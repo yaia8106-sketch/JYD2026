@@ -17,21 +17,29 @@
 ## 2. 工作区目录结构架构 (Workspace Architecture)
 
 - **`00_AI_Rules/` (全局规则基石)**
-  - 存放本项目的全局编码规范、接口协议约定和指令集背景等内容。
-  - 同时，在`selfuse/`路径下会存放用户的所思所想，允许查看，但禁止修改。
-  - 在`design_rules/`路径下存放的是你在设计时可供参考的内容。
+  - `design_rules/`：设计时必须遵守的规范。
+  - `selfuse/`：架构师笔记（`design_decisions.md`、`TODO.md`）。**每次设计改动后检查是否需要同步更新。**
 
 - **`01_Docs/` (参考资料)**
-  - 存放官方数据手册或比赛相关资料（如 RISC-V ISA Manual、AXI 总线协议、赛事章程等）。
+  - 板卡数据手册、引脚定义、COE 文件等。AI 仅做参考，不应修改。
 
-- **`02_Design/` (核心设计区 - 你的代码输出地)**
-  - **【文档驱动模式】**该路径下有两个重要文件夹，分别用于存放对应记录：
-    1. `spec/`用于存放:`<Module>_spec.md` (黄金提示词/Golden Spec)：极其严谨的模块规格说明书。包含端口列表 (I/O)、时序描述和功能约束。**这是生成 RTL 的唯一依据。**
-    2. `rtl/`用于存放:`<Module>.sv` (RTL 产物)：你根据 Spec 生成的最终 SystemVerilog 代码。
+- **`02_Design/` (核心设计区 — AI 的代码输出地)**
+  - `spec/`：`<Module>_spec.md`，模块规格文档。**是生成 RTL 的唯一依据。**
+  - `rtl/`：`<Module>.sv`，由 Spec 驱动生成的 SystemVerilog 代码。
 
-- **`03_Timing_Analysis/` (时序与物理验证区)**
-  - `scripts/`: 存放vivado脚本。
-  - `reports/`: 存放生成的 `critical_paths.log`。**当用户把这个报告丢给你时，意味着组合逻辑延迟过长。** 你必须通过重构代码（如拆分逻辑、减少嵌套）来修复违例。
+- **`03_Timing_Analysis/` (独立时序测试区 — 临时)**
+  - 仅用于 cpu_top 的独立性能测试，与数字孪生平台工程无关。后续可能删除。
+  - `constraints/`：临时 XDC 约束文件。
+  - `scripts/`：Vivado TCL 脚本。
+  - `reports/`：Vivado 时序报告。**当用户把报告丢给你时，意味着组合逻辑延迟过长。**
+
+- **`JYD2025_Contest-rv32i/` (赛事方数字孪生平台 Vivado 工程)**
+  - 比赛的集成目标平台。CPU 需要接入此工程中的 `student_top.sv`，通过外设桥连接 DRAM 和 MMIO。
+  - `counter.sv` 及其对应时钟 **禁止修改**。其余模块（包括 `perip_bridge.sv`）允许修改或替换。
+
+- **`cdp-tests/` (赛事方功能测试框架)**
+  - Verilator 仿真测试程序，用于验证指令级功能正确性。
+  - `mySoC/` 内含一份独立的 RTL 副本，由用户自行维护。**AI 编写代码时不应参考此目录。**
 
 ---
 

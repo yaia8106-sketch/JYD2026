@@ -1,5 +1,4 @@
-# Documentation (private/external)
 01_Docs/
-
-# Timing analysis reports (generated)
 03_Timing_Analysis/reports/
+JYD2025_Contest-rv32i/
+cdp-tests/

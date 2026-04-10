@@ -27,12 +27,25 @@
 
 - [x] 按 spec 逐模块生成 `.sv` 文件（17 个模块）
 - [x] 顶层集成连线 (`cpu_top.sv`)
-- [ ] 例化 Vivado BRAM IP（IROM / DRAM）
+- [x] 例化 Vivado BRAM IP（IROM / DRAM）— 独立测试用
+- [x] 独立 Implementation 时序验证（222MHz，WNS = -0.990ns）
+
+### 数字孪生平台集成（进行中）
+
+- [ ] 确定 DRAM 容量（60K×32 vs 16K×32），决定是否需要 output register
+- [ ] 重构 `cpu_top.sv` 端口：移除内部 IROM/DRAM，暴露外设总线接口
+- [ ] `ex_mem_reg.sv` 新增字段：`mem_write_en`、`rs2_data`
+- [ ] `mem_wb_reg.sv` 新增字段：`perip_rdata`
+- [ ] 自研 `perip_bridge.sv`：地址译码 + BRAM DRAM + MMIO + 复用模板 counter
+- [ ] 编写 `student_top.sv`：CPU + IROM + perip_bridge 连线
+- [ ] 功能验证（cdp-tests 或 coremark）
+- [ ] Implementation 时序验证（目标 ≥200MHz）
 
 ### 后期优化
 
 - [ ] JAL 提前到 ID 级判断（penalty 2→1 拍）
 - [ ] JALR 提前到 ID 级判断（视时序余量）
+- [ ] coremark 跑分验证
 
 ---
 

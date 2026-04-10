@@ -91,13 +91,22 @@ MEM 级前递显式排除 Load 指令（`!mem_is_load`），因为 MEM 级的 AL
 
 ## G. IROM/DRAM Vivado IP 配置
 
-**决策：均使用 Single Port BRAM**
+**当前状态：均使用 Single Port BRAM，内部例化于 cpu_top**
 
-- IROM：Single Port ROM，32-bit，启用输出寄存器（方案 B），COE 文件初始化
-- DRAM：Single Port RAM，32-bit，启用输出寄存器（方案 B），WEA 4-bit 字节使能
+- IROM：Single Port ROM，32-bit，启用输出寄存器（2 拍延迟），COE 文件初始化
+- DRAM：Single Port RAM，32-bit，启用输出寄存器（2 拍延迟），WEA 4-bit 字节使能
 - 不需要双端口：Load 和 Store 统一用 EX 级 ALU 输出作地址，同一时刻只有一条指令在 EX
 - 地址粒度：word 地址（BRAM 地址 = ALU_result[?:2]）
-- 地址宽度根据实际存储大小确定
+- 当前 DRAM 为 60K×32bit（240KB），使用约 59 个 RAMB36E1，3 级输出 MUX 导致时序紧张
+
+**计划变更（数字孪生平台集成）：**
+
+集成到 `JYD2025_Contest-rv32i/` 工程后，IROM 和 DRAM 需从 cpu_top 内部移至外部：
+1. **IROM**：移到 `student_top` 中外部例化，cpu_top 通过 `irom_addr` / `irom_data` 端口访问
+2. **DRAM**：由自研的 `perip_bridge` 统一管理，通过外设总线端口访问
+3. **访存阶段变更**：DRAM 地址输出从 EX 阶段推迟到 **MEM 阶段**（使用已锁存的 `mem_alu_result`），以适配外部存储的时序需求
+4. **Output Register 策略**：MEM 阶段发送地址后，BRAM 只需 1 拍延迟（不启用 output register）即可在 WB 阶段输出数据；MMIO 读数据在 bridge 内打 1 拍对齐
+5. **DRAM 容量**：待定，60K×32 在无 output register 时 3 级输出 MUX 可能仍有时序压力，可能需缩减至 16K×32（64KB）
 
 ---
 

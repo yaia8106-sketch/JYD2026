@@ -4,76 +4,108 @@
 
 ---
 
-## 文件结构
+## 项目概述
+
+本工作区是一个 **RV32I 五级流水线处理器** 的设计项目，目标是参加数字孪生平台竞赛。
+最终交付物为：将自研 CPU 集成到赛事方提供的数字孪生平台 Vivado 工程中，完成跑分测试。
+
+---
+
+## 工作区顶层结构
+
+```
+CPU_Workspace/
+├── 00_AI_Rules/              ← AI 角色定义与设计规则（你正在看的目录）
+├── 01_Docs/                  ← 参考资料（板卡手册、COE 文件等）
+├── 02_Design/                ← CPU RTL 源码（核心设计区）
+│   ├── spec/                 ← 模块规格文档
+│   └── rtl/                  ← SystemVerilog 源码
+├── 03_Timing_Analysis/       ← 时序约束、Vivado TCL 脚本、时序报告
+│   ├── constraints/
+│   ├── scripts/
+│   └── reports/
+├── JYD2025_Contest-rv32i/    ← 赛事方数字孪生平台 Vivado 工程（集成目标）
+└── cdp-tests/                ← 赛事方功能测试框架（Verilator 仿真）
+```
+
+---
+
+## 各目录详细说明
+
+### `00_AI_Rules/` — AI 规则基石
 
 ```
 00_AI_Rules/
 ├── README.md                 ← 你正在看的文件
 ├── project_context.md        ← AI 角色定义与工作流
-├── design_rules/             ← AI 必须遵守的设计规则（"法律"）
+├── design_rules/             ← AI 必须遵守的设计规则
 │   ├── pipeline.md           ← 五级流水线控制规范（核心文档）
 │   ├── isa_encoding.md       ← RV32I 控制信号与译码表
 │   └── spec_format.md        ← Module Spec 编写模板
-└── selfuse/                  ← 架构师个人笔记（可查看，禁止修改）
+└── selfuse/                  ← 架构师笔记（每次设计改动后检查是否需要同步更新）
     ├── design_decisions.md   ← A-H 设计决策记录
     └── TODO.md               ← 待办清单
 ```
 
----
-
-## 各文件说明
-
-### `project_context.md`
-**定位**：System Prompt，定义 AI 的角色和工作范式。
-**内容**：黑盒开发流程、目录结构、SOP、硬件编码底线规则。
-**何时读**：每次对话开头。
-
----
-
-### `design_rules/pipeline.md`
-**定位**：全局架构圣经，所有模块 spec 的上位依据。
-**内容**：
-- §1-2：流水线结构、BRAM 时序模型（方案 B）、IROM/DRAM 时序分析
-- §3-5：握手协议（valid/allowin/ready_go）、级间寄存器行为、PC 更新逻辑
-- §6-7：stall 传播机制与时序示例
-- §8：flush 机制（2 拍代价、信号连接、valid gating）
-- §9：数据冒险（并行前递 MUX、Load-Use 检测 EX+MEM 两级）
-- §10-11：信号连接总览、设计检查清单
-
-**何时读**：编写任何模块 spec 或 RTL 之前。
+| 文件 | 说明 | 何时读 |
+|---|---|---|
+| `project_context.md` | AI 角色定义、黑盒开发流程、SOP | 每次对话开头 |
+| `pipeline.md` | 流水线架构圣经：握手协议、BRAM 时序、前递、flush | 编写任何模块前 |
+| `isa_encoding.md` | 指令编码、控制信号定义、译码真值表 | 编写译码器/ALU/分支单元时 |
+| `spec_format.md` | Module Spec 格式模板 | 编写新的 `_spec.md` 时 |
+| `design_decisions.md` | 架构师决策记录（A-H 共 8 项） | 了解设计决策时。**每次改动后检查是否需要更新** |
+| `TODO.md` | 待办清单 | 确认任务优先级时。**每次改动后检查是否需要更新** |
 
 ---
 
-### `design_rules/isa_encoding.md`
-**定位**：指令集编码与控制信号定义。
-**内容**：14 个控制信号定义、ALU 操作编码、分支条件编码、立即数生成规则、完整译码真值表、EX 级分支判断单元。
-**何时读**：编写译码器、ALU、分支单元相关模块时。
+### `01_Docs/` — 参考资料
+
+存放板卡数据手册、引脚定义、BRAM 初始化 COE 文件等比赛相关资料。AI 仅做参考，不应修改。
 
 ---
 
-### `design_rules/spec_format.md`
-**定位**：Module Spec 的格式模板。
-**内容**：必需章节（端口列表、功能描述、时序约束、边界条件、依赖文档）、可选章节、反面示例。
-**何时读**：编写新的 `_spec.md` 时。
+### `02_Design/` — CPU 核心设计区
+
+**这是 AI 的主要代码输出目录。**
+
+- `spec/`：模块规格文档（`<Module>_spec.md`），是生成 RTL 的唯一依据
+- `rtl/`：SystemVerilog 源码（`<Module>.sv`），由 Spec 驱动生成
 
 ---
 
-### `selfuse/design_decisions.md`
-**定位**：架构师决策笔记（A-H 共 8 项）。
-**内容**：
-- A. 寄存器堆：read-first
-- B. Flush 代价：2 拍
-- C. 跳转处理：初版全 EX
-- D. 控制信号：见 isa_encoding.md
-- E. DRAM 访存：Single Port + 4-bit WEA
-- F. 前递路径：ID 级并行 MUX，EX>MEM>WB>regfile
-- G. BRAM 配置：均 Single Port 带输出寄存器
-- H. BRAM 残留：valid gating 屏蔽
+### `03_Timing_Analysis/` — 独立时序测试区（临时）
 
-**何时读**：需要了解"为什么这样设计"时。AI 不应修改此文件。
+**仅用于 cpu_top 的独立性能测试**，与 `JYD2025_Contest-rv32i/` 中的数字孪生平台工程无关。后续可能删除。
+
+- `constraints/`：临时 XDC 约束文件（为独立测试创建的时钟定义，非数字孪生平台约束）
+- `scripts/`：Vivado TCL 脚本（分阶段时序提取）
+- `reports/`：Vivado 生成的时序报告
 
 ---
 
-### `selfuse/TODO.md`
-**定位**：待办清单，分 AI 总结区和架构师自用区。
-**何时读**：确认当前任务优先级时。AI 不应修改此文件。
+### `JYD2025_Contest-rv32i/` — 赛事方数字孪生平台工程
+
+**赛事方提供的 Vivado 工程，是 CPU 集成的目标平台。**
+
+关键文件（位于 `.../digital_twin.srcs/sources_1/new/`）：
+- `top.sv` — 顶层模块，包含 PLL（差分时钟）、UART、twin_controller
+- `student_top.sv` — **学生区**，CPU 及外设桥在此例化
+- `perip_bridge.sv` — 外设桥（地址译码、DRAM、MMIO 读写）
+- `dram_driver.sv` — DRAM 读写驱动（使用分布式 RAM）
+- `counter.sv` — 硬件计数器（**含 CDC 处理，禁止修改**）
+- `display_seg.sv` / `seg7.sv` — 七段数码管驱动
+- `twin_controller.sv` / `uart.sv` — 数字孪生通信链路
+
+> **修改约束**：`counter.sv` 及其对应时钟 **明确禁止修改**。其余模块（包括 `perip_bridge.sv`）允许根据需要修改或替换。
+
+---
+
+### `cdp-tests/` — 功能测试框架
+
+赛事方提供的 Verilator 仿真测试程序，用于验证 CPU 指令级功能正确性。
+
+- `mySoC/`：包含一份独立的 RTL 副本（用户自行维护，**AI 编写代码时不参考此目录**）
+- `waveform/`：各指令的 VCD 波形文件
+- `golden_model/`：参考模型
+
+> **注意**：AI 在编写 `02_Design/rtl/` 中的代码时，**不应参考或同步 `cdp-tests/mySoC/` 中的代码**。两份代码由用户手动管理。
