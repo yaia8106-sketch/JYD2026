@@ -159,11 +159,11 @@ module cpu_top (
 
     // ==================== IROM (Vivado BRAM IP) ====================
     // TODO: Replace with actual Vivado IP instantiation
-    // irom u_irom (
-    //     .clka  (clk),
-    //     .addra (next_pc[??:2]),      // word address, width depends on ROM size
-    //     .douta (irom_dout)
-    // );
+     IROM4Test u_irom (
+         .clka  (clk),
+         .addra (next_pc[13:2]),      // word address, width depends on ROM size
+         .douta (irom_dout)
+     );
 
     // ==================== IF/ID ====================
 
@@ -351,13 +351,13 @@ module cpu_top (
 
     // ==================== DRAM (Vivado BRAM IP) ====================
     // TODO: Replace with actual Vivado IP instantiation
-    // dram u_dram (
-    //     .clka  (clk),
-    //     .wea   (dram_wea),
-    //     .addra (alu_result[??:2]),    // word address, width depends on RAM size
-    //     .dina  (store_data_shifted),
-    //     .douta (dram_dout)
-    // );
+     DRAM4Test u_dram (
+         .clka  (clk),
+         .wea   (dram_wea),
+         .addra (alu_result[17:2]),    // word address, width depends on RAM size
+         .dina  (store_data_shifted),
+         .douta (dram_dout)
+     );
 
     // ==================== EX/MEM ====================
 
