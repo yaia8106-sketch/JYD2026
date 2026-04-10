@@ -1,0 +1,5 @@
+# Documentation (private/external)
+01_Docs/
+
+# Timing analysis reports (generated)
+03_Timing_Analysis/reports/
