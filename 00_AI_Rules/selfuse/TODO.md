@@ -32,11 +32,13 @@
 
 ### 数字孪生平台集成（进行中）
 
-- [ ] 确定 DRAM 容量（60K×32 vs 16K×32），决定是否需要 output register
-- [ ] 重构 `cpu_top.sv` 端口：移除内部 IROM/DRAM，暴露外设总线接口
-- [ ] `ex_mem_reg.sv` 新增字段：`mem_write_en`、`rs2_data`
-- [ ] `mem_wb_reg.sv` 新增字段：`perip_rdata`
-- [ ] 自研 `perip_bridge.sv`：地址译码 + BRAM DRAM + MMIO + 复用模板 counter
+- [x] 确定 DRAM Output Register 策略：不勾选（1 拍延迟）
+- [x] `mem_wb_reg.sv`：新增 `mem_dram_dout` / `wb_dram_dout` 传递
+- [x] `cpu_top.sv`：`dram_dout` 改走 MEM/WB 寄存器
+- [x] `mem_interface.sv`：修复 `* 4'd8` → `{addr, 3'b0}`
+- [ ] 确定 DRAM 容量（65536 vs 16384），重新生成 BRAM IP（取消 output register）
+- [ ] 重构 `cpu_top.sv` 端口：移除内部 IROM/DRAM，暴露 IROM 和外设总线接口
+- [ ] 自研 `perip_bridge.sv`：BRAM DRAM + MMIO 组合读 + 时序写 + 复用模板 counter
 - [ ] 编写 `student_top.sv`：CPU + IROM + perip_bridge 连线
 - [ ] 功能验证（cdp-tests 或 coremark）
 - [ ] Implementation 时序验证（目标 ≥200MHz）
