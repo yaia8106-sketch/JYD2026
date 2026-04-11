@@ -93,22 +93,28 @@ safe_stage_timing "*u_id_ex_reg*" "*u_id_ex_reg*" \
     $outdir/08_CROSS_ex_forward.txt "u_id_ex_reg → u_id_ex_reg"
 
 # ---- 9. MEM 阶段: u_ex_mem_reg → u_mem_wb_reg ----
-puts "\n>>> 9/12  MEM: u_ex_mem_reg → u_mem_wb_reg ..."
+puts "\n>>> 9/14  MEM: u_ex_mem_reg → u_mem_wb_reg ..."
 safe_stage_timing "*u_ex_mem_reg*" "*u_mem_wb_reg*" \
     $outdir/09_MEM_exmem_to_memwb.txt "u_ex_mem_reg → u_mem_wb_reg"
 
+# ---- 9b. MEM 阶段: u_dram → u_mem_wb_reg (BRAM Clk-to-Q → MEM/WB) ----
+# 关键路径：1-cycle BRAM 无 output register，douta → wb_dram_dout_reg
+puts "\n>>> 9b/14 MEM: u_dram → u_mem_wb_reg (BRAM output → MEM/WB) ..."
+safe_stage_timing "*u_dram*" "*u_mem_wb_reg*" \
+    $outdir/09b_MEM_dram_to_memwb.txt "u_dram → u_mem_wb_reg"
+
 # ---- 10. WB 阶段: u_mem_wb_reg → regfile ----
-puts "\n>>> 10/12 WB: u_mem_wb_reg → regfile ..."
+puts "\n>>> 10/14 WB: u_mem_wb_reg → regfile ..."
 safe_stage_timing "*u_mem_wb_reg*" "*u_regfile*" \
     $outdir/10_WB_memwb_to_regfile.txt "u_mem_wb_reg → u_regfile"
 
 # ---- 11. WB 前递跨级: u_mem_wb_reg → u_id_ex_reg ----
-puts "\n>>> 11/12 跨级: u_mem_wb_reg → u_id_ex_reg (WB 前递) ..."
+puts "\n>>> 11/14 跨级: u_mem_wb_reg → u_id_ex_reg (WB 前递) ..."
 safe_stage_timing "*u_mem_wb_reg*" "*u_id_ex_reg*" \
     $outdir/11_CROSS_wb_forward.txt "u_mem_wb_reg → u_id_ex_reg"
 
 # ---- 12. 全局时序 Summary ----
-puts "\n>>> 12/12 全局时序 Summary ..."
+puts "\n>>> 12/14 全局时序 Summary ..."
 report_timing_summary -delay_type min_max -max_paths 10 \
               -file $outdir/12_timing_summary.txt
 puts "    -> $outdir/12_timing_summary.txt"
@@ -126,8 +132,9 @@ puts "    06_EX_branch_to_pc.txt          EX 分支→PC"
 puts "    07_EX_idex_to_dram.txt          EX→DRAM (BRAM 地址建立)"
 puts "    08_CROSS_ex_forward.txt         跨级 EX 前递"
 puts "    09_MEM_exmem_to_memwb.txt       MEM: EX/MEM→MEM/WB"
+puts "    09b_MEM_dram_to_memwb.txt       MEM: DRAM→MEM/WB (BRAM Clk-to-Q)"
 puts "    10_WB_memwb_to_regfile.txt      WB: MEM/WB→regfile"
 puts "    11_CROSS_wb_forward.txt         跨级 WB 前递"
 puts "    12_timing_summary.txt           全局 Summary (WNS/WHS)"
-puts "  [SKIP] 表示该路径在当前网表中不存在（模块被拍平或无此路径）"
+puts "  \[SKIP\] 表示该路径在当前网表中不存在（模块被拍平或无此路径）"
 puts "======================================"

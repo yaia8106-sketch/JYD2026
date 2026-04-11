@@ -1,8 +1,8 @@
 // ============================================================
 // Module: mem_wb_reg
 // Description: MEM/WB pipeline register
-// Note: Does NOT store Load data. dram_dout is provided directly
-//       to WB writeback MUX from BRAM output register.
+// Note: dram_dout is captured here. BRAM uses 1-cycle latency
+//       (no output register), data available in MEM stage.
 // ============================================================
 
 module mem_wb_reg (
@@ -25,6 +25,7 @@ module mem_wb_reg (
     input  logic [ 1:0] mem_mem_size,       // needed for WB byte extraction
     input  logic        mem_mem_unsigned,   // needed for WB sign/zero extension
     input  logic [ 1:0] mem_addr_low,       // ALU_result[1:0], needed for WB byte extraction
+    input  logic [31:0] mem_dram_dout,      // BRAM output (available in MEM stage, 1-cycle BRAM)
 
     // Data out (to WB stage)
     output logic [31:0] wb_alu_result,
@@ -35,7 +36,8 @@ module mem_wb_reg (
     output logic        wb_is_load,
     output logic [ 1:0] wb_mem_size,
     output logic        wb_mem_unsigned,
-    output logic [ 1:0] wb_addr_low
+    output logic [ 1:0] wb_addr_low,
+    output logic [31:0] wb_dram_dout       // registered BRAM output for WB stage
 );
 
     // ---- Handshake (WB is last stage, no downstream backpressure) ----
@@ -55,6 +57,7 @@ module mem_wb_reg (
             wb_mem_size      <= 2'd0;
             wb_mem_unsigned  <= 1'b0;
             wb_addr_low      <= 2'd0;
+            wb_dram_dout     <= 32'd0;
         end else if (wb_allowin) begin
             wb_valid         <= mem_valid & mem_ready_go;
             wb_alu_result    <= mem_alu_result;
@@ -66,6 +69,7 @@ module mem_wb_reg (
             wb_mem_size      <= mem_mem_size;
             wb_mem_unsigned  <= mem_mem_unsigned;
             wb_addr_low      <= mem_addr_low;
+            wb_dram_dout     <= mem_dram_dout;
         end
     end
 

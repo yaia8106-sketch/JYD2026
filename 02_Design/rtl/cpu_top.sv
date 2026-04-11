@@ -116,6 +116,7 @@ module cpu_top (
     wire [ 1:0] wb_mem_size;
     wire        wb_mem_unsigned;
     wire [ 1:0] wb_addr_low;
+    wire [31:0] wb_dram_dout;   // registered BRAM output (1-cycle BRAM, captured in MEM/WB)
 
     // ---- WB ----
     wire [31:0] wb_load_data;
@@ -345,7 +346,7 @@ module cpu_top (
         .load_addr_low   (wb_addr_low),
         .load_mem_size   (wb_mem_size),
         .load_unsigned   (wb_mem_unsigned),
-        .load_dram_dout  (dram_dout),
+        .load_dram_dout  (wb_dram_dout),    // from MEM/WB register (1-cycle BRAM)
         .load_data_out   (wb_load_data)
     );
 
@@ -414,7 +415,9 @@ module cpu_top (
         .wb_is_load       (wb_is_load),
         .wb_mem_size      (wb_mem_size),
         .wb_mem_unsigned  (wb_mem_unsigned),
-        .wb_addr_low      (wb_addr_low)
+        .wb_addr_low      (wb_addr_low),
+        .mem_dram_dout    (dram_dout),      // BRAM output (MEM stage, 1-cycle latency)
+        .wb_dram_dout     (wb_dram_dout)    // registered for WB stage
     );
 
     // ==================== WB stage ====================
