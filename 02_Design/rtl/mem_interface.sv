@@ -42,14 +42,14 @@ module mem_interface (
     assign store_wea = (store_valid & store_en) ? wea_raw : 4'b0000;
 
     // Data shift: move rs2 data to correct byte lane
-    assign store_data_out = store_data_in << ({3'b0, store_addr_low} * 4'd8);
+    assign store_data_out = store_data_in << {store_addr_low, 3'b0};
 
     // ================================================================
     //  Load side: byte extraction + sign/zero extension
     // ================================================================
 
     // Step 1: shift dout right to align target bytes to LSB
-    wire [31:0] shifted = load_dram_dout >> ({3'b0, load_addr_low} * 4'd8);
+    wire [31:0] shifted = load_dram_dout >> {load_addr_low, 3'b0};
 
     // Step 2: extract + extend
     always_comb begin
