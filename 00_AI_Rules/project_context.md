@@ -20,13 +20,16 @@
   - `design_rules/`：设计时必须遵守的规范。
   - `selfuse/`：架构师笔记（`design_decisions.md`、`TODO.md`）。**每次设计改动后检查是否需要同步更新。**
 
-- **`01_Docs/` (参考资料 + 赛方原版归档)**
-  - 板卡数据手册、引脚定义等。AI 仅做参考，不应修改。
-  - `contest_readonly/`：赛方原版文件归档（RTL、IP `.xci`、XDC 约束、仿真 TB），禁止修改，供 TCL 脚本一键导入新工程。
+- **`01_Docs/` (参考资料)**
+  - 板卡数据手册、引脚定义 PDF 等。AI 仅做参考，不应修改。
 
 - **`02_Design/` (核心设计区 — AI 的代码输出地)**
   - `spec/`：`<Module>_spec.md`，模块规格文档。**是生成 RTL 的唯一依据。**
   - `rtl/`：`<Module>.sv`，由 Spec 驱动生成的 SystemVerilog 代码。
+  - `rtl/platform/`：`student_top.sv`、`perip_bridge.sv`（平台接口层）。
+  - `contest_readonly/`：赛方原版文件归档（RTL、IP `.xci`、XDC、仿真 TB），**禁止修改**，供 TCL 脚本一键导入。
+  - `coe/`：BRAM 初始化文件（`current/` 为当前使用版本）。
+  - `sim/`：自研 testbench。
 
 - **`03_Timing_Analysis/` (独立时序测试区 — 临时)**
   - 仅用于 cpu_top 的独立性能测试，与数字孪生平台工程无关。后续可能删除。
