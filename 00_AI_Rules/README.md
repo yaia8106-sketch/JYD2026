@@ -24,7 +24,6 @@ CPU_Workspace/
 │   ├── contest_readonly/     ← 赛方原版文件（RTL、IP、XDC、TB，禁止修改）
 │   ├── coe/                  ← BRAM 初始化文件
 │   └── sim/                  ← 自研 testbench
-├── 03_Timing_Analysis/       ← 时序约束、Vivado TCL 脚本、时序报告
 ├── JYD2025_Contest-rv32i/    ← 赛事方数字孪生平台 Vivado 工程（集成目标）
 └── cdp-tests/                ← 赛事方功能测试框架（Verilator 仿真）
 ```

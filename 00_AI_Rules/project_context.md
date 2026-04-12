@@ -31,12 +31,6 @@
   - `coe/`：BRAM 初始化文件（`current/` 为当前使用版本）。
   - `sim/`：自研 testbench。
 
-- **`03_Timing_Analysis/` (独立时序测试区 — 临时)**
-  - 仅用于 cpu_top 的独立性能测试，与数字孪生平台工程无关。后续可能删除。
-  - `constraints/`：临时 XDC 约束文件。
-  - `scripts/`：Vivado TCL 脚本。
-  - `reports/`：Vivado 时序报告。**当用户把报告丢给你时，意味着组合逻辑延迟过长。**
-
 - **`JYD2025_Contest-rv32i/` (赛事方数字孪生平台 Vivado 工程)**
   - 比赛的集成目标平台。CPU 需要接入此工程中的 `student_top.sv`，通过外设桥连接 DRAM 和 MMIO。
   - `counter.sv` 及其对应时钟 **禁止修改**。其余模块（包括 `perip_bridge.sv`）允许修改或替换。
