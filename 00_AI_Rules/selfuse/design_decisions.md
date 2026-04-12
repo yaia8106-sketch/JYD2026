@@ -89,6 +89,41 @@ MEM 级前递显式排除 Load 指令（`!mem_is_load`），因为 MEM 级的 AL
 
 ---
 
+## F2. Load-Use Stall 与 1-cycle BRAM 的权衡
+
+**决策：保持 2 拍 stall 不变（暂不加 MEM Load 前递）**
+
+DRAM 从 2 拍 BRAM（有 output register）改为 1 拍（无 output register）后，load 数据在 MEM 阶段就可用（BRAM Clk-to-Q）。
+理论上可以从 MEM 阶段直接前递 load 数据到 ID 阶段，将 load-use penalty 从 2 拍降到 1 拍。
+
+### 权衡分析
+
+当前 `load_in_mem` stall 的原因（2 拍 BRAM 时）：MEM 阶段 load 数据不可用。
+改为 1 拍 BRAM 后：MEM 阶段 BRAM 已输出数据，`load_in_mem` 可以去掉。
+
+但需要在 MEM 阶段增加 load 前递路径：
+```
+BRAM Clk-to-Q(2.0) + output MUX(0.2) + mem_interface(0.5)
++ routing(0.5) + 前递MUX(0.3) + routing到ID/EX(0.5) = ~4.0ns
+```
+
+对比当前最长路径 3.65ns（EX 前递），这会成为新瓶颈。
+
+### 决策理由
+
+- 4.0ns 路径在 222MHz（4.5ns 周期）下 slack 仅 ~0.5ns，布线后大概率违例
+- 当前 2 拍 stall 功能正确，性能损失可通过编译器调度部分弥补
+- 先保证时序收敛，后期优化时再考虑此路径
+
+### 后期优化方向
+
+如果需要降低 load-use penalty：
+1. 降频到 200MHz（5.0ns），给 MEM load 前递留更多余量
+2. 只对 LW（word load）做 MEM 前递，LB/LH 走 2 拍 stall（省去 mem_interface 延迟）
+3. 将 mem_interface 的字节提取逻辑移到前递 MUX 之后（WB 侧处理）
+
+---
+
 ## G. IROM/DRAM Vivado IP 配置
 
 **IROM：Single Port ROM，32-bit，启用输出寄存器（2 拍延迟），COE 文件初始化 — 不变**

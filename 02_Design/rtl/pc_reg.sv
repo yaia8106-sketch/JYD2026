@@ -29,7 +29,7 @@ module pc_reg (
     // ---- PC register ----
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            pc <= 32'h0000_0000;       // Reset vector (configurable)
+            pc <= 32'h7FFF_FFFC;       // text_base - 4 (prefetch: next_pc 首拍 = 0x80000000)
         end else if (branch_flush) begin
             pc <= branch_target;        // Flush overrides stall
         end else if (if_allowin) begin
@@ -39,3 +39,4 @@ module pc_reg (
     end
 
 endmodule
+ 

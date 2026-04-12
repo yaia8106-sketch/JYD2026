@@ -2,12 +2,22 @@
 // Module: cpu_top
 // Description: RV32I 5-stage pipeline processor top-level
 // Rule: WIRING ONLY — no logic, no assign expressions with operators
-// IROM/DRAM: Vivado BRAM IP, instantiated here
+// IROM/DRAM: 外部例化，通过端口访问
 // ============================================================
 
 module cpu_top (
-    input  logic clk,
-    input  logic rst_n
+    input  logic        clk,
+    input  logic        rst_n,
+
+    // IROM 接口 (IF stage)
+    output logic [31:0] irom_addr,       // = next_pc（预取，IF 阶段）
+    input  logic [31:0] irom_data,       // 指令（BRAM 1拍 Clk-to-Q，IF 阶段有效）
+
+    // 外设总线 (EX stage → bridge)
+    output logic [31:0] perip_addr,      // = alu_result
+    output logic [3:0]  perip_wea,       // = mem_interface store wea
+    output logic [31:0] perip_wdata,     // = store_data_shifted
+    input  logic [31:0] perip_rdata      // bridge 返回数据（MEM 阶段有效）
 );
 
     // ================================================================
@@ -24,6 +34,7 @@ module cpu_top (
     wire        id_allowin;
     wire        id_ready_go;
     wire [31:0] id_pc;
+    wire [31:0] id_inst;           // registered instruction from IF/ID
 
     // ---- IROM ----
     wire [31:0] irom_dout;         // instruction from BRAM output register
@@ -90,7 +101,7 @@ module cpu_top (
 
     // ---- DRAM ----
     wire [ 3:0] dram_wea;
-    wire [31:0] dram_dout;
+    wire [31:0] dram_dout;             // = perip_rdata (from bridge, MEM stage)
 
     // ---- EX/MEM ----
     wire        mem_valid;
@@ -131,10 +142,20 @@ module cpu_top (
     wire id_flush = branch_flush;
     wire ex_flush = branch_flush;
 
-    // ---- Register addresses from instruction ----
-    wire [4:0] id_rs1_addr = irom_dout[19:15];
-    wire [4:0] id_rs2_addr = irom_dout[24:20];
-    wire [4:0] id_rd_addr  = irom_dout[11:7];
+    // ---- Register addresses from instruction (ID stage, from IF/ID reg) ----
+    wire [4:0] id_rs1_addr = id_inst[19:15];
+    wire [4:0] id_rs2_addr = id_inst[24:20];
+    wire [4:0] id_rd_addr  = id_inst[11:7];
+
+    // ---- Port assignments ----
+    wire        if_allowin_w = id_allowin;   // for irom_addr mux
+    assign irom_addr   = branch_flush  ? branch_target :   // 分支：预取目标
+                         !if_allowin_w ? pc :               // 停顿：保持当前地址
+                                         next_pc;           // 正常：预取下一条
+    assign perip_addr  = alu_result;        // bridge 地址 (EX stage)
+    assign perip_wea   = dram_wea;          // bridge 写使能 (EX stage)
+    assign perip_wdata = store_data_shifted; // bridge 写数据 (EX stage)
+    assign dram_dout   = perip_rdata;       // bridge 读数据 (MEM stage)
 
     // ================================================================
     //  Module instantiations
@@ -158,13 +179,7 @@ module cpu_top (
         .pc            (pc)
     );
 
-    // ==================== IROM (Vivado BRAM IP) ====================
-    // TODO: Replace with actual Vivado IP instantiation
-     IROM4Test u_irom (
-         .clka  (clk),
-         .addra (next_pc[13:2]),      // word address, width depends on ROM size
-         .douta (irom_dout)
-     );
+    // ==================== IROM: 外部例化，通过 irom_addr/irom_data 端口 ====================
 
     // ==================== IF/ID ====================
 
@@ -179,13 +194,15 @@ module cpu_top (
         .ex_allowin   (ex_allowin),
         .id_flush     (id_flush),
         .if_pc        (pc),
-        .id_pc        (id_pc)
+        .if_inst      (irom_data),       // BRAM output captured in IF stage
+        .id_pc        (id_pc),
+        .id_inst      (id_inst)          // registered instruction for ID
     );
 
     // ==================== ID stage ====================
 
     decoder u_decoder (
-        .inst           (irom_dout),
+        .inst           (id_inst),            // from IF/ID register
         .alu_op         (dec_alu_op),
         .alu_src1_sel   (dec_alu_src1_sel),
         .alu_src2_sel   (dec_alu_src2_sel),
@@ -203,7 +220,7 @@ module cpu_top (
     );
 
     imm_gen u_imm_gen (
-        .inst     (irom_dout),
+        .inst     (id_inst),                   // from IF/ID register
         .imm_type (dec_imm_type),
         .imm      (id_imm)
     );
@@ -350,15 +367,7 @@ module cpu_top (
         .load_data_out   (wb_load_data)
     );
 
-    // ==================== DRAM (Vivado BRAM IP) ====================
-    // TODO: Replace with actual Vivado IP instantiation
-     DRAM4Test u_dram (
-         .clka  (clk),
-         .wea   (dram_wea),
-         .addra (alu_result[17:2]),    // word address, width depends on RAM size
-         .dina  (store_data_shifted),
-         .douta (dram_dout)
-     );
+    // ==================== DRAM: 外部例化，通过 perip 端口 ====================
 
     // ==================== EX/MEM ====================
 

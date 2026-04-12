@@ -1,8 +1,8 @@
 // ============================================================
 // Module: if_id_reg
-// Description: IF/ID pipeline register (stores PC only)
+// Description: IF/ID pipeline register (stores PC + instruction)
 // Spec: 02_Design/spec/if_id_reg_spec.md
-// Note: Instruction comes directly from IROM dout, not stored here
+// Note: Instruction captured from BRAM output in IF stage
 // ============================================================
 
 module if_id_reg (
@@ -22,7 +22,9 @@ module if_id_reg (
 
     // Data
     input  logic [31:0] if_pc,
-    output logic [31:0] id_pc
+    input  logic [31:0] if_inst,       // BRAM output (irom_data), valid in IF stage
+    output logic [31:0] id_pc,
+    output logic [31:0] id_inst        // registered instruction for ID stage
 );
 
     // ---- Handshake ----
@@ -33,11 +35,13 @@ module if_id_reg (
         if (!rst_n) begin
             id_valid <= 1'b0;
             id_pc    <= 32'd0;
+            id_inst  <= 32'd0;
         end else if (id_flush) begin
             id_valid <= 1'b0;
         end else if (id_allowin) begin
             id_valid <= if_valid & if_ready_go;
             id_pc    <= if_pc;
+            id_inst  <= if_inst;
         end
     end
 
