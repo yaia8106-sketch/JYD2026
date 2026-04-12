@@ -20,9 +20,9 @@
   - `design_rules/`：设计时必须遵守的规范。
   - `selfuse/`：架构师笔记（`design_decisions.md`、`TODO.md`）。**每次设计改动后检查是否需要同步更新。**
 
-- **`01_Docs/` (参考资料 + 官方平台归档)**
+- **`01_Docs/` (参考资料 + 赛方原版归档)**
   - 板卡数据手册、引脚定义等。AI 仅做参考，不应修改。
-  - `platform_official/`：赛事方官方文件归档（RTL、IP `.xci`、XDC 约束、仿真 TB），用于开新工程时快速引用。
+  - `contest_readonly/`：赛方原版文件归档（RTL、IP `.xci`、XDC 约束、仿真 TB），禁止修改，供 TCL 脚本一键导入新工程。
 
 - **`02_Design/` (核心设计区 — AI 的代码输出地)**
   - `spec/`：`<Module>_spec.md`，模块规格文档。**是生成 RTL 的唯一依据。**

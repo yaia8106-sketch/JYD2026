@@ -16,8 +16,8 @@
 ```
 CPU_Workspace/
 ├── 00_AI_Rules/              ← AI 角色定义与设计规则（你正在看的目录）
-├── 01_Docs/                  ← 参考资料 + 官方平台归档
-│   └── platform_official/    ← 赛事方官方文件归档（RTL、IP、XDC、TB）
+├── 01_Docs/                  ← 参考资料 + 赛方原版归档
+│   └── contest_readonly/     ← 赛方原版文件（RTL、IP、XDC、TB，禁止修改）
 ├── 02_Design/                ← CPU RTL 源码（核心设计区）
 │   ├── spec/                 ← 模块规格文档
 │   ├── rtl/                  ← SystemVerilog 源码
@@ -60,27 +60,27 @@ CPU_Workspace/
 
 ---
 
-### `01_Docs/` — 参考资料 + 官方平台归档
+### `01_Docs/` — 参考资料 + 赛方原版归档
 
 存放板卡数据手册、引脚定义等比赛相关资料。AI 仅做参考，不应修改。
 
-`platform_official/` 子目录归档了赛事方数字孪生平台的官方文件（从 `JYD2025_Contest-rv32i/` 中复制），用于开新工程时快速引用：
+`contest_readonly/` 归档了赛方原版文件（从 `JYD2025_Contest-rv32i/` 复制），**禁止修改**，用于开新工程时 TCL 脚本一键导入：
 
-| 子目录 | 内容 | 修改权限 |
+| 子目录 | 内容 | 说明 |
 |---|---|---|
-| `rtl/` | `top.sv`, `twin_controller.sv`, `uart.sv`, `counter.sv`, `display_seg.sv`, `seg7.sv` | 🔴 禁止 / 🟡 不建议 |
-| `ip/` | PLL、计数器的 `.xci` 配置（见下表） | 🔴 禁止 |
-| `constraints/` | `digital_twin.xdc`（引脚绑定 + 时钟约束） | 🔴 禁止 |
-| `sim/` | `tb_top.sv`, `tb_myCPU.sv`, `tb_uart.sv` + `.wcfg` 波形配置 | 仅参考 |
+| `rtl/` | `top.sv`, `twin_controller.sv`, `uart.sv`, `counter.sv`, `display_seg.sv`, `seg7.sv` | 赛方平台 RTL |
+| `ip/` | 扁平化 `.xci`（TCL 可 `glob *.xci` 批量导入） | 见下表 |
+| `constraints/` | `digital_twin.xdc` | 引脚绑定 + 时钟约束 |
+| `sim/` | `tb_top.sv`, `tb_myCPU.sv`, `tb_uart.sv` + `.wcfg` | 仿真 testbench |
 
-**IP 配置详情**：
+**IP 配置详情**（`ip/` 目录已扁平化，无子目录）：
 
-| IP | 说明 | 状态 |
+| 文件 | 说明 | 状态 |
 |---|---|---|
-| `pll/` | 1 路输出：clk_out1 = 50MHz，有 reset | 备用 |
-| **`pll_1/`** | **2 路输出：clk_out1 = 50MHz, clk_out2 = 180MHz (cpu_clk)，无 reset** | **✅ 当前使用** |
-| `counter_0/` | 计数器 IP（CDC FIFO） | 当前使用 |
-| `counter_1/` | 计数器 IP（CDC FIFO） | 当前使用 |
+| `pll.xci` | 1 路输出：clk_out1 = 50MHz，有 reset | 备用 |
+| **`pll_1.xci`** | **2 路输出：clk_out1 = 50MHz, clk_out2 = 180MHz (cpu_clk)，无 reset** | **✅ 当前使用** |
+| `IROM.xci` | IROM BRAM 配置（Block Memory Generator） | 当前使用 |
+| `DRAM.xci` | DRAM BRAM 配置（Block Memory Generator） | 当前使用 |
 
 ---
 
