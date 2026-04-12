@@ -8,7 +8,7 @@
 
 | 信号名 | 方向 | 位宽 | 类型 | 含义 |
 |--------|------|------|------|------|
-| `inst` | input | 32 | 数据 | 原始指令（来自 IROM dout） |
+| `inst` | input | 32 | 数据 | 原始指令（来自 IF/ID 寄存器 `id_inst`） |
 | `alu_op` | output | 4 | 控制（组合） | ALU 操作类型（`{funct7[5], funct3}` 编码） |
 | `alu_src1_sel` | output | 2 | 控制（组合） | ALU 源 1：`00`=rs1, `01`=PC, `10`=0 |
 | `alu_src2_sel` | output | 1 | 控制（组合） | ALU 源 2：`0`=rs2, `1`=立即数 |
@@ -98,7 +98,7 @@ funct7 = inst[31:25]
 ## 3. 时序约束
 
 - 纯组合逻辑，无时钟、无寄存器
-- 输入 `inst` 来自 IROM dout（BRAM 输出寄存器），在 IF→ID 的 posedge 后稳定
+- 输入 `inst` 来自 IF/ID 寄存器 `id_inst`（寄存器 Clk-to-Q ~0.3ns），下游组合路径时间充裕
 
 ---
 

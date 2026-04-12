@@ -59,7 +59,7 @@ top.sv
 | 给下游留的时间 (5ns) | 全部 5ns | ~3.0ns | ~4.4ns |
 | 容量效率 | 差（1 LUT6 = 64bit） | 好（1 BRAM36 = 36Kbit） | 好 |
 
-### 决策：BRAM 无 Output Register（已确定）
+### 决策：BRAM 无 Output Register（已确定，IROM 和 DRAM 均如此）
 
 理由：
 - 分布式 RAM：大容量（>16KB）时消耗大量 LUT，不适合 DRAM
@@ -68,14 +68,11 @@ top.sv
   - 手动加 reg 的 MEM 阶段压力与不勾选完全相同，白等 1 拍
 - BRAM 无 Output Reg（1 拍）：延迟适中，MEM/WB 寄存器承担数据锁存
 
-### DRAM 容量待定
+### DRAM 容量（已确定）
 
-- 当前 standalone 版本：65536 × 32bit（256KB），约 64 个 BRAM36
+- 65536 × 32bit（256KB），约 64 个 BRAM36
   - 3 级输出 MUX，Clk-to-Q ~2.0ns + MUX ~1.5ns = ~3.5ns
-  - 5.0ns 周期（200MHz）下余量仅 ~1.5ns，偏紧
-- 缩减到 16384 × 32bit（64KB）：约 16 个 BRAM36
-  - 2 级输出 MUX，时序更宽裕
-- 实际容量取决于比赛程序需求
+  - 50MHz（20ns 周期）下余量充足
 
 ---
 
@@ -85,7 +82,7 @@ top.sv
 
 BRAM 选型：无 Output Register（1 拍读延迟）。
 ALU 输出在 EX 阶段直连 bridge 地址端口，BRAM 在 EX→MEM 时钟沿锁存，MEM 阶段 Clk-to-Q 后数据可用。
-**流水线主体结构不变，唯一改动是 MEM/WB 寄存器新增 `dram_dout` 传递。**
+**流水线改动：IF/ID 寄存器新增 `id_inst`（锁存指令），MEM/WB 寄存器新增 `wb_dram_dout`（锁存 Load 数据）。**
 
 ### 精确时序（A-C-B 模型）
 
@@ -133,17 +130,18 @@ WB 阶段（Edge3 ~）:
 | DRAM 数据传递 | 直连 mem_interface | 经 **MEM/WB 寄存器** | 同左 |
 | DRAM 位置 | cpu_top 内部 | cpu_top 内部 | bridge 内部（外部） |
 | MMIO | 不存在 | 不存在 | 组合读 + 时序写 |
-| IROM | BRAM 有 Reg（2拍） | 不变 | 不变 |
+| IROM | BRAM 无 Reg（1拍） | 不变 | 不变，预取方案取指 |
 
 ### 需要修改的文件
 
 | 文件 | 改动 |
 |---|---|
-| `mem_wb_reg.sv` | ✅已完成：新增 `mem_dram_dout` / `wb_dram_dout` 传递 |
-| `cpu_top.sv` | ✅已完成：`dram_dout` 改走 MEM/WB 寄存器 |
+| `if_id_reg.sv` | ✅已完成：新增 `if_inst` / `id_inst` 传递，锁存指令到 ID 阶段 |
+| `cpu_top.sv` | ✅已完成：`irom_addr` 三路 MUX + decoder/imm_gen 使用 `id_inst` |
+| `pc_reg.sv` | ✅已完成：复位值改为 `0x7FFF_FFFC`（预取方案） |
 | `mem_interface.sv` | ✅已完成：`* 4'd8` → `{addr, 3'b0}` 修复 |
-| `student_top.sv` | 待编写：CPU + IROM + bridge 连线 |
-| `perip_bridge.sv` | 待编写：BRAM + MMIO 组合读 + 写逻辑 |
+| `student_top.sv` | ✅已完成：CPU + IROM + bridge 连线 |
+| `perip_bridge.sv` | ✅已完成：BRAM + MMIO 组合读 + 写逻辑 |
 
 ### cpu_top 新增端口（集成时）
 
@@ -152,8 +150,8 @@ module cpu_top (
     input  logic        clk,
     input  logic        rst_n,
     // IROM 接口 (IF stage)
-    output logic [31:0] irom_addr,      // = next_pc
-    input  logic [31:0] irom_data,      // 指令（BRAM 2拍 Clk-to-Q 后有效）
+    output logic [31:0] irom_addr,      // = branch_target / pc / next_pc 三路 MUX
+    input  logic [31:0] irom_data,      // 指令（BRAM 1拍 Clk-to-Q，IF 阶段有效）
     // 外设总线 (EX stage → bridge)
     output logic [31:0] perip_addr,     // = alu_result
     output logic [3:0]  perip_wea,      // = mem_interface store wea
@@ -161,6 +159,19 @@ module cpu_top (
     input  logic [31:0] perip_rdata     // bridge 返回数据（MEM 阶段有效）
 );
 ```
+
+### IROM 预取时序
+
+IROM 为 1 拍 BRAM（无 Output Register），采用预取方案：
+
+```
+irom_addr = branch_flush  ? branch_target :   // 分支：预取目标
+            !if_allowin   ? pc :               // 停顿：保持当前地址
+                            next_pc;           // 正常：预取下一条
+```
+
+IF/ID 寄存器同时锁存 `id_pc`（来自 pc）和 `id_inst`（来自 irom_data），确保 ID 阶段天然对齐。
+PC 复位值 = `0x7FFF_FFFC`（= text_base - 4），使首拍 `next_pc = 0x8000_0000`。
 
 ---
 
@@ -217,8 +228,8 @@ assign rdata = is_dram_r ? dram_douta : mmio_rdata;
 
 ## 6. 待定事项
 
-- [ ] DRAM 容量最终确定（影响 BRAM output MUX 级数和 MEM 阶段时序）
-- [ ] IROM IP 名称和配置确认
-- [ ] 复位极性：模板 `w_clk_rst` 高有效，cpu_top `rst_n` 低有效，在 student_top 中反转
-- [ ] 汇编程序数据段地址需改为 `0x8010_0000` 起始
+- [x] DRAM 容量已确定：65536×32bit（256KB）
+- [x] IROM IP 确认：1 拍 BRAM（无 Output Register），预取方案取指
+- [x] 复位极性：模板 `w_clk_rst` 高有效，cpu_top `rst_n` 低有效，在 student_top 中反转
+- [x] 汇编程序数据段地址已确认为 `0x8010_0000` 起始
 - [ ] bridge 需要 `mem_alu_result` 输入端口（来自 cpu_top，用于 MMIO 组合读地址）

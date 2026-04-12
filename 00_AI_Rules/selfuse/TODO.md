@@ -36,12 +36,16 @@
 - [x] `mem_wb_reg.sv`：新增 `mem_dram_dout` / `wb_dram_dout` 传递
 - [x] `cpu_top.sv`：`dram_dout` 改走 MEM/WB 寄存器
 - [x] `mem_interface.sv`：修复 `* 4'd8` → `{addr, 3'b0}`
-- [ ] 确定 DRAM 容量（65536 vs 16384），重新生成 BRAM IP（取消 output register）
-- [ ] 重构 `cpu_top.sv` 端口：移除内部 IROM/DRAM，暴露 IROM 和外设总线接口
-- [ ] 自研 `perip_bridge.sv`：BRAM DRAM + MMIO 组合读 + 时序写 + 复用模板 counter
-- [ ] 编写 `student_top.sv`：CPU + IROM + perip_bridge 连线
-- [ ] 功能验证（cdp-tests 或 coremark）
-- [ ] Implementation 时序验证（目标 ≥200MHz）
+- [x] IROM/DRAM 确认为 1 拍 BRAM（无 Output Register）
+- [x] IROM 预取方案：`irom_addr` 三路 MUX（branch_target / pc / next_pc）
+- [x] IF/ID 寄存器存指令：`if_inst` → `id_inst`，decoder/imm_gen 使用 `id_inst`
+- [x] PC 复位值改为 `0x7FFF_FFFC`（预取方案需要 text_base - 4）
+- [x] 重构 `cpu_top.sv` 端口：移除内部 IROM/DRAM，暴露 IROM 和外设总线接口
+- [x] 编写 `student_top.sv`：CPU + IROM + perip_bridge 连线
+- [x] 仿真验证（Vivado 行为仿真 37 个测试全通过 ✅）
+- [x] DRAM 容量确定为 65536×32bit（256KB）
+- [x] FPGA 烧录验证通过 ✅（LED 显示对勾 + 数码管显示 37）
+- [x] Implementation 时序验证通过（50MHz）
 
 ### 后期优化
 

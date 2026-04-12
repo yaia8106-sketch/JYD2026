@@ -93,3 +93,21 @@ end
 - **共享加法器**：ADD/SUB/SLT/SLTU 共用一个加法器（条件取反 src2）
 - **共享移位器**：SLL/SRL/SRA 共用一个右移器（位翻转实现左移）
 - **统一比较器**：利用减法结果的符号位判断大小关系
+
+## 6. 时序表述规范 (Timing Documentation Convention)
+
+描述多级流水线时序关系时，使用 **阶段→动作** 的逐级展开格式，每行一个阶段，标注信号名和延迟：
+
+```
+pre-IF:  irom_addr → BRAM addr_reg 锁存
+IF:      BRAM Clk-to-Q → irom_data (= if_inst) 有效
+IF→ID:   IF/ID 寄存器锁存 if_inst → id_inst
+ID:      decoder/imm_gen 使用 id_inst（仅 Clk-to-Q ~0.3ns）
+```
+
+### 规则
+
+- **左侧**：流水线阶段名称（`pre-IF` / `IF` / `IF→ID` / `ID` / `EX` 等），用 `→` 标记阶段边界（时钟沿）
+- **右侧**：该阶段发生的动作 + 涉及的信号名 + 关键延迟（如 `Clk-to-Q ~2ns`）
+- **保持简洁**：每行只描述一个关键动作，避免堆砌
+- **适用场景**：spec 文档、设计决策记录、调试分析中涉及时序推导的地方

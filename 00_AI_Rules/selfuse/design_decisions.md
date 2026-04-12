@@ -21,9 +21,16 @@
 **决策：Flush 代价 = 2 拍气泡**
 
 - 分支在 EX 级判断，默认顺序执行，错了 flush
-- 方案 B BRAM（两级流水线）导致 flush 后需要 2 拍重新填充 IROM 流水线
-- 时序分析详见 `pipeline.md` 第 8 节
-- BRAM 流水线残留的错误指令通过 IF/ID_reg.valid = 0 屏蔽，不产生副作用
+- IROM 为 1 拍 BRAM（无 Output Register），flush 时 `irom_addr` 立即切换到 `branch_target`
+- 冲刷 2 条指令：IF/ID 中的错误指令 + BRAM 正在取的下一条错误指令
+- 时序（阶段→动作）：
+  ```
+  Cycle N:    EX 检测分支 → flush=1, irom_addr=branch_target, IF/ID.valid←0
+  Cycle N+1:  BRAM Clk-to-Q 出目标指令, ID=bubble, EX=bubble（第1拍气泡）
+  Cycle N+2:  IF/ID 锁存目标指令(id_valid=1), EX=bubble（第2拍气泡）
+  Cycle N+3:  目标指令进入 EX，恢复正常执行
+  ```
+- 对比旧方案（2 拍 BRAM）：flush 代价从 3 拍降到 2 拍
 
 ---
 
@@ -79,7 +86,7 @@ MEM 级前递显式排除 Load 指令（`!mem_is_load`），因为 MEM 级的 AL
 |----|---------|------|------|
 | EX | `ex_alu_result` | EX 级 ALU 组合逻辑输出 | Load 在 EX 时数据不可用 → Load-Use stall |
 | MEM | `mem_alu_result` | EX/MEM_reg 输出 | 只有 ALU 结果可前递，Load 数据在 MEM 级仍不可用 |
-| WB | `wb_write_data` | `wb_is_load ? dram_dout : wb_alu_result` | Load 数据此时才可用（DRAM dout 与 MEM/WB_reg 对齐） |
+| WB | `wb_write_data` | `wb_is_load ? wb_dram_dout : wb_alu_result` | Load 数据此时才可用（经 MEM/WB 寄存器传递） |
 | regfile | `rf_rd1_data` / `rf_rd2_data` | regfile 读端口输出 | read-first，WB 同拍写读读到旧值 |
 
 控制信号来源：
@@ -126,7 +133,7 @@ BRAM Clk-to-Q(2.0) + output MUX(0.2) + mem_interface(0.5)
 
 ## G. IROM/DRAM Vivado IP 配置
 
-**IROM：Single Port ROM，32-bit，启用输出寄存器（2 拍延迟），COE 文件初始化 — 不变**
+**IROM：Single Port ROM，32-bit，不启用输出寄存器（1 拍延迟），COE 文件初始化 — 已确定**
 
 **DRAM：Single Port RAM，32-bit，不启用输出寄存器（1 拍延迟），WEA 4-bit 字节使能 — 已确定**
 
@@ -134,34 +141,53 @@ BRAM Clk-to-Q(2.0) + output MUX(0.2) + mem_interface(0.5)
 - 地址粒度：word 地址（BRAM 地址 = ALU_result[?:2]）
 - 当前 DRAM 为 65536×32bit（256KB），使用约 64 个 RAMB36E1
 
-### Output Register 决策过程
+### IROM 取指架构（预取方案）
+
+IROM 为 1 拍 BRAM（无 Output Register），采用预取方案：
+
+```
+irom_addr = branch_flush  ? branch_target :   // 分支：预取目标
+            !if_allowin   ? pc :               // 停顿：保持当前地址
+                            next_pc;           // 正常：预取下一条
+```
+
+- **正常执行**：`irom_addr = next_pc = pc + 4`，BRAM 提前 1 拍锁存下一条指令地址
+- **分支 flush**：`irom_addr = branch_target`，BRAM 立即锁存目标地址，1 拍后出正确指令
+- **load-use stall**：`irom_addr = pc`，BRAM 保持当前地址，stall 解除后出正确指令
+- IF/ID 寄存器同时锁存 PC 和指令（`id_pc` + `id_inst`），确保 ID 阶段天然对齐
+- PC 复位值 = `0x7FFF_FFFC`（= text_base - 4），使首拍 `next_pc = 0x8000_0000`
+
+### DRAM Output Register 决策
 
 三种方案对比后确定不勾选 output register：
 - 内建 output reg（2 拍）：MUX 在输出寄存器之后，WB 的 Clk-to-Q = 2.1ns
 - 手动加 reg（2 拍）：MEM 阶段压力与不勾选完全相同（3.5ns），多等 1 拍无优势
 - 不勾选（1 拍）：MEM/WB 寄存器承担原来 output register 的角色
 
-### 已完成的 standalone 改动
+### 已完成的改动
 
+- `if_id_reg.sv`：新增 `if_inst` / `id_inst` 传递（锁存指令到 ID 阶段）
+- `cpu_top.sv`：`irom_addr` 三路 MUX（branch_target / pc / next_pc）
+- `cpu_top.sv`：decoder/imm_gen/regfile 读地址从 `irom_data` 改为 `id_inst`
+- `pc_reg.sv`：复位值改为 `0x7FFF_FFFC`（预取方案需要 text_base - 4）
 - `mem_wb_reg.sv`：新增 `mem_dram_dout` → `wb_dram_dout` 传递
-- `cpu_top.sv`：`mem_interface.load_dram_dout` 从 `dram_dout` 改接 `wb_dram_dout`（经 MEM/WB 寄存器）
-- IROM 保持 2 拍延迟不变
 
-### 计划变更（数字孪生平台集成）
+### 平台集成架构
 
-1. **IROM**：移到 `student_top`，cpu_top 通过 `irom_addr` / `irom_data` 端口访问
+1. **IROM**：在 `student_top` 例化，cpu_top 通过 `irom_addr` / `irom_data` 端口访问
 2. **DRAM**：由自研 `perip_bridge` 管理，EX 阶段 ALU 直连 BRAM 地址
 3. **MMIO 读**：组合逻辑，在 MEM 阶段用 `mem_alu_result` 做地址译码（组合路径 ~3ns < BRAM 路径 ~3.5ns，不构成瓶颈）
 4. **MMIO 写**：时序逻辑，与 DRAM 写在同一个时钟沿（EX→MEM）执行
-5. **DRAM 容量**：待定，65536 时 3 级输出 MUX 使 MEM 阶段偏紧
+5. **DRAM 容量**：65536×32bit（256KB），50MHz 下时序余量充足
 
 ---
 
-## H. Flush 时 BRAM 残留数据处理
+## H. Flush / Stall 时 IROM 地址控制
 
-**决策：通过 valid gating 自然屏蔽**
+**决策：通过 `irom_addr` 三路 MUX + valid gating 处理**
 
-- Flush 后 IROM BRAM 流水线中可能有错误路径的指令正在 stage1→stage2 传递
-- 但 flush 已将 IF/ID_reg.valid = 0，所以这些残留指令即使到了 IROM dout，对应的 IF/ID_reg.valid 仍为 0（气泡）
-- 气泡不会产生任何副作用（所有副作用操作都经过 valid gating）
-- **不需要额外的 BRAM flush 机制**
+- **分支 flush**：`irom_addr = branch_target`，BRAM 立即锁存正确地址。flush 沿 IF/ID.valid = 0（1 拍气泡），下一拍 BRAM 输出正确指令，IF/ID 正常锁存
+- **load-use stall**：`irom_addr = pc`（不是 next_pc），BRAM 保持锁存当前指令地址。stall 解除时 BRAM 输出的是正确指令（不会跳过一条）
+- **正常执行**：`irom_addr = next_pc`，预取下一条
+- 关键：三路 MUX 优先级为 `branch_flush > !if_allowin > default`
+- 不需要额外的 BRAM flush 或 enable 控制机制
