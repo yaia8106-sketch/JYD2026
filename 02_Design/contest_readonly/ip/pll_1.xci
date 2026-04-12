@@ -1,10 +1,10 @@
 {
   "schema": "xilinx.com:schema:json_instance:1.0",
   "ip_inst": {
-    "xci_name": "pll",
+    "xci_name": "pll_1",
     "component_reference": "xilinx.com:ip:clk_wiz:6.0",
     "ip_revision": "14",
-    "gen_directory": "../../../../digital_twin.gen/sources_1/ip/pll",
+    "gen_directory": "../../../../../CPU_Workspace/CPU4MyOwn/CPU4MyOwn.gen/sources_1/ip/pll_1",
     "parameters": {
       "component_parameters": {
         "Component_Name": [ { "value": "pll", "resolve_type": "user", "usage": "all" } ],
@@ -600,7 +600,7 @@
         "IPCONTEXT": [ { "value": "IP_Flow" } ],
         "IPREVISION": [ { "value": "14" } ],
         "MANAGED": [ { "value": "TRUE" } ],
-        "OUTPUTDIR": [ { "value": "../../../../digital_twin.gen/sources_1/ip/pll" } ],
+        "OUTPUTDIR": [ { "value": "../../../../../CPU_Workspace/CPU4MyOwn/CPU4MyOwn.gen/sources_1/ip/pll_1" } ],
         "SELECTEDSIMMODEL": [ { "value": "" } ],
         "SHAREDDIR": [ { "value": "." } ],
         "SWVERSION": [ { "value": "2024.1" } ],
