@@ -525,8 +525,8 @@ PC 更新见第 5.2 节：flush 时 `pc <= correct_target`，优先级高于 sta
 
 ```verilog
 assign reg_write_en_actual = wb_valid  & wb_reg_write_en;
-assign mem_write_en_actual = ex_valid  & ex_mem_write_en;   // DRAM Store 在 EX→MEM 沿写入
-// MMIO 写在 MEM→WB 沿执行（perip_bridge 内部用 mem_wea 门控）⚠ [UNVERIFIED]
+assign mem_write_en_actual = ex_valid  & ex_mem_write_en;   // Store 在 EX 级写入 DRAM
+assign csr_write_en_actual = wb_valid  & wb_csr_write_en;   // 若支持
 ```
 
 flush 只需清零 valid，所有副作用自动被屏蔽。

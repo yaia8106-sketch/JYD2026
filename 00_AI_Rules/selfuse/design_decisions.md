@@ -176,10 +176,9 @@ irom_addr = branch_flush  ? branch_target :   // 分支：预取目标
 
 1. **IROM**：在 `student_top` 例化，cpu_top 通过 `irom_addr` / `irom_data` 端口访问
 2. **DRAM**：由自研 `perip_bridge` 管理，EX 阶段 ALU 直连 BRAM 地址
-3. **MMIO 读**：组合逻辑，在 MEM 阶段用 `mem_addr` 做地址译码
-4. **MMIO 写**：时序逻辑，在 MEM→WB 沿执行（用 `mem_wea`/`mem_wdata`/`mem_addr`），⚠ [UNVERIFIED]
-5. **DRAM 写**：仍在 EX→MEM 沿执行（BRAM 必须同沿写入）
-6. **DRAM 容量**：65536×32bit（256KB），50MHz 下时序余量充足
+3. **MMIO 读**：组合逻辑，在 MEM 阶段用 `mem_alu_result` 做地址译码（组合路径 ~3ns < BRAM 路径 ~3.5ns，不构成瓶颈）
+4. **MMIO 写**：时序逻辑，与 DRAM 写在同一个时钟沿（EX→MEM）执行
+5. **DRAM 容量**：65536×32bit（256KB），50MHz 下时序余量充足
 
 ---
 
@@ -192,39 +191,3 @@ irom_addr = branch_flush  ? branch_target :   // 分支：预取目标
 - **正常执行**：`irom_addr = next_pc`，预取下一条
 - 关键：三路 MUX 优先级为 `branch_flush > !if_allowin > default`
 - 不需要额外的 BRAM flush 或 enable 控制机制
-
----
-
-## I. MMIO 写时序优化 ⚠ [UNVERIFIED]
-
-**决策：MMIO 写从 EX→MEM 沿推迟到 MEM→WB 沿**
-
-### 背景
-
-原始关键路径：`ID/EX_reg → ALU(6级) → is_dram(2级) → MMIO 判断(5级) → cnt_enable_cfg_reg`
-= 15 级 LUT, 5.428ns, slack = -0.016ns（违例）
-
-### 改动内容
-
-- `perip_bridge` 新增 `mem_wea`/`mem_wdata` 打拍寄存器（与已有的 `mem_addr`/`mem_is_dram` 并列）
-- MMIO 写条件从 `|wea && !is_dram` 改为 `|mem_wea && !mem_is_dram`
-- DRAM 写路径不变（BRAM 仍在 EX→MEM 沿写入）
-
-### 安全性分析（REG/COMB 标记法推演）
-
-- MMIO 写（always_ff posedge）+ MMIO 读（wire 组合逻辑）= write-first 行为
-- 背靠背 SW→LW 到同一 MMIO 地址：REG N 写入 seg_wdata，COMB N 读取 seg_wdata = 新值 ✓
-- 无需 stall 或 bypass
-- 详见 `design_rules/timing_notation.md` 示例
-
-### 效果
-
-- WNS: -0.016ns → +0.517ns（违例消除）
-- cnt_enable_cfg 路径从 Top 10 消失
-- 新的最差路径：ID/EX → DRAM WEA（4.455ns, 7 级, slack +0.517ns）
-
-### 待验证
-
-- [ ] riscv-tests ISA 合规测试
-- [ ] MMIO 读写功能（LED / 数码管 / Counter）
-- [ ] Coremark 跑分

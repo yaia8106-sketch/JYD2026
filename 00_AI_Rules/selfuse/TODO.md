@@ -47,18 +47,6 @@
 - [X] FPGA 烧录验证通过 ✅（LED 显示对勾 + 数码管显示 37）
 - [X] Implementation 时序验证通过（50MHz）
 
-### 时序优化
-
-- [X] 流水线级间时序分析 TCL 脚本 (`report_stage_timing.tcl`)
-- [X] `is_dram` 地址译码优化：32 位范围比较 → 14 位等值比较
-- [X] MMIO 写推迟到 MEM→WB 沿（WNS: -0.016ns → +0.517ns）⚠ [UNVERIFIED]
-
-### 功能验证
-
-- [ ] 搭建 riscv-tests 验证环境（自定义 riscv_test.h + 编译脚本 + bin→coe 转换）
-- [ ] 运行 rv32ui 全部 ISA 测试
-- [ ] 验证 MMIO 写时序改动的正确性（通过后移除 [UNVERIFIED] 标记）
-
 ### 后期优化
 
 - [ ] JAL 提前到 ID 级判断（penalty 2→1 拍）

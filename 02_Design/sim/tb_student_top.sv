@@ -122,7 +122,7 @@ module tb_student_top;
                 $display("  >>> WB: x%0d <= %08h", tb_wb_rd, tb_wb_write_data);
 
             // 前 100 拍后自动停止（可调整）
-            if (cycle_cnt >= 500) begin
+            if (cycle_cnt >= 3000) begin
                 $display("===== 100 cycles reached =====");
                 $finish;
             end
