@@ -1,6 +1,7 @@
 // ============================================================
 // Module: alu_src_mux
-// Description: ALU operand selection (EX stage, pure combinational)
+// Description: ALU operand selection (ID stage, pure combinational)
+//              输出经 ID/EX_reg 打拍后送入 EX 级 ALU
 // ============================================================
 
 module alu_src_mux (
