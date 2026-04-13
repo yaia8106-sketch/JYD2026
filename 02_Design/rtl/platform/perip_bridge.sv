@@ -3,11 +3,17 @@
 // Module: perip_bridge
 // Description: 自研外设桥，用于 JYD2025 数字孪生平台
 //
-// 时序模型 (A-C-B):
+// ⚠ [UNVERIFIED] 2026-04-13 MMIO 写时序改动尚未通过功能验证
+//    改动内容：MMIO 写从 EX→MEM 沿推迟到 MEM→WB 沿
+//    目的：消除 ALU→MMIO 写的 15 级 LUT 关键路径
+//    待验证：riscv-tests ISA 合规测试 + MMIO 读写功能
+//
+// 时序模型:
 //   EX 阶段 (addr/wea/wdata 组合线有效)
-//     → Edge (EX→MEM): BRAM 锁存 / MMIO 写入
+//     → Edge (EX→MEM): BRAM 锁存写入 / EX→MEM 打拍
 //   MEM 阶段: BRAM Clk-to-Q + MMIO 组合读 → MUX → rdata
-//     → Edge (MEM→WB): cpu_top 内 MEM/WB 寄存器捕获 rdata
+//     → Edge (MEM→WB): MMIO 寄存器写入（用 mem_* 信号）
+//                       cpu_top 内 MEM/WB 寄存器捕获 rdata
 //
 // 依赖的模板模块 (不可修改):
 //   - counter.sv (含 CDC gray 码同步)
@@ -56,14 +62,18 @@ module perip_bridge (
     wire is_dram = (addr[31:18] == 14'b1000_0000_0001_00);  // 0x8010_0000 ~ 0x8013_FFFF
 
     // ================================================================
-    //  地址打拍 (EX → MEM，给 MMIO 组合读和输出 MUX 用)
+    //  EX → MEM 打拍（给 MMIO 读/写 和输出 MUX 用）
     // ================================================================
     logic [31:0] mem_addr;
     logic        mem_is_dram;
+    logic [3:0]  mem_wea;
+    logic [31:0] mem_wdata;
 
     always_ff @(posedge clk) begin
         mem_addr    <= addr;
         mem_is_dram <= is_dram;
+        mem_wea     <= wea;
+        mem_wdata   <= wdata;
     end
 
     // ================================================================
@@ -84,7 +94,10 @@ module perip_bridge (
     );
 
     // ================================================================
-    //  MMIO 写 (EX→MEM 时钟沿采样)
+    //  MMIO 写 (MEM→WB 时钟沿采样，使用打拍后的 mem_* 信号)
+    //  目的：将 MMIO 写从 EX 组合路径移出，消除 ALU 依赖
+    //  安全性：MMIO 读为组合逻辑 (wire)，write-first 行为保证
+    //          同周期 Store+Load 到同地址可读到新值
     // ================================================================
     logic [31:0] led_reg;
     logic [31:0] seg_wdata;
@@ -95,14 +108,14 @@ module perip_bridge (
             led_reg        <= 32'd0;
             seg_wdata      <= 32'd0;
             cnt_enable_cfg <= 1'b0;
-        end else if (|wea && !is_dram) begin
-            case (addr)
-                LED_ADDR: led_reg <= wdata;
-                SEG_ADDR: seg_wdata <= wdata;
+        end else if (|mem_wea && !mem_is_dram) begin
+            case (mem_addr)
+                LED_ADDR: led_reg <= mem_wdata;
+                SEG_ADDR: seg_wdata <= mem_wdata;
                 CNT_ADDR: begin
-                    if (wdata == CNT_START_CMD)
+                    if (mem_wdata == CNT_START_CMD)
                         cnt_enable_cfg <= 1'b1;
-                    else if (wdata == CNT_STOP_CMD)
+                    else if (mem_wdata == CNT_STOP_CMD)
                         cnt_enable_cfg <= 1'b0;
                 end
                 default: ;
