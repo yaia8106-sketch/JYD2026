@@ -84,7 +84,7 @@ BRAM 选型：无 Output Register（1 拍读延迟）。
 ALU 输出在 EX 阶段直连 bridge 地址端口，BRAM 在 EX→MEM 时钟沿锁存，MEM 阶段 Clk-to-Q 后数据可用。
 **流水线改动：IF/ID 寄存器新增 `id_inst`（锁存指令），MEM/WB 寄存器新增 `wb_dram_dout`（锁存 Load 数据）。**
 
-### 精确时序（A-C-B 模型）
+### 精确时序
 
 ```
 时钟:  _____|‾‾‾‾‾|_____|‾‾‾‾‾|_____|‾‾‾‾‾|_____
@@ -96,17 +96,17 @@ EX 阶段（Edge1 ~ Edge2）:
   → 直连 bridge 输入端口
 
 Edge2（EX→MEM 时钟沿）:
-  ├── BRAM 锁存地址（读）/ 执行写入（写）
-  ├── MMIO always_ff 捕获写数据（写）
-  └── EX/MEM 寄存器锁存 alu_result → mem_alu_result
+  ├── BRAM 锁存地址（读）/ 执行写入（DRAM 写）
+  └── bridge 打拍: mem_addr/mem_is_dram/mem_wea/mem_wdata ← EX 信号
 
 MEM 阶段（Edge2 ~ Edge3）:
   ├── DRAM: BRAM Clk-to-Q(2.0ns) + output MUX(1.5ns) = ~3.5ns
-  ├── MMIO: mem_alu_result(0.3ns) → 地址译码 → 组合读 = ~3.0ns  ← 并行！
+  ├── MMIO: mem_addr(0.3ns) → 地址译码 → 组合读 = ~3.0ns  ← 并行！
   └── 最终 MUX: max(3.5, 3.0) + MUX(0.3ns) = ~3.8ns → bridge_rdata
 
 Edge3（MEM→WB 时钟沿）:
-  MEM/WB 寄存器捕获 bridge_rdata → wb_dram_dout
+  ├── MMIO always_ff 写入 LED/SEG/CNT（用 mem_wea/mem_wdata）⚠ [UNVERIFIED]
+  └── MEM/WB 寄存器捕获 bridge_rdata → wb_dram_dout
 
 WB 阶段（Edge3 ~）:
   wb_dram_dout → mem_interface load → wb_mux → 写回 regfile
@@ -117,9 +117,9 @@ WB 阶段（Edge3 ~）:
 | 操作 | 信号来源 | 发生时刻 |
 |---|---|---|
 | DRAM 读 | EX: alu_result → BRAM 直连 | Edge2 锁存 → MEM 阶段 Clk-to-Q 出数据 |
-| MMIO 读 | MEM: mem_alu_result → 组合逻辑 | MEM 阶段内完成（组合） |
+| MMIO 读 | MEM: mem_addr → 组合逻辑 | MEM 阶段内完成（组合） |
 | DRAM 写 | EX: alu_result + wea + wdata | Edge2 瞬间写入 |
-| MMIO 写 | EX: alu_result + wea + wdata | Edge2 瞬间写入（同一个沿） |
+| MMIO 写 | MEM: mem_addr + mem_wea + mem_wdata | Edge3 写入（MEM→WB 沿）⚠ [UNVERIFIED] |
 
 ### 与 standalone 的差异
 
@@ -219,10 +219,10 @@ assign rdata = is_dram_r ? dram_douta : mmio_rdata;
 
 ### 写路径
 
-- 所有写操作在 **Edge2（EX→MEM 时钟沿）** 统一执行
-- DRAM 写：`wea` + `wdata` 直驱 BRAM（地址译码门控 wea）
-- MMIO 写：`always_ff` 按地址写入 LED / SEG / CNT enable
-- 写信号全部来自 EX 阶段组合输出（alu_result, wea, wdata）
+- DRAM 写在 **Edge2（EX→MEM 沿）** 执行：`wea` + `wdata` 直驱 BRAM
+- MMIO 写在 **Edge3（MEM→WB 沿）** 执行：用打拍后的 `mem_wea`/`mem_wdata`/`mem_addr` ⚠ [UNVERIFIED]
+- 改动目的：消除 ALU→MMIO 写的关键路径（15 级 LUT → 从 Top 10 消失）
+- 安全性：MMIO 读为组合逻辑（wire），write-first 行为保证同周期 SW→LW 可读到新值
 
 ---
 
