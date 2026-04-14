@@ -51,10 +51,17 @@
 
 ### 后期优化
 
-- [ ] JAL 提前到 ID 级判断（penalty 2→1 拍）
-- [ ] JALR 提前到 ID 级判断（视时序余量）
+- [x] ~~JAL 提前到 ID 级判断（penalty 2→1 拍）~~ —— **取消**，见下方说明
+- [x] ~~JALR 提前到 ID 级判断~~ —— **取消**，见下方说明
+- [ ] **riscv-tests 功能验证**（下一步）
 - [ ] coremark 跑分验证
 - [ ] P&R 策略优化（Performance_Explore / Pblock）—— 如需进一步提频
+
+> **JAL/JALR 迁移取消原因**：
+> 200MHz Implementation 下，IF/ID → IROM 路径 slack 仅 +0.434ns，MEM/WB → ID/EX 路径 slack 仅 +0.427ns。
+> JAL 提前到 ID 级需新增 32-bit 加法器（pc+imm，~1.5ns），将导致 IF/ID → IROM 路径违例 ~1ns。
+> JALR 更严重——需要前递后的 rs1 + 加法器，MEM/WB → IROM 路径将违例 ~2ns。
+> 频率 vs CPI 权衡：降频到 180MHz 换 1 拍分支 penalty 不划算（频率损失 10% > IPC 提升 ~5-10%）。
 
 ---
 
