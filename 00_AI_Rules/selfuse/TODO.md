@@ -57,6 +57,9 @@
   > 会导致时序违例约 -1ns。JALR 更严重——需前递 MUX + 加法器，MEM/WB→ID 路径已达 4.498ns，
   > 200MHz 下完全不可行。频率 vs CPI 的 trade-off 中，保持 200MHz + penalty 2 拍更优。
 - [ ] **riscv-tests 功能正确性验证**（下一步）
+- [ ] **Phase 1: RAS**（4 entry 返回地址栈，预测 JALR/ret，预期 CPI -0.10）
+- [ ] **Phase 2: 2-bit BHT**（256 entry 局部分支预测，预期 CPI -0.05）
+- [ ] Phase 3: GShare（如 BHT 效果不足，替换为全局预测）
 - [ ] coremark 跑分验证
 - [ ] P&R 策略优化（Performance_Explore / Pblock）—— 如需进一步提频
 
