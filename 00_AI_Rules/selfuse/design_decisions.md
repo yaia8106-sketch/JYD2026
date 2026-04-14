@@ -216,12 +216,15 @@ irom_addr = branch_flush  ? branch_target :   // 分支：预取目标
 
 ### 优化效果
 
-| 版本 | 最差路径 | DataPath | Levels | Slack |
-|------|---------|----------|--------|-------|
-| 原始 | cnt_enable_cfg | 5.035ns | 15 | +0.377ns |
-| +alu_sum/部分译码 | cnt_enable_cfg | 5.029ns | 15 | +0.383ns |
-| **+并行AND-OR/2bit解码** | **DRAM WEA** | **3.802ns** | **13** | **+1.170ns** |
+| 版本 | 约束 | 最差路径 | DataPath | Levels | Slack |
+|------|------|---------|----------|--------|-------|
+| 原始 | 180MHz | cnt_enable_cfg | 5.035ns | 15 | +0.377ns |
+| +alu_sum/部分译码 | 180MHz | cnt_enable_cfg | 5.029ns | 15 | +0.383ns |
+| +并行AND-OR/2bit解码 | 180MHz | DRAM WEA | 3.802ns | 13 | +1.170ns |
+| **Implementation@200MHz** | **200MHz** | **DRAM DIADI** | **4.269ns** | **5** | **+0.011ns** |
 
 - `cnt_enable_cfg` 路径彻底跌出 Top 10
-- 最差路径从 5.035ns 降至 3.802ns（**↓24.5%**），slack 翻 3 倍
-- 现在 Top 10 全是 DRAM WEA 路径（`is_dram & wea`），时序瓶颈均匀分布
+- RTL 级最差路径从 5.035ns 降至 3.802ns（**↓24.5%**），slack 翻 3 倍
+- 200MHz Implementation 通过，但 slack 仅 +0.011ns，瓶颈已转移至**布线延迟**
+  （5 级 LUT 纯逻辑 ~1.25ns，布线 ~2.5ns，占总延迟 ~50%）
+- 进一步提频需 P&R 策略优化（Performance_Explore / Pblock）而非 RTL 改动

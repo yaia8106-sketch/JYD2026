@@ -46,12 +46,15 @@
 - [X] DRAM 容量确定为 65536×32bit（256KB）
 - [X] FPGA 烧录验证通过 ✅（LED 显示对勾 + 数码管显示 37）
 - [X] Implementation 时序验证通过（50MHz）
+- [X] perip_bridge 写路径时序优化（ALU sum 直出 + 部分译码 + 并行 AND-OR）
+- [X] Implementation 200MHz 时序验证通过（slack +0.011ns，瓶颈为布线延迟）
 
 ### 后期优化
 
 - [ ] JAL 提前到 ID 级判断（penalty 2→1 拍）
 - [ ] JALR 提前到 ID 级判断（视时序余量）
 - [ ] coremark 跑分验证
+- [ ] P&R 策略优化（Performance_Explore / Pblock）—— 如需进一步提频
 
 ---
 
