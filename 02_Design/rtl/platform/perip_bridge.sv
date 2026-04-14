@@ -89,33 +89,51 @@ module perip_bridge (
 
     // ================================================================
     //  MMIO 写 (EX→MEM 时钟沿采样)
-    //  优化：addr_sum[6:4] 部分译码（3-bit vs 原 32-bit）
-    //    - !is_dram 已确认在 MMIO 空间，只需区分设备
-    //    - LED=0x..40([6:4]=100), SEG=0x..20([6:4]=010), CNT=0x..50([6:4]=101)
-    //    - 使用 addr_sum：跳过 ALU output MUX（Store 恒为 ADD，addr_sum==addr）
+    //  并行 AND-OR 结构：每个寄存器独立译码 + 独立 always_ff
+    //    - mmio_wr: 公共写使能（|wea && !is_dram）
+    //    - wr_xxx: 各设备独立写使能（one-hot）
+    //    - 使用 addr_sum[6:4] 部分译码 + addr_sum 跳过 ALU output MUX
     // ================================================================
     logic [31:0] led_reg;
     logic [31:0] seg_wdata;
     logic        cnt_enable_cfg;
 
+    // ---- 并行译码（one-hot，组合逻辑）----
+    wire mmio_wr = |wea & ~is_dram;
+    wire wr_led  = mmio_wr & (addr_sum[6:4] == 3'b100);   // LED  0x8020_0040
+    wire wr_seg  = mmio_wr & (addr_sum[6:4] == 3'b010);   // SEG  0x8020_0020
+    wire wr_cnt  = mmio_wr & (addr_sum[6:4] == 3'b101);   // CNT  0x8020_0050
+
+    // ---- LED 寄存器 ----
     always_ff @(posedge clk) begin
-        if (rst) begin
-            led_reg        <= 32'd0;
-            seg_wdata      <= 32'd0;
+        if (rst)
+            led_reg <= 32'd0;
+        else if (wr_led)
+            led_reg <= wdata;
+    end
+
+    // ---- SEG 寄存器 ----
+    always_ff @(posedge clk) begin
+        if (rst)
+            seg_wdata <= 32'd0;
+        else if (wr_seg)
+            seg_wdata <= wdata;
+    end
+
+    // ---- CNT enable 寄存器 ----
+    // wdata 命令解码：只需 2 bit 即可区分
+    //   START = 0x8000_0000: wdata[31]=1, wdata[0]=0
+    //   STOP  = 0xFFFF_FFFF: wdata[31]=1, wdata[0]=1
+    wire cnt_start = wr_cnt & wdata[31] & ~wdata[0];
+    wire cnt_stop  = wr_cnt & wdata[31] &  wdata[0];
+
+    always_ff @(posedge clk) begin
+        if (rst)
             cnt_enable_cfg <= 1'b0;
-        end else if (|wea && !is_dram) begin
-            case (addr_sum[6:4])
-                3'b100: led_reg <= wdata;           // LED  0x8020_0040
-                3'b010: seg_wdata <= wdata;         // SEG  0x8020_0020
-                3'b101: begin                       // CNT  0x8020_0050
-                    if (wdata == CNT_START_CMD)
-                        cnt_enable_cfg <= 1'b1;
-                    else if (wdata == CNT_STOP_CMD)
-                        cnt_enable_cfg <= 1'b0;
-                end
-                default: ;
-            endcase
-        end
+        else if (cnt_start)
+            cnt_enable_cfg <= 1'b1;
+        else if (cnt_stop)
+            cnt_enable_cfg <= 1'b0;
     end
 
     // ================================================================

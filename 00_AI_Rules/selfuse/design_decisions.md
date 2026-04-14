@@ -196,7 +196,7 @@ irom_addr = branch_flush  ? branch_target :   // 分支：预取目标
 
 ## I. perip_bridge EX→MEM 写路径时序优化
 
-**决策：ALU sum 直出 + 部分地址译码，已实施并验证通过**
+**决策：三轮优化，已全部实施并 FPGA 验证通过**
 
 ### 优化内容
 
@@ -204,20 +204,24 @@ irom_addr = branch_flush  ? branch_target :   // 分支：预取目标
    - 安全性：Load/Store 指令的 `alu_op` 恒为 `ALU_ADD`，所以 `alu_sum == alu_result`
    - 非 Load/Store 指令时 `wea=0`，`is_dram` 和地址判断的值无关紧要
 
-2. **`is_dram` 使用 `addr_sum[31:18]`**：跳过 ALU output MUX
-   - 改善 DRAM WEA 路径 slack：+0.751ns → +1.178ns
-
-3. **MMIO 写 `case(addr_sum[6:4])` 部分译码**：32-bit 比较 → 3-bit 比较
+2. **`is_dram` 使用 `addr_sum[31:18]`**、**MMIO 写用 `addr_sum[6:4]` 部分译码**
+   - 跳过 ALU output MUX + 32-bit 比较 → 3-bit 比较
    - `!is_dram` 已确认 MMIO 空间，只需区分设备：LED=100, SEG=010, CNT=101
-   - LED 写入路径改善：从 Top 10 #2（slack +0.648ns）跌出 Top 10
 
-### 当前最差路径
+3. **并行 AND-OR 结构 + wdata 2-bit 命令解码**
+   - 每个 MMIO 寄存器独立 `always_ff` + one-hot 写使能（`wr_led/wr_seg/wr_cnt`）
+   - `wdata` 命令解码从 32-bit×2 全等比较改为 2-bit 判断：
+     - `cnt_start = wr_cnt & wdata[31] & ~wdata[0]`（0x8000_0000）
+     - `cnt_stop  = wr_cnt & wdata[31] &  wdata[0]`（0xFFFF_FFFF）
 
-优化后最差路径仍为 `ex_alu_op_reg[1] → cnt_enable_cfg_reg/D`（5.029ns, 15 级），
-瓶颈在 `wdata == CNT_START_CMD / CNT_STOP_CMD` 的 32-bit×2 比较 + if-else。
+### 优化效果
 
-### 后续优化方向（如需提频）
+| 版本 | 最差路径 | DataPath | Levels | Slack |
+|------|---------|----------|--------|-------|
+| 原始 | cnt_enable_cfg | 5.035ns | 15 | +0.377ns |
+| +alu_sum/部分译码 | cnt_enable_cfg | 5.029ns | 15 | +0.383ns |
+| **+并行AND-OR/2bit解码** | **DRAM WEA** | **3.802ns** | **13** | **+1.170ns** |
 
-- `wdata` 命令解码简化：只比较 `wdata[31]` + `wdata[0]` 区分两个命令（省 ~2 级 LUT）
-- 前提：赛方软件只写 `0x8000_0000`（start）和 `0xFFFF_FFFF`（stop）到 CNT_ADDR
-
+- `cnt_enable_cfg` 路径彻底跌出 Top 10
+- 最差路径从 5.035ns 降至 3.802ns（**↓24.5%**），slack 翻 3 倍
+- 现在 Top 10 全是 DRAM WEA 路径（`is_dram & wea`），时序瓶颈均匀分布

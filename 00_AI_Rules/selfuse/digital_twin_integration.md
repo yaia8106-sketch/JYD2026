@@ -222,8 +222,9 @@ assign rdata = is_dram_r ? dram_douta : mmio_rdata;
 
 - 所有写操作在 **Edge2（EX→MEM 时钟沿）** 统一执行
 - DRAM 写：`{4{is_dram}} & wea` 直驱 BRAM，`is_dram` 使用 `addr_sum[31:18]`（跳过 ALU output MUX）
-- MMIO 写：`always_ff` 按 `addr_sum[6:4]` 部分译码（3-bit）写入 LED / SEG / CNT enable
-  - 优化：`!is_dram` 已确认 MMIO 空间，只需区分设备（LED=100, SEG=010, CNT=101）
+- MMIO 写：并行 AND-OR 结构，每个寄存器独立 `always_ff` + one-hot 写使能
+  - 地址译码：`addr_sum[6:4]` 部分译码（3-bit，LED=100, SEG=010, CNT=101）
+  - CNT 命令解码：`wdata[31]` + `wdata[0]` 两位即可区分 START/STOP
 - 写信号全部来自 EX 阶段组合输出（alu_result, alu_sum, wea, wdata）
 
 ---
