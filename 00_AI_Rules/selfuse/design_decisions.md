@@ -191,3 +191,33 @@ irom_addr = branch_flush  ? branch_target :   // 分支：预取目标
 - **正常执行**：`irom_addr = next_pc`，预取下一条
 - 关键：三路 MUX 优先级为 `branch_flush > !if_allowin > default`
 - 不需要额外的 BRAM flush 或 enable 控制机制
+
+---
+
+## I. perip_bridge EX→MEM 写路径时序优化
+
+**决策：ALU sum 直出 + 部分地址译码，已实施并验证通过**
+
+### 优化内容
+
+1. **ALU `alu_sum` 端口**：暴露加法器直出（跳过 AND-OR output MUX），省 ~1 级 LUT
+   - 安全性：Load/Store 指令的 `alu_op` 恒为 `ALU_ADD`，所以 `alu_sum == alu_result`
+   - 非 Load/Store 指令时 `wea=0`，`is_dram` 和地址判断的值无关紧要
+
+2. **`is_dram` 使用 `addr_sum[31:18]`**：跳过 ALU output MUX
+   - 改善 DRAM WEA 路径 slack：+0.751ns → +1.178ns
+
+3. **MMIO 写 `case(addr_sum[6:4])` 部分译码**：32-bit 比较 → 3-bit 比较
+   - `!is_dram` 已确认 MMIO 空间，只需区分设备：LED=100, SEG=010, CNT=101
+   - LED 写入路径改善：从 Top 10 #2（slack +0.648ns）跌出 Top 10
+
+### 当前最差路径
+
+优化后最差路径仍为 `ex_alu_op_reg[1] → cnt_enable_cfg_reg/D`（5.029ns, 15 级），
+瓶颈在 `wdata == CNT_START_CMD / CNT_STOP_CMD` 的 32-bit×2 比较 + if-else。
+
+### 后续优化方向（如需提频）
+
+- `wdata` 命令解码简化：只比较 `wdata[31]` + `wdata[0]` 区分两个命令（省 ~2 级 LUT）
+- 前提：赛方软件只写 `0x8000_0000`（start）和 `0xFFFF_FFFF`（stop）到 CNT_ADDR
+

@@ -12,9 +12,12 @@
 | `alu_op` | input | 4 | 控制 | ALU 操作类型（`{funct7[5], funct3}`） |
 | `alu_src1` | input | 32 | 数据 | 操作数 1（已由上游 MUX 选定：rs1 / PC / 0） |
 | `alu_src2` | input | 32 | 数据 | 操作数 2（已由上游 MUX 选定：rs2 / 立即数） |
-| `alu_result` | output | 32 | 数据（组合） | 运算结果 |
+| `alu_result` | output | 32 | 数据（组合） | 运算结果（经 AND-OR output MUX 选择） |
+| `alu_sum` | output | 32 | 数据（组合） | 加法器直出（跳过 output MUX），供 bridge 做地址判断 |
 
 > **注**：操作数来源的 MUX 选择不在本模块内部，由上游逻辑完成。本模块只做纯运算。
+> `alu_sum` 是时序优化端口：Load/Store 指令的 `alu_op` 恒为 `ALU_ADD`，此时 `alu_sum == alu_result`。
+> perip_bridge 使用 `alu_sum` 做 `is_dram` 和 MMIO 地址判断，避免等待 output MUX 延迟。
 
 ---
 
@@ -100,6 +103,7 @@ endcase
 
 - 纯组合逻辑，无时钟、无寄存器
 - **关键路径**：`alu_result` 直接驱动 DRAM 地址端口，在 EX→MEM posedge 前必须稳定（见 `pipeline.md` §2.3）
+- **`alu_sum`**：跳过 output MUX（省 ~1 级 LUT），用于 bridge 地址范围判断。仅在 Load/Store 指令下有意义（`alu_op = ALU_ADD` 时 `alu_sum == alu_result`）
 
 ---
 

@@ -154,6 +154,7 @@ module cpu_top (
     input  logic [31:0] irom_data,      // 指令（BRAM 1拍 Clk-to-Q，IF 阶段有效）
     // 外设总线 (EX stage → bridge)
     output logic [31:0] perip_addr,     // = alu_result
+    output logic [31:0] perip_addr_sum, // = alu_sum（加法器直出，跳过 ALU output MUX）
     output logic [3:0]  perip_wea,      // = mem_interface store wea
     output logic [31:0] perip_wdata,    // = store_data_shifted
     input  logic [31:0] perip_rdata     // bridge 返回数据（MEM 阶段有效）
@@ -220,9 +221,10 @@ assign rdata = is_dram_r ? dram_douta : mmio_rdata;
 ### 写路径
 
 - 所有写操作在 **Edge2（EX→MEM 时钟沿）** 统一执行
-- DRAM 写：`wea` + `wdata` 直驱 BRAM（地址译码门控 wea）
-- MMIO 写：`always_ff` 按地址写入 LED / SEG / CNT enable
-- 写信号全部来自 EX 阶段组合输出（alu_result, wea, wdata）
+- DRAM 写：`{4{is_dram}} & wea` 直驱 BRAM，`is_dram` 使用 `addr_sum[31:18]`（跳过 ALU output MUX）
+- MMIO 写：`always_ff` 按 `addr_sum[6:4]` 部分译码（3-bit）写入 LED / SEG / CNT enable
+  - 优化：`!is_dram` 已确认 MMIO 空间，只需区分设备（LED=100, SEG=010, CNT=101）
+- 写信号全部来自 EX 阶段组合输出（alu_result, alu_sum, wea, wdata）
 
 ---
 
