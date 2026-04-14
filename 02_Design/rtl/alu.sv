@@ -11,8 +11,11 @@ module alu
     input  logic [ 3:0] alu_op,
     input  logic [31:0] alu_src1,
     input  logic [31:0] alu_src2,
-    output logic [31:0] alu_result
+    output logic [31:0] alu_result,
+    output logic [31:0] alu_sum        // 加法器直出（跳过 output MUX），供 bridge 做地址判断
 );
+
+    assign alu_sum = sum;
 
     // ---- 3.1 Shared adder/subtractor ----
     // negate src2 for SUB(1_000), SLT(0_010), SLTU(0_011)

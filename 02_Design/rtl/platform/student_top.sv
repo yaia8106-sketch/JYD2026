@@ -45,6 +45,7 @@ module student_top #(
 
     // CPU ↔ perip_bridge
     logic [31:0] perip_addr;
+    logic [31:0] perip_addr_sum;    // ALU 加法器直出，跳过 output MUX
     logic [3:0]  perip_wea;
     logic [31:0] perip_wdata;
     logic [31:0] perip_rdata;
@@ -61,10 +62,11 @@ module student_top #(
         .irom_data   (irom_data),
 
         // 外设总线 (EX stage → bridge)
-        .perip_addr  (perip_addr),
-        .perip_wea   (perip_wea),
-        .perip_wdata (perip_wdata),
-        .perip_rdata (perip_rdata)
+        .perip_addr     (perip_addr),
+        .perip_addr_sum (perip_addr_sum),
+        .perip_wea      (perip_wea),
+        .perip_wdata    (perip_wdata),
+        .perip_rdata    (perip_rdata)
     );
 
     // ================================================================
@@ -87,10 +89,11 @@ module student_top #(
         .rst     (w_clk_rst),            // 高有效，直连
 
         // CPU 总线
-        .addr    (perip_addr),
-        .wea     (perip_wea),
-        .wdata   (perip_wdata),
-        .rdata   (perip_rdata),
+        .addr     (perip_addr),
+        .addr_sum (perip_addr_sum),
+        .wea      (perip_wea),
+        .wdata    (perip_wdata),
+        .rdata    (perip_rdata),
 
         // 平台 I/O
         .sw      (virtual_sw),

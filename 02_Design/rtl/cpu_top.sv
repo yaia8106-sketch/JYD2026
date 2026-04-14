@@ -15,6 +15,7 @@ module cpu_top (
 
     // 外设总线 (EX stage → bridge)
     output logic [31:0] perip_addr,      // = alu_result
+    output logic [31:0] perip_addr_sum,  // = alu_sum（加法器直出，跳过 ALU output MUX）
     output logic [3:0]  perip_wea,       // = mem_interface store wea
     output logic [31:0] perip_wdata,     // = store_data_shifted
     input  logic [31:0] perip_rdata      // bridge 返回数据（MEM 阶段有效）
@@ -91,6 +92,7 @@ module cpu_top (
 
     // ---- ALU ----
     wire [31:0] alu_result;
+    wire [31:0] alu_sum;               // ALU 加法器直出（跳过 output MUX）
 
     // ---- Branch ----
     wire        branch_flush;
@@ -152,9 +154,10 @@ module cpu_top (
     assign irom_addr   = branch_flush  ? branch_target :   // 分支：预取目标
                          !if_allowin_w ? pc :               // 停顿：保持当前地址
                                          next_pc;           // 正常：预取下一条
-    assign perip_addr  = alu_result;        // bridge 地址 (EX stage)
-    assign perip_wea   = dram_wea;          // bridge 写使能 (EX stage)
-    assign perip_wdata = store_data_shifted; // bridge 写数据 (EX stage)
+    assign perip_addr     = alu_result;         // bridge 地址 (EX stage)
+    assign perip_addr_sum = alu_sum;             // bridge 地址判断用（跳过 MUX）
+    assign perip_wea      = dram_wea;            // bridge 写使能 (EX stage)
+    assign perip_wdata    = store_data_shifted;  // bridge 写数据 (EX stage)
     assign dram_dout   = perip_rdata;       // bridge 读数据 (MEM stage)
 
     // ================================================================
@@ -333,7 +336,8 @@ module cpu_top (
         .alu_op     (ex_alu_op),
         .alu_src1   (ex_alu_src1),
         .alu_src2   (ex_alu_src2),
-        .alu_result (alu_result)
+        .alu_result (alu_result),
+        .alu_sum    (alu_sum)
     );
 
     branch_unit u_branch_unit (

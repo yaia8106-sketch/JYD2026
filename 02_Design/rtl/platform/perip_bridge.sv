@@ -24,6 +24,7 @@ module perip_bridge (
 
     // CPU 接口 (EX 阶段信号)
     input  logic [31:0]  addr,            // = alu_result（EX 组合）
+    input  logic [31:0]  addr_sum,        // = alu_sum（加法器直出，跳过 ALU output MUX）
     input  logic [3:0]   wea,             // 字节写使能（EX 组合）
     input  logic [31:0]  wdata,           // 写数据（EX 组合，已移位）
     output logic [31:0]  rdata,           // 读数据（MEM 阶段有效）
@@ -53,7 +54,10 @@ module perip_bridge (
     // ================================================================
     //  地址译码 (EX 阶段，组合)
     // ================================================================
-    wire is_dram = (addr[31:18] == 14'b1000_0000_0001_00);  // 0x8010_0000 ~ 0x8013_FFFF
+    // 使用 addr_sum（ALU 加法器直出，跳过 output MUX）来判断
+    // Load/Store 指令的 alu_op 恒为 ALU_ADD，所以 addr_sum == addr
+    // 非 Load/Store 指令时 wea=0，is_dram 的值无关紧要
+    wire is_dram = (addr_sum[31:18] == 14'b1000_0000_0001_00);  // 0x8010_0000 ~ 0x8013_FFFF
 
     // ================================================================
     //  地址打拍 (EX → MEM，给 MMIO 组合读和输出 MUX 用)
@@ -85,6 +89,10 @@ module perip_bridge (
 
     // ================================================================
     //  MMIO 写 (EX→MEM 时钟沿采样)
+    //  优化：addr_sum[6:4] 部分译码（3-bit vs 原 32-bit）
+    //    - !is_dram 已确认在 MMIO 空间，只需区分设备
+    //    - LED=0x..40([6:4]=100), SEG=0x..20([6:4]=010), CNT=0x..50([6:4]=101)
+    //    - 使用 addr_sum：跳过 ALU output MUX（Store 恒为 ADD，addr_sum==addr）
     // ================================================================
     logic [31:0] led_reg;
     logic [31:0] seg_wdata;
@@ -96,10 +104,10 @@ module perip_bridge (
             seg_wdata      <= 32'd0;
             cnt_enable_cfg <= 1'b0;
         end else if (|wea && !is_dram) begin
-            case (addr)
-                LED_ADDR: led_reg <= wdata;
-                SEG_ADDR: seg_wdata <= wdata;
-                CNT_ADDR: begin
+            case (addr_sum[6:4])
+                3'b100: led_reg <= wdata;           // LED  0x8020_0040
+                3'b010: seg_wdata <= wdata;         // SEG  0x8020_0020
+                3'b101: begin                       // CNT  0x8020_0050
                     if (wdata == CNT_START_CMD)
                         cnt_enable_cfg <= 1'b1;
                     else if (wdata == CNT_STOP_CMD)
