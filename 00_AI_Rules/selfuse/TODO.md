@@ -51,16 +51,23 @@
 
 ### 后期优化
 
-- [x] ~~JAL 提前到 ID 级判断（penalty 2→1 拍）~~ — **取消**
-- [x] ~~JALR 提前到 ID 级判断（视时序余量）~~ — **取消**
-  > **取消原因**：200MHz 下 IF/ID→IROM 路径 slack 仅 +0.434ns，JAL 提前需新增
-  > 32-bit 加法器（~1.5ns），将导致时序违例约 -1ns。JALR 更严重——需要
-  > 前递 MUX + 加法器，MEM/WB→ID 路径余量仅 +0.427ns，完全无法容纳。
-  > 频率 vs CPI 的 trade-off 分析表明，降频到 180MHz 换取 JAL penalty 1→0
-  > 收益（IPC +5~10%）不如保持 200MHz 的频率优势（+11%），因此暂不迁移。
-- [ ] riscv-tests 功能正确性验证
+- [ ] **riscv-tests 功能验证**（下一步）
+- [~] ~~JAL 提前到 ID 级判断~~（暂缓，见下方说明）
+- [~] ~~JALR 提前到 ID 级判断~~（暂缓，见下方说明）
 - [ ] coremark 跑分验证
 - [ ] P&R 策略优化（Performance_Explore / Pblock）—— 如需进一步提频
+
+#### JAL/JALR 迁移暂缓说明
+
+200MHz Implementation 下时序余量不足，无法安全将 JAL/JALR 判断提前到 ID 级：
+
+| 路径 | 当前 Slack | 提前后需新增 | 预估结果 |
+|------|-----------|------------|----------|
+| JAL: IF/ID → IROM | +0.434ns | +32-bit 加法器 (~1.5ns) | **违例 ~1ns** |
+| JALR: MEM/WB → IROM | +0.427ns | +前递 MUX + 加法器 (~2ns) | **违例 ~1.5ns** |
+
+结论：在 200MHz 下提前 JAL/JALR 会导致时序违例。提频带来的性能收益（~10%）大于 JAL 提前减少分支 penalty 的收益（~5-10% IPC）。
+待 Coremark 跑分后重新评估频率 vs CPI 的 trade-off。
 
 ---
 
