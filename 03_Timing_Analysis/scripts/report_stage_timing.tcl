@@ -33,11 +33,35 @@ set MAX_PATHS 3
 set CLK_PORT   "w_cpu_clk"
 set CLK_PERIOD 5.556
 
-# 设计层级前缀
-# - 若 student_top 是 Vivado 顶层模块，设为 ""（空字符串）
-# - 若 top.sv 是顶层且例化名为 u_student_top，设为 "u_student_top"
-# - 若 top.sv 例化名为 student_top_inst，设为 "student_top_inst"
+# 设计层级前缀（自动检测）
+# 支持两种顶层配置：
+#   1. student_top 作为顶层 → TOP_HIER = ""
+#   2. top.sv 作为顶层，例化名 student_top_inst → TOP_HIER = "student_top_inst"
+#
+# 检测方法：查找 u_cpu/u_pc_reg 在哪个层次下
 set TOP_HIER ""
+set _probe_patterns [list \
+    ""                    \
+    "student_top_inst"    \
+    "u_student_top"       \
+]
+foreach _pat $_probe_patterns {
+    if {$_pat eq ""} {
+        set _test_filter "IS_SEQUENTIAL == 1 && NAME =~ u_cpu/u_pc_reg/*"
+    } else {
+        set _test_filter "IS_SEQUENTIAL == 1 && NAME =~ ${_pat}/u_cpu/u_pc_reg/*"
+    }
+    set _test_cells [get_cells -quiet -hierarchical -filter $_test_filter]
+    if {[llength $_test_cells] > 0} {
+        set TOP_HIER $_pat
+        break
+    }
+}
+if {$TOP_HIER eq ""} {
+    puts "  → 自动检测: student_top 为顶层 (TOP_HIER = \"\")"
+} else {
+    puts "  → 自动检测: 顶层下例化名 = $TOP_HIER"
+}
 
 # ---- 流水线寄存器组 ----
 # 格式: {显示名称  层级通配模式（相对于 TOP_HIER）}
