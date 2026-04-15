@@ -5,3 +5,21 @@ digital_twin.gen/
 CPU4MyOwn/
 03_Timing_Analysis/reports/
 riscv-tests/
+
+# --- Simulation Artifacts ---
+# Waveforms
+*.vcd
+*.wcfg
+
+# riscv-tests generated files
+02_Design/sim/riscv_tests/hex/*
+!02_Design/sim/riscv_tests/hex/.gitkeep
+
+# iverilog/xsim work directories and snapshots
+02_Design/sim/riscv_tests/work/*
+!02_Design/sim/riscv_tests/work/.gitkeep
+xsim.dir/
+
+# Logs and Journals
+*.log
+*.jou
