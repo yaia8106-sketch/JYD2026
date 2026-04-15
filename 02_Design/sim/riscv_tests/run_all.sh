@@ -14,10 +14,12 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SIM_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$SCRIPT_DIR"
+
+SIM_DIR="$(cd ".." && pwd)"
 RTL_DIR="$(cd "$SIM_DIR/../rtl" && pwd)"
-HEX_DIR="$SCRIPT_DIR/hex"
-WORK_DIR="$SCRIPT_DIR/work"
+HEX_DIR="hex"
+WORK_DIR="work"
 SIMULATOR="${1:-iverilog}"
 
 # RTL 源文件 (cpu_top 及其子模块, 不含 platform)
