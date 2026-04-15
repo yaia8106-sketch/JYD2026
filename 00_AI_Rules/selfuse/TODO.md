@@ -56,7 +56,8 @@
   > **取消原因**：200MHz 下 IF/ID→IROM 路径 slack 仅 +0.434ns，JAL 需新增 32-bit 加法器（~1.5ns），
   > 会导致时序违例约 -1ns。JALR 更严重——需前递 MUX + 加法器，MEM/WB→ID 路径已达 4.498ns，
   > 200MHz 下完全不可行。频率 vs CPI 的 trade-off 中，保持 200MHz + penalty 2 拍更优。
-- [ ] **riscv-tests 功能正确性验证**（下一步）
+- [X] **riscv-tests 功能验证环境搭建** (已完成，含 Custom Env/自动化脚本)
+- [ ] **riscv-tests 全量功能通过** (下一步目标)
 - [ ] **Phase 1: RAS**（4 entry 返回地址栈，预测 JALR/ret，预期 CPI -0.10）
 - [ ] **Phase 2: 2-bit BHT**（256 entry 局部分支预测，预期 CPI -0.05）
 - [ ] Phase 3: GShare（如 BHT 效果不足，替换为全局预测）
