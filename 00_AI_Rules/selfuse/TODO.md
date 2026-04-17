@@ -1,26 +1,31 @@
 # TODO 清单
 
-## ⚠️ 当前阻塞问题（2026-04-17）
+## ⚠️ 当前阻塞问题（2026-04-17 更新）
 
 **现象**：处理器通过 riscv-tests（40/40 PASS），但上板（数字孪生平台 FPGA）后程序跑飞。
 
-**已确认的事实**：
-- riscv-tests 仿真环境下功能完全正确（Verilator 40/40 PASS）
-- EX-only 基线（无 JAL ID 优化、无分支预测器）= FPGA 曾经正常（11.134s @ 200MHz）
-- JAL ID 级优化单独启用 → FPGA 跑飞（仿真正常）
-- 分支预测器（BTB + RAS + BHT）启用 → FPGA 跑飞（仿真正常）
+**根因已定位并修复（3 个 Bug）**：
 
-**疑点方向**：
-- 仿真与 FPGA 行为不一致，可能原因：
-  1. 时序违例（200MHz slack 仅 +0.011ns，布线后可能实际违例）
-  2. 异步复位 / CDC 问题（仿真不暴露，FPGA 实际触发）
-  3. BRAM 初始化差异（仿真 vs 实际 FPGA 行为）
-  4. 组合逻辑毛刺导致误触发（仿真无延迟模型，不体现）
+1. ✅ **branch_unit 不校验预测目标地址**（`branch_unit.sv`）
+   - BTB aliasing 导致错误目标时，只检查方向不检查地址 → 不 flush → 跑飞
+   - 修复：增加 `wrong_tgt = actual_taken & pred_taken & (target ≠ pred_target)`
 
-**下一步**：
-- [ ] 首先在 EX-only 基线上重新验证 FPGA 是否仍然正常
-- [ ] 逐步启用优化特性，定位最小复现集
-- [ ] 考虑降频到 180MHz / 150MHz 排除时序违例因素
+2. ✅ **pred_target 未通过 IF/ID 寄存器**（`if_id_reg.sv` + `cpu_top.sv`）
+   - `id_ex_reg` 收到的是 branch_predictor 的实时组合输出，不对应 ID 阶段指令
+   - 修复：在 IF/ID 寄存器中增加 `pred_target` 注册
+
+3. ✅ **RAS POP 在 IF 阶段导致重复弹出**（`branch_predictor.sv`）
+   - flush 后重取同一 RET → `btb_pred_ret` 再次触发 → RAS 反复 POP → 栈耗尽
+   - 修复：POP 移到 EX 阶段（每条 RET 最多 POP 一次）
+
+**验证状态**：
+- ✅ riscv-tests 40/40 PASS（预测器启用）
+- ✅ 竞赛程序仿真 100K 拍 PC 未跑飞（Vivado xsim + BRAM IP）
+- ⬜ **等待 FPGA 上板验证**
+
+**待观察**：
+- `wrong_tgt` 比率高（~99% flush 来自 wrong_tgt），可能需要优化 RAS 机制
+- 降频测试（排除时序违例因素）仍建议执行
 
 ---
 
