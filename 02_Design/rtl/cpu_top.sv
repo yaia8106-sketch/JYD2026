@@ -98,6 +98,10 @@ module cpu_top (
     wire        branch_flush;
     wire [31:0] branch_target;
 
+    // ---- ID stage jump (Phase 1: Early resolution) ----
+    wire        id_jump_taken;
+    wire [31:0] id_jump_target;
+
     // ---- Store interface (EX stage) ----
     wire [31:0] store_data_shifted;
 
@@ -141,7 +145,7 @@ module cpu_top (
     wire mem_ready_go_w = 1'b1;     // BRAM latency absorbed by pipeline
 
     // ---- Flush ----
-    wire id_flush = branch_flush;
+    wire id_flush = branch_flush | id_jump_taken;
     wire ex_flush = branch_flush;
 
     // ---- Register addresses from instruction (ID stage, from IF/ID reg) ----
@@ -150,10 +154,6 @@ module cpu_top (
     wire [4:0] id_rd_addr  = id_inst[11:7];
 
     // ---- Port assignments ----
-    wire        if_allowin_w = id_allowin;   // for irom_addr mux
-    assign irom_addr   = branch_flush  ? branch_target :   // 分支：预取目标
-                         !if_allowin_w ? pc :               // 停顿：保持当前地址
-                                         next_pc;           // 正常：预取下一条
     assign perip_addr     = alu_result;         // bridge 地址 (EX stage)
     assign perip_addr_sum = alu_sum;             // bridge 地址判断用（跳过 MUX）
     assign perip_wea      = dram_wea;            // bridge 写使能 (EX stage)
@@ -167,8 +167,14 @@ module cpu_top (
     // ==================== Pre-IF ====================
 
     next_pc_mux u_next_pc_mux (
-        .pc       (pc),
-        .next_pc  (next_pc)
+        .pc                (pc),
+        .next_pc_seq       (pc + 32'd4),
+        .id_jump_taken     (id_jump_taken),
+        .id_jump_target    (id_jump_target),
+        .ex_branch_flush   (branch_flush),
+        .ex_branch_target  (branch_target),
+        .if_allowin        (id_allowin),
+        .irom_addr         (irom_addr)
     );
 
     pc_reg u_pc_reg (
@@ -178,7 +184,7 @@ module cpu_top (
         .if_valid      (if_valid),
         .branch_flush  (branch_flush),
         .branch_target (branch_target),
-        .next_pc       (next_pc),
+        .next_pc       (irom_addr),
         .pc            (pc)
     );
 
@@ -202,8 +208,6 @@ module cpu_top (
         .id_inst      (id_inst)          // registered instruction for ID
     );
 
-    // ==================== ID stage ====================
-
     decoder u_decoder (
         .inst           (id_inst),            // from IF/ID register
         .alu_op         (dec_alu_op),
@@ -221,6 +225,10 @@ module cpu_top (
         .is_jalr        (dec_is_jalr),
         .imm_type       (dec_imm_type)
     );
+
+    // JAL Early Resolution (30-bit optimized adder for timing)
+    assign id_jump_taken  = id_valid && dec_is_jal;
+    assign id_jump_target = { (id_pc[31:2] + id_imm[31:2]), id_imm[1], 1'b0 };
 
     imm_gen u_imm_gen (
         .inst     (id_inst),                   // from IF/ID register

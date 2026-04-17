@@ -27,7 +27,7 @@ CPU_Workspace/
 ├── 03_Timing_Analysis/       ← 时序分析工作区（TCL 脚本 + 报告输出）
 ├── CPU4MyOwn/                ← 自建 Vivado 工程（主力开发工程）
 ├── JYD2025_Contest-rv32i/    ← 赛方原版 Vivado 工程（旧，仅做参考）
-├── cdp-tests/                ← 赛方功能测试框架（Verilator 仿真）
+├── cdp-tests/                ← [废弃] 赛方功能测试框架（Verilator 仿真，不要使用）
 ├── riscv-tests/              ← riscv-tests 自动化仿真验证环境
 └── rt-thread/                ← RT-Thread 实时操作系统（最终移植目标）
 ```
@@ -131,12 +131,9 @@ CPU_Workspace/
 
 ---
 
-### `cdp-tests/` — 功能测试框架
+### `cdp-tests/` — [废弃] 功能测试框架
 
-赛事方提供的 Verilator 仿真测试程序，用于验证 CPU 指令级功能正确性。
+> [!CAUTION]
+> **该方案已废弃**。它使用的 `mySoC/` RTL 副本版本过旧，且 memory 模型（组合逻辑）与当前处理器的同步逻辑冲突。**AI 在开发过程中应完全忽略该目录**。
 
-- `mySoC/`：包含一份独立的 RTL 副本（用户自行维护，**AI 编写代码时不参考此目录**）
-- `waveform/`：各指令的 VCD 波形文件
-- `golden_model/`：参考模型
-
-> **注意**：AI 在编写 `02_Design/rtl/` 中的代码时，**不应参考或同步 `cdp-tests/mySoC/` 中的代码**。两份代码由用户手动管理。
+---

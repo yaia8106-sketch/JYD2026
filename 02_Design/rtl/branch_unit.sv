@@ -45,7 +45,8 @@ module branch_unit (
 
     // ---- Flush decision ----
     // Default prediction: not-taken → actual_taken means misprediction
-    wire actual_taken = is_jal | is_jalr | (is_branch & branch_taken);
+    // JAL is now handled in ID stage, so only JALR and Branch trigger flush in EX
+    wire actual_taken = is_jalr | (is_branch & branch_taken);
     assign branch_flush = ex_valid & actual_taken;
 
     // ---- Target address ----
