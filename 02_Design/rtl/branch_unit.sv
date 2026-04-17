@@ -53,16 +53,15 @@ module branch_unit (
     wire [31:0] actual_target = is_jalr ? (alu_result & ~32'd1) : alu_result;
 
     // ---- Flush decision (prediction-aware) ----
-    wire missed    = actual_taken & ~pred_taken;              // not predicted, actually taken
-    wire wrong_dir = ~actual_taken &  pred_taken;             // predicted taken, actually not taken
-    wire wrong_tgt = actual_taken &  pred_taken               // both taken, but target mismatch
-                   & (actual_target != pred_target);
+    // DEBUG: JAL handled in EX stage (ID disabled), so JAL must flush here
+    wire missed    = actual_taken & ~pred_taken;              // all jumps flush if not predicted
+    wire wrong_dir = ~actual_taken &  pred_taken;             // predicted jump, actually not taken
 
-    assign branch_flush = ex_valid & (missed | wrong_dir | wrong_tgt);
+    assign branch_flush = ex_valid & (missed | wrong_dir);
 
     // ---- Redirect target ----
-    // wrong_dir: redirect to sequential PC (fallthrough)
-    // missed / wrong_tgt: redirect to actual target
+    // missed:    redirect to actual branch/jump target
+    // wrong_dir: redirect to sequential PC (ex_pc + 4, fallthrough)
     assign branch_target = wrong_dir ? (ex_pc + 32'd4) : actual_target;
 
     // ---- Actual outcome for predictor training ----

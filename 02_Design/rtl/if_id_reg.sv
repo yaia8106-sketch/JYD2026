@@ -24,11 +24,9 @@ module if_id_reg (
     input  logic [31:0] if_pc,
     input  logic [31:0] if_inst,       // BRAM output (irom_data), valid in IF stage
     input  logic        if_pred_taken, // IF-stage prediction flag (from BTB)
-    input  logic [31:0] if_pred_target,// IF-stage predicted target (from BTB)
     output logic [31:0] id_pc,
     output logic [31:0] id_inst,       // registered instruction for ID stage
-    output logic        id_pred_taken, // prediction flag for ID stage
-    output logic [31:0] id_pred_target // predicted target for ID stage
+    output logic        id_pred_taken  // prediction flag for ID stage
 );
 
     // ---- Handshake ----
@@ -37,20 +35,18 @@ module if_id_reg (
     // ---- Pipeline register ----
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            id_valid       <= 1'b0;
-            id_pc          <= 32'd0;
-            id_inst        <= 32'd0;
-            id_pred_taken  <= 1'b0;
-            id_pred_target <= 32'd0;
+            id_valid      <= 1'b0;
+            id_pc         <= 32'd0;
+            id_inst       <= 32'd0;
+            id_pred_taken <= 1'b0;
         end else if (id_flush) begin
-            id_valid       <= 1'b0;
-            id_pred_taken  <= 1'b0;
+            id_valid      <= 1'b0;
+            id_pred_taken <= 1'b0;
         end else if (id_allowin) begin
-            id_valid       <= if_valid & if_ready_go;
-            id_pc          <= if_pc;
-            id_inst        <= if_inst;
-            id_pred_taken  <= if_pred_taken;
-            id_pred_target <= if_pred_target;
+            id_valid      <= if_valid & if_ready_go;
+            id_pc         <= if_pc;
+            id_inst       <= if_inst;
+            id_pred_taken <= if_pred_taken;
         end
     end
 

@@ -102,29 +102,28 @@ module branch_predictor (
     // Gate with if_allowin: during stalls, pred_taken must be 0 to prevent
     // repeated RAS pops and incorrect PC redirection by next_pc_mux
     wire pred_taken_raw = btb_pred_jal | btb_pred_br | btb_pred_ret;
-    assign pred_taken  = pred_taken_raw & if_allowin;
+    // >>> DEBUG: Force prediction OFF to isolate FPGA issue <<<
+    assign pred_taken  = 1'b0;  // pred_taken_raw & if_allowin;
     assign pred_target = btb_pred_ret ? ras_top_addr : btb_target[if_idx];
 
     // ================================================================
-    //  RAS: Push (ID stage) / Pop (EX stage, committed only)
-    //  Pop moved to EX to avoid repeated pops on flush-refetch of
-    //  the same RET instruction (Bug: IF-stage pop fires every fetch)
+    //  RAS: Synchronous Push (ID stage) / Pointer Update
     // ================================================================
-    wire ex_ras_pop = update_en && (ex_inst_type == BP_RET);
-
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             ras_top <= '0;
         end else begin
-            if (id_is_call && ex_ras_pop) begin
-                // Simultaneous push + pop: ras_top unchanged, only push data
+            if (ex_mispredict && id_is_call) begin
+                ras_top <= ras_top + 1'b1;
                 ras_stack[ras_top + 1'b1] <= id_pc + 32'd4;
-            end else if (id_is_call) begin
-                // Push: CALL detected in ID
+            end else if (id_is_call && btb_pred_ret) begin
                 ras_stack[ras_top + 1'b1] <= id_pc + 32'd4;
                 ras_top <= ras_top + 1'b1;
-            end else if (ex_ras_pop) begin
-                // Pop: RET committed in EX
+            end else if (id_is_call) begin
+                ras_stack[ras_top + 1'b1] <= id_pc + 32'd4;
+                ras_top <= ras_top + 1'b1;
+            end else if (btb_pred_ret && !ex_mispredict && if_allowin) begin
+                // Normal RET prediction: pop only when pipeline is flowing
                 ras_top <= ras_top - 1'b1;
             end
         end
