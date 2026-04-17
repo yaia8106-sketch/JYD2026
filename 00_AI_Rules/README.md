@@ -25,8 +25,7 @@ CPU_Workspace/
 │   ├── scripts/              ← Vivado TCL 脚本（import_all.tcl 等）
 │   └── sim/                  ← 仿真验证
 │       ├── riscv_tests/       ← riscv-tests 全自动回归（TB+脚本+hex）
-│       ├── debug/             ← 临时调试 TB + 输出
-│       └── tb_student_top.sv  ← 平台级集成仿真 TB
+│       └── debug/             ← 调试 TB（tb_student_top.sv）+ 仿真输出
 ├── 03_Timing_Analysis/       ← 时序分析工作区（TCL 脚本 + 报告输出）
 ├── JYD2025_Contest-rv32i/    ← 赛事方数字孪生平台工程（主力开发工程）
 ├── cdp-tests/                ← [废弃] 赛方功能测试框架（Verilator 仿真，不要使用）
@@ -83,11 +82,10 @@ CPU_Workspace/
 
 **`sim/`** — 仿真验证区：
 
-| 子目录/文件 | 内容 | 说明 |
+| 子目录 | 内容 | 说明 |
 |---|---|---|
 | `riscv_tests/` | riscv-tests 全自动回归环境 | TB、脚本、hex、work 全部在内 |
-| `debug/` | 临时调试 TB + 输出 | 快速打印信号值、一次性验证用 |
-| `tb_student_top.sv` | 数字孪生平台级 TB | 例化 student_top 的集成仿真 |
+| `debug/` | 调试 TB + 仿真输出 | 含 `tb_student_top.sv`，用于打印信号值、波形调试 |
 
 **`contest_readonly/`** — 赛方原版文件（TCL 脚本可一键导入）：
 

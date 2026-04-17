@@ -31,8 +31,7 @@
   - `coe/`：BRAM 初始化文件（`current/` 为当前使用版本）。
   - `sim/`：仿真验证区。
     - `riscv_tests/`：riscv-tests 全自动回归环境（TB、脚本、hex 全在内）
-    - `debug/`：临时调试 TB + 输出（打印信号值、一次性验证）
-    - `tb_student_top.sv`：数字孪生平台级集成仿真 TB
+    - `debug/`：调试 TB（`tb_student_top.sv`）+ 仿真输出。路径：`/home/anokyai/桌面/CPU_Workspace/02_Design/sim/debug`
 
 - **`JYD2025_Contest-rv32i/` (数字孪生平台工程 — 主力开发)**
   - 赛事方提供的模板工程，已完成核心集成。通过 `$PPRDIR/../02_Design/` 链接源码，实现实时同步。
