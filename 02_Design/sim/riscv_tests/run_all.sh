@@ -36,6 +36,7 @@ RTL_FILES="
     $RTL_DIR/id_ex_reg.sv
     $RTL_DIR/alu.sv
     $RTL_DIR/branch_unit.sv
+    $RTL_DIR/branch_predictor.sv
     $RTL_DIR/mem_interface.sv
     $RTL_DIR/ex_mem_reg.sv
     $RTL_DIR/mem_wb_reg.sv

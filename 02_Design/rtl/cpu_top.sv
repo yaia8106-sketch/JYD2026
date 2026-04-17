@@ -201,11 +201,19 @@ module cpu_top (
     // EX stage: determine actual branch/jump outcome for training
     wire        ex_actual_taken = branch_actual_taken;  // true outcome from branch_unit
     wire [31:0] ex_actual_target = branch_target;
-    wire        ex_update_en = ex_valid && (ex_is_branch || ex_is_jal || ex_is_jalr);
-    // Encode type: 0=JAL, 1=B-type, 2=RET, 3=other JALR
+
+    // Detect RET in EX stage: JALR with rs1=x1/x5, rd=x0
+    wire        ex_is_ret = ex_is_jalr
+                          && (ex_rs1_addr == 5'd1 || ex_rs1_addr == 5'd5)
+                          && (ex_rd == 5'd0);
+
+    // Only store predictable instructions in BTB (no non-RET JALR)
+    wire        ex_update_en = ex_valid && (ex_is_branch || ex_is_jal || ex_is_ret);
+
+    // Encode type: 0=JAL, 1=B-type, 2=RET
     wire [1:0]  ex_bp_type = ex_is_jal    ? 2'd0 :
                              ex_is_branch ? 2'd1 :
-                                            2'd2;  // JALR (RET or other)
+                                            2'd2;  // RET (only RET reaches here now)
     wire        ex_mispredict = branch_flush;  // flush = misprediction
 
     branch_predictor u_branch_predictor (
@@ -213,6 +221,7 @@ module cpu_top (
         .rst_n           (rst_n),
         // IF Stage (Query)
         .if_pc           (pc),
+        .if_allowin      (id_allowin),
         .pred_taken      (pred_taken),
         .pred_target     (pred_target),
         // ID Stage (RAS)

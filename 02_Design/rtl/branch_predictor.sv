@@ -13,6 +13,7 @@ module branch_predictor (
     // IF Stage (Query - Combinational, must be < 1ns)
     // --------------------------------------------------------
     input  logic [31:0] if_pc,           // 当前正在取指的 PC
+    input  logic        if_allowin,      // IF stage 可流动（非阻塞时为 1）
     output logic        pred_taken,      // 预测是否跳转
     output logic [31:0] pred_target,     // 预测的目标地址
 
@@ -98,7 +99,10 @@ module branch_predictor (
     wire [31:0] ras_top_addr = ras_stack[ras_top];
 
     // --- Final prediction output ---
-    assign pred_taken  = btb_pred_jal | btb_pred_br | btb_pred_ret;
+    // Gate with if_allowin: during stalls, pred_taken must be 0 to prevent
+    // repeated RAS pops and incorrect PC redirection by next_pc_mux
+    wire pred_taken_raw = btb_pred_jal | btb_pred_br | btb_pred_ret;
+    assign pred_taken  = pred_taken_raw & if_allowin;
     assign pred_target = btb_pred_ret ? ras_top_addr : btb_target[if_idx];
 
     // ================================================================
@@ -117,7 +121,8 @@ module branch_predictor (
             end else if (id_is_call) begin
                 ras_stack[ras_top + 1'b1] <= id_pc + 32'd4;
                 ras_top <= ras_top + 1'b1;
-            end else if (btb_pred_ret && !ex_mispredict) begin
+            end else if (btb_pred_ret && !ex_mispredict && if_allowin) begin
+                // Normal RET prediction: pop only when pipeline is flowing
                 ras_top <= ras_top - 1'b1;
             end
         end
