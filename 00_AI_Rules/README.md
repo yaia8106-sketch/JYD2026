@@ -20,9 +20,8 @@ CPU_Workspace/
 │   ├── spec/                 ← 模块规格文档
 │   ├── rtl/                  ← 自研 CPU RTL 源码
 │   │   └── platform/          ← student_top, perip_bridge
-│   ├── contest_readonly/     ← 赛方原版文件（RTL、IP、XDC、TB，禁止修改）
+│   ├── contest_readonly/     ← 赛方原版 RTL（仅 rtl/，禁止修改）
 │   ├── coe/                  ← BRAM 初始化文件
-│   ├── scripts/              ← Vivado TCL 脚本（import_all.tcl 等）
 │   └── sim/                  ← 仿真验证
 │       ├── riscv_tests/       ← riscv-tests 全自动回归（TB+脚本+hex）
 │       └── debug/             ← 调试 TB（tb_student_top.sv）+ 仿真输出
@@ -76,7 +75,7 @@ CPU_Workspace/
 | `spec/` | `<Module>_spec.md` | 模块规格文档，生成 RTL 的唯一依据 |
 | `rtl/` | `<Module>.sv` | 自研 CPU RTL 源码 |
 | `rtl/platform/` | `student_top.sv`, `perip_bridge.sv` | 平台接口层（自研） |
-| `contest_readonly/` | 赛方原版文件（见下表） | **禁止修改** |
+| `contest_readonly/rtl/` | 赛方原版 RTL | `top.sv`, `twin_controller.sv`, `uart.sv` 等，**禁止修改** |
 | `coe/` | BRAM 初始化文件 | `current/` 为当前使用版本 |
 | `sim/` | 仿真验证 | 详见下方 |
 
@@ -86,24 +85,6 @@ CPU_Workspace/
 |---|---|---|
 | `riscv_tests/` | riscv-tests 全自动回归环境 | TB、脚本、hex、work 全部在内 |
 | `debug/` | 调试 TB + 仿真输出 | 含 `tb_student_top.sv`，用于打印信号值、波形调试 |
-
-**`contest_readonly/`** — 赛方原版文件（TCL 脚本可一键导入）：
-
-| 子目录 | 内容 |
-|---|---|
-| `rtl/` | `top.sv`, `twin_controller.sv`, `uart.sv`, `counter.sv`, `display_seg.sv`, `seg7.sv` |
-| `ip/` | 扁平化 `.xci`（TCL 可 `glob *.xci` 批量导入） |
-| `constraints/` | `digital_twin.xdc` |
-| `sim/` | `tb_top.sv`, `tb_myCPU.sv`, `tb_uart.sv` + `.wcfg` |
-
-**IP 配置详情**：
-
-| 文件 | 说明 | 状态 |
-|---|---|---|
-| `pll.xci` | 1 路输出：clk_out1 = 50MHz，有 reset | 备用 |
-| **`pll_1.xci`** | **2 路输出：clk_out1 = 50MHz, clk_out2 = 180MHz (cpu_clk)，无 reset** | **✅ 当前使用** |
-| `IROM.xci` | IROM BRAM 配置（Block Memory Generator） | 当前使用 |
-| `DRAM.xci` | DRAM BRAM 配置（Block Memory Generator） | 当前使用 |
 
 **这是 AI 的主要代码输出目录。**
 
