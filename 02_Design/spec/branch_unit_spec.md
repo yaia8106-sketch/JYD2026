@@ -43,13 +43,22 @@
 
 ### 2.2 预测感知 Flush 逻辑
 
-```
-actual_taken = is_jalr | (is_branch & branch_taken)
-missed       = actual_taken & ~pred_taken    // 未预测但实际跳转
-wrong_dir    = ~actual_taken & pred_taken    // 预测跳转但实际不跳
+**当前状态 (FPGA debug)**: JAL 由 EX 级处理，ID 级优化已禁用。
 
+```
+actual_taken = is_jal | is_jalr | (is_branch & branch_taken)
+missed       = actual_taken & ~pred_taken          // 当前：所有跳转未预测则 flush
+wrong_dir    = ~actual_taken & pred_taken
 branch_flush = ex_valid & (missed | wrong_dir)
 ```
+
+**启用 JAL ID 级优化后**（待 FPGA 验证通过后恢复）:
+```
+missed       = actual_taken & ~pred_taken & ~is_jal  // JAL 由 ID 级兜底
+```
+
+> **注意**: `actual_taken` **必须包含 `is_jal`**。否则 BTB 预测 JAL 后，EX 级
+> 会误判为"预测跳了但实际没跳"（`wrong_dir=1`），错误 flush 到 PC+4。
 
 ### 2.3 重定向目标
 
@@ -65,7 +74,7 @@ branch_target = wrong_dir ? (ex_pc + 4) : actual_target
 
 - `ex_valid = 0` 时 `branch_flush` 必须为 0
 - `pred_taken = 1 && actual_taken = 1` → 不 flush（0 拍跳转成功）
-- JAL 不在此模块处理（由 BTB 或 ID 级 JAL 逻辑兜底）
+- 当前状态：所有跳转（含 JAL）由 EX 级处理，`pred_taken = 0`
 
 ---
 

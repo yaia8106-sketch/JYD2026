@@ -53,10 +53,9 @@ module branch_unit (
     wire [31:0] actual_target = is_jalr ? (alu_result & ~32'd1) : alu_result;
 
     // ---- Flush decision (prediction-aware) ----
-    // For unpredicted JAL: ID stage already handles redirection (1-cycle penalty),
-    // so EX must NOT double-flush. Predicted JAL that matches is a 0-cycle hit.
-    wire missed    = actual_taken & ~pred_taken & ~is_jal;  // JAL w/o prediction → ID handles
-    wire wrong_dir = ~actual_taken &  pred_taken;           // predicted jump, actually not taken
+    // DEBUG: JAL handled in EX stage (ID disabled), so JAL must flush here
+    wire missed    = actual_taken & ~pred_taken;              // all jumps flush if not predicted
+    wire wrong_dir = ~actual_taken &  pred_taken;             // predicted jump, actually not taken
 
     assign branch_flush = ex_valid & (missed | wrong_dir);
 

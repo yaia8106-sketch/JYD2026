@@ -102,7 +102,8 @@ module branch_predictor (
     // Gate with if_allowin: during stalls, pred_taken must be 0 to prevent
     // repeated RAS pops and incorrect PC redirection by next_pc_mux
     wire pred_taken_raw = btb_pred_jal | btb_pred_br | btb_pred_ret;
-    assign pred_taken  = pred_taken_raw & if_allowin;
+    // >>> DEBUG: Force prediction OFF to isolate FPGA issue <<<
+    assign pred_taken  = 1'b0;  // pred_taken_raw & if_allowin;
     assign pred_target = btb_pred_ret ? ras_top_addr : btb_target[if_idx];
 
     // ================================================================

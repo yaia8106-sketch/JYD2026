@@ -288,9 +288,9 @@ module cpu_top (
         .imm_type       (dec_imm_type)
     );
 
-    // JAL Early Resolution (30-bit optimized adder for timing)
-    // Suppressed when BTB already predicted this JAL in IF stage
-    assign id_jump_taken  = id_valid && dec_is_jal && !id_pred_taken;
+    // JAL Early Resolution — DISABLED for FPGA debug
+    // assign id_jump_taken  = id_valid && dec_is_jal && !id_pred_taken;
+    assign id_jump_taken  = 1'b0;  // JAL handled in EX stage instead
     assign id_jump_target = { (id_pc[31:2] + id_imm[31:2]), id_imm[1], 1'b0 };
 
     imm_gen u_imm_gen (

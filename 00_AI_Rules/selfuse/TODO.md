@@ -51,8 +51,9 @@
 
 ### 后期优化
 
-- [x] ~~JAL 提前到 ID 级判断（penalty 2→1 拍）~~ — **已完成 (Phase 1, d1fb38f)**
-  > 30-bit 加法器优化，200MHz 时序通过。
+- [x] ~~JAL 提前到 ID 级判断（penalty 2→1 拍）~~ — **已实现 (d1fb38f)，但 FPGA 验证未通过**
+  > 30-bit 加法器优化，200MHz 时序通过，riscv-tests 40/40 PASS。
+  > **问题**：数字孫生平台 FPGA 上跑飞。关闭后 FPGA 正常，待排查。
 - [x] ~~JALR 提前到 ID 级判断（视时序余量）~~ — **取消**
   > 200MHz 下寄存器读取 + 加法器时序无法收敛。改用 BTB+RAS 方案。
 - [X] **riscv-tests 功能验证环境搭建** (已完成，含 Custom Env/自动化脚本)
@@ -63,6 +64,15 @@
   - [X] 64-entry BHT: 2-bit 饱和计数器方向预测
   - [X] 预测感知 branch_unit: 正确预测时抑制 flush
   - [X] 200MHz 时序通过 (WNS = +0.064ns)
+- [X] **Bugfix: 预测器三个关键 Bug 修复 (8a6fac0)**
+  - [X] branch_unit: JAL 纳入 actual_taken，防止 BTB 命中后 EX 错误 flush
+  - [X] cpu_top: 只对真正 RET 存 BTB，防止普通 JALR 触发 RAS pop
+  - [X] branch_predictor: if_allowin 门控，防止 stall 时重复 pop
+  - [X] run_all.sh: 加入 branch_predictor.sv
+- [~] **FPGA 数字孫生平台验证**
+  - [X] 基线确认：EX-only + 无预测器 = FPGA 正常 (11.134s @ 200MHz)
+  - [ ] 定位 JAL ID 级优化导致 FPGA 跑飞的根因
+  - [ ] 修复后重新启用 Phase 1 + Phase 2+ 预测器
 - [ ] Phase 3: GShare（如 BHT 效果不足，替换为全局预测）
 - [ ] coremark 跑分验证
 - [ ] P&R 策略优化（Performance_Explore / Pblock）—— 如需进一步提频
