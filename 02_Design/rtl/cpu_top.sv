@@ -37,6 +37,7 @@ module cpu_top (
     wire [31:0] id_pc;
     wire [31:0] id_inst;           // registered instruction from IF/ID
     wire        id_pred_taken;     // prediction flag from IF stage
+    wire [31:0] id_pred_target;    // predicted target from IF stage (registered)
 
     // ---- IROM ----
     wire [31:0] irom_dout;         // instruction from BRAM output register
@@ -265,9 +266,11 @@ module cpu_top (
         .if_pc         (pc),
         .if_inst       (irom_data),
         .if_pred_taken (pred_taken),
+        .if_pred_target(pred_target),
         .id_pc         (id_pc),
         .id_inst       (id_inst),
-        .id_pred_taken (id_pred_taken)
+        .id_pred_taken (id_pred_taken),
+        .id_pred_target(id_pred_target)
     );
 
     decoder u_decoder (
@@ -380,7 +383,7 @@ module cpu_top (
         .id_is_jal        (dec_is_jal),
         .id_is_jalr       (dec_is_jalr),
         .id_pred_taken    (id_pred_taken),
-        .id_pred_target   (pred_target),
+        .id_pred_target   (id_pred_target),
         .ex_pc            (ex_pc),
         .ex_alu_src1      (ex_alu_src1),
         .ex_alu_src2      (ex_alu_src2),
