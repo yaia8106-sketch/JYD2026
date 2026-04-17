@@ -51,15 +51,18 @@
 
 ### 后期优化
 
-- [x] ~~JAL 提前到 ID 级判断（penalty 2→1 拍）~~ — **取消**
+- [x] ~~JAL 提前到 ID 级判断（penalty 2→1 拍）~~ — **已完成 (Phase 1, d1fb38f)**
+  > 30-bit 加法器优化，200MHz 时序通过。
 - [x] ~~JALR 提前到 ID 级判断（视时序余量）~~ — **取消**
-  > **取消原因**：200MHz 下 IF/ID→IROM 路径 slack 仅 +0.434ns，JAL 需新增 32-bit 加法器（~1.5ns），
-  > 会导致时序违例约 -1ns。JALR 更严重——需前递 MUX + 加法器，MEM/WB→ID 路径已达 4.498ns，
-  > 200MHz 下完全不可行。频率 vs CPI 的 trade-off 中，保持 200MHz + penalty 2 拍更优。
+  > 200MHz 下寄存器读取 + 加法器时序无法收敛。改用 BTB+RAS 方案。
 - [X] **riscv-tests 功能验证环境搭建** (已完成，含 Custom Env/自动化脚本)
-- [ ] **riscv-tests 全量功能通过** (下一步目标)
-- [ ] **Phase 1: RAS**（4 entry 返回地址栈，预测 JALR/ret，预期 CPI -0.10）
-- [ ] **Phase 2: 2-bit BHT**（256 entry 局部分支预测，预期 CPI -0.05）
+- [X] **riscv-tests 全量功能通过** (40/40 PASS ✅)
+- [X] **Phase 2+: 前端综合预测中心 (c2efc29)**
+  - [X] 32-entry BTB (LUTRAM): JAL/Branch/RET 0 拍跳转
+  - [X] 4-entry RAS: 函数返回地址栈
+  - [X] 64-entry BHT: 2-bit 饱和计数器方向预测
+  - [X] 预测感知 branch_unit: 正确预测时抑制 flush
+  - [X] 200MHz 时序通过 (WNS = +0.064ns)
 - [ ] Phase 3: GShare（如 BHT 效果不足，替换为全局预测）
 - [ ] coremark 跑分验证
 - [ ] P&R 策略优化（Performance_Explore / Pblock）—— 如需进一步提频

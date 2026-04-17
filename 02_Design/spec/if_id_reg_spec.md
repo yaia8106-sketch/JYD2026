@@ -23,8 +23,10 @@
 | **数据** |
 | `if_pc` | input | 32 | 数据 | Pre_IF_reg 的 PC 值 |
 | `if_inst` | input | 32 | 数据 | BRAM 输出的指令（IF 阶段 Clk-to-Q 有效） |
+| `if_pred_taken` | input | 1 | 控制 | IF 级预测是否跳转（来自 BTB/BHT） |
 | `id_pc` | output | 32 | 数据（寄存器） | 传给 ID 级的 PC |
 | `id_inst` | output | 32 | 数据（寄存器） | 传给 ID 级的指令（decoder/imm_gen 使用） |
+| `id_pred_taken` | output | 1 | 控制（寄存器） | 传给 ID 级的预测标志（抑制 JAL 重复重定向） |
 
 ---
 
@@ -43,15 +45,18 @@ assign id_allowin = !id_valid || (id_ready_go & ex_allowin);
 ```verilog
 always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
-        id_valid <= 1'b0;
-        id_pc    <= 32'd0;
-        id_inst  <= 32'd0;
+        id_valid      <= 1'b0;
+        id_pc         <= 32'd0;
+        id_inst       <= 32'd0;
+        id_pred_taken <= 1'b0;
     end else if (id_flush) begin
-        id_valid <= 1'b0;
+        id_valid      <= 1'b0;
+        id_pred_taken <= 1'b0;
     end else if (id_allowin) begin
-        id_valid <= if_valid & if_ready_go;
-        id_pc    <= if_pc;
-        id_inst  <= if_inst;
+        id_valid      <= if_valid & if_ready_go;
+        id_pc         <= if_pc;
+        id_inst       <= if_inst;
+        id_pred_taken <= if_pred_taken;
     end
 end
 ```
