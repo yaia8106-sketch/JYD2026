@@ -31,12 +31,9 @@
   - `coe/`：BRAM 初始化文件（`current/` 为当前使用版本）。
   - `sim/`：自研 testbench。
 
-- **`CPU4MyOwn/` (自建 Vivado 工程 — 主力开发)**
-  - 基于 `02_Design/` 的文件构建的独立 Vivado 工程。用于综合、实现、FPGA 烧录。
-  - 可通过 `02_Design/scripts/import_all.tcl` 一键导入所有源文件。
-
-- **`JYD2025_Contest-rv32i/` (赛方原版 Vivado 工程 — 旧，仅做参考)**
-  - 赛方提供的数字孪生平台模板工程。已由 `CPU4MyOwn/` 替代，保留仅供查阅。
+- **`JYD2025_Contest-rv32i/` (数字孪生平台工程 — 主力开发)**
+  - 赛事方提供的模板工程，已完成核心集成。通过 `$PPRDIR/../02_Design/` 链接源码，实现实时同步。
+  - 用于综合、实现、FPGA 烧录。
 
 - **`cdp-tests/` (赛事方功能测试框架)**
   - Verilator 仿真测试程序，用于验证指令级功能正确性。

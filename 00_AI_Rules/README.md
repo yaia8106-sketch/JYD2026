@@ -25,8 +25,7 @@ CPU_Workspace/
 │   ├── scripts/              ← Vivado TCL 脚本（import_all.tcl 等）
 │   └── sim/                  ← 自研 testbench
 ├── 03_Timing_Analysis/       ← 时序分析工作区（TCL 脚本 + 报告输出）
-├── CPU4MyOwn/                ← 自建 Vivado 工程（主力开发工程）
-├── JYD2025_Contest-rv32i/    ← 赛方原版 Vivado 工程（旧，仅做参考）
+├── JYD2025_Contest-rv32i/    ← 赛事方数字孪生平台工程（主力开发工程）
 ├── cdp-tests/                ← [废弃] 赛方功能测试框架（Verilator 仿真，不要使用）
 ├── riscv-tests/              ← riscv-tests 自动化仿真验证环境
 └── rt-thread/                ← RT-Thread 实时操作系统（最终移植目标）
@@ -116,7 +115,7 @@ CPU_Workspace/
 
 ### `JYD2025_Contest-rv32i/` — 赛事方数字孪生平台工程
 
-**赛事方提供的 Vivado 工程，是 CPU 集成的目标平台。**
+**本项目的主力 Vivado 工程，已完成 CPU 逻辑与外设接口的集成，直接链接 02_Design 的源码。**
 
 关键文件（位于 `.../digital_twin.srcs/sources_1/new/`）：
 - `top.sv` — 顶层模块，包含 PLL（差分时钟）、UART、twin_controller
