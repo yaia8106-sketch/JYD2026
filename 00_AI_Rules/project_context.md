@@ -48,6 +48,37 @@
 2. **定频阶段**：协助提炼出无歧义的 `_spec.md`。
 3. **黑盒生成**：严格按照 `_spec.md` 输出 `<Module>.sv`。
 4. **迭代修复**：接收用户反馈的逻辑错误日志或 `03_Timing_Analysis` 中的时序报告，先给出修改建议，在取得修改批准后修改重构后的 `.sv` 代码。
+5. **主动调试**：当需要验证信号行为时，修改调试 TB 并通过仿真器运行（见 §3.1）。
+
+### 3.1 调试 Testbench 方法
+
+**调试目录**：`/home/anokyai/桌面/CPU_Workspace/02_Design/sim/debug`
+
+**核心文件**：`tb_student_top.sv`（例化 student_top 的平台级仿真 TB）
+
+**使用流程**：
+
+1. **修改 TB**：在 `tb_student_top.sv` 中添加 `$display` / `$monitor` 语句，打印需要观察的信号值
+2. **运行仿真**：通过 `iverilog` 或 Vivado TCL shell 运行仿真
+3. **查看输出**：仿真输出保存在 `debug/` 目录下（如 `*_output.log`）
+4. **分析结果**：根据打印的信号值定位问题
+
+**示例**：在 TB 中添加信号追踪
+
+```systemverilog
+// 追踪分支预测行为
+always @(posedge clk) begin
+    if (u_student_top.u_cpu.branch_flush)
+        $display("[%0t] FLUSH: pc=%h target=%h", $time,
+                 u_student_top.u_cpu.ex_pc,
+                 u_student_top.u_cpu.branch_target);
+end
+```
+
+**注意**：
+- AI 可以随时修改此 TB 文件进行调试，无需用户批准
+- 调试完成后应清理临时的 `$display` 语句，保持 TB 整洁
+- 重要的调试发现应记录到 `selfuse/` 文档中
 
 ## 4. 硬件编码底线规则 (Golden Hardware Rules)
 - 组合逻辑中绝对禁止产生 Latch，所有的 `always_comb` 必须有完整的默认分支。
