@@ -5,6 +5,7 @@ digital_twin.gen/
 CPU4MyOwn/
 03_Timing_Analysis/reports/
 riscv-tests/
+rt-thread/
 
 # --- Simulation Artifacts ---
 # Waveforms

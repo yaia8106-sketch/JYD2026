@@ -16,7 +16,6 @@
 ```
 CPU_Workspace/
 ├── 00_AI_Rules/              ← AI 角色定义与设计规则（你正在看的目录）
-├── 01_Docs/                  ← 参考资料（板卡手册 PDF 等）
 ├── 02_Design/                ← 核心设计区（所有设计文件）
 │   ├── spec/                 ← 模块规格文档
 │   ├── rtl/                  ← 自研 CPU RTL 源码
@@ -28,7 +27,9 @@ CPU_Workspace/
 ├── 03_Timing_Analysis/       ← 时序分析工作区（TCL 脚本 + 报告输出）
 ├── CPU4MyOwn/                ← 自建 Vivado 工程（主力开发工程）
 ├── JYD2025_Contest-rv32i/    ← 赛方原版 Vivado 工程（旧，仅做参考）
-└── cdp-tests/                ← 赛方功能测试框架（Verilator 仿真）
+├── cdp-tests/                ← 赛方功能测试框架（Verilator 仿真）
+├── riscv-tests/              ← riscv-tests 自动化仿真验证环境
+└── rt-thread/                ← RT-Thread 实时操作系统（最终移植目标）
 ```
 
 ---
@@ -61,9 +62,7 @@ CPU_Workspace/
 
 ---
 
-### `01_Docs/` — 参考资料
-
-存放板卡数据手册、引脚定义 PDF 等比赛相关参考资料。AI 仅做参考，不应修改。
+### `01_Docs/（已移除）`
 
 ---
 

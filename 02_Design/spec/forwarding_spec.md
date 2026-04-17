@@ -33,7 +33,7 @@
 | **输出** |
 | `id_rs1_data` | output | 32 | 数据（组合） | 前递后的 rs1 数据 |
 | `id_rs2_data` | output | 32 | 数据（组合） | 前递后的 rs2 数据 |
-| `load_use_hazard` | output | 1 | 控制（组合） | Load-Use 冒险（驱动 `id_ready_go = !load_use_hazard`） |
+| `id_ready_go` | output | 1 | 控制（组合） | ID 级就绪信号（= `!load_use_hazard`） |
 
 ---
 

@@ -235,4 +235,4 @@ assign rdata = is_dram_r ? dram_douta : mmio_rdata;
 - [x] IROM IP 确认：1 拍 BRAM（无 Output Register），预取方案取指
 - [x] 复位极性：模板 `w_clk_rst` 高有效，cpu_top `rst_n` 低有效，在 student_top 中反转
 - [x] 汇编程序数据段地址已确认为 `0x8010_0000` 起始
-- [ ] bridge 需要 `mem_alu_result` 输入端口（来自 cpu_top，用于 MMIO 组合读地址）
+- [x] bridge 已实现内部地址打拍，无需 `mem_alu_result` 输入端口
