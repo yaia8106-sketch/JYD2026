@@ -29,7 +29,10 @@
   - `rtl/platform/`：`student_top.sv`、`perip_bridge.sv`（平台接口层）。
   - `contest_readonly/`：赛方原版文件归档（RTL、IP `.xci`、XDC、仿真 TB），**禁止修改**，供 TCL 脚本一键导入。
   - `coe/`：BRAM 初始化文件（`current/` 为当前使用版本）。
-  - `sim/`：自研 testbench。
+  - `sim/`：仿真验证区。
+    - `riscv_tests/`：riscv-tests 全自动回归环境（TB、脚本、hex 全在内）
+    - `debug/`：临时调试 TB + 输出（打印信号值、一次性验证）
+    - `tb_student_top.sv`：数字孪生平台级集成仿真 TB
 
 - **`JYD2025_Contest-rv32i/` (数字孪生平台工程 — 主力开发)**
   - 赛事方提供的模板工程，已完成核心集成。通过 `$PPRDIR/../02_Design/` 链接源码，实现实时同步。

@@ -42,7 +42,7 @@ RTL_FILES="
     $RTL_DIR/mem_wb_reg.sv
     $RTL_DIR/wb_mux.sv
     $RTL_DIR/cpu_top.sv
-    $SIM_DIR/tb_riscv_tests.sv
+    $SCRIPT_DIR/tb_riscv_tests.sv
 "
 
 # 要运行的测试 (与 build_tests.sh 一致, 去掉 fence_i)

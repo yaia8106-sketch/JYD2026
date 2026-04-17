@@ -23,7 +23,10 @@ CPU_Workspace/
 │   ├── contest_readonly/     ← 赛方原版文件（RTL、IP、XDC、TB，禁止修改）
 │   ├── coe/                  ← BRAM 初始化文件
 │   ├── scripts/              ← Vivado TCL 脚本（import_all.tcl 等）
-│   └── sim/                  ← 自研 testbench
+│   └── sim/                  ← 仿真验证
+│       ├── riscv_tests/       ← riscv-tests 全自动回归（TB+脚本+hex）
+│       ├── debug/             ← 临时调试 TB + 输出
+│       └── tb_student_top.sv  ← 平台级集成仿真 TB
 ├── 03_Timing_Analysis/       ← 时序分析工作区（TCL 脚本 + 报告输出）
 ├── JYD2025_Contest-rv32i/    ← 赛事方数字孪生平台工程（主力开发工程）
 ├── cdp-tests/                ← [废弃] 赛方功能测试框架（Verilator 仿真，不要使用）
@@ -76,7 +79,15 @@ CPU_Workspace/
 | `rtl/platform/` | `student_top.sv`, `perip_bridge.sv` | 平台接口层（自研） |
 | `contest_readonly/` | 赛方原版文件（见下表） | **禁止修改** |
 | `coe/` | BRAM 初始化文件 | `current/` 为当前使用版本 |
-| `sim/` | 自研 testbench | `tb_student_top.sv` 等 |
+| `sim/` | 仿真验证 | 详见下方 |
+
+**`sim/`** — 仿真验证区：
+
+| 子目录/文件 | 内容 | 说明 |
+|---|---|---|
+| `riscv_tests/` | riscv-tests 全自动回归环境 | TB、脚本、hex、work 全部在内 |
+| `debug/` | 临时调试 TB + 输出 | 快速打印信号值、一次性验证用 |
+| `tb_student_top.sv` | 数字孪生平台级 TB | 例化 student_top 的集成仿真 |
 
 **`contest_readonly/`** — 赛方原版文件（TCL 脚本可一键导入）：
 
