@@ -36,7 +36,6 @@ module cpu_top (
     wire        id_ready_go;
     wire [31:0] id_pc;
     wire [31:0] id_inst;           // registered instruction from IF/ID
-    wire        id_pred_taken;     // prediction flag from IF stage
 
     // ---- IROM ----
     wire [31:0] irom_dout;         // instruction from BRAM output register
@@ -90,8 +89,6 @@ module cpu_top (
     wire [ 2:0] ex_branch_cond;
     wire        ex_is_jal;
     wire        ex_is_jalr;
-    wire        ex_pred_taken;     // prediction flag pipelined to EX
-    wire [31:0] ex_pred_target;    // predicted target pipelined to EX
 
     // ---- ALU ----
     wire [31:0] alu_result;
@@ -100,15 +97,7 @@ module cpu_top (
     // ---- Branch ----
     wire        branch_flush;
     wire [31:0] branch_target;
-    wire        branch_actual_taken;  // true outcome from branch_unit
 
-    // ---- ID stage jump (Phase 1: Early resolution) ----
-    wire        id_jump_taken;
-    wire [31:0] id_jump_target;
-
-    // ---- IF stage prediction (Phase 2+: BTB/BHT/RAS) ----
-    wire        pred_taken;
-    wire [31:0] pred_target;
 
     // ---- Store interface (EX stage) ----
     wire [31:0] store_data_shifted;
@@ -153,7 +142,7 @@ module cpu_top (
     wire mem_ready_go_w = 1'b1;     // BRAM latency absorbed by pipeline
 
     // ---- Flush ----
-    wire id_flush = branch_flush | id_jump_taken;
+    wire id_flush = branch_flush;
     wire ex_flush = branch_flush;
 
     // ---- Register addresses from instruction (ID stage, from IF/ID reg) ----
@@ -174,68 +163,17 @@ module cpu_top (
 
     // ==================== Pre-IF ====================
 
+    wire [31:0] next_pc;
+    wire        if_allowin_w = id_allowin;   // for irom_addr mux
+
     next_pc_mux u_next_pc_mux (
-        .pc                (pc),
-        .next_pc_seq       (pc + 32'd4),
-        .pred_taken        (pred_taken),
-        .pred_target       (pred_target),
-        .id_jump_taken     (id_jump_taken),
-        .id_jump_target    (id_jump_target),
-        .ex_branch_flush   (branch_flush),
-        .ex_branch_target  (branch_target),
-        .if_allowin        (id_allowin),
-        .irom_addr         (irom_addr)
+        .pc       (pc),
+        .next_pc  (next_pc)
     );
 
-    // ==================== Branch Predictor (Phase 2+) ====================
-
-    // CALL/RET detection (ID stage): RISC-V convention
-    //   CALL = JAL/JALR with rd == x1 or x5
-    //   RET  = JALR with rs1 == x1 or x5, rd == x0
-    wire id_is_call = id_valid && (dec_is_jal || dec_is_jalr)
-                    && (id_rd_addr == 5'd1 || id_rd_addr == 5'd5);
-    wire id_is_ret  = id_valid && dec_is_jalr
-                    && (id_rs1_addr == 5'd1 || id_rs1_addr == 5'd5)
-                    && (id_rd_addr == 5'd0);
-
-    // EX stage: determine actual branch/jump outcome for training
-    wire        ex_actual_taken = branch_actual_taken;  // true outcome from branch_unit
-    wire [31:0] ex_actual_target = branch_target;
-
-    // Detect RET in EX stage: JALR with rs1=x1/x5, rd=x0
-    wire        ex_is_ret = ex_is_jalr
-                          && (ex_rs1_addr == 5'd1 || ex_rs1_addr == 5'd5)
-                          && (ex_rd == 5'd0);
-
-    // Only store predictable instructions in BTB (no non-RET JALR)
-    wire        ex_update_en = ex_valid && (ex_is_branch || ex_is_jal || ex_is_ret);
-
-    // Encode type: 0=JAL, 1=B-type, 2=RET
-    wire [1:0]  ex_bp_type = ex_is_jal    ? 2'd0 :
-                             ex_is_branch ? 2'd1 :
-                                            2'd2;  // RET (only RET reaches here now)
-    wire        ex_mispredict = branch_flush;  // flush = misprediction
-
-    branch_predictor u_branch_predictor (
-        .clk             (clk),
-        .rst_n           (rst_n),
-        // IF Stage (Query)
-        .if_pc           (pc),
-        .if_allowin      (id_allowin),
-        .pred_taken      (pred_taken),
-        .pred_target     (pred_target),
-        // ID Stage (RAS)
-        .id_pc           (id_pc),
-        .id_is_call      (id_is_call),
-        .id_is_ret       (id_is_ret),
-        // EX Stage (Update)
-        .update_en       (ex_update_en),
-        .ex_pc           (ex_pc),
-        .ex_actual_target(ex_actual_target),
-        .ex_actual_taken (ex_actual_taken),
-        .ex_inst_type    (ex_bp_type),
-        .ex_mispredict   (ex_mispredict)
-    );
+    assign irom_addr = branch_flush  ? branch_target :   // 分支：预取目标
+                       !if_allowin_w ? pc :               // 停顿：保持当前地址
+                                       next_pc;           // 正常：预取下一条
 
     pc_reg u_pc_reg (
         .clk           (clk),
@@ -253,21 +191,19 @@ module cpu_top (
     // ==================== IF/ID ====================
 
     if_id_reg u_if_id_reg (
-        .clk           (clk),
-        .rst_n         (rst_n),
-        .if_valid      (if_valid),
-        .if_ready_go   (if_ready_go_w),
-        .id_allowin    (id_allowin),
-        .id_valid      (id_valid),
-        .id_ready_go   (id_ready_go),
-        .ex_allowin    (ex_allowin),
-        .id_flush      (id_flush),
-        .if_pc         (pc),
-        .if_inst       (irom_data),
-        .if_pred_taken (pred_taken),
-        .id_pc         (id_pc),
-        .id_inst       (id_inst),
-        .id_pred_taken (id_pred_taken)
+        .clk          (clk),
+        .rst_n        (rst_n),
+        .if_valid     (if_valid),
+        .if_ready_go  (if_ready_go_w),
+        .id_allowin   (id_allowin),
+        .id_valid     (id_valid),
+        .id_ready_go  (id_ready_go),
+        .ex_allowin   (ex_allowin),
+        .id_flush     (id_flush),
+        .if_pc        (pc),
+        .if_inst      (irom_data),       // BRAM output captured in IF stage
+        .id_pc        (id_pc),
+        .id_inst      (id_inst)          // registered instruction for ID
     );
 
     decoder u_decoder (
@@ -288,10 +224,7 @@ module cpu_top (
         .imm_type       (dec_imm_type)
     );
 
-    // JAL Early Resolution — DISABLED for FPGA debug
-    // assign id_jump_taken  = id_valid && dec_is_jal && !id_pred_taken;
-    assign id_jump_taken  = 1'b0;  // JAL handled in EX stage instead
-    assign id_jump_target = { (id_pc[31:2] + id_imm[31:2]), id_imm[1], 1'b0 };
+
 
     imm_gen u_imm_gen (
         .inst     (id_inst),                   // from IF/ID register
@@ -379,8 +312,6 @@ module cpu_top (
         .id_branch_cond   (dec_branch_cond),
         .id_is_jal        (dec_is_jal),
         .id_is_jalr       (dec_is_jalr),
-        .id_pred_taken    (id_pred_taken),
-        .id_pred_target   (pred_target),
         .ex_pc            (ex_pc),
         .ex_alu_src1      (ex_alu_src1),
         .ex_alu_src2      (ex_alu_src2),
@@ -399,9 +330,7 @@ module cpu_top (
         .ex_is_branch     (ex_is_branch),
         .ex_branch_cond   (ex_branch_cond),
         .ex_is_jal        (ex_is_jal),
-        .ex_is_jalr       (ex_is_jalr),
-        .ex_pred_taken    (ex_pred_taken),
-        .ex_pred_target   (ex_pred_target)
+        .ex_is_jalr       (ex_is_jalr)
     );
 
     // ==================== EX stage ====================
@@ -419,17 +348,13 @@ module cpu_top (
         .rs1_data      (ex_rs1_data),
         .rs2_data      (ex_rs2_data),
         .alu_result    (alu_result),
-        .ex_pc         (ex_pc),
         .is_branch     (ex_is_branch),
         .branch_cond   (ex_branch_cond),
         .is_jal        (ex_is_jal),
         .is_jalr       (ex_is_jalr),
         .ex_valid      (ex_valid),
-        .pred_taken    (ex_pred_taken),
-        .pred_target   (ex_pred_target),
         .branch_flush  (branch_flush),
-        .branch_target (branch_target),
-        .actual_taken_out (branch_actual_taken)
+        .branch_target (branch_target)
     );
 
     // Store interface (EX stage → DRAM)
