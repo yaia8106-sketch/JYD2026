@@ -24,3 +24,6 @@ xsim.dir/
 # Logs and Journals
 *.log
 *.jou
+
+# Branch prediction simulation output
+02_Design/coe/sim_output/__pycache__/
