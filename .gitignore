@@ -27,3 +27,4 @@ xsim.dir/
 
 # Branch prediction simulation output
 02_Design/coe/sim_output/__pycache__/
+02_Design/coe/sim_output/
