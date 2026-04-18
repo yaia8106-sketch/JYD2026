@@ -1,31 +1,21 @@
 # TODO 清单
 
-## ⚠️ 当前阻塞问题（2026-04-17 更新）
+## ✅ 基线状态（2026-04-18 更新）
 
-**现象**：处理器通过 riscv-tests（40/40 PASS），但上板（数字孪生平台 FPGA）后程序跑飞。
+**纯净 EX-only 基线已通过数字孪生平台 FPGA 验证，功能完全正确。**
 
-**根因已定位并修复（3 个 Bug）**：
+- ✅ riscv-tests 40/40 PASS
+- ✅ 数字孪生平台 FPGA 上板验证通过（200MHz）
+- ✅ 所有预测器和 JAL ID-stage 残留代码已清理
 
-1. ✅ **branch_unit 不校验预测目标地址**（`branch_unit.sv`）
-   - BTB aliasing 导致错误目标时，只检查方向不检查地址 → 不 flush → 跑飞
-   - 修复：增加 `wrong_tgt = actual_taken & pred_taken & (target ≠ pred_target)`
+> **下一步**：在此基线上添加 Tournament 分支预测器（Bimodal + GShare + GHR-indexed selector）。
+> 如果预测器导致功能异常，回滚到本版本（见 `milestones.md` M6）。
 
-2. ✅ **pred_target 未通过 IF/ID 寄存器**（`if_id_reg.sv` + `cpu_top.sv`）
-   - `id_ex_reg` 收到的是 branch_predictor 的实时组合输出，不对应 ID 阶段指令
-   - 修复：在 IF/ID 寄存器中增加 `pred_target` 注册
+### 历史 Bug 记录（已修复并清理，仅供参考）
 
-3. ✅ **RAS POP 在 IF 阶段导致重复弹出**（`branch_predictor.sv`）
-   - flush 后重取同一 RET → `btb_pred_ret` 再次触发 → RAS 反复 POP → 栈耗尽
-   - 修复：POP 移到 EX 阶段（每条 RET 最多 POP 一次）
-
-**验证状态**：
-- ✅ riscv-tests 40/40 PASS（预测器启用）
-- ✅ 竞赛程序仿真 100K 拍 PC 未跑飞（Vivado xsim + BRAM IP）
-- ⬜ **等待 FPGA 上板验证**
-
-**待观察**：
-- `wrong_tgt` 比率高（~99% flush 来自 wrong_tgt），可能需要优化 RAS 机制
-- 降频测试（排除时序违例因素）仍建议执行
+1. ✅ branch_unit 不校验预测目标地址 → 已修复并从基线中移除
+2. ✅ pred_target 未通过 IF/ID 寄存器 → 已修复并从基线中移除
+3. ✅ RAS POP 重复弹出 → 已修复并从基线中移除
 
 ---
 
@@ -78,29 +68,21 @@
 
 ### 后期优化
 
-- [x] ~~JAL 提前到 ID 级判断（penalty 2→1 拍）~~ — **已实现 (d1fb38f)，但 FPGA 验证未通过**
-  > 30-bit 加法器优化，200MHz 时序通过，riscv-tests 40/40 PASS。
-  > **问题**：数字孫生平台 FPGA 上跑飞。关闭后 FPGA 正常，待排查。
-- [x] ~~JALR 提前到 ID 级判断（视时序余量）~~ — **取消**
-  > 200MHz 下寄存器读取 + 加法器时序无法收敛。改用 BTB+RAS 方案。
+- [x] ~~JAL 提前到 ID 级判断（penalty 2→1 拍）~~ — **已放弃**
+  > FPGA 上跑飞，已从基线中清理
+- [x] ~~JALR 提前到 ID 级判断（视时序余量）~~ — **已取消**
+  > 200MHz 下时序无法收敛
 - [X] **riscv-tests 功能验证环境搭建** (已完成，含 Custom Env/自动化脚本)
 - [X] **riscv-tests 全量功能通过** (40/40 PASS ✅)
-- [X] **Phase 2+: 前端综合预测中心 (c2efc29)**
-  - [X] 32-entry BTB (LUTRAM): JAL/Branch/RET 0 拍跳转
-  - [X] 4-entry RAS: 函数返回地址栈
-  - [X] 64-entry BHT: 2-bit 饱和计数器方向预测
-  - [X] 预测感知 branch_unit: 正确预测时抑制 flush
-  - [X] 200MHz 时序通过 (WNS = +0.064ns)
-- [X] **Bugfix: 预测器三个关键 Bug 修复 (8a6fac0)**
-  - [X] branch_unit: JAL 纳入 actual_taken，防止 BTB 命中后 EX 错误 flush
-  - [X] cpu_top: 只对真正 RET 存 BTB，防止普通 JALR 触发 RAS pop
-  - [X] branch_predictor: if_allowin 门控，防止 stall 时重复 pop
-  - [X] run_all.sh: 加入 branch_predictor.sv
-- [~] **FPGA 数字孫生平台验证**
-  - [X] 基线确认：EX-only + 无预测器 = FPGA 正常 (11.134s @ 200MHz)
-  - [ ] 定位 JAL ID 级优化导致 FPGA 跑飞的根因
-  - [ ] 修复后重新启用 Phase 1 + Phase 2+ 预测器
-- [ ] Phase 3: GShare（如 BHT 效果不足，替换为全局预测）
+- [X] **FPGA 数字孪生平台验证（EX-only 纯净基线）** ✅
+  - [X] 基线确认：EX-only + 无预测器 = FPGA 功能完全正确 @ 200MHz
+  - **此为添加分支预测器前的最终确认（M6）**
+- [ ] **Tournament 分支预测器** ← 当前任务
+  - [ ] Bimodal 预测器实现
+  - [ ] GShare 预测器实现
+  - [ ] GHR-indexed selector 实现
+  - [ ] 集成到 cpu_top + riscv-tests 验证
+  - [ ] FPGA 上板验证
 - [ ] coremark 跑分验证
 - [ ] P&R 策略优化（Performance_Explore / Pblock）—— 如需进一步提频
 
