@@ -46,6 +46,7 @@ module student_top #(
     // CPU ↔ perip_bridge
     logic [31:0] perip_addr;
     logic [31:0] perip_addr_sum;    // ALU 加法器直出，跳过 output MUX
+    logic [31:0] perip_wr_addr;     // FIX-C: MEM stage store address
     logic [3:0]  perip_wea;
     logic [31:0] perip_wdata;
     logic [31:0] perip_rdata;
@@ -61,9 +62,10 @@ module student_top #(
         .irom_addr   (irom_addr),
         .irom_data   (irom_data),
 
-        // 外设总线 (EX stage → bridge)
+        // 外设总线
         .perip_addr     (perip_addr),
         .perip_addr_sum (perip_addr_sum),
+        .perip_wr_addr  (perip_wr_addr),     // FIX-C: MEM stage write addr
         .perip_wea      (perip_wea),
         .perip_wdata    (perip_wdata),
         .perip_rdata    (perip_rdata)
@@ -89,10 +91,10 @@ module student_top #(
         .rst     (w_clk_rst),            // 高有效，直连
 
         // CPU 总线
-        .addr     (perip_addr),
-        .addr_sum (perip_addr_sum),
-        .wea      (perip_wea),
-        .wdata    (perip_wdata),
+        .addr     (perip_addr),           // EX stage: 读地址
+        .wr_addr  (perip_wr_addr),        // MEM stage: 写地址 (FIX-C)
+        .wea      (perip_wea),            // MEM stage: 写使能 (FIX-C)
+        .wdata    (perip_wdata),          // MEM stage: 写数据 (FIX-C)
         .rdata    (perip_rdata),
 
         // 平台 I/O

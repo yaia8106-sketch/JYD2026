@@ -22,12 +22,14 @@ module perip_bridge (
     input  logic         cnt_clk,         // 50MHz，counter CDC 用
     input  logic         rst,             // 高有效
 
-    // CPU 接口 (EX 阶段信号)
-    input  logic [31:0]  addr,            // = alu_result（EX 组合）
-    input  logic [31:0]  addr_sum,        // = alu_sum（加法器直出，跳过 ALU output MUX）
-    input  logic [3:0]   wea,             // 字节写使能（EX 组合）
-    input  logic [31:0]  wdata,           // 写数据（EX 组合，已移位）
-    output logic [31:0]  rdata,           // 读数据（MEM 阶段有效）
+    // CPU 接口
+    //   Read path (EX stage): addr → DRAM 读端口 + is_dram 判断
+    //   Write path (MEM stage, FIX-C): wr_addr/wea/wdata 已打拍
+    input  logic [31:0]  addr,            // EX stage: 读地址 (= alu_addr)
+    input  logic [31:0]  wr_addr,         // MEM stage: 写地址 (= mem_alu_result, 已打拍)
+    input  logic [3:0]   wea,             // MEM stage: 字节写使能（已打拍）
+    input  logic [31:0]  wdata,           // MEM stage: 写数据（已打拍）
+    output logic [31:0]  rdata,           // MEM stage: 读数据
 
     // 平台 I/O
     input  logic [63:0]  sw,              // 虚拟拨码开关
@@ -52,12 +54,14 @@ module perip_bridge (
     localparam CNT_STOP_CMD  = 32'hFFFF_FFFF;
 
     // ================================================================
-    //  地址译码 (EX 阶段，组合)
+    //  地址译码
     // ================================================================
-    // 使用 addr_sum（ALU 加法器直出，跳过 output MUX）来判断
-    // Load/Store 指令的 alu_op 恒为 ALU_ADD，所以 addr_sum == addr
-    // 非 Load/Store 指令时 wea=0，is_dram 的值无关紧要
-    wire is_dram = (addr_sum[31:18] == 14'b1000_0000_0001_00);  // 0x8010_0000 ~ 0x8013_FFFF
+
+    // 读侧 is_dram：用 EX 级 addr（给 mem_is_dram 打拍，用于输出 MUX）
+    wire is_dram = (addr[31:18] == 14'b1000_0000_0001_00);
+
+    // 写侧 is_dram：用 MEM 级 wr_addr（已打拍，用于 DRAM 写端口和 MMIO 写）
+    wire wr_is_dram = (wr_addr[31:18] == 14'b1000_0000_0001_00);
 
     // ================================================================
     //  地址打拍 (EX → MEM，给 MMIO 组合读和输出 MUX 用)
@@ -71,38 +75,40 @@ module perip_bridge (
     end
 
     // ================================================================
-    //  DRAM: BRAM (无 output register, 1 拍读延迟)
-    // ================================================================
-    //  IP: Block Memory Generator, Single Port RAM
-    //  配置: 32bit, 65536 depth (可调), 4-bit Byte Write Enable
-    //  无 output register, 无 enable port
+    //  DRAM: Simple Dual Port BRAM (FIX-C)
+    //   Port A = 写端口 (MEM 级，已打拍，无组合路径)
+    //   Port B = 读端口 (EX 级，保持原有 load 时序)
+    //   IP 配置: Byte Write Enable, Byte Size=8, Width=32, Depth=65536
     // ================================================================
     logic [31:0] dram_douta;
 
     DRAM4MyOwn u_dram (
+        // 写端口 (Port A, MEM stage)
         .clka  (clk),
-        .addra (addr[17:2]),             // word 地址，EX 阶段直连
-        .wea   ({4{is_dram}} & wea),     // DRAM 范围外禁止写
-        .dina  (wdata),
-        .douta (dram_douta)              // MEM 阶段 Clk-to-Q 有效
+        .wea   ({4{wr_is_dram}} & wea),    // MEM 级已打拍 WEA [3:0]
+        .addra (wr_addr[17:2]),            // MEM 级已打拍地址
+        .dina  (wdata),                    // MEM 级已打拍数据
+
+        // 读端口 (Port B, EX stage)
+        .clkb  (clk),
+        .enb   (1'b1),                     // 读端口常使能
+        .addrb (addr[17:2]),               // EX 级组合地址
+        .doutb (dram_douta)                // MEM 级 Clk-to-Q 有效
     );
 
     // ================================================================
-    //  MMIO 写 (EX→MEM 时钟沿采样)
-    //  并行 AND-OR 结构：每个寄存器独立译码 + 独立 always_ff
-    //    - mmio_wr: 公共写使能（|wea && !is_dram）
-    //    - wr_xxx: 各设备独立写使能（one-hot）
-    //    - 使用 addr_sum[6:4] 部分译码 + addr_sum 跳过 ALU output MUX
+    //  MMIO 写 (MEM stage, FIX-C: 用已打拍信号)
+    //  wr_addr/wea/wdata 均来自 EX/MEM 寄存器，无组合路径压力
     // ================================================================
     logic [31:0] led_reg;
     logic [31:0] seg_wdata;
     logic        cnt_enable_cfg;
 
-    // ---- 并行译码（one-hot，组合逻辑）----
-    wire mmio_wr = |wea & ~is_dram;
-    wire wr_led  = mmio_wr & (addr_sum[6:4] == 3'b100);   // LED  0x8020_0040
-    wire wr_seg  = mmio_wr & (addr_sum[6:4] == 3'b010);   // SEG  0x8020_0020
-    wire wr_cnt  = mmio_wr & (addr_sum[6:4] == 3'b101);   // CNT  0x8020_0050
+    // ---- 并行译码（one-hot，组合逻辑，用 MEM 级信号）----
+    wire mmio_wr = |wea & ~wr_is_dram;
+    wire wr_led  = mmio_wr & (wr_addr[6:4] == 3'b100);   // LED  0x8020_0040
+    wire wr_seg  = mmio_wr & (wr_addr[6:4] == 3'b010);   // SEG  0x8020_0020
+    wire wr_cnt  = mmio_wr & (wr_addr[6:4] == 3'b101);   // CNT  0x8020_0050
 
     // ---- LED 寄存器 ----
     always_ff @(posedge clk) begin

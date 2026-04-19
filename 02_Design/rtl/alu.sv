@@ -12,15 +12,20 @@ module alu
     input  logic [31:0] alu_src1,
     input  logic [31:0] alu_src2,
     output logic [31:0] alu_result,
-    output logic [31:0] alu_sum        // 加法器直出（跳过 output MUX），供 bridge 做地址判断
+    output logic [31:0] alu_sum,       // 加法器直出（跳过 output MUX），供 bridge 做地址判断
+    output logic [31:0] alu_addr       // FIX-A: 独立地址加法器，不依赖 alu_op
 );
 
-    assign alu_sum = sum;
+
+    // FIX-A: 纯 src1+src2 加法器，用于 load/store 地址计算
+    //   不经过 negate 逻辑，彻底切断 alu_op → DRAM 地址的依赖
+    assign alu_addr = alu_src1 + alu_src2;
 
     // ---- 3.1 Shared adder/subtractor ----
     // negate src2 for SUB(1_000), SLT(0_010), SLTU(0_011)
     wire negate = alu_op[3] | alu_op[1];
     wire [31:0] sum = alu_src1 + (negate ? ~alu_src2 : alu_src2) + {31'b0, negate};
+    assign alu_sum = sum;
 
     // ---- 3.2 Unified comparator ----
     // Same sign: check subtraction result sign bit

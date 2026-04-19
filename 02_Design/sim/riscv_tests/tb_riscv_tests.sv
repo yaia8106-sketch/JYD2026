@@ -30,12 +30,12 @@ module tb_riscv_tests;
 
     // ================================================================
     //  CPU ↔ Memory interfaces
-    // ================================================================
-    wire [31:0] irom_addr;
+       wire [31:0] irom_addr;
     reg  [31:0] irom_data;
 
     wire [31:0] perip_addr;
     wire [31:0] perip_addr_sum;
+    wire [31:0] perip_wr_addr;     // FIX-C: MEM stage write address
     wire [3:0]  perip_wea;
     wire [31:0] perip_wdata;
     wire [31:0] perip_rdata;
@@ -50,6 +50,7 @@ module tb_riscv_tests;
         .irom_data      (irom_data),
         .perip_addr     (perip_addr),
         .perip_addr_sum (perip_addr_sum),
+        .perip_wr_addr  (perip_wr_addr),    // FIX-C
         .perip_wea      (perip_wea),
         .perip_wdata    (perip_wdata),
         .perip_rdata    (perip_rdata)
@@ -68,31 +69,32 @@ module tb_riscv_tests;
     end
 
     // ================================================================
-    //  DRAM Model (1-cycle latency: no output register)
-    //  Address: 0x80100000 ~ 0x8013FFFF, 65536 x 32-bit words
-    //  Word address = perip_addr[17:2]
-    //  Byte write enable (4-bit WEA)
+    //  DRAM Model — Simple Dual Port (FIX-C)
+    //   Write port: perip_wr_addr (MEM stage, registered)
+    //   Read port:  perip_addr (EX stage, combinational)
     // ================================================================
     reg [31:0] dram [0:65535];
     reg [31:0] dram_dout;
 
-    // Address decode (matching perip_bridge.sv)
-    wire is_dram = (perip_addr_sum[31:18] == 14'b1000_0000_0001_00);
-    wire [15:0] dram_word_addr = perip_addr[17:2];
-    wire [3:0]  dram_wea = {4{is_dram}} & perip_wea;
+    // Write side: MEM stage address
+    wire wr_is_dram = (perip_wr_addr[31:18] == 14'b1000_0000_0001_00);
+    wire [15:0] dram_wr_word_addr = perip_wr_addr[17:2];
+    wire [3:0]  dram_wea = {4{wr_is_dram}} & perip_wea;
+
+    // Read side: EX stage address
+    wire [15:0] dram_rd_word_addr = perip_addr[17:2];
 
     always @(posedge clk) begin
-        if (dram_wea[0]) dram[dram_word_addr][ 7: 0] <= perip_wdata[ 7: 0];
-        if (dram_wea[1]) dram[dram_word_addr][15: 8] <= perip_wdata[15: 8];
-        if (dram_wea[2]) dram[dram_word_addr][23:16] <= perip_wdata[23:16];
-        if (dram_wea[3]) dram[dram_word_addr][31:24] <= perip_wdata[31:24];
-        dram_dout <= dram[dram_word_addr];
+        // Write port (MEM stage)
+        if (dram_wea[0]) dram[dram_wr_word_addr][ 7: 0] <= perip_wdata[ 7: 0];
+        if (dram_wea[1]) dram[dram_wr_word_addr][15: 8] <= perip_wdata[15: 8];
+        if (dram_wea[2]) dram[dram_wr_word_addr][23:16] <= perip_wdata[23:16];
+        if (dram_wea[3]) dram[dram_wr_word_addr][31:24] <= perip_wdata[31:24];
+        // Read port (EX stage address → available in MEM)
+        dram_dout <= dram[dram_rd_word_addr];
     end
 
     // Read data MUX (simplified: for riscv-tests, only DRAM is accessed)
-    reg mem_is_dram;
-    always @(posedge clk) mem_is_dram <= is_dram;
-
     assign perip_rdata = dram_dout;
 
     // ================================================================
@@ -113,7 +115,7 @@ module tb_riscv_tests;
             tohost_value    <= 32'd0;
         end else if (!tohost_detected &&
                      |dram_wea &&
-                     dram_word_addr == TOHOST_WORD_ADDR) begin
+                     dram_wr_word_addr == TOHOST_WORD_ADDR) begin
             tohost_detected <= 1'b1;
             tohost_value    <= perip_wdata;
         end

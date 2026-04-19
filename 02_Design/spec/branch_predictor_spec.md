@@ -1,13 +1,15 @@
 # 分支预测器架构规格书
 
-> 状态：架构确定，待 RTL 实现 | 最后更新：2026-04-18
+> 状态：✅ RTL 实现完成，FPGA 验证通过 | 最后更新：2026-04-19
 
 ---
 
 ## 1. 设计目标
 
-在 5 级流水线（IF → ID → EX → MEM → WB）的 IF 阶段，预测跳转方向和目标地址，
-将 JAL/CALL/B-type/RET 的跳转惩罚从 **2 拍** 降至 **0 拍**（预测正确时）。
+采用 **NLP (Next-Line Predictor) 两级预测架构**，将 Tournament 预测逻辑从 IF 级分离到 ID 级：
+- **IF 级（L0 快速预测）**：BTB 直接映射 + Bimodal bht[1] → 驱动 IROM 地址（2-3 级逻辑）
+- **ID 级（L1 Tournament 验证）**：完整 Tournament 并行验证 → 不一致时 redirect（1 bubble）
+- **EX 级**：最终确认 + 所有状态更新（不变）
 
 **适用指令**：JAL、CALL（JAL rd=ra）、B-type、RET（JALR rs1=ra rd=x0）
 **不适用**：非 RET 的 JALR（不预测，每次 2 拍惩罚）
@@ -25,9 +27,9 @@
 
 ┌──────────────────────────────────────────────────────┐
 │  BTB (Branch Target Buffer)                          │
-│  64 entry, 2-way set-associative, 32 sets            │
-│  每条目: valid(1)+tag(8)+target(30)+type(2)+bht(2)   │
-│  = 43 bit/entry + 1 bit LRU/set                     │
+│  64 entry, direct-mapped (NLP: 消除 way 选择逻辑)   │
+│  每条目: valid(1)+tag(7)+target(30)+type(2)+bht(2)   │
+│  = 42 bit/entry，无 LRU                              │
 │  实现: LUTRAM                                        │
 ├──────────────────────────────────────────────────────┤
 │  GShare 预测器                                       │
@@ -48,28 +50,28 @@
 └──────────────────────────────────────────────────────┘
 ```
 
-### 2.2 流水线交互
+### 2.2 NLP 流水线交互
 
 ```
-       IF 阶段（只读，纯组合）              EX 阶段（只写，时序）
-  ┌──────────────────────┐           ┌──────────────────────┐
-  │                      │           │ 分支确认后:          │
-  │ PC ──┬→ BTB 读       │           │  · BTB 写入/更新     │
-  │      ├→ PHT 读  ┐    │           │  · Bimodal 计数器更新│
-  │      └→ Selector ┤   │           │  · GHR 移位          │
-  │         读     并行   │           │  · PHT 计数器更新    │
-  │                  ↓    │           │  · Selector 更新     │
-  │      tag比较 → 预测   │           │  · RAS push/pop      │
-  │              → next_pc│           │  · LRU 更新          │
-  └──────────────────────┘           │                      │
-                                     │ 误预测时:            │
-                                     │  · branch_flush      │
-                                     │  · branch_target     │
-                                     └──────────────────────┘
+  IF 阶段（L0 快速预测）       ID 阶段（L1 Tournament验证）  EX 阶段（只写，时序）
+┌─────────────────────┐   ┌─────────────────────┐   ┌──────────────────────┐
+│ PC → BTB LUTRAM读   │   │ 从IF/ID reg读取:    │   │ 分支确认后:          │
+│    → tag比较(1级)   │   │  · bht, pht, sel    │   │  · BTB 写入/更新     │
+│    → bht[1](Bimodal)│   │                     │   │  · Bimodal 计数器更新│
+│    → target MUX     │   │ L1 Tournament决策:  │   │  · GHR 移位          │
+│    → IROM addr      │   │  bimodal vs gshare  │   │  · PHT 计数器更新    │
+│                     │   │  via selector       │   │  · Selector 更新     │
+│ 并行(不在关键路径): │  │                     │   │  · RAS push/pop      │
+│  · PHT 读           │   │ L0≠L1 且为BRANCH:  │   │                      │
+│  · Selector 读      │   │  → id_bp_redirect   │   │ 误预测时:            │
+│                     │   │  → flush IF, 1bubble│   │  · branch_flush      │
+└─────────────────────┘   └─────────────────────┘   └──────────────────────┘
+     2-3 级逻辑 ~3.3ns         纯组合，不限时序           纯时序
 ```
 
 **关键原则**：
-- **IF 阶段只读**：BTB + PHT + Selector + RAS 读取，纯组合逻辑
+- **IF 阶段（L0）**：仅 BTB 读 + tag 比较 + bht[1] 快速方向决策，**极短关键路径**
+- **ID 阶段（L1）**：Tournament（Bimodal vs GShare via Selector）验证 L0，不一致时 redirect
 - **EX 阶段只写**：分支确认后才更新所有状态
 - **无投机更新**：所有状态永远正确，无需 checkpoint/恢复
 
@@ -82,43 +84,47 @@
 | 参数 | 值 | 验证方式 |
 |------|:--:|---------|
 | **容量** | 64 entry | 仿真：BTB64 比 BTB32 平均命中率高 5-7% |
-| **映射方式** | 2 路组相联 | 仿真：2 路比直接映射好 2%，src0 上好 6% |
-| **组数** | 32 组 | 64 / 2 = 32 |
+| **映射方式** | **直接映射** | NLP 优化：消除 way 选择 MUXF7，减少 IF 级逻辑级数 |
 | **索引方式** | PC 直接取位 | 仿真：Direct 80.1% vs XOR 79.8% |
-| **索引位** | `PC[6:2]` | 5 bit → 32 组 |
-| **Tag 位** | `PC[14:7]` | 8 bit，支持 64KB 代码空间 |
-| **替换策略** | LRU | 每组 1-bit |
+| **索引位** | `PC[7:2]` | 6 bit → 64 entry |
+| **Tag 位** | `PC[14:8]` | 7 bit |
+| **替换策略** | 直接覆盖 | 直接映射无需 LRU |
+
+> [!NOTE]
+> 原设计为 2-way 组相联（32 组）。NLP 优化改为直接映射以消除 IF 级的 way 选择逻辑（MUXF7），
+> 将关键路径从 8 级降至 2-3 级。虽然仿真显示 2-way 比直接映射准确率高 ~2%，但 NLP 的
+> ID 级 Tournament 验证弥补了这个差距。
 
 ### 3.2 地址位分解
 
 ```
-PC[31:0] 的用途分配：
+PC[31:0] 的用途分配（NLP 直接映射）：
 
-  31        15  14       7  6     2    1  0
- ┌──────────┬────────────┬─────────┬──────┐
- │ 不使用   │  Tag (8b)  │Index(5b)│ 00   │
- │(高位恒定)│ PC[14:7]   │PC[6:2]  │(对齐)│
- └──────────┴────────────┴─────────┴──────┘
+  31        15  14     8  7     2    1  0
+ ┌──────────┬──────────┬─────────┬──────┐
+ │ 不使用   │ Tag (7b) │Index(6b)│ 00   │
+ │(高位恒定)│ PC[14:8] │PC[7:2]  │(对齐)│
+ └──────────┴──────────┴─────────┴──────┘
 ```
 
-### 3.3 Entry 结构（每条目 43 bit）
+### 3.3 Entry 结构（每条目 42 bit）
 
 ```
- 42    41 40   39 32   31                2   1  0
+ 41    40 39   38 32   31                2   1  0
 ┌─────┬──────┬───────┬───────────────────┬─────┐
 │valid│ bht  │  tag  │     target        │type │
-│ (1) │ (2)  │  (8)  │      (30)         │ (2) │
+│ (1) │ (2)  │  (7)  │      (30)         │ (2) │
 └─────┴──────┴───────┴───────────────────┴─────┘
 ```
 
 | 字段 | 位宽 | 说明 |
 |------|:---:|------|
 | `valid` | 1 | 条目有效标志，复位时清零 |
-| `tag` | 8 | `PC[14:7]`，用于匹配 |
+| `tag` | 7 | `PC[14:8]`，用于匹配 |
 | `target` | 30 | 预测跳转目标 `PC[31:2]`，低 2 位恒为 0 |
-| `type` | 2 | 指令类型编码 |
-| `bht` | 2 | Bimodal 2-bit 饱和计数器 |
-| **合计** | **43** | |
+| `type` | 2 | 指令类型编码（NLP：ID 级用于判断是否需要 Tournament 验证） |
+| `bht` | 2 | Bimodal 2-bit 饱和计数器（NLP：bht[1] 用于 IF 级 L0 快速方向决策） |
+| **合计** | **42** | |
 
 ### 3.4 Type 编码
 
@@ -126,18 +132,17 @@ PC[31:0] 的用途分配：
 |:---------:|------|---------|
 | `2'b00` | JAL | `opcode=6F`，`rd ≠ x1` |
 | `2'b01` | CALL | `opcode=6F`，`rd = x1`（即 JAL ra, offset） |
-| `2'b10` | BRANCH | `opcode=63`（B-type） |
+| `2'b10` | BRANCH | `opcode=63`（B-type）— NLP: **仅此类型触发 ID 级 L1 验证** |
 | `2'b11` | RET | `opcode=67`，`rs1=x1`，`rd=x0` |
 
 ### 3.5 不存储的指令
 
 **非 RET 的 JALR 不存入 BTB**。仿真验证：存入 BTB 在 src1 上导致 CALL 命中率从 97%→74%。
 
-### 3.6 每组存储布局
+### 3.6 存储布局
 
 ```
-一组 = Way0 (43b) + Way1 (43b) + LRU (1b) = 87 bit
-32 组 × 87 = 2,784 bit 总计
+64 entry × 42 bit = 2,688 bit 总计（无 LRU）
 ```
 
 ---
@@ -224,73 +229,120 @@ Selector: 256 × 2-bit = 512 bit（LUTRAM）
 
 ---
 
-## 6. IF 阶段预测逻辑（组合，纯读）
+## 6. IF 阶段预测逻辑 — L0 快速预测（NLP）
 
-### 6.1 完整预测流程
+### 6.1 L0 预测流程
+
+> [!IMPORTANT]
+> NLP 架构核心变化：IF 级 **不再执行 Tournament 选择**。
+> BRANCH 方向仅使用 BTB 内嵌的 bht[1]（Bimodal 最高位），0 级额外逻辑。
+> Tournament 验证推迟到 ID 级（见 §6A）。
 
 ```
-输入: PC（当前取指地址），GHR（全局历史寄存器）
+输入: PC（当前取指地址）
 
-── 并行读取（三路同时启动）──
+── BTB 直接映射读取（单路，无 way 选择）──
 
-路径 A: BTB 读取
-  set_index = PC[6:2]
-  tag = PC[14:7]
-  读取 btb[set_index] 的两个 way
-  tag 比较 → btb_hit, hit_entry (target, type, bht)
+  idx = PC[7:2]      // 6 bits → 64 entries
+  tag = PC[14:8]     // 7 bits
+  读取 btb[idx] → {valid, tag, target, type, bht}
+  tag 比较 → btb_hit
 
-路径 B: PHT 读取
-  pht_idx = GHR[7:0] ⊕ PC[9:2]
-  gshare_cnt = PHT[pht_idx]
+── 并行读取（不在关键路径上，供 pipeline 传递到 ID 级）──
 
-路径 C: Selector 读取
-  sel_idx = GHR[7:0]
-  sel_cnt = Selector[sel_idx]
+  pht_idx = GHR[7:0] ⊕ PC[9:2]  →  pht_cnt
+  sel_idx = GHR[7:0]             →  sel_cnt
 
-── 汇合 ──
+── L0 快速预测 ──
 
 if (!btb_hit):
-    predict_taken = 0
-    predict_target = PC + 4
+    bp_taken  = 0
+    bp_target = PC + 4
 
 else:
     case (hit_entry.type)
-        JAL:    predict_taken = 1
-                predict_target = {hit_entry.target, 2'b00}
+        JAL:    bp_taken  = 1
+                bp_target = {hit_entry.target, 2'b00}
 
-        CALL:   predict_taken = 1
-                predict_target = {hit_entry.target, 2'b00}
+        CALL:   bp_taken  = 1
+                bp_target = {hit_entry.target, 2'b00}
 
-        BRANCH: bimodal_taken = (hit_entry.bht >= 2)
-                gshare_taken  = (gshare_cnt >= 2)
-                predict_taken = (sel_cnt >= 2) ? bimodal_taken : gshare_taken
-                predict_target = predict_taken ? {hit_entry.target, 2'b00} : PC+4
+        BRANCH: bp_taken  = bht[1]              // ← NLP: 仅看最高位！
+                bp_target = {hit_entry.target, 2'b00}  // 始终输出 BTB target
+                // （ID 级 redirect 需要此值，无论 taken/not-taken）
 
         RET:    if (ras_valid):
-                    predict_taken = 1
-                    predict_target = ras_top
+                    bp_taken  = 1
+                    bp_target = ras_top
                 else:
-                    predict_taken = 0
-                    predict_target = PC + 4
+                    bp_taken  = 0
+                    bp_target = PC + 4
     endcase
-
-next_pc = branch_flush  ? branch_target :   // EX flush 最高优先
-          !if_allowin   ? pc :               // 停顿
-          predict_taken ? predict_target :    // 预测跳转
-                          PC + 4              // 预测不跳
 ```
 
-### 6.2 关键路径
+### 6.2 IF 级关键路径（NLP 优化后）
 
 ```
-       ┌→ BTB LUTRAM → tag比较 ────────────────── bimodal_taken ──┐
-PC ──┤                                                            ├→ sel MUX → pred MUX → next_pc MUX → BRAM
-0.3ns ├→ PHT LUTRAM → cnt≥2 ────────────────── gshare_taken ──┤    0.3ns      0.3ns       0.3ns       0.2ns
-       └→ Selector LUTRAM ───────────────────── sel_cnt ──────────┘
-           1.0ns        0.5ns                                  0.3ns
+PC → BTB LUTRAM读(1.0ns) → tag比较(0.5ns) → hit & bht[1](0.3ns) → target MUX(0.3ns) → IROM
+                                                                                        0.2ns
+= 2-3 级逻辑，~2.3ns（逻辑），含布线 ~3.3ns
+```
 
-关键路径 = 0.3 + max(1.5, 1.2, 1.0) + 0.3 + 0.3 + 0.3 + 0.2 = ~2.9ns（逻辑）
-含布线估算 = ~3.5ns，余量 ~1.5ns
+对比改前（8 级逻辑，~7.5ns 含布线）：**路径缩短 ~4.2ns**。
+
+---
+
+## 6A. ID 阶段 Tournament 验证 — L1（NLP 新增）
+
+### 6A.1 L1 验证流程
+
+IF/ID reg 传递的 snapshot：`btb_hit, btb_type, btb_bht, pht_cnt, sel_cnt`
+
+```
+// 仅对 BRANCH 类型 + BTB 命中 执行验证
+
+bimodal_taken   = (btb_bht >= 2)    // = bht[1]（与 L0 一致）
+gshare_taken    = (pht_cnt >= 2)
+use_bimodal     = (sel_cnt >= 2)
+tournament_taken = use_bimodal ? bimodal_taken : gshare_taken
+
+// L0 和 L1 是否一致？
+id_bp_redirect = id_valid & ~branch_flush
+               & btb_hit & (btb_type == BRANCH)
+               & (bht[1] != tournament_taken)
+               & id_ready_go & ex_allowin      // ← 必须：防止 stall 期间丢指令
+```
+
+### 6A.2 Redirect 行为
+
+| L0 (IF) | L1 (ID) | 行为 | 代价 |
+|:-------:|:-------:|------|:---:|
+| taken | taken | 一致，无操作 | 0 |
+| not-taken | not-taken | 一致，无操作 | 0 |
+| **taken** | **not-taken** | redirect → PC+4 | **1 bubble** |
+| **not-taken** | **taken** | redirect → BTB target | **1 bubble** |
+
+### 6A.3 Redirect 时的流水线操作
+
+1. `irom_addr` = `id_redirect_target`（L1 的目标）
+2. IF/ID 寄存器 flush（`id_flush = branch_flush | id_bp_redirect`）
+3. ID→EX 的 `bp_taken/bp_target` 被 **覆盖为 Tournament 结果**
+   （确保 EX 级用正确的预测值做误预测检测）
+
+### 6A.4 Stall 安全门控
+
+> [!CAUTION]
+> `id_bp_redirect` **必须**用 `id_ready_go & ex_allowin` 门控。
+> 否则在 load-use stall 期间，redirect 会通过 `id_flush` 清除 IF/ID 的 `id_valid`，
+> 而 ID/EX 因 `ex_allowin=0` 无法捕获分支指令 → **指令永久丢失，流水线损坏**。
+
+### 6A.5 next_pc 优先级（4 级 MUX）
+
+```
+irom_addr = branch_flush   ? branch_target :     // (1) EX flush（最高优先）
+            id_bp_redirect ? id_redirect_target : // (2) NLP: ID redirect
+            !if_allowin    ? pc :                  // (3) 停顿
+                             next_pc               // (4) 正常（含 L0 预测）
 ```
 
 ---
@@ -314,10 +366,8 @@ BRANCH taken: 写入新条目或更新已有条目
 BRANCH not-taken: 仅更新已有条目的 bht（不新建条目）
 JALR（非 RET）: 不写入
 
-写入目标 way:
-  BTB 命中 → 写回同一 way
-  BTB 未命中 → 写入 LRU 指示的 way（驱逐旧条目）
-  更新 LRU: 刚写入的 way 标记为 MRU
+直接映射 → 无 way 选择：
+  直接写入 btb[ex_idx]，覆盖已有条目（如有冲突）
 ```
 
 ### 7.3 Bimodal 更新
@@ -406,26 +456,31 @@ ras_count (2-bit): 跟踪栈内有效条目数
 
 ## 9. 时序分析
 
-### 9.1 IF 阶段关键路径
+### 9.1 NLP IF 阶段关键路径
 
-三路并行读取（BTB + PHT + Selector），Selector MUX 是新增的唯一串行环节。
+| 方案 | IF 逻辑级数 | 逻辑延迟 | 含布线估算 | 5ns 余量 |
+|------|:--------:|:------:|:--------:|:------:|
+| 无预测器 | 1-2 级 | ~1.8ns | ~2.2ns | 2.8ns |
+| **NLP (L0 快速)** | **2-3 级** | **~2.3ns** | **~3.3ns** | **~1.7ns** |
+| 旧 Tournament (IF全量) | 6-8 级 | ~4.5ns | ~7.5ns | **-2.5ns ❌** |
 
-| 方案 | 逻辑延迟 | 含布线估算 | 5ns 余量 |
-|------|:------:|:--------:|:------:|
-| 无预测器（当前） | ~1.8ns | ~2.2ns | 2.8ns |
-| 仅 Bimodal | ~2.4ns | ~3.0ns | 2.0ns |
-| **Tournament** | **~2.9ns** | **~3.5ns** | **~1.5ns** |
-
-### 9.2 关键路径详细
+### 9.2 NLP IF 关键路径详细
 
 ```
-逻辑:
-  PC Tco(0.3) → max(BTB+tag=1.5, PHT=1.2, Sel=1.0) → selMUX(0.3) → predMUX(0.3) → npcMUX(0.3) → BRAM(0.2)
-  = 2.9ns
-
-含布线 (+50~60%):
-  ≈ 3.5ns，余量 1.5ns
+PC(0.3ns) → BTB LUTRAM(1.0ns) → tag比较(0.5ns) → hit&bht[1] MUX(0.3ns) → IROM(0.2ns)
+= 2.3ns（逻辑），含布线 ~3.3ns
 ```
+
+### 9.3 实际 Vivado 时序结果（@200MHz, xc7k325t）
+
+| 路径 | WNS | 逻辑级数 | 说明 |
+|------|:---:|:------:|------|
+| **EX flush → IROM** | -0.647ns | 10 级 | ALU→branch_flush→irom_addr MUX→IROM |
+| IF L0 → IROM | 正时序 | 2-3 级 | **NLP 优化成功，不再是最差路径** |
+
+> [!NOTE]
+> NLP 优化成功将 BTB→IROM 路径移出关键路径。当前瓶颈是 EX flush 路径（branch_unit 的
+> 32-bit 目标地址比较 CARRY4 链），这是实现层面的优化范围，与预测器架构无关。
 
 ---
 
@@ -433,16 +488,17 @@ ras_count (2-bit): 跟踪栈内有效条目数
 
 | 结构 | 位数 | 实现方式 |
 |------|:---:|:-------:|
-| BTB（64 × 43 bit） | 2,752 | LUTRAM |
-| LRU（32 × 1 bit） | 32 | LUTRAM |
+| BTB（64 × 42 bit） | 2,688 | LUTRAM |
 | PHT（256 × 2 bit） | 512 | LUTRAM |
 | Selector（256 × 2 bit） | 512 | LUTRAM |
 | GHR（8 bit） | 8 | 寄存器 |
 | RAS（4 × 32 bit） | 128 | 寄存器 |
-| RAS count（2 bit） | 2 | 寄存器 |
-| **合计** | **3,946** | — |
+| RAS count（3 bit） | 3 | 寄存器 |
+| **合计** | **3,851** | — |
 
-vs 仅 Bimodal 的 2,914 bit，增加 **+1,032 bit**（+35%），换来命中率从 80.1% → 86.0%。
+对比旧 2-way 方案（3,946 bit）：NLP 减少 **-95 bit**（移除 LRU + tag 缩 1 bit）。
+
+Vivado 综合实际使用 **8 × RAM128X1D**（LUTRAM）。
 
 ---
 
@@ -470,15 +526,16 @@ vs 仅 Bimodal 的 2,914 bit，增加 **+1,032 bit**（+35%），换来命中率
 | 参数 | 测试范围 | 最终选择 |
 |------|---------|---------|
 | BTB 大小 | 32, 64 | **64** |
-| 映射方式 | 直接, 2路 | **2路** |
+| 映射方式 | 直接, 2路 | **直接映射**（NLP: 为时序牺牲 ~2% 准确率） |
 | BHT 模式 | 内嵌, 独立128, 独立256 | **内嵌** |
 | RAS 深度 | 0, 2, 4, 8 | **4** |
 | 索引方式 | Direct, XOR | **Direct** |
-| Tag 宽度 | 4, 6, 8, 12, 24 | **8 bit** |
+| Tag 宽度 | 4, 6, 7, 8, 12, 24 | **7 bit**（直接映射，index 占 6 bit） |
 | Target 宽度 | 30 bit vs 偏移量 | **30 bit** |
 | JALR 策略 | 存 vs 不存 | **不存** |
 | RAS 更新时机 | IF vs EX | **EX** |
-| 方向预测器 | bimodal, GShare, 局部, Tournament | **Tournament** |
+| 方向预测器 | bimodal, GShare, 局部, Tournament | **Tournament (NLP 两级)** |
+| IF 级方向决策 | Tournament, Bimodal, bht[1] | **bht[1]**（NLP L0，0 级额外逻辑） |
 | GHR 长度 | 2, 4, 8 | **8** |
 | PHT 大小 | 4~256 | **256** |
 | PHT 索引 | GShare, GSelect, 直接, 仅GHR | **GShare** |
@@ -520,6 +577,18 @@ vs 仅 Bimodal 的 2,914 bit，增加 **+1,032 bit**（+35%），换来命中率
 
 | 优化 | 描述 | 硬件成本 |
 |------|------|---------|
+| **EX flush 路径优化** | 当前最差路径，10 级逻辑 WNS=-0.647ns | 逻辑重构 |
 | **递归压缩** | RAS 每条目加 3-4 bit 计数器 | +12-16 bit |
 | **间接跳转缓存** | 独立小缓存处理非 RET JALR | +200-500 bit |
 | **TAGE 预测器** | 多级历史长度标签匹配 | +2000-4000 bit |
+
+---
+
+## 14. NLP 架构 FPGA 验证记录
+
+| 日期 | 版本 | COE | 结果 |
+|------|------|-----|:---:|
+| 2026-04-19 | `99849fd` NLP + stall fix | current (1271 inst) | ✅ PASS |
+| — | — | src0 (2035 inst) | ⏳ 待测 |
+| — | — | src1 (1909 inst) | ⏳ 待测 |
+| — | — | src2 (1996 inst) | ⏳ 待测 |

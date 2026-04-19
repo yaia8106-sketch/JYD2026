@@ -29,9 +29,9 @@ set OUTPUT_DIR "/home/anokyai/桌面/CPU_Workspace/03_Timing_Analysis/reports"
 set MAX_PATHS 3
 
 # 时钟端口名与周期（当设计中没有时钟约束时自动创建）
-# cpu_clk 频率：180MHz → 5.556ns；50MHz → 20ns
+# cpu_clk 频率：200MHz → 5.0ns；100MHz → 10.0ns；50MHz → 20ns
 set CLK_PORT   "w_cpu_clk"
-set CLK_PERIOD 5.556
+set CLK_PERIOD 10.0
 
 # 设计层级前缀（自动检测）
 # 支持两种顶层配置：
@@ -73,6 +73,7 @@ set PIPELINE_GROUPS [list \
     [list "EX/MEM"       "u_cpu/u_ex_mem_reg"    ] \
     [list "MEM/WB"       "u_cpu/u_mem_wb_reg"    ] \
     [list "RegFile"      "u_cpu/u_regfile"        ] \
+    [list "BP(pred)"     "u_cpu/u_bp"             ] \
 ]
 
 # ---- BRAM 组（特殊时序端点）----

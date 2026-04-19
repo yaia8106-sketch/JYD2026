@@ -29,7 +29,8 @@ TESTS="simple \
        lui auipc \
        lb lbu lh lhu lw \
        sb sh sw \
-       ld_st st_ld"
+       ld_st st_ld \
+       bp_stress"
 
 mkdir -p "$HEX_DIR"
 
