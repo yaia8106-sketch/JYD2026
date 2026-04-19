@@ -169,7 +169,7 @@ module cpu_top (
     assign perip_addr     = alu_addr;             // EX stage: 读地址
     assign perip_addr_sum = alu_addr;             // 兼容保留
     assign perip_wr_addr  = mem_alu_result;       // MEM stage: 写地址（已打拍）
-    assign perip_wea      = mem_store_wea;        // MEM stage: 写使能（已打拍）
+    assign perip_wea      = mem_valid ? mem_store_wea : 4'b0000;  // 门控：MEM 无效时禁写
     assign perip_wdata    = mem_store_data;       // MEM stage: 写数据（已打拍）
     assign dram_dout   = perip_rdata;       // bridge 读数据 (MEM stage)
 

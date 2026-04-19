@@ -78,18 +78,20 @@ module perip_bridge (
     //  DRAM: Simple Dual Port BRAM (FIX-C)
     //   Port A = 写端口 (MEM 级，已打拍，无组合路径)
     //   Port B = 读端口 (EX 级，保持原有 load 时序)
+    //   IP 配置: Byte Write Enable, Byte Size=8, Width=32, Depth=65536
     // ================================================================
     logic [31:0] dram_douta;
 
     DRAM4MyOwn u_dram (
         // 写端口 (Port A, MEM stage)
         .clka  (clk),
+        .wea   ({4{wr_is_dram}} & wea),    // MEM 级已打拍 WEA [3:0]
         .addra (wr_addr[17:2]),            // MEM 级已打拍地址
-        .wea   ({4{wr_is_dram}} & wea),    // MEM 级已打拍 WEA
         .dina  (wdata),                    // MEM 级已打拍数据
 
         // 读端口 (Port B, EX stage)
         .clkb  (clk),
+        .enb   (1'b1),                     // 读端口常使能
         .addrb (addr[17:2]),               // EX 级组合地址
         .doutb (dram_douta)                // MEM 级 Clk-to-Q 有效
     );
