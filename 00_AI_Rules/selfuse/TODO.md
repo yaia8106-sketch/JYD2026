@@ -73,7 +73,7 @@
 - [x] ~~JALR 提前到 ID 级判断（视时序余量）~~ — **已取消**
   > 200MHz 下时序无法收敛
 - [X] **riscv-tests 功能验证环境搭建** (已完成，含 Custom Env/自动化脚本)
-- [X] **riscv-tests 全量功能通过** (41/41 PASS ✅，含 bp_stress)
+- [X] **riscv-tests 全量功能通过** (42/42 PASS ✅，含 bp_stress + coprime)
 - [X] **FPGA 数字孪生平台验证（EX-only 纯净基线）** ✅
   - [X] 基线确认：EX-only + 无预测器 = FPGA 功能完全正确 @ 200MHz
   - **此为添加分支预测器前的最终确认（M6）**
@@ -84,7 +84,7 @@
   - [X] NLP 时序优化：IF(L0) Bimodal 快速预测, ID(L1) Tournament 验证
   - [X] RAS 4-deep shift stack
   - [X] 分支预测专用测试程序 (bp_stress)
-  - [X] riscv-tests 41/41 PASS ✅
+  - [X] riscv-tests 42/42 PASS ✅
   - [X] FPGA 上板验证通过 @ 200MHz, current 程序 ~176ms
 - [X] **250MHz 超频尝试** (feat/250mhz-timing 分支)
   - [X] Flush 延迟一拍（EX→MEM）优化关键路径
@@ -92,12 +92,20 @@
   - [X] 250MHz 未收敛 (WNS=-0.623ns) — 瓶颈为 DRAM 68×BRAM36 高扇出布线
   - [X] CPU 内部逻辑最差 3.41ns，已具备 250MHz 能力
   - **结论：提频瓶颈不在 CPU，在 DRAM BRAM 布线**
-- [ ] **Data Cache** ← 待评估
-  > DRAM 68个 BRAM 高扇出是 250MHz 的唯一瓶颈。
-  > Cache（如 4KB direct-mapped）只需少量 BRAM，扇出小布线短，
-  > 有望同时解决频率瓶颈和访存性能问题。
-- [ ] coremark 跑分验证
-- [ ] P&R 策略优化（Performance_Explore / Pblock）—— 如需进一步提频
+- [X] **Data Cache 可行性评估** ✅ (cache_sim.py 已完成)
+  - [X] 4 个 COE 程序 ISA 级访存 trace 仿真
+  - [X] 9 种 Cache 配置命中率 + 性能对比
+  - [X] 确认 DM 4KB/32B 方案：平均命中率 98.8%，250MHz 加速 +24.6%
+- [ ] **Data Cache 实现** ← **🔥 下一待办**
+  > 配置：DM 4KB/32B (直接映射，128 lines × 32B/line)
+  > 写策略：Write-through
+  > 预期：Cache 仅 1-2 BRAM，解决 68×BRAM36 扇出瓶颈，冲击 250MHz
+  - [ ] Cache 控制器 RTL (data_cache.sv)
+  - [ ] CPU stall 信号适配 (miss 时暂停流水线)
+  - [ ] 集成到 perip_bridge (CPU ↔ Cache ↔ DRAM)
+  - [ ] riscv-tests 回归验证
+  - [ ] 250MHz 时序验证
+  - [ ] FPGA 上板验证
 
 ---
 
