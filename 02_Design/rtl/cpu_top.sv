@@ -265,10 +265,15 @@ module cpu_top (
 
     // NLP redirect: L0 and L1 disagree on BRANCH direction
     // Only triggers for BRANCH type with BTB hit
+    // CRITICAL: must gate with id_ready_go & ex_allowin to ensure the branch
+    // instruction actually transfers to EX on this cycle. Without this gate,
+    // a stall would cause id_flush to destroy the branch while ID/EX can't
+    // capture it, permanently losing the instruction.
     assign id_bp_redirect = id_valid & ~branch_flush
                           & id_bp_btb_hit
                           & (id_bp_btb_type == 2'b10)    // TYPE_BRANCH
-                          & (id_bp_btb_bht[1] != id_tournament_taken);
+                          & (id_bp_btb_bht[1] != id_tournament_taken)
+                          & id_ready_go & ex_allowin;
 
     // Redirect target: if Tournament says taken → use BTB target;
     //                  if Tournament says not-taken → use PC+4
