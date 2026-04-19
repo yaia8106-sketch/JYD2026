@@ -3,6 +3,7 @@
 // Description: IF/ID pipeline register (stores PC + instruction + prediction)
 // Spec: 02_Design/spec/if_id_reg_spec.md
 // Note: Instruction captured from BRAM output in IF stage
+// NLP: added bp_btb_type, removed bp_btb_way
 // ============================================================
 
 module if_id_reg (
@@ -31,7 +32,7 @@ module if_id_reg (
     input  logic [31:0] if_bp_target,
     input  logic [ 7:0] if_bp_ghr_snap,
     input  logic        if_bp_btb_hit,
-    input  logic        if_bp_btb_way,
+    input  logic [ 1:0] if_bp_btb_type,    // NLP: entry type for ID verification
     input  logic [ 1:0] if_bp_btb_bht,
     input  logic [ 1:0] if_bp_pht_cnt,
     input  logic [ 1:0] if_bp_sel_cnt,
@@ -39,7 +40,7 @@ module if_id_reg (
     output logic [31:0] id_bp_target,
     output logic [ 7:0] id_bp_ghr_snap,
     output logic        id_bp_btb_hit,
-    output logic        id_bp_btb_way,
+    output logic [ 1:0] id_bp_btb_type,    // NLP: entry type for ID verification
     output logic [ 1:0] id_bp_btb_bht,
     output logic [ 1:0] id_bp_pht_cnt,
     output logic [ 1:0] id_bp_sel_cnt
@@ -58,7 +59,7 @@ module if_id_reg (
             id_bp_target    <= 32'd0;
             id_bp_ghr_snap  <= 8'd0;
             id_bp_btb_hit   <= 1'b0;
-            id_bp_btb_way   <= 1'b0;
+            id_bp_btb_type  <= 2'd0;
             id_bp_btb_bht   <= 2'd0;
             id_bp_pht_cnt   <= 2'd0;
             id_bp_sel_cnt   <= 2'd0;
@@ -72,7 +73,7 @@ module if_id_reg (
             id_bp_target    <= if_bp_target;
             id_bp_ghr_snap  <= if_bp_ghr_snap;
             id_bp_btb_hit   <= if_bp_btb_hit;
-            id_bp_btb_way   <= if_bp_btb_way;
+            id_bp_btb_type  <= if_bp_btb_type;
             id_bp_btb_bht   <= if_bp_btb_bht;
             id_bp_pht_cnt   <= if_bp_pht_cnt;
             id_bp_sel_cnt   <= if_bp_sel_cnt;

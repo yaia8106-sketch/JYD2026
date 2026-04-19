@@ -1,21 +1,24 @@
 // ============================================================
 // Module: branch_predictor
-// Description: Tournament branch predictor (IF read / EX update)
-//   - BTB: 64-entry, 2-way set-associative, 32 sets
-//   - GShare: 8-bit GHR + 256-entry PHT
-//   - Selector: 256 × 2-bit, GHR-indexed
-//   - RAS: 4-entry shift-register stack
-// Spec: 02_Design/spec/branch_predictor_spec.md
+// Description: Tournament branch predictor with NLP timing optimization
+//   IF stage: L0 fast prediction (BTB direct-mapped + Bimodal bht[1])
+//   ID stage: L1 Tournament verification (Bimodal vs GShare via Selector)
+//   EX stage: all state updates (no speculative update)
 //
-// Key principle: IF stage is pure combinational read (no state change).
-//   All state updates happen in EX stage (no speculative update).
+//   Architecture change (NLP optimization):
+//   - BTB: 64-entry direct-mapped (was 2-way 32-set)
+//   - IF: uses bht[1] for BRANCH direction (was full Tournament)
+//   - Critical path: PC → LUTRAM read → tag compare → bht MUX → IROM
+//     = 2-3 logic levels (~3.3ns), down from 8 levels (~7.5ns)
+//
+// Spec: 02_Design/spec/branch_predictor_spec.md
 // ============================================================
 
 module branch_predictor (
     input  logic        clk,
     input  logic        rst_n,
 
-    // ==== IF stage: prediction (combinational read) ====
+    // ==== IF stage: L0 prediction (combinational read) ====
     input  logic [31:0] if_pc,
     output logic        bp_taken,
     output logic [31:0] bp_target,
@@ -23,7 +26,7 @@ module branch_predictor (
     // Snapshot outputs (pass through pipeline IF→ID→EX for update)
     output logic [ 7:0] bp_ghr_snap,    // GHR at prediction time
     output logic        bp_btb_hit,     // BTB hit
-    output logic        bp_btb_way,     // hit way (0 or 1)
+    output logic [ 1:0] bp_btb_type,    // hit entry type (NLP: for ID verification)
     output logic [ 1:0] bp_btb_bht,     // Bimodal counter from BTB entry
     output logic [ 1:0] bp_pht_cnt,     // GShare PHT counter
     output logic [ 1:0] bp_sel_cnt,     // Selector counter
@@ -42,7 +45,6 @@ module branch_predictor (
     // Snapshot inputs (from pipeline, originally produced in IF)
     input  logic [ 7:0] ex_ghr_snap,
     input  logic        ex_btb_hit,
-    input  logic        ex_btb_way,
     input  logic [ 1:0] ex_btb_bht,
     input  logic [ 1:0] ex_pht_cnt,
     input  logic [ 1:0] ex_sel_cnt
@@ -51,10 +53,10 @@ module branch_predictor (
     // ================================================================
     //  Parameters
     // ================================================================
-    localparam BTB_SETS   = 32;
-    localparam BTB_IDX_W  = 5;     // log2(32)
-    localparam BTB_TAG_W  = 8;     // PC[14:7]
-    localparam BTB_TGT_W  = 30;    // PC[31:2]
+    localparam BTB_ENTRIES = 64;
+    localparam BTB_IDX_W   = 6;     // log2(64)
+    localparam BTB_TAG_W   = 7;     // PC[14:8]
+    localparam BTB_TGT_W   = 30;    // PC[31:2]
 
     localparam GHR_W      = 8;
     localparam PHT_SIZE   = 256;   // 2^GHR_W
@@ -72,24 +74,13 @@ module branch_predictor (
     //  Storage declarations
     // ================================================================
 
-    // ---- BTB Way 0 ----
-    // OPT-3/FIX-B: 数据字段用 LUTRAM，valid 位保持 FF（需要 reset）
-    logic                  btb_v0    [0:BTB_SETS-1];    // valid: FF（有 reset）
-    (* ram_style = "distributed" *) logic [BTB_TAG_W-1:0]  btb_tag0  [0:BTB_SETS-1];
-    (* ram_style = "distributed" *) logic [BTB_TGT_W-1:0]  btb_tgt0  [0:BTB_SETS-1];
-    (* ram_style = "distributed" *) logic [1:0]            btb_type0 [0:BTB_SETS-1];
-    (* ram_style = "distributed" *) logic [1:0]            btb_bht0  [0:BTB_SETS-1];
-
-    // ---- BTB Way 1 ----
-    logic                  btb_v1    [0:BTB_SETS-1];    // valid: FF（有 reset）
-    (* ram_style = "distributed" *) logic [BTB_TAG_W-1:0]  btb_tag1  [0:BTB_SETS-1];
-    (* ram_style = "distributed" *) logic [BTB_TGT_W-1:0]  btb_tgt1  [0:BTB_SETS-1];
-    (* ram_style = "distributed" *) logic [1:0]            btb_type1 [0:BTB_SETS-1];
-    (* ram_style = "distributed" *) logic [1:0]            btb_bht1  [0:BTB_SETS-1];
-
-    // ---- BTB LRU (1 bit per set) ----
-    // Convention: lru[s]=0 → way0 is LRU; lru[s]=1 → way1 is LRU
-    logic                  btb_lru   [0:BTB_SETS-1];
+    // ---- BTB: Direct-mapped, 64 entries ----
+    // NLP: 1 way only (no way selection → fewer logic levels in IF)
+    logic                  btb_valid [0:BTB_ENTRIES-1];    // valid: FF（有 reset）
+    (* ram_style = "distributed" *) logic [BTB_TAG_W-1:0]  btb_tag   [0:BTB_ENTRIES-1];
+    (* ram_style = "distributed" *) logic [BTB_TGT_W-1:0]  btb_tgt   [0:BTB_ENTRIES-1];
+    (* ram_style = "distributed" *) logic [1:0]            btb_type  [0:BTB_ENTRIES-1];
+    (* ram_style = "distributed" *) logic [1:0]            btb_bht   [0:BTB_ENTRIES-1];
 
     // ---- GShare ----
     logic [GHR_W-1:0]      ghr;
@@ -103,45 +94,29 @@ module branch_predictor (
     logic [2:0]            ras_count;   // 0..4
 
     // ================================================================
-    //  IF stage — Prediction (combinational, read-only)
+    //  IF stage — L0 Prediction (combinational, read-only)
+    //  Critical path: PC → LUTRAM → tag compare → bht[1] MUX → target
+    //  Logic levels: 2-3 (vs 8 in old 2-way Tournament scheme)
     // ================================================================
 
-    // ---- BTB lookup ----
-    wire [BTB_IDX_W-1:0] if_set = if_pc[6:2];
-    wire [BTB_TAG_W-1:0] if_tag = if_pc[14:7];
+    // ---- BTB lookup (direct-mapped: single read) ----
+    wire [BTB_IDX_W-1:0] if_idx = if_pc[7:2];     // 6 bits for 64 entries
+    wire [BTB_TAG_W-1:0] if_tag = if_pc[14:8];     // 7 bits
 
-    // Read both ways (asynchronous)
-    wire                  r_v0    = btb_v0   [if_set];
-    wire [BTB_TAG_W-1:0]  r_tag0  = btb_tag0 [if_set];
-    wire [BTB_TGT_W-1:0]  r_tgt0  = btb_tgt0 [if_set];
-    wire [1:0]            r_type0 = btb_type0[if_set];
-    wire [1:0]            r_bht0  = btb_bht0 [if_set];
+    wire                  r_valid = btb_valid[if_idx];
+    wire [BTB_TAG_W-1:0]  r_tag   = btb_tag  [if_idx];
+    wire [BTB_TGT_W-1:0]  r_tgt   = btb_tgt  [if_idx];
+    wire [1:0]            r_type  = btb_type [if_idx];
+    wire [1:0]            r_bht   = btb_bht  [if_idx];
 
-    wire                  r_v1    = btb_v1   [if_set];
-    wire [BTB_TAG_W-1:0]  r_tag1  = btb_tag1 [if_set];
-    wire [BTB_TGT_W-1:0]  r_tgt1  = btb_tgt1 [if_set];
-    wire [1:0]            r_type1 = btb_type1[if_set];
-    wire [1:0]            r_bht1  = btb_bht1 [if_set];
+    // Tag compare (1 LUT level)
+    wire btb_hit_w = r_valid & (r_tag == if_tag);
 
-    // Tag compare
-    wire hit0 = r_v0 & (r_tag0 == if_tag);
-    wire hit1 = r_v1 & (r_tag1 == if_tag);
-    wire btb_hit_w = hit0 | hit1;
-    wire btb_way_w = hit1;   // 0 = way0, 1 = way1
-
-    // Hit-entry MUX (parallel AND-OR)
-    wire [BTB_TGT_W-1:0] hit_tgt  = ({BTB_TGT_W{hit0}} & r_tgt0)
-                                   | ({BTB_TGT_W{hit1}} & r_tgt1);
-    wire [1:0]            hit_type = ({2{hit0}} & r_type0)
-                                   | ({2{hit1}} & r_type1);
-    wire [1:0]            hit_bht  = ({2{hit0}} & r_bht0)
-                                   | ({2{hit1}} & r_bht1);
-
-    // ---- GShare PHT read ----
+    // ---- GShare PHT read (parallel, not on critical path) ----
     wire [GHR_W-1:0] if_pht_idx = ghr ^ if_pc[9:2];
     wire [1:0]       if_pht_val = pht[if_pht_idx];
 
-    // ---- Selector read ----
+    // ---- Selector read (parallel, not on critical path) ----
     wire [GHR_W-1:0] if_sel_idx = ghr;
     wire [1:0]       if_sel_val = sel_table[if_sel_idx];
 
@@ -149,29 +124,29 @@ module branch_predictor (
     wire [31:0] ras_top   = ras[0];
     wire        ras_valid = (ras_count != 3'd0);
 
-    // ---- Direction prediction ----
-    wire bimodal_taken = (hit_bht >= 2'd2);
-    wire gshare_taken  = (if_pht_val >= 2'd2);
-    wire use_bimodal   = (if_sel_val >= 2'd2);
-
-    // ---- Final prediction ----
+    // ---- L0 Fast prediction ----
+    // NLP key: BRANCH direction uses bht[1] only (Bimodal, 0 extra logic levels)
+    // Full Tournament verification deferred to ID stage
     always_comb begin
         bp_taken  = 1'b0;
-        bp_target = if_pc + 32'd4;   // default: predict not-taken
+        bp_target = if_pc + 32'd4;   // default: sequential
 
         if (btb_hit_w) begin
-            case (hit_type)
+            case (r_type)
                 TYPE_JAL: begin
                     bp_taken  = 1'b1;
-                    bp_target = {hit_tgt, 2'b00};
+                    bp_target = {r_tgt, 2'b00};
                 end
                 TYPE_CALL: begin
                     bp_taken  = 1'b1;
-                    bp_target = {hit_tgt, 2'b00};
+                    bp_target = {r_tgt, 2'b00};
                 end
                 TYPE_BRANCH: begin
-                    bp_taken  = use_bimodal ? bimodal_taken : gshare_taken;
-                    bp_target = bp_taken ? {hit_tgt, 2'b00} : (if_pc + 32'd4);
+                    // L0: use Bimodal bht[1] for fast direction decision
+                    // L1 (Tournament) will verify in ID stage
+                    bp_taken  = r_bht[1];
+                    // Always output BTB target (ID stage needs it for redirect)
+                    bp_target = {r_tgt, 2'b00};
                 end
                 TYPE_RET: begin
                     if (ras_valid) begin
@@ -188,8 +163,8 @@ module branch_predictor (
     // ---- Snapshot outputs ----
     assign bp_ghr_snap = ghr;
     assign bp_btb_hit  = btb_hit_w;
-    assign bp_btb_way  = btb_way_w;
-    assign bp_btb_bht  = hit_bht;
+    assign bp_btb_type = btb_hit_w ? r_type : 2'b00;
+    assign bp_btb_bht  = r_bht;
     assign bp_pht_cnt  = if_pht_val;
     assign bp_sel_cnt  = if_sel_val;
 
@@ -207,21 +182,13 @@ module branch_predictor (
     wire ex_update = ex_valid & (ex_is_branch | ex_is_jal | ex_is_jalr);
 
     // ---- BTB write decision ----
-    // JAL/CALL/RET: always write
-    // BRANCH taken: write (allocate or update)
-    // BRANCH not-taken + BTB hit: update bht only (rewrite same entry)
-    // BRANCH not-taken + BTB miss: don't allocate
-    // JALR non-RET: never write
     wire ex_btb_write = ex_update & ~ex_is_jalr_nr &
                         (ex_is_jal | ex_is_ret |
                          (ex_is_branch & (ex_actual_taken | ex_btb_hit)));
 
-    // BTB addressing
-    wire [BTB_IDX_W-1:0] ex_set = ex_pc[6:2];
-    wire [BTB_TAG_W-1:0] ex_tag = ex_pc[14:7];
-
-    // Write way: hit → same way; miss → LRU way
-    wire ex_wr_way = ex_btb_hit ? ex_btb_way : btb_lru[ex_set];
+    // BTB addressing (direct-mapped)
+    wire [BTB_IDX_W-1:0] ex_idx = ex_pc[7:2];
+    wire [BTB_TAG_W-1:0] ex_tag = ex_pc[14:8];
 
     // Type for BTB entry
     wire [1:0] ex_wr_type = ex_is_jal_nc ? TYPE_JAL  :
@@ -230,9 +197,6 @@ module branch_predictor (
                                            TYPE_BRANCH;
 
     // BHT value for BTB entry
-    //   BRANCH + hit:  saturating inc/dec existing counter
-    //   BRANCH + miss: init to weakly taken/not-taken
-    //   JAL/CALL/RET:  type field drives prediction, bht set to 11 (don't-care)
     wire [1:0] ex_bht_inc = (ex_btb_bht == 2'd3) ? 2'd3 : ex_btb_bht + 2'd1;
     wire [1:0] ex_bht_dec = (ex_btb_bht == 2'd0) ? 2'd0 : ex_btb_bht - 2'd1;
 
@@ -280,29 +244,18 @@ module branch_predictor (
     //  Sequential update (all at posedge clk)
     // ================================================================
 
-    // ---- BTB: 合并块，reset 只清 valid+LRU（数据字段不 reset → LUTRAM 友好）----
+    // ---- BTB: direct-mapped, reset only valid bits ----
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            for (int i = 0; i < BTB_SETS; i++) begin
-                btb_v0[i]  <= 1'b0;
-                btb_v1[i]  <= 1'b0;
-                btb_lru[i] <= 1'b0;
+            for (int i = 0; i < BTB_ENTRIES; i++) begin
+                btb_valid[i] <= 1'b0;
             end
         end else if (ex_btb_write) begin
-            if (!ex_wr_way) begin
-                btb_v0   [ex_set] <= 1'b1;
-                btb_tag0 [ex_set] <= ex_tag;
-                btb_tgt0 [ex_set] <= ex_wr_tgt;
-                btb_type0[ex_set] <= ex_wr_type;
-                btb_bht0 [ex_set] <= ex_wr_bht;
-            end else begin
-                btb_v1   [ex_set] <= 1'b1;
-                btb_tag1 [ex_set] <= ex_tag;
-                btb_tgt1 [ex_set] <= ex_wr_tgt;
-                btb_type1[ex_set] <= ex_wr_type;
-                btb_bht1 [ex_set] <= ex_wr_bht;
-            end
-            btb_lru[ex_set] <= ex_wr_way ? 1'b0 : 1'b1;
+            btb_valid[ex_idx] <= 1'b1;
+            btb_tag  [ex_idx] <= ex_tag;
+            btb_tgt  [ex_idx] <= ex_wr_tgt;
+            btb_type [ex_idx] <= ex_wr_type;
+            btb_bht  [ex_idx] <= ex_wr_bht;
         end
     end
 

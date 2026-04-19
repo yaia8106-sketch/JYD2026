@@ -155,8 +155,9 @@ module cpu_top (
     wire ex_ready_go_w  = ~store_load_hazard;
     wire mem_ready_go_w = 1'b1;     // BRAM latency absorbed by pipeline
 
-    // ---- Flush ----
-    wire id_flush = branch_flush;
+    // ---- Flush (updated below after id_bp_redirect is computed) ----
+    wire id_bp_redirect;            // NLP: ID-stage Tournament redirect
+    wire id_flush = branch_flush | id_bp_redirect;
     wire ex_flush = branch_flush;
 
     // ---- Register addresses from instruction (ID stage, from IF/ID reg) ----
@@ -177,12 +178,12 @@ module cpu_top (
     //  Branch prediction wires
     // ================================================================
 
-    // IF stage prediction outputs
+    // IF stage prediction outputs (L0: fast path)
     wire        bp_taken;
     wire [31:0] bp_target;
     wire [ 7:0] bp_ghr_snap;
     wire        bp_btb_hit;
-    wire        bp_btb_way;
+    wire [ 1:0] bp_btb_type;    // NLP: entry type for ID verification
     wire [ 1:0] bp_btb_bht;
     wire [ 1:0] bp_pht_cnt;
     wire [ 1:0] bp_sel_cnt;
@@ -192,7 +193,7 @@ module cpu_top (
     wire [31:0] id_bp_target;
     wire [ 7:0] id_bp_ghr_snap;
     wire        id_bp_btb_hit;
-    wire        id_bp_btb_way;
+    wire [ 1:0] id_bp_btb_type; // NLP: entry type for ID verification
     wire [ 1:0] id_bp_btb_bht;
     wire [ 1:0] id_bp_pht_cnt;
     wire [ 1:0] id_bp_sel_cnt;
@@ -202,7 +203,6 @@ module cpu_top (
     wire [31:0] ex_bp_target;
     wire [ 7:0] ex_bp_ghr_snap;
     wire        ex_bp_btb_hit;
-    wire        ex_bp_btb_way;
     wire [ 1:0] ex_bp_btb_bht;
     wire [ 1:0] ex_bp_pht_cnt;
     wire [ 1:0] ex_bp_sel_cnt;
@@ -217,13 +217,13 @@ module cpu_top (
         .clk             (clk),
         .rst_n           (rst_n),
 
-        // IF prediction
+        // IF prediction (L0: fast path)
         .if_pc           (pc),
         .bp_taken        (bp_taken),
         .bp_target       (bp_target),
         .bp_ghr_snap     (bp_ghr_snap),
         .bp_btb_hit      (bp_btb_hit),
-        .bp_btb_way      (bp_btb_way),
+        .bp_btb_type     (bp_btb_type),     // NLP
         .bp_btb_bht      (bp_btb_bht),
         .bp_pht_cnt      (bp_pht_cnt),
         .bp_sel_cnt      (bp_sel_cnt),
@@ -240,7 +240,6 @@ module cpu_top (
         .ex_actual_target(actual_target),
         .ex_ghr_snap     (ex_bp_ghr_snap),
         .ex_btb_hit      (ex_bp_btb_hit),
-        .ex_btb_way      (ex_bp_btb_way),
         .ex_btb_bht      (ex_bp_btb_bht),
         .ex_pht_cnt      (ex_bp_pht_cnt),
         .ex_sel_cnt      (ex_bp_sel_cnt)
@@ -257,9 +256,29 @@ module cpu_top (
         .next_pc  (next_pc)
     );
 
-    assign irom_addr = branch_flush  ? branch_target :   // 分支：预取目标
-                       !if_allowin_w ? pc :               // 停顿：保持当前地址
-                                       next_pc;           // 正常：预取下一条（含预测跳转）
+    // NLP: ID-stage Tournament verification (L1)
+    // Compares L0 (Bimodal bht[1], used in IF) with L1 (Tournament, computed here)
+    wire id_bimodal_taken  = (id_bp_btb_bht >= 2'd2);   // = bht[1]
+    wire id_gshare_taken   = (id_bp_pht_cnt >= 2'd2);
+    wire id_use_bimodal    = (id_bp_sel_cnt >= 2'd2);
+    wire id_tournament_taken = id_use_bimodal ? id_bimodal_taken : id_gshare_taken;
+
+    // NLP redirect: L0 and L1 disagree on BRANCH direction
+    // Only triggers for BRANCH type with BTB hit
+    assign id_bp_redirect = id_valid & ~branch_flush
+                          & id_bp_btb_hit
+                          & (id_bp_btb_type == 2'b10)    // TYPE_BRANCH
+                          & (id_bp_btb_bht[1] != id_tournament_taken);
+
+    // Redirect target: if Tournament says taken → use BTB target;
+    //                  if Tournament says not-taken → use PC+4
+    wire [31:0] id_redirect_target = id_tournament_taken ? id_bp_target
+                                                         : (id_pc + 32'd4);
+
+    assign irom_addr = branch_flush   ? branch_target :     // EX flush (highest priority)
+                       id_bp_redirect ? id_redirect_target : // NLP: ID redirect
+                       !if_allowin_w  ? pc :                 // 停顿：保持当前地址
+                                        next_pc;             // 正常：预取下一条（含L0预测）
 
     pc_reg u_pc_reg (
         .clk           (clk),
@@ -295,7 +314,7 @@ module cpu_top (
         .if_bp_target   (bp_target),
         .if_bp_ghr_snap (bp_ghr_snap),
         .if_bp_btb_hit  (bp_btb_hit),
-        .if_bp_btb_way  (bp_btb_way),
+        .if_bp_btb_type (bp_btb_type),     // NLP: type for ID verification
         .if_bp_btb_bht  (bp_btb_bht),
         .if_bp_pht_cnt  (bp_pht_cnt),
         .if_bp_sel_cnt  (bp_sel_cnt),
@@ -303,7 +322,7 @@ module cpu_top (
         .id_bp_target   (id_bp_target),
         .id_bp_ghr_snap (id_bp_ghr_snap),
         .id_bp_btb_hit  (id_bp_btb_hit),
-        .id_bp_btb_way  (id_bp_btb_way),
+        .id_bp_btb_type (id_bp_btb_type),  // NLP: type for ID verification
         .id_bp_btb_bht  (id_bp_btb_bht),
         .id_bp_pht_cnt  (id_bp_pht_cnt),
         .id_bp_sel_cnt  (id_bp_sel_cnt)
@@ -419,12 +438,13 @@ module cpu_top (
         .id_branch_cond   (dec_branch_cond),
         .id_is_jal        (dec_is_jal),
         .id_is_jalr       (dec_is_jalr),
-        // Branch prediction passthrough
-        .id_bp_taken      (id_bp_taken),
-        .id_bp_target     (id_bp_target),
+        // Branch prediction passthrough (NLP: corrected by Tournament in ID)
+        // When ID redirect fires, override L0's prediction with Tournament's result
+        // so EX stage sees the corrected prediction for misprediction detection
+        .id_bp_taken      (id_bp_redirect ? id_tournament_taken : id_bp_taken),
+        .id_bp_target     (id_bp_redirect ? id_redirect_target  : id_bp_target),
         .id_bp_ghr_snap   (id_bp_ghr_snap),
         .id_bp_btb_hit    (id_bp_btb_hit),
-        .id_bp_btb_way    (id_bp_btb_way),
         .id_bp_btb_bht    (id_bp_btb_bht),
         .id_bp_pht_cnt    (id_bp_pht_cnt),
         .id_bp_sel_cnt    (id_bp_sel_cnt),
@@ -447,12 +467,11 @@ module cpu_top (
         .ex_branch_cond   (ex_branch_cond),
         .ex_is_jal        (ex_is_jal),
         .ex_is_jalr       (ex_is_jalr),
-        // Branch prediction out
+        // Branch prediction out (NLP: removed btb_way)
         .ex_bp_taken      (ex_bp_taken),
         .ex_bp_target     (ex_bp_target),
         .ex_bp_ghr_snap   (ex_bp_ghr_snap),
         .ex_bp_btb_hit    (ex_bp_btb_hit),
-        .ex_bp_btb_way    (ex_bp_btb_way),
         .ex_bp_btb_bht    (ex_bp_btb_bht),
         .ex_bp_pht_cnt    (ex_bp_pht_cnt),
         .ex_bp_sel_cnt    (ex_bp_sel_cnt)
