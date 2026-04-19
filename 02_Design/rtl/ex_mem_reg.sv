@@ -2,6 +2,7 @@
 // Module: ex_mem_reg
 // Description: EX/MEM pipeline register
 // Note: No flush (branch instruction itself flows through normally)
+// 250MHz: branch_flush/target registered here for timing closure
 // ============================================================
 
 module ex_mem_reg (
@@ -15,6 +16,12 @@ module ex_mem_reg (
     output logic        mem_valid,
     input  logic        mem_ready_go,
     input  logic        wb_allowin,
+
+    // 250MHz: registered branch flush (captures EX-stage combinational result)
+    input  logic        ex_branch_flush,
+    input  logic [31:0] ex_branch_target,
+    output logic        mem_branch_flush,
+    output logic [31:0] mem_branch_target,
 
     // Data in (from EX stage)
     input  logic [31:0] ex_alu_result,
@@ -48,7 +55,10 @@ module ex_mem_reg (
     // ---- Handshake ----
     assign mem_allowin = !mem_valid || (mem_ready_go & wb_allowin);
 
-    // ---- Pipeline register (no flush) ----
+    // ---- Pipeline register ----
+    // 250MHz: when mem_branch_flush fires, the instruction in EX is spurious
+    // (it entered EX one cycle before the registered flush could stop it).
+    // Must prevent it from entering MEM with valid=1.
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             mem_valid         <= 1'b0;
@@ -62,6 +72,10 @@ module ex_mem_reg (
             mem_mem_unsigned  <= 1'b0;
             mem_store_wea     <= 4'd0;
             mem_store_data    <= 32'd0;
+        end else if (mem_branch_flush) begin
+            // 250MHz: flush spurious EX instruction — prevent it from entering MEM
+            mem_valid         <= 1'b0;
+            mem_store_wea     <= 4'd0;
         end else if (mem_allowin) begin
             mem_valid         <= ex_valid & ex_ready_go;
             mem_alu_result    <= ex_alu_result;
@@ -74,6 +88,18 @@ module ex_mem_reg (
             mem_mem_unsigned  <= ex_mem_unsigned;
             mem_store_wea     <= ex_store_wea;
             mem_store_data    <= ex_store_data;
+        end
+    end
+
+    // 250MHz: branch_flush/target registered unconditionally
+    // Must NOT be gated by mem_allowin — flush must propagate immediately
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            mem_branch_flush  <= 1'b0;
+            mem_branch_target <= 32'd0;
+        end else begin
+            mem_branch_flush  <= ex_branch_flush;
+            mem_branch_target <= ex_branch_target;
         end
     end
 

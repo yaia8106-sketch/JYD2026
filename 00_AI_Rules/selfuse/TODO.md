@@ -73,24 +73,29 @@
 - [x] ~~JALR 提前到 ID 级判断（视时序余量）~~ — **已取消**
   > 200MHz 下时序无法收敛
 - [X] **riscv-tests 功能验证环境搭建** (已完成，含 Custom Env/自动化脚本)
-- [X] **riscv-tests 全量功能通过** (40/40 PASS ✅)
+- [X] **riscv-tests 全量功能通过** (41/41 PASS ✅，含 bp_stress)
 - [X] **FPGA 数字孪生平台验证（EX-only 纯净基线）** ✅
   - [X] 基线确认：EX-only + 无预测器 = FPGA 功能完全正确 @ 200MHz
   - **此为添加分支预测器前的最终确认（M6）**
-- [ ] **Tournament 分支预测器** ← 当前任务
-  - [ ] Bimodal 预测器实现
-  - [ ] GShare 预测器实现
-  - [ ] GHR-indexed selector 实现
-  - [ ] **编写分支预测专用测试程序** ← 重要
-    > 分支预测功能复杂，riscv-tests 主要验证指令正确性，对预测器的覆盖不足。
-    > 需要自行编写一套完备的测试程序，覆盖以下场景：
-    > - 循环分支（taken/not-taken 模式切换）
-    > - 嵌套循环、深层函数调用/返回
-    > - 连续分支（分支间关联性测试，验证 GShare）
-    > - 冷启动 / 预测器训练过程
-    > - 边界条件（饱和计数器翻转、GHR 溢出等）
-  - [ ] 集成到 cpu_top + riscv-tests 验证
-  - [ ] FPGA 上板验证
+- [X] **Tournament 分支预测器** ✅ (已合并到 master)
+  - [X] Bimodal 预测器实现 (嵌入 BTB 的 2-bit BHT)
+  - [X] GShare 预测器实现 (8-bit GHR XOR PC[9:2] → 256-entry PHT)
+  - [X] GHR-indexed selector 实现 (256-entry Tournament selector)
+  - [X] NLP 时序优化：IF(L0) Bimodal 快速预测, ID(L1) Tournament 验证
+  - [X] RAS 4-deep shift stack
+  - [X] 分支预测专用测试程序 (bp_stress)
+  - [X] riscv-tests 41/41 PASS ✅
+  - [X] FPGA 上板验证通过 @ 200MHz, current 程序 ~176ms
+- [X] **250MHz 超频尝试** (feat/250mhz-timing 分支)
+  - [X] Flush 延迟一拍（EX→MEM）优化关键路径
+  - [X] 200MHz 时序收敛 (WNS=+0.099ns) ✅
+  - [X] 250MHz 未收敛 (WNS=-0.623ns) — 瓶颈为 DRAM 68×BRAM36 高扇出布线
+  - [X] CPU 内部逻辑最差 3.41ns，已具备 250MHz 能力
+  - **结论：提频瓶颈不在 CPU，在 DRAM BRAM 布线**
+- [ ] **Data Cache** ← 待评估
+  > DRAM 68个 BRAM 高扇出是 250MHz 的唯一瓶颈。
+  > Cache（如 4KB direct-mapped）只需少量 BRAM，扇出小布线短，
+  > 有望同时解决频率瓶颈和访存性能问题。
 - [ ] coremark 跑分验证
 - [ ] P&R 策略优化（Performance_Explore / Pblock）—— 如需进一步提频
 
@@ -101,3 +106,4 @@
 - [ ] TCL 脚本一键创建 Vivado 工程（自动导入 RTL、IP、约束、COE）— **暂缓**
   > 初次尝试失败：Vivado 工程的 IP 配置、BRAM 参数、文件依赖关系等
   > 过于复杂，难以通过脚本完全自动化。等以后有空再研究。
+

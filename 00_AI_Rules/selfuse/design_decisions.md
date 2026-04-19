@@ -233,7 +233,15 @@ irom_addr = branch_flush  ? branch_target :   // 分支：预取目标
 
 ## J. 分支预测 / RAS 优化计划
 
-**状态：规划中，待实施**
+**状态：已实施（NLP Tournament 架构）**
+
+> 以下规划已全部完成。最终实现为 NLP Tournament 分支预测器：
+> - BTB 64-entry 直接映射 + 嵌入 2-bit Bimodal BHT
+> - GShare: 8-bit GHR XOR PC[9:2] → 256-entry PHT
+> - Selector: 256-entry, GHR 索引
+> - RAS: 4-deep shift stack
+> - IF(L0): 用 bht[1] 快速预测（Bimodal）, ID(L1): Tournament 验证
+> - FPGA 验证通过 @ 200MHz, riscv-tests 41/41 PASS
 
 ### CPI 损失分析（基于 COE 指令分布统计）
 
@@ -310,3 +318,69 @@ wire [31:0] mem_fwd_val = (mem_wb_sel == 2'b10) ? (mem_pc + 32'd4) : mem_alu_res
 
 > 分支预测器改变了"哪些指令可以同时存在于流水线中"的关系。  
 > 新增优化功能时，必须重新审视前递、stall、flush 三者的隐含假设。
+
+---
+
+## K. 250MHz 超频尝试与 DRAM 瓶颈
+
+**日期**: 2026-04-19  
+**分支**: `feat/250mhz-timing`  
+**状态**: 200MHz 时序收敛，250MHz 未收敛，瓶颈为 DRAM BRAM 布线
+
+### 核心改动：Flush 延迟一拍（EX→MEM）
+
+为降低关键路径延迟，将 `branch_flush` 和 `branch_target` 从 EX 级组合逻辑推迟到 MEM 级（打一拍）：
+
+- **关键路径优化前**: EX ALU 输出 → `branch_flush` → `irom_addr` MUX → IROM（组合逻辑跨 EX-IF 两级）
+- **关键路径优化后**: 寄存器输出 → `mem_branch_flush` → `irom_addr` MUX → IROM（仅 1 级 MUX）
+- **代价**: Branch penalty 从 2 cycles 增加到 3 cycles
+
+修改文件：
+- `cpu_top.sv`: 更新 `irom_addr` MUX 优先级，使用 `mem_branch_flush`
+- `ex_mem_reg.sv`: 新增 `mem_branch_flush/target` 寄存器 + 门控 spurious 指令
+- `id_ex_reg.sv`: 更新 `ex_flush` 信号源
+- `cpu_top.sv`: 门控 `branch_flush & ~mem_branch_flush` 防止错误路径 flush
+- `cpu_top.sv`: 门控预测器 `ex_valid & ~mem_branch_flush` 防止错误路径训练
+
+### 时序结果
+
+| 约束频率 | WNS | 结果 |
+|---------|:---:|:----:|
+| 200MHz (主分支, 无 flush 延迟) | -0.647ns | ❌ |
+| **200MHz (本分支, flush 延迟)** | **+0.099ns** | **✅** |
+| 220MHz | -1.241ns | ❌ (拥塞) |
+| 250MHz (AggressiveExplore) | -0.623ns | ❌ |
+
+### 250MHz 瓶颈分析
+
+超过 4ns 的路径**全部是 DRAM BRAM 相关**，CPU 内部逻辑最差仅 3.41ns：
+
+| 路径 | 最差延迟 | 逻辑级 | 原因 |
+|------|:-------:|:-----:|------|
+| MEM ALU → DRAM BRAM 读地址 | 4.47ns | 0 级 | `mem_alu_result` 寄存器直连 BRAM 读端口，扇出 68 导致布线长 |
+| EX forwarding → DRAM BRAM 写地址 | 4.33ns | 9 级 | ALU 组合逻辑 → 经 perip_bridge → BRAM 写端口 |
+| MEM 写数据 → DRAM BRAM | 4.21ns | 0 级 | `mem_store_data/wea` 寄存器直连 BRAM 写数据端口，扇出大 |
+
+**根本原因**: DRAM 由 68 个 BRAM36 块组成（256KB），任何连到 DRAM 的信号扇出都很大。
+
+### 已尝试的优化
+
+1. **MAX_FANOUT 约束**: XDC 中对高扇出寄存器设置 `MAX_FANOUT 24`，效果有限
+2. **Performance_Explore + AggressiveExplore**: Vivado 策略优化，改善但不足以收敛
+
+### 后续方向思考
+
+- **Data Cache**: 在 CPU 和 DRAM 之间加一层小容量 Cache（如 4KB direct-mapped），Cache 只用少量 BRAM 块（扇出小，布线短），频率应能显著提升。同时 Cache 可降低 DRAM 访问频率，对多次访问同一区域的程序有性能加速效果。
+- **缩小 DRAM**: 如比赛允许，减小 DRAM 容量（如 64KB → 17 个 BRAM）直接降低扇出
+- **Pblock/Floorplan**: 手动约束 CPU 和 DRAM BRAM 放到相邻区域
+
+### 基准性能对比 (current 程序, 200MHz)
+
+| 分支 | 时钟频率 | 运行时间 | 说明 |
+|------|:-------:|:-------:|------|
+| master (NLP Tournament) | 200MHz | ~176ms | 时序收敛 |
+| feat/250mhz-timing | 200MHz | ~180+ms | flush penalty +1 cycle |
+
+当前分支因 flush penalty 增加（2→3 cycles），性能略有回退。
+在 200MHz 不变的前提下，本分支不如主分支。
+本分支价值在于：**如果未来加入 Cache 解决 DRAM 瓶颈，可在更高频率下运行。**

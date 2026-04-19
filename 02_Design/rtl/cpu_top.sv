@@ -100,10 +100,14 @@ module cpu_top (
     wire [31:0] alu_addr;              // FIX-A: 独立地址加法器（不依赖 alu_op）
 
     // ---- Branch ----
-    wire        branch_flush;
-    wire [31:0] branch_target;
+    wire        branch_flush;          // EX stage combinational (for predictor update)
+    wire [31:0] branch_target;         // EX stage combinational
     wire        actual_taken;          // for predictor update
     wire [31:0] actual_target;         // for predictor update
+
+    // ---- Registered branch flush (MEM stage, for 250MHz timing) ----
+    wire        mem_branch_flush;      // branch_flush delayed 1 cycle (from EX/MEM reg)
+    wire [31:0] mem_branch_target;     // branch_target delayed 1 cycle (from EX/MEM reg)
 
     // ---- Store interface (EX stage) ----
     wire [31:0] store_data_shifted;
@@ -155,10 +159,10 @@ module cpu_top (
     wire ex_ready_go_w  = ~store_load_hazard;
     wire mem_ready_go_w = 1'b1;     // BRAM latency absorbed by pipeline
 
-    // ---- Flush (updated below after id_bp_redirect is computed) ----
+    // ---- Flush (250MHz: uses registered mem_branch_flush instead of combinational branch_flush) ----
     wire id_bp_redirect;            // NLP: ID-stage Tournament redirect
-    wire id_flush = branch_flush | id_bp_redirect;
-    wire ex_flush = branch_flush;
+    wire id_flush = mem_branch_flush | id_bp_redirect;
+    wire ex_flush = mem_branch_flush;   // 250MHz: flush EX too (3-stage flush: IF+ID+EX)
 
     // ---- Register addresses from instruction (ID stage, from IF/ID reg) ----
     wire [4:0] id_rs1_addr = id_inst[19:15];
@@ -229,7 +233,10 @@ module cpu_top (
         .bp_sel_cnt      (bp_sel_cnt),
 
         // EX update
-        .ex_valid        (ex_valid),
+        // 250MHz: gate ex_valid with ~mem_branch_flush to prevent wrong-path
+        // instructions (that entered EX before registered flush) from corrupting
+        // predictor state (GHR, PHT, BTB, selector)
+        .ex_valid        (ex_valid & ~mem_branch_flush),
         .ex_pc           (ex_pc),
         .ex_is_branch    (ex_is_branch),
         .ex_is_jal       (ex_is_jal),
@@ -269,7 +276,7 @@ module cpu_top (
     // instruction actually transfers to EX on this cycle. Without this gate,
     // a stall would cause id_flush to destroy the branch while ID/EX can't
     // capture it, permanently losing the instruction.
-    assign id_bp_redirect = id_valid & ~branch_flush
+    assign id_bp_redirect = id_valid & ~mem_branch_flush
                           & id_bp_btb_hit
                           & (id_bp_btb_type == 2'b10)    // TYPE_BRANCH
                           & (id_bp_btb_bht[1] != id_tournament_taken)
@@ -280,18 +287,19 @@ module cpu_top (
     wire [31:0] id_redirect_target = id_tournament_taken ? id_bp_target
                                                          : (id_pc + 32'd4);
 
-    assign irom_addr = branch_flush   ? branch_target :     // EX flush (highest priority)
-                       id_bp_redirect ? id_redirect_target : // NLP: ID redirect
-                       !if_allowin_w  ? pc :                 // 停顿：保持当前地址
-                                        next_pc;             // 正常：预取下一条（含L0预测）
+    // 250MHz: irom_addr driven by registered mem_branch_flush (short path: reg → MUX → IROM)
+    assign irom_addr = mem_branch_flush ? mem_branch_target :  // MEM flush (highest, registered)
+                       id_bp_redirect   ? id_redirect_target : // NLP: ID redirect
+                       !if_allowin_w    ? pc :                 // 停顿：保持当前地址
+                                          next_pc;             // 正常：预取下一条（含L0预测）
 
     pc_reg u_pc_reg (
         .clk           (clk),
         .rst_n         (rst_n),
         .if_allowin    (id_allowin),    // simplified: if_valid=1, if_ready_go=1
         .if_valid      (if_valid),
-        .branch_flush  (branch_flush),
-        .branch_target (branch_target),
+        .branch_flush  (mem_branch_flush),   // 250MHz: registered flush from MEM
+        .branch_target (mem_branch_target),  // 250MHz: registered target from MEM
         .next_pc       (irom_addr),
         .pc            (pc)
     );
@@ -543,6 +551,14 @@ module cpu_top (
         .mem_valid        (mem_valid),
         .mem_ready_go     (mem_ready_go_w),
         .wb_allowin       (wb_allowin),
+        // 250MHz: register branch_flush into MEM stage
+        // Gate with ~mem_branch_flush: suppress flush from wrong-path instructions
+        // that entered EX before the registered flush could stop them
+        // (e.g., 'j fail' on not-taken path would otherwise generate a second flush)
+        .ex_branch_flush  (branch_flush & ~mem_branch_flush),
+        .ex_branch_target (branch_target),
+        .mem_branch_flush (mem_branch_flush),
+        .mem_branch_target(mem_branch_target),
         .ex_alu_result    (alu_result),
         .ex_pc            (ex_pc),
         .ex_rd            (ex_rd),
