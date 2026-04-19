@@ -7,16 +7,16 @@ CPU4MyOwn/
 riscv-tests/
 rt-thread/
 
+# --- Editor / Tool Caches ---
+.Xil/
+.obsidian/
+
 # --- Simulation Artifacts ---
 # Waveforms
 *.vcd
 *.wcfg
 
-# riscv-tests generated files
-02_Design/sim/riscv_tests/hex/*
-!02_Design/sim/riscv_tests/hex/.gitkeep
-
-# iverilog/xsim work directories and snapshots
+# iverilog/xsim work directory (hex, binaries, etc.)
 02_Design/sim/riscv_tests/work/*
 !02_Design/sim/riscv_tests/work/.gitkeep
 xsim.dir/
@@ -26,5 +26,4 @@ xsim.dir/
 *.jou
 
 # Branch prediction simulation output
-02_Design/coe/sim_output/__pycache__/
 02_Design/coe/sim_output/

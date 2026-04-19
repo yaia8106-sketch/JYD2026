@@ -18,7 +18,7 @@ cd "$SCRIPT_DIR"
 
 SIM_DIR="$(cd ".." && pwd)"
 RTL_DIR="$(cd "$SIM_DIR/../rtl" && pwd)"
-HEX_DIR="hex"
+HEX_DIR="work/hex"
 WORK_DIR="work"
 SIMULATOR="${1:-iverilog}"
 
@@ -57,7 +57,8 @@ TESTS="simple \
        lb lbu lh lhu lw \
        sb sh sw \
        ld_st st_ld \
-       bp_stress"
+       bp_stress \
+       coprime"
 
 mkdir -p "$WORK_DIR"
 

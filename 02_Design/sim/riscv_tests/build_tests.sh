@@ -10,7 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 WORKSPACE="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 TESTS_DIR="$WORKSPACE/riscv-tests"
 CUSTOM_ENV="$TESTS_DIR/env/custom"
-HEX_DIR="$SCRIPT_DIR/hex"
+HEX_DIR="$SCRIPT_DIR/work/hex"
 
 CC=riscv64-unknown-elf-gcc
 OBJDUMP="riscv64-unknown-elf-objdump"
@@ -30,7 +30,8 @@ TESTS="simple \
        lb lbu lh lhu lw \
        sb sh sw \
        ld_st st_ld \
-       bp_stress"
+       bp_stress \
+       coprime"
 
 mkdir -p "$HEX_DIR"
 

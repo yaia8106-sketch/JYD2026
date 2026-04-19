@@ -39,6 +39,8 @@ coe/
 | `disasm_coe.py`   | COE 反汇编         | `python3 disasm_coe.py <coe文件> [base_addr]` |
 | `bp_simulator.py` | 分支预测器配置对比 | `python3 bp_simulator.py`                     |
 | `bp_sweep.py`     | 多核并行全参数扫描 | `python3 bp_sweep.py`                         |
+| `bp_test_current.py` | 当前 RTL Tournament BP 准确率测试 | `python3 bp_test_current.py`          |
+
 
 所有仿真结果输出到 `sim_output/` 目录（已加入 `.gitignore`）。
 

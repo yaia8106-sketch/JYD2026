@@ -83,7 +83,8 @@ CPU_Workspace/
 
 | 子目录 | 内容 | 说明 |
 |---|---|---|
-| `riscv_tests/` | riscv-tests 全自动回归环境 | TB、脚本、hex、work 全部在内 |
+| `riscv_tests/` | riscv-tests 全自动回归环境 | TB、脚本、elf2hex，产物输出到 `work/` |
+| `riscv_tests/work/` | 编译 / 仿真产物 | hex 文件、iverilog 二进制（已 gitignore） |
 | `debug/` | 调试 TB + 仿真输出 | 含 `tb_student_top.sv`，用于打印信号值、波形调试 |
 
 **这是 AI 的主要代码输出目录。**

@@ -18,7 +18,7 @@ bash build_tests.sh
 ```
 
 * **动作**：调用 `riscv64-unknown-elf-gcc` 进行编译，并利用 `elf2hex.py` 将生成的 ELF 文件拆分为 `irom.hex` (指令) 和 `dram.hex` (数据)。
-* **产物**：生成的镜像将存放在 `hex/` 目录下。
+* **产物**：生成的镜像将存放在 `work/hex/` 目录下。
 
 ### 第二步：运行全量回归 (Run All Tests)
 
@@ -51,10 +51,10 @@ bash run_all.sh [simulator]
 
 如果某个测试用例（如 `add`）报错，您可以进行深入分析：
 
-1. **检查反汇编**：查看 `hex/rv32ui-p-add.dump` 文件，确认编译出的指令序列是否符合预期。
+1. **检查反汇编**：查看 `work/hex/rv32ui-p-add.dump` 文件，确认编译出的指令序列是否符合预期。
 2. **查看仿真波形**：
-   * 在 `tb_riscv_tests.sv` 中，仿真结果会自动生成 `riscv_test.vcd`。
-   * 使用 `gtkwave riscv_test.vcd` 或 Vivado 的 Waveform Viewer 进行信号追踪。
+   * 如需波形调试，可在 TB 中添加 `$dumpfile` / `$dumpvars`，VCD 文件建议输出到 `work/` 目录。
+   * 使用 `gtkwave work/xxx.vcd` 或 Vivado 的 Waveform Viewer 进行信号追踪。
 3. **单项调试**：
    如果您只想单跑某一个生成的仿真包，可以直接进入 `work/` 目录运行 `vvp` 命令，而不必每次都跑全量脚本。
 

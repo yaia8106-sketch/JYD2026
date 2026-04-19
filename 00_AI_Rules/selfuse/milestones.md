@@ -34,12 +34,22 @@
 - **新增**: COE 指令分布分析、分支预测/RAS 优化计划、JAL/JALR 迁移取消记录
 
 ### 🏁 M6: 纯净 EX-only 基线 FPGA 验证通过（200MHz）✅ ⭐ 预测器前最终基线
-- **Commit**: `2a11aa1` ← 当前 HEAD
+- **Commit**: `bb094dd` (tag: `M6-baseline`)
 - **说明**: 清理全部预测器和 JAL ID-stage 残留代码后的纯净 EX-only 基线，数字孪生平台 FPGA 上板验证**功能完全正确**
 - **验证结果**: 数字孪生平台上板通过，riscv-tests 40/40 PASS
-- **时序**: 200MHz，WNS = -0.304ns（轻微违例，不影响 FPGA 功能正确性）
-- **⚠️ 重要**: **这是添加分支预测器前的最后一次功能正确性确认。** 后续所有分支预测相关改动如果导致功能异常，应回滚到此版本。
-- **回档提示**: `git reset --hard <此commit>` 即可恢复到确认正确的无预测器基线
+- **⚗️ 重要**: 添加分支预测器前的最后一次功能正确性确认
+
+### 🏁 M7: NLP Tournament 分支预测器合并 + FPGA 验证通过（200MHz）✅
+- **Commit**: `ddc0be4` (master)
+- **说明**: Tournament 分支预测器（BTB64 + Bimodal + GShare + Selector + RAS4）合并到 master
+- **验证结果**: FPGA 上板通过 @ 200MHz，riscv-tests 42/42 PASS（含 bp_stress + coprime）
+- **性能**: current 程序 ~176ms
+
+### 🏁 M8: 250MHz 超频尝试（feat/250mhz-timing 分支）
+- **Commit**: `2f84a77` (feat/250mhz-timing)
+- **说明**: Flush 延迟 EX→MEM 优化关键路径，200MHz 时序收敛，250MHz 未收敛
+- **瓶颈**: DRAM 68×BRAM36 高扇出布线（CPU 逻辑已具备 250MHz 能力）
+- **性能**: current 程序 ~180+ms（flush penalty +1 cycle）
 
 ---
 
@@ -50,7 +60,9 @@
 | **功能基线** | `22f40e9` | FPGA 验证通过，功能完全正确（50MHz） | ⭐⭐⭐⭐⭐ |
 | **180MHz 基线** | `48b0f45` | 时序优化完成，FPGA 验证通过 | ⭐⭐⭐⭐⭐ |
 | **200MHz** | `ce50982` | Implementation 通过 | ⭐⭐⭐ |
-| **🔒 预测器前最终基线** | `2a11aa1` | **纯净 EX-only，FPGA 功能正确，添加预测器前最后确认** | ⭐⭐⭐⭐⭐ |
+| **🔒 预测器前最终基线** | `bb094dd` | 纯净 EX-only，FPGA 功能正确 (tag: M6-baseline) | ⭐⭐⭐⭐⭐ |
+| **Tournament BP** | `ddc0be4` | NLP 分支预测器，FPGA 验证通过 @ 200MHz | ⭐⭐⭐⭐⭐ |
+| **250MHz 尝试** | `2f84a77` | flush 延迟优化，200MHz 收敛，250MHz 未收敛 | ⭐⭐⭐ |
 
 ---
 
