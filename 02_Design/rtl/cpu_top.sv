@@ -14,12 +14,15 @@ module cpu_top (
     output logic [31:0] irom_addr,       // = next_pc（预取，IF 阶段）
     input  logic [31:0] irom_data,       // 指令（BRAM 1拍 Clk-to-Q，IF 阶段有效）
 
-    // 外设总线 (EX stage → bridge)
-    output logic [31:0] perip_addr,      // = alu_result
-    output logic [31:0] perip_addr_sum,  // = alu_sum（加法器直出，跳过 ALU output MUX）
-    output logic [3:0]  perip_wea,       // = mem_interface store wea
-    output logic [31:0] perip_wdata,     // = store_data_shifted
-    input  logic [31:0] perip_rdata      // bridge 返回数据（MEM 阶段有效）
+    // Peripheral bus
+    //   Read path: EX stage (combinational)
+    //   Write path: MEM stage (registered, FIX-C)
+    output logic [31:0] perip_addr,      // EX stage: alu_addr (DRAM read addr)
+    output logic [31:0] perip_addr_sum,  // 兼容保留 (= perip_addr)
+    output logic [31:0] perip_wr_addr,   // MEM stage: store address (DRAM write addr)
+    output logic [3:0]  perip_wea,       // MEM stage: store WEA (registered)
+    output logic [31:0] perip_wdata,     // MEM stage: store data (registered)
+    input  logic [31:0] perip_rdata      // MEM stage: read data
 );
 
     // ================================================================
@@ -120,6 +123,8 @@ module cpu_top (
     wire        mem_mem_read_en;
     wire [ 1:0] mem_mem_size;
     wire        mem_mem_unsigned;
+    wire [ 3:0] mem_store_wea;         // FIX-C: registered store WEA
+    wire [31:0] mem_store_data;        // FIX-C: registered store data
 
     // ---- MEM/WB ----
     wire        wb_valid;
@@ -141,7 +146,13 @@ module cpu_top (
 
     // ---- Handshake constants ----
     wire if_ready_go_w  = 1'b1;     // BRAM latency absorbed by pipeline
-    wire ex_ready_go_w  = 1'b1;     // No multi-cycle ops (yet)
+
+    // FIX-C: Store-load hazard detection
+    //   MEM 有 store + EX 有 load + DRAM word 地址相同 → stall 1 拍
+    wire store_load_hazard = (|mem_store_wea)
+                           & ex_valid & ex_mem_read_en
+                           & (mem_alu_result[17:2] == alu_addr[17:2]);
+    wire ex_ready_go_w  = ~store_load_hazard;
     wire mem_ready_go_w = 1'b1;     // BRAM latency absorbed by pipeline
 
     // ---- Flush ----
@@ -154,11 +165,12 @@ module cpu_top (
     wire [4:0] id_rd_addr  = id_inst[11:7];
 
     // ---- Port assignments ----
-    // FIX-A: DRAM 地址用 alu_addr（独立加法器），彻底不依赖 alu_op
-    assign perip_addr     = alu_addr;             // 独立加法器直出
-    assign perip_addr_sum = alu_addr;             // bridge 地址判断用
-    assign perip_wea      = dram_wea;            // bridge 写使能 (EX stage)
-    assign perip_wdata    = store_data_shifted;  // bridge 写数据 (EX stage)
+    // FIX-C: 读写分离——读(EX) + 写(MEM)
+    assign perip_addr     = alu_addr;             // EX stage: 读地址
+    assign perip_addr_sum = alu_addr;             // 兼容保留
+    assign perip_wr_addr  = mem_alu_result;       // MEM stage: 写地址（已打拍）
+    assign perip_wea      = mem_store_wea;        // MEM stage: 写使能（已打拍）
+    assign perip_wdata    = mem_store_data;       // MEM stage: 写数据（已打拍）
     assign dram_dout   = perip_rdata;       // bridge 读数据 (MEM stage)
 
     // ================================================================
@@ -515,6 +527,8 @@ module cpu_top (
         .ex_mem_read_en   (ex_mem_read_en),
         .ex_mem_size      (ex_mem_size),
         .ex_mem_unsigned  (ex_mem_unsigned),
+        .ex_store_wea     (dram_wea),            // FIX-C: latch WEA
+        .ex_store_data    (store_data_shifted),   // FIX-C: latch shifted data
         .mem_alu_result   (mem_alu_result),
         .mem_pc           (mem_pc),
         .mem_rd           (mem_rd),
@@ -522,7 +536,9 @@ module cpu_top (
         .mem_wb_sel       (mem_wb_sel),
         .mem_mem_read_en  (mem_mem_read_en),
         .mem_mem_size     (mem_mem_size),
-        .mem_mem_unsigned (mem_mem_unsigned)
+        .mem_mem_unsigned (mem_mem_unsigned),
+        .mem_store_wea    (mem_store_wea),        // FIX-C: to perip_wea
+        .mem_store_data   (mem_store_data)        // FIX-C: to perip_wdata
     );
 
     // ==================== MEM/WB ====================
