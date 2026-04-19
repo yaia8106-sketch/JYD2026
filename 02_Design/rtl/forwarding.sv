@@ -3,6 +3,12 @@
 // Description: Forwarding MUX (rs1/rs2) + Load-Use hazard detection
 // Spec: 02_Design/spec/forwarding_spec.md
 // Style: parallel match + priority encode + AND-OR MUX
+//
+// FIX: EX/MEM forwarding now handles JAL/JALR (wb_sel=10 → PC+4)
+//   Previously forwarded alu_result even for JAL/JALR, which gives
+//   the jump TARGET instead of the LINK ADDRESS (PC+4).
+//   This was masked pre-predictor (JAL always flushed, so no
+//   dependent instruction could follow in the pipeline).
 // ============================================================
 
 module forwarding (
@@ -18,6 +24,8 @@ module forwarding (
     input  logic        ex_mem_read,
     input  logic [ 4:0] ex_rd,
     input  logic [31:0] ex_alu_result,
+    input  logic [31:0] ex_pc,          // NEW: for JAL/JALR link address
+    input  logic [ 1:0] ex_wb_sel,      // NEW: 00=ALU, 01=DRAM, 10=PC+4
 
     // MEM stage
     input  logic        mem_valid,
@@ -25,6 +33,8 @@ module forwarding (
     input  logic        mem_is_load,
     input  logic [ 4:0] mem_rd,
     input  logic [31:0] mem_alu_result,
+    input  logic [31:0] mem_pc,         // NEW: for JAL/JALR link address
+    input  logic [ 1:0] mem_wb_sel,     // NEW: 00=ALU, 01=DRAM, 10=PC+4
 
     // WB stage
     input  logic        wb_valid,
@@ -37,6 +47,14 @@ module forwarding (
     output logic [31:0] id_rs2_data,
     output logic        id_ready_go
 );
+
+    // ================================================================
+    //  Forwarding value computation
+    //  For EX/MEM stages: if wb_sel==10 (JAL/JALR), forward PC+4
+    //  For wb_sel==01 (load), value not ready yet → handled by stall
+    // ================================================================
+    wire [31:0] ex_fwd_val  = (ex_wb_sel  == 2'b10) ? (ex_pc  + 32'd4) : ex_alu_result;
+    wire [31:0] mem_fwd_val = (mem_wb_sel == 2'b10) ? (mem_pc + 32'd4) : mem_alu_result;
 
     // ================================================================
     //  RS1 Forwarding MUX
@@ -54,8 +72,8 @@ module forwarding (
     wire rs1_sel_rf  = ~rs1_ex_match & ~rs1_mem_match & ~rs1_wb_match;
 
     // ---- Step 3: AND-OR MUX ----
-    assign id_rs1_data = ({32{rs1_sel_ex}}  & ex_alu_result)
-                       | ({32{rs1_sel_mem}} & mem_alu_result)
+    assign id_rs1_data = ({32{rs1_sel_ex}}  & ex_fwd_val)
+                       | ({32{rs1_sel_mem}} & mem_fwd_val)
                        | ({32{rs1_sel_wb}}  & wb_write_data)
                        | ({32{rs1_sel_rf}}  & rf_rs1_data);
 
@@ -72,8 +90,8 @@ module forwarding (
     wire rs2_sel_wb  = rs2_wb_match  & ~rs2_ex_match & ~rs2_mem_match;
     wire rs2_sel_rf  = ~rs2_ex_match & ~rs2_mem_match & ~rs2_wb_match;
 
-    assign id_rs2_data = ({32{rs2_sel_ex}}  & ex_alu_result)
-                       | ({32{rs2_sel_mem}} & mem_alu_result)
+    assign id_rs2_data = ({32{rs2_sel_ex}}  & ex_fwd_val)
+                       | ({32{rs2_sel_mem}} & mem_fwd_val)
                        | ({32{rs2_sel_wb}}  & wb_write_data)
                        | ({32{rs2_sel_rf}}  & rf_rs2_data);
 

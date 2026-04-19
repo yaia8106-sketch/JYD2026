@@ -1,6 +1,6 @@
 // ============================================================
 // Module: if_id_reg
-// Description: IF/ID pipeline register (stores PC + instruction)
+// Description: IF/ID pipeline register (stores PC + instruction + prediction)
 // Spec: 02_Design/spec/if_id_reg_spec.md
 // Note: Instruction captured from BRAM output in IF stage
 // ============================================================
@@ -24,7 +24,25 @@ module if_id_reg (
     input  logic [31:0] if_pc,
     input  logic [31:0] if_inst,       // BRAM output (irom_data), valid in IF stage
     output logic [31:0] id_pc,
-    output logic [31:0] id_inst        // registered instruction for ID stage
+    output logic [31:0] id_inst,       // registered instruction for ID stage
+
+    // Branch prediction signals (IF → ID passthrough)
+    input  logic        if_bp_taken,
+    input  logic [31:0] if_bp_target,
+    input  logic [ 7:0] if_bp_ghr_snap,
+    input  logic        if_bp_btb_hit,
+    input  logic        if_bp_btb_way,
+    input  logic [ 1:0] if_bp_btb_bht,
+    input  logic [ 1:0] if_bp_pht_cnt,
+    input  logic [ 1:0] if_bp_sel_cnt,
+    output logic        id_bp_taken,
+    output logic [31:0] id_bp_target,
+    output logic [ 7:0] id_bp_ghr_snap,
+    output logic        id_bp_btb_hit,
+    output logic        id_bp_btb_way,
+    output logic [ 1:0] id_bp_btb_bht,
+    output logic [ 1:0] id_bp_pht_cnt,
+    output logic [ 1:0] id_bp_sel_cnt
 );
 
     // ---- Handshake ----
@@ -33,15 +51,31 @@ module if_id_reg (
     // ---- Pipeline register ----
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            id_valid <= 1'b0;
-            id_pc    <= 32'd0;
-            id_inst  <= 32'd0;
+            id_valid        <= 1'b0;
+            id_pc           <= 32'd0;
+            id_inst         <= 32'd0;
+            id_bp_taken     <= 1'b0;
+            id_bp_target    <= 32'd0;
+            id_bp_ghr_snap  <= 8'd0;
+            id_bp_btb_hit   <= 1'b0;
+            id_bp_btb_way   <= 1'b0;
+            id_bp_btb_bht   <= 2'd0;
+            id_bp_pht_cnt   <= 2'd0;
+            id_bp_sel_cnt   <= 2'd0;
         end else if (id_flush) begin
-            id_valid <= 1'b0;
+            id_valid        <= 1'b0;
         end else if (id_allowin) begin
-            id_valid <= if_valid & if_ready_go;
-            id_pc    <= if_pc;
-            id_inst  <= if_inst;
+            id_valid        <= if_valid & if_ready_go;
+            id_pc           <= if_pc;
+            id_inst         <= if_inst;
+            id_bp_taken     <= if_bp_taken;
+            id_bp_target    <= if_bp_target;
+            id_bp_ghr_snap  <= if_bp_ghr_snap;
+            id_bp_btb_hit   <= if_bp_btb_hit;
+            id_bp_btb_way   <= if_bp_btb_way;
+            id_bp_btb_bht   <= if_bp_btb_bht;
+            id_bp_pht_cnt   <= if_bp_pht_cnt;
+            id_bp_sel_cnt   <= if_bp_sel_cnt;
         end
     end
 

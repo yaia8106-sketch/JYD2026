@@ -3,6 +3,7 @@
 // Description: RV32I 5-stage pipeline processor top-level
 // Rule: WIRING ONLY — no logic, no assign expressions with operators
 // IROM/DRAM: 外部例化，通过端口访问
+// Branch Prediction: Tournament (BTB+GShare+Selector+RAS)
 // ============================================================
 
 module cpu_top (
@@ -93,11 +94,13 @@ module cpu_top (
     // ---- ALU ----
     wire [31:0] alu_result;
     wire [31:0] alu_sum;               // ALU 加法器直出（跳过 output MUX）
+    wire [31:0] alu_addr;              // FIX-A: 独立地址加法器（不依赖 alu_op）
 
     // ---- Branch ----
     wire        branch_flush;
     wire [31:0] branch_target;
-
+    wire        actual_taken;          // for predictor update
+    wire [31:0] actual_target;         // for predictor update
 
     // ---- Store interface (EX stage) ----
     wire [31:0] store_data_shifted;
@@ -151,29 +154,100 @@ module cpu_top (
     wire [4:0] id_rd_addr  = id_inst[11:7];
 
     // ---- Port assignments ----
-    assign perip_addr     = alu_result;         // bridge 地址 (EX stage)
-    assign perip_addr_sum = alu_sum;             // bridge 地址判断用（跳过 MUX）
+    // FIX-A: DRAM 地址用 alu_addr（独立加法器），彻底不依赖 alu_op
+    assign perip_addr     = alu_addr;             // 独立加法器直出
+    assign perip_addr_sum = alu_addr;             // bridge 地址判断用
     assign perip_wea      = dram_wea;            // bridge 写使能 (EX stage)
     assign perip_wdata    = store_data_shifted;  // bridge 写数据 (EX stage)
     assign dram_dout   = perip_rdata;       // bridge 读数据 (MEM stage)
 
     // ================================================================
+    //  Branch prediction wires
+    // ================================================================
+
+    // IF stage prediction outputs
+    wire        bp_taken;
+    wire [31:0] bp_target;
+    wire [ 7:0] bp_ghr_snap;
+    wire        bp_btb_hit;
+    wire        bp_btb_way;
+    wire [ 1:0] bp_btb_bht;
+    wire [ 1:0] bp_pht_cnt;
+    wire [ 1:0] bp_sel_cnt;
+
+    // ID stage prediction (from IF/ID reg)
+    wire        id_bp_taken;
+    wire [31:0] id_bp_target;
+    wire [ 7:0] id_bp_ghr_snap;
+    wire        id_bp_btb_hit;
+    wire        id_bp_btb_way;
+    wire [ 1:0] id_bp_btb_bht;
+    wire [ 1:0] id_bp_pht_cnt;
+    wire [ 1:0] id_bp_sel_cnt;
+
+    // EX stage prediction (from ID/EX reg)
+    wire        ex_bp_taken;
+    wire [31:0] ex_bp_target;
+    wire [ 7:0] ex_bp_ghr_snap;
+    wire        ex_bp_btb_hit;
+    wire        ex_bp_btb_way;
+    wire [ 1:0] ex_bp_btb_bht;
+    wire [ 1:0] ex_bp_pht_cnt;
+    wire [ 1:0] ex_bp_sel_cnt;
+
+    // ================================================================
     //  Module instantiations
     // ================================================================
 
+    // ==================== Branch Predictor ====================
+
+    branch_predictor u_bp (
+        .clk             (clk),
+        .rst_n           (rst_n),
+
+        // IF prediction
+        .if_pc           (pc),
+        .bp_taken        (bp_taken),
+        .bp_target       (bp_target),
+        .bp_ghr_snap     (bp_ghr_snap),
+        .bp_btb_hit      (bp_btb_hit),
+        .bp_btb_way      (bp_btb_way),
+        .bp_btb_bht      (bp_btb_bht),
+        .bp_pht_cnt      (bp_pht_cnt),
+        .bp_sel_cnt      (bp_sel_cnt),
+
+        // EX update
+        .ex_valid        (ex_valid),
+        .ex_pc           (ex_pc),
+        .ex_is_branch    (ex_is_branch),
+        .ex_is_jal       (ex_is_jal),
+        .ex_is_jalr      (ex_is_jalr),
+        .ex_rd           (ex_rd),
+        .ex_rs1_addr     (ex_rs1_addr),
+        .ex_actual_taken (actual_taken),
+        .ex_actual_target(actual_target),
+        .ex_ghr_snap     (ex_bp_ghr_snap),
+        .ex_btb_hit      (ex_bp_btb_hit),
+        .ex_btb_way      (ex_bp_btb_way),
+        .ex_btb_bht      (ex_bp_btb_bht),
+        .ex_pht_cnt      (ex_bp_pht_cnt),
+        .ex_sel_cnt      (ex_bp_sel_cnt)
+    );
+
     // ==================== Pre-IF ====================
 
-    wire [31:0] next_pc;
     wire        if_allowin_w = id_allowin;   // for irom_addr mux
 
     next_pc_mux u_next_pc_mux (
         .pc       (pc),
+        .bp_taken (bp_taken),
+        .bp_target(bp_target),
         .next_pc  (next_pc)
     );
 
     assign irom_addr = branch_flush  ? branch_target :   // 分支：预取目标
                        !if_allowin_w ? pc :               // 停顿：保持当前地址
-                                       next_pc;           // 正常：预取下一条
+                                       next_pc;           // 正常：预取下一条（含预测跳转）
 
     pc_reg u_pc_reg (
         .clk           (clk),
@@ -203,7 +277,24 @@ module cpu_top (
         .if_pc        (pc),
         .if_inst      (irom_data),       // BRAM output captured in IF stage
         .id_pc        (id_pc),
-        .id_inst      (id_inst)          // registered instruction for ID
+        .id_inst      (id_inst),         // registered instruction for ID
+        // Branch prediction passthrough
+        .if_bp_taken    (bp_taken),
+        .if_bp_target   (bp_target),
+        .if_bp_ghr_snap (bp_ghr_snap),
+        .if_bp_btb_hit  (bp_btb_hit),
+        .if_bp_btb_way  (bp_btb_way),
+        .if_bp_btb_bht  (bp_btb_bht),
+        .if_bp_pht_cnt  (bp_pht_cnt),
+        .if_bp_sel_cnt  (bp_sel_cnt),
+        .id_bp_taken    (id_bp_taken),
+        .id_bp_target   (id_bp_target),
+        .id_bp_ghr_snap (id_bp_ghr_snap),
+        .id_bp_btb_hit  (id_bp_btb_hit),
+        .id_bp_btb_way  (id_bp_btb_way),
+        .id_bp_btb_bht  (id_bp_btb_bht),
+        .id_bp_pht_cnt  (id_bp_pht_cnt),
+        .id_bp_sel_cnt  (id_bp_sel_cnt)
     );
 
     decoder u_decoder (
@@ -255,11 +346,15 @@ module cpu_top (
         .ex_mem_read    (ex_mem_read_en),
         .ex_rd          (ex_rd),
         .ex_alu_result  (alu_result),
+        .ex_pc          (ex_pc),
+        .ex_wb_sel      (ex_wb_sel),
         .mem_valid      (mem_valid),
         .mem_reg_write  (mem_reg_write_en),
         .mem_is_load    (mem_mem_read_en),
         .mem_rd         (mem_rd),
         .mem_alu_result (mem_alu_result),
+        .mem_pc         (mem_pc),
+        .mem_wb_sel     (mem_wb_sel),
         .wb_valid       (wb_valid),
         .wb_reg_write   (wb_reg_write_en),
         .wb_rd          (wb_rd),
@@ -312,6 +407,15 @@ module cpu_top (
         .id_branch_cond   (dec_branch_cond),
         .id_is_jal        (dec_is_jal),
         .id_is_jalr       (dec_is_jalr),
+        // Branch prediction passthrough
+        .id_bp_taken      (id_bp_taken),
+        .id_bp_target     (id_bp_target),
+        .id_bp_ghr_snap   (id_bp_ghr_snap),
+        .id_bp_btb_hit    (id_bp_btb_hit),
+        .id_bp_btb_way    (id_bp_btb_way),
+        .id_bp_btb_bht    (id_bp_btb_bht),
+        .id_bp_pht_cnt    (id_bp_pht_cnt),
+        .id_bp_sel_cnt    (id_bp_sel_cnt),
         .ex_pc            (ex_pc),
         .ex_alu_src1      (ex_alu_src1),
         .ex_alu_src2      (ex_alu_src2),
@@ -330,7 +434,16 @@ module cpu_top (
         .ex_is_branch     (ex_is_branch),
         .ex_branch_cond   (ex_branch_cond),
         .ex_is_jal        (ex_is_jal),
-        .ex_is_jalr       (ex_is_jalr)
+        .ex_is_jalr       (ex_is_jalr),
+        // Branch prediction out
+        .ex_bp_taken      (ex_bp_taken),
+        .ex_bp_target     (ex_bp_target),
+        .ex_bp_ghr_snap   (ex_bp_ghr_snap),
+        .ex_bp_btb_hit    (ex_bp_btb_hit),
+        .ex_bp_btb_way    (ex_bp_btb_way),
+        .ex_bp_btb_bht    (ex_bp_btb_bht),
+        .ex_bp_pht_cnt    (ex_bp_pht_cnt),
+        .ex_bp_sel_cnt    (ex_bp_sel_cnt)
     );
 
     // ==================== EX stage ====================
@@ -341,20 +454,26 @@ module cpu_top (
         .alu_src1   (ex_alu_src1),
         .alu_src2   (ex_alu_src2),
         .alu_result (alu_result),
-        .alu_sum    (alu_sum)
+        .alu_sum    (alu_sum),
+        .alu_addr   (alu_addr)
     );
 
     branch_unit u_branch_unit (
-        .rs1_data      (ex_rs1_data),
-        .rs2_data      (ex_rs2_data),
-        .alu_result    (alu_result),
-        .is_branch     (ex_is_branch),
-        .branch_cond   (ex_branch_cond),
-        .is_jal        (ex_is_jal),
-        .is_jalr       (ex_is_jalr),
-        .ex_valid      (ex_valid),
-        .branch_flush  (branch_flush),
-        .branch_target (branch_target)
+        .rs1_data         (ex_rs1_data),
+        .rs2_data         (ex_rs2_data),
+        .alu_result       (alu_result),
+        .ex_pc            (ex_pc),
+        .is_branch        (ex_is_branch),
+        .branch_cond      (ex_branch_cond),
+        .is_jal           (ex_is_jal),
+        .is_jalr          (ex_is_jalr),
+        .ex_valid         (ex_valid),
+        .predicted_taken  (ex_bp_taken),
+        .predicted_target (ex_bp_target),
+        .branch_flush     (branch_flush),
+        .branch_target    (branch_target),
+        .actual_taken     (actual_taken),
+        .actual_target    (actual_target)
     );
 
     // Store interface (EX stage → DRAM)
@@ -362,7 +481,7 @@ module cpu_top (
         // Store side (EX stage)
         .store_valid     (ex_valid),
         .store_en        (ex_mem_write_en),
-        .store_addr_low  (alu_result[1:0]),
+        .store_addr_low  (alu_addr[1:0]),
         .store_mem_size  (ex_mem_size),
         .store_data_in   (ex_rs2_data),
         .store_wea       (dram_wea),

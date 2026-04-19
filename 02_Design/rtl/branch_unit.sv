@@ -1,20 +1,33 @@
 // ============================================================
 // Module: branch_unit
-// Description: Branch/jump decision unit (EX stage, pure combinational)
+// Description: Branch/jump decision + misprediction detection (EX stage)
+//   With branch prediction: compares predicted vs actual outcome.
+//   Flush only on misprediction (not on every taken branch).
 // Spec: 02_Design/spec/branch_unit_spec.md
 // ============================================================
 
 module branch_unit (
     input  logic [31:0] rs1_data,
     input  logic [31:0] rs2_data,
-    input  logic [31:0] alu_result,      // branch target from ALU
+    input  logic [31:0] alu_result,      // branch/jump target from ALU
+    input  logic [31:0] ex_pc,           // PC of the instruction in EX
     input  logic        is_branch,
     input  logic [ 2:0] branch_cond,
     input  logic        is_jal,
     input  logic        is_jalr,
     input  logic        ex_valid,
+
+    // Prediction from pipeline (IF → ID → EX)
+    input  logic        predicted_taken,
+    input  logic [31:0] predicted_target,
+
+    // Flush outputs
     output logic        branch_flush,
-    output logic [31:0] branch_target
+    output logic [31:0] branch_target,    // redirect target (correct PC)
+
+    // Actual outcome (for predictor update)
+    output logic        actual_taken,
+    output logic [31:0] actual_target     // actual destination address
 );
 
     // ---- Shared subtractor (reuse for all comparisons) ----
@@ -43,15 +56,22 @@ module branch_unit (
                       | (sel_lt &  cmp)
                       | (sel_ge & ~cmp);
 
-    // ---- Flush decision ----
-    // Default prediction: not-taken → actual_taken means misprediction
-    // JAL is now handled in EX stage (ID-stage resolution disabled)
-    wire actual_taken = is_jal | is_jalr | (is_branch & branch_taken);
-    assign branch_flush = ex_valid & actual_taken;
+    // ---- Actual outcome ----
+    assign actual_taken  = is_jal | is_jalr | (is_branch & branch_taken);
+    assign actual_target = is_jalr ? (alu_result & ~32'd1) : alu_result;
 
-    // ---- Target address ----
-    // JALR: (rs1 + imm) & ~1 (clear LSB), computed by ALU
-    // JAL / Branch: PC + imm, computed by ALU
-    assign branch_target = is_jalr ? (alu_result & ~32'd1) : alu_result;
+    // ---- Misprediction detection ----
+    // Case 1: direction wrong (predicted taken ≠ actual taken)
+    // Case 2: target wrong (both taken but different targets)
+    wire direction_wrong = (actual_taken != predicted_taken);
+    wire target_wrong    = actual_taken & predicted_taken &
+                           (actual_target != predicted_target);
+
+    assign branch_flush = ex_valid & (direction_wrong | target_wrong);
+
+    // ---- Flush target (correct next PC) ----
+    // Actual taken → redirect to actual target
+    // Actual not-taken (but predicted taken) → redirect to ex_pc + 4
+    assign branch_target = actual_taken ? actual_target : (ex_pc + 32'd4);
 
 endmodule

@@ -4,6 +4,7 @@
 // Note: ALU operands (alu_src1/alu_src2) are pre-selected in ID stage
 //       to reduce EX critical path. Raw rs1/rs2 still carried for
 //       branch comparison and store data.
+//       Branch prediction signals passed through for EX update.
 // ============================================================
 
 module id_ex_reg (
@@ -42,6 +43,16 @@ module id_ex_reg (
     input  logic        id_is_jal,
     input  logic        id_is_jalr,
 
+    // Branch prediction (ID → EX passthrough)
+    input  logic        id_bp_taken,
+    input  logic [31:0] id_bp_target,
+    input  logic [ 7:0] id_bp_ghr_snap,
+    input  logic        id_bp_btb_hit,
+    input  logic        id_bp_btb_way,
+    input  logic [ 1:0] id_bp_btb_bht,
+    input  logic [ 1:0] id_bp_pht_cnt,
+    input  logic [ 1:0] id_bp_sel_cnt,
+
     // Data out (to EX stage)
     output logic [31:0] ex_pc,
     output logic [31:0] ex_alu_src1,
@@ -61,7 +72,17 @@ module id_ex_reg (
     output logic        ex_is_branch,
     output logic [ 2:0] ex_branch_cond,
     output logic        ex_is_jal,
-    output logic        ex_is_jalr
+    output logic        ex_is_jalr,
+
+    // Branch prediction out (to EX stage)
+    output logic        ex_bp_taken,
+    output logic [31:0] ex_bp_target,
+    output logic [ 7:0] ex_bp_ghr_snap,
+    output logic        ex_bp_btb_hit,
+    output logic        ex_bp_btb_way,
+    output logic [ 1:0] ex_bp_btb_bht,
+    output logic [ 1:0] ex_bp_pht_cnt,
+    output logic [ 1:0] ex_bp_sel_cnt
 );
 
     // ---- Handshake ----
@@ -90,6 +111,14 @@ module id_ex_reg (
             ex_branch_cond   <= 3'd0;
             ex_is_jal        <= 1'b0;
             ex_is_jalr       <= 1'b0;
+            ex_bp_taken      <= 1'b0;
+            ex_bp_target     <= 32'd0;
+            ex_bp_ghr_snap   <= 8'd0;
+            ex_bp_btb_hit    <= 1'b0;
+            ex_bp_btb_way    <= 1'b0;
+            ex_bp_btb_bht    <= 2'd0;
+            ex_bp_pht_cnt    <= 2'd0;
+            ex_bp_sel_cnt    <= 2'd0;
         end else if (ex_flush) begin
             ex_valid         <= 1'b0;
         end else if (ex_allowin) begin
@@ -113,6 +142,14 @@ module id_ex_reg (
             ex_branch_cond   <= id_branch_cond;
             ex_is_jal        <= id_is_jal;
             ex_is_jalr       <= id_is_jalr;
+            ex_bp_taken      <= id_bp_taken;
+            ex_bp_target     <= id_bp_target;
+            ex_bp_ghr_snap   <= id_bp_ghr_snap;
+            ex_bp_btb_hit    <= id_bp_btb_hit;
+            ex_bp_btb_way    <= id_bp_btb_way;
+            ex_bp_btb_bht    <= id_bp_btb_bht;
+            ex_bp_pht_cnt    <= id_bp_pht_cnt;
+            ex_bp_sel_cnt    <= id_bp_sel_cnt;
         end
     end
 

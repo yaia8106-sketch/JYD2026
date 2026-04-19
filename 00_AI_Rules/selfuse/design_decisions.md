@@ -271,3 +271,42 @@ JAL+JALR 占 CPI 损失的 **68%**，是最大优化目标。
 | Phase 3 | 改 GShare（如 BHT 不够好） | ~0.01-0.02 | 低 |
 
 Phase 1 + Phase 2 覆盖 ~90% 的收益。
+
+---
+
+## 决策 D-11: 前递值修复（预测器集成时发现的隐藏 bug）
+
+**日期**: 2026-04-19  
+**状态**: 已修复  
+**触发条件**: bp_stress Test 5（函数调用/返回）失败
+
+### 问题
+
+`forwarding.sv` 的 EX/MEM 前递值始终取 `alu_result`。对于 JAL/JALR 指令：
+- `alu_result` = 跳转目标地址（如函数入口 `0x80000150`）
+- 实际写入 `rd` 的 = `PC+4`（返回地址 `0x800001D4`）
+
+**前递给出的是跳转目标，而不是返回地址。**
+
+### 为什么之前没有暴露
+
+无预测器时，每次 JAL/JALR taken 都会 flush IF/ID。flush 后 ID 级不存在有效指令，
+前递的 match 条件 (`ex_valid=0`) 永远不成立 → bug 代码路径从未执行。
+
+### 为什么有预测器后暴露
+
+正确预测的 CALL 不 flush → 函数体内的指令立即进入 ID → 如果函数第 2 条指令
+读取 `ra`（如 `ret`），前递 match 成功 → 拿到错误的跳转目标而非返回地址。
+
+### 修复
+
+```sv
+// forwarding.sv
+wire [31:0] ex_fwd_val  = (ex_wb_sel  == 2'b10) ? (ex_pc  + 32'd4) : ex_alu_result;
+wire [31:0] mem_fwd_val = (mem_wb_sel == 2'b10) ? (mem_pc + 32'd4) : mem_alu_result;
+```
+
+### 教训
+
+> 分支预测器改变了"哪些指令可以同时存在于流水线中"的关系。  
+> 新增优化功能时，必须重新审视前递、stall、flush 三者的隐含假设。
