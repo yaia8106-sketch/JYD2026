@@ -106,6 +106,15 @@
   - [ ] riscv-tests 回归验证
   - [ ] 250MHz 时序验证
   - [ ] FPGA 上板验证
+- [ ] **优化分支预测器预测率**
+  > 冷启动 10M 指令模拟结果：整体准确率 59.7–78.1%，CPI ≈ 1.16–1.18
+  > 模拟脚本：`02_Design/coe/bp_coldstart_sim.py`
+  > 详细报告：`02_Design/coe/sim_output/bp_coldstart_results.md`
+  - [ ] 条件分支准确率偏低（59–78%），排查 BTB 64-entry aliasing 问题
+  - [ ] src0 CALL 准确率仅 35.6%，BTB index 冲突严重
+  - [ ] src1 RET 准确率仅 71.2%，考虑 RAS 加深（4→8）
+  - [ ] 非 RET 的 JALR 0%，考虑是否将间接跳转写入 BTB
+  - [ ] 优化后重跑 bp_coldstart_sim.py 对比改善
 
 ---
 
