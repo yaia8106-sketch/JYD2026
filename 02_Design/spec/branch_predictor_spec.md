@@ -119,7 +119,7 @@ PC[31:0] 的用途分配（NLP 直接映射）：
 
 | 字段 | 位宽 | 说明 |
 |------|:---:|------|
-| `valid` | 1 | 条目有效标志，复位时清零 |
+| `valid` | 1 | 条目有效标志，LUTRAM（无 reset，冷启动安全：误命中由 flush 纠正） |
 | `tag` | 7 | `PC[14:8]`，用于匹配 |
 | `target` | 30 | 预测跳转目标 `PC[31:2]`，低 2 位恒为 0 |
 | `type` | 2 | 指令类型编码（NLP：ID 级用于判断是否需要 Tournament 验证） |
@@ -142,7 +142,7 @@ PC[31:0] 的用途分配（NLP 直接映射）：
 ### 3.6 存储布局
 
 ```
-64 entry × 42 bit = 2,688 bit 总计（无 LRU）
+64 entry × 42 bit = 2,688 bit 总计（无 LRU，全 LUTRAM）
 ```
 
 ---
@@ -253,42 +253,38 @@ Selector: 256 × 2-bit = 512 bit（LUTRAM）
   pht_idx = GHR[7:0] ⊕ PC[9:2]  →  pht_cnt
   sel_idx = GHR[7:0]             →  sel_cnt
 
-── L0 快速预测 ──
+── L0 快速预测（AND-OR 平坦逻辑）──
 
-if (!btb_hit):
-    bp_taken  = 0
-    bp_target = PC + 4
+bp_taken（单 LUT6，5 输入）:
+  = btb_hit & (
+      ~type[1]                      // JAL/CALL: always taken
+    | (~type[0] & bht[1])           // BRANCH: bimodal direction
+    | ( type[0] & ras_valid)        // RET: RAS valid
+  )
 
-else:
-    case (hit_entry.type)
-        JAL:    bp_taken  = 1
-                bp_target = {hit_entry.target, 2'b00}
+bp_target（3 路 AND-OR MUX，one-hot select）:
+  sel_btb = btb_hit & ~(type[1] & type[0])              // JAL/CALL/BRANCH
+  sel_ras = btb_hit &   type[1] & type[0] & ras_valid   // RET
+  sel_seq = ~sel_btb & ~sel_ras                          // default
 
-        CALL:   bp_taken  = 1
-                bp_target = {hit_entry.target, 2'b00}
-
-        BRANCH: bp_taken  = bht[1]              // ← NLP: 仅看最高位！
-                bp_target = {hit_entry.target, 2'b00}  // 始终输出 BTB target
-                // （ID 级 redirect 需要此值，无论 taken/not-taken）
-
-        RET:    if (ras_valid):
-                    bp_taken  = 1
-                    bp_target = ras_top
-                else:
-                    bp_taken  = 0
-                    bp_target = PC + 4
-    endcase
+  bp_target = (sel_btb & {target, 2'b00})     // BTB target（ID 级 redirect 也需要）
+            | (sel_ras & ras_top)              // RAS top
+            | (sel_seq & (PC + 4))            // sequential
 ```
 
-### 6.2 IF 级关键路径（NLP 优化后）
+### 6.2 IF 级关键路径（AND-OR 优化后）
 
 ```
-PC → BTB LUTRAM读(1.0ns) → tag比较(0.5ns) → hit & bht[1](0.3ns) → target MUX(0.3ns) → IROM
-                                                                                        0.2ns
-= 2-3 级逻辑，~2.3ns（逻辑），含布线 ~3.3ns
+PC → BTB LUTRAM读(1.0ns) → tag比较 → btb_hit_w ──┐
+                            r_type ────────────────┤→ 1 LUT6 → bp_taken
+                            r_bht[1] ──────────────┘
+                                                     ↓
+                                                   next_pc_mux → IROM
+= 2 级逻辑，~2.0ns（逻辑），含布线 ~3.0ns
+注: btb_valid 已改为 LUTRAM，与其他 BTB 字段统一 1 级读取
 ```
 
-对比改前（8 级逻辑，~7.5ns 含布线）：**路径缩短 ~4.2ns**。
+对比改前（8 级逻辑，~7.5ns 含布线）：**路径缩短 ~4.5ns**。
 
 ---
 
@@ -468,7 +464,8 @@ ras_count (2-bit): 跟踪栈内有效条目数
 
 ```
 PC(0.3ns) → BTB LUTRAM(1.0ns) → tag比较(0.5ns) → hit&bht[1] MUX(0.3ns) → IROM(0.2ns)
-= 2.3ns（逻辑），含布线 ~3.3ns
+= 2-3 级逻辑，~2.3ns（逻辑），含布线 ~3.3ns
+注: btb_valid 已改为 LUTRAM，与其他 BTB 字段统一 1 级读取（旧版为 FF 64:1 MUX，~2-3 级）
 ```
 
 ### 9.3 实际 Vivado 时序结果（@200MHz, xc7k325t）

@@ -462,3 +462,80 @@ CPU ←→ Cache (1-2 BRAM) ←→ DRAM (68 BRAM)
 - Write-through 策略（简单，store 同时写 cache 和 DRAM）
 - 需要新增 CPU stall 信号（cache miss 时暂停流水线）
 
+
+## M. 250MHz 时序优化：非 DRAM 关键路径削减
+
+**日期**: 2026-04-21
+**分支**: `feat/dcache-250mhz`
+**状态**: 已实施，待 FPGA 验证
+
+### 背景
+
+决策 K 确认 250MHz 瓶颈在 DRAM 68×BRAM36 布线（决策 L 推荐用 DCache 解决）。
+但从 200MHz 时序报告分析，去掉 DRAM 路径后，还有 5 条路径在 250MHz 下会违例。
+本决策记录其中 2 条已优化的路径。
+
+### 优化 1：branch_unit 使用 alu_addr 替代 alu_result
+
+**问题路径**: `ID/EX(ex_alu_src1) → ALU → branch_unit → branch_flush → EX/MEM(mem_branch_flush_reg)`
+- DataPath = 4.430ns, 9 级逻辑, slack = +0.518ns @200MHz
+- 250MHz 下 slack ≈ -0.43ns ❌
+
+**根因**: `branch_unit` 输入 `alu_result` 需经过 ALU 的 negate 判断 + src2 条件取反 + 7 路 AND-OR output MUX，多出 ~3 级逻辑。但分支/跳转指令的 `alu_op` 恒为 ADD，不需要 negate 和 output MUX。
+
+**改动**:
+- `branch_unit.sv`: 端口 `alu_result` → `alu_addr`
+- `cpu_top.sv`: 连接 `alu_addr`（纯 src1+src2 加法器直出）
+
+**效果**: 省掉 negate + conditional invert + output MUX 三段，约减少 ~0.9ns。250MHz 下预估 slack 翻转为 +0.5ns ✅
+
+**安全性**: 对所有分支/跳转指令，`alu_addr == alu_result`。非分支指令时 `branch_flush` 不被激活。
+
+### 优化 2：btb_valid 从 FF 数组改为 LUTRAM
+
+**问题路径**: `BP(btb_valid FF) → 64:1 MUX → tag compare → bp_taken → next_pc → pc_reg`
+- DataPath = 4.428ns, 8 级逻辑, slack = +0.471ns @200MHz
+- 250MHz 下 slack ≈ -0.43ns ❌
+
+**根因**: `btb_valid` 声明为普通 `logic` 数组（有 async reset），Vivado 综合为 64 个独立 FF。读取 `btb_valid[if_idx]` 变成 64:1 FF MUX（~2-3 级 LUT）。
+
+**改动**:
+- `branch_predictor.sv`: `btb_valid` 加 `(* ram_style = "distributed" *)` 属性
+- 去掉 async reset，改为 `always_ff @(posedge clk)` + `initial` 块
+
+**效果**: 省掉 ~1-2 级 LUT（~0.3-0.5ns）。
+
+**安全性**: 冷启动安全——虚假 hit 由 branch_unit flush 纠正，与 PHT/Selector 冷启动模式一致。
+
+### 优化 3：L0 预测逻辑 if-case → AND-OR 平坦化
+
+**问题**: `bp_taken` 由 `if (btb_hit_w) case (r_type)` 生成，综合器可能产生 2 级 MUX（hit 门控 + type 解码）。
+
+**改动**:
+- `branch_predictor.sv`: 用 AND-OR 表达式替代 always_comb if-case
+
+```sv
+// bp_taken: 5 输入 → 单 LUT6
+bp_taken = btb_hit_w & (
+      ~r_type[1]                    // JAL/CALL: always taken
+    | (~r_type[0] & r_bht[1])      // BRANCH: bimodal direction
+    | ( r_type[0] & ras_valid)     // RET: RAS valid
+);
+
+// bp_target: 3 路 AND-OR MUX（one-hot select）
+sel_btb / sel_ras / sel_seq → AND-OR
+```
+
+**效果**: `bp_taken` 从 ~2 级 LUT → **1 个 LUT6**，省 ~0.2-0.3ns。`bp_target` 显式 one-hot MUX，加法器与 MUX 并行。
+
+### 优化后剩余风险路径
+
+| 路径 | 优化前 DataPath | 优化后估算 | 250MHz Slack |
+|------|:--------------:|:---------:|:------------:|
+| ID/EX → EX/MEM flush | 4.430ns | ~3.5ns | ~+0.5ns ✅ |
+| ID/EX → BP btb_tgt 写 | 4.450ns | ~3.5ns | ~+0.5ns ✅ |
+| BP → PC | 4.428ns | ~3.6ns | ~+0.1ns ⚠️ |
+| BP → IROM | 4.153ns | ~3.7ns | ~+0.0ns ⚠️ |
+| PC → IROM | 4.203ns | ~4.0ns | ~-0.2ns ⚠️ |
+
+取指前端的剩余违例主要是布线延迟，可能需要 Pblock 布局约束配合。

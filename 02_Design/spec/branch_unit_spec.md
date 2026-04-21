@@ -11,7 +11,7 @@
 |--------|------|------|------|------|
 | `rs1_data` | input | 32 | 数据 | rs1 值（经前递后） |
 | `rs2_data` | input | 32 | 数据 | rs2 值（经前递后） |
-| `alu_result` | input | 32 | 数据 | ALU 计算的跳转目标地址 |
+| `alu_addr` | input | 32 | 数据 | ALU 纯加法器直出的跳转目标地址（绕过 negate + output MUX，省 ~0.9ns） |
 | `ex_pc` | input | 32 | 数据 | 当前指令 PC（用于计算 fallthrough 地址） |
 | `is_branch` | input | 1 | 控制 | 是否为 B-type 分支 |
 | `branch_cond` | input | 3 | 控制 | 分支条件（funct3 透传） |
@@ -63,7 +63,7 @@ missed       = actual_taken & ~pred_taken & ~is_jal  // JAL 由 ID 级兜底
 ### 2.3 重定向目标
 
 ```
-// missed:    跳转到实际分支目标（alu_result）
+// missed:    跳转到实际分支目标（alu_addr）
 // wrong_dir: 跳转到顺序地址（ex_pc + 4）
 branch_target = wrong_dir ? (ex_pc + 4) : actual_target
 ```

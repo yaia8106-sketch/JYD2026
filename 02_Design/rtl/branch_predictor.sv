@@ -76,7 +76,8 @@ module branch_predictor (
 
     // ---- BTB: Direct-mapped, 64 entries ----
     // NLP: 1 way only (no way selection → fewer logic levels in IF)
-    logic                  btb_valid [0:BTB_ENTRIES-1];    // valid: FF（有 reset）
+    // All fields are LUTRAM (no reset → 1-level read, vs FF 64:1 MUX ~2-3 levels)
+    (* ram_style = "distributed" *) logic                  btb_valid [0:BTB_ENTRIES-1];
     (* ram_style = "distributed" *) logic [BTB_TAG_W-1:0]  btb_tag   [0:BTB_ENTRIES-1];
     (* ram_style = "distributed" *) logic [BTB_TGT_W-1:0]  btb_tgt   [0:BTB_ENTRIES-1];
     (* ram_style = "distributed" *) logic [1:0]            btb_type  [0:BTB_ENTRIES-1];
@@ -124,41 +125,32 @@ module branch_predictor (
     wire [31:0] ras_top   = ras[0];
     wire        ras_valid = (ras_count != 3'd0);
 
-    // ---- L0 Fast prediction ----
-    // NLP key: BRANCH direction uses bht[1] only (Bimodal, 0 extra logic levels)
+    // ---- L0 Fast prediction (AND-OR, flat logic) ----
+    // NLP key: BRANCH direction uses bht[1] only (Bimodal)
     // Full Tournament verification deferred to ID stage
-    always_comb begin
-        bp_taken  = 1'b0;
-        bp_target = if_pc + 32'd4;   // default: sequential
 
-        if (btb_hit_w) begin
-            case (r_type)
-                TYPE_JAL: begin
-                    bp_taken  = 1'b1;
-                    bp_target = {r_tgt, 2'b00};
-                end
-                TYPE_CALL: begin
-                    bp_taken  = 1'b1;
-                    bp_target = {r_tgt, 2'b00};
-                end
-                TYPE_BRANCH: begin
-                    // L0: use Bimodal bht[1] for fast direction decision
-                    // L1 (Tournament) will verify in ID stage
-                    bp_taken  = r_bht[1];
-                    // Always output BTB target (ID stage needs it for redirect)
-                    bp_target = {r_tgt, 2'b00};
-                end
-                TYPE_RET: begin
-                    if (ras_valid) begin
-                        bp_taken  = 1'b1;
-                        bp_target = ras_top;
-                    end
-                    // else: not-taken (default)
-                end
-                default: ;
-            endcase
-        end
-    end
+    // bp_taken: 5 inputs → single LUT6
+    //   hit=0 → 0
+    //   JAL/CALL (type[1]=0) → 1 (always taken)
+    //   BRANCH  (type=10)    → bht[1] (bimodal direction)
+    //   RET     (type=11)    → ras_valid
+    assign bp_taken = btb_hit_w & (
+          ~r_type[1]                    // JAL/CALL: always taken
+        | (~r_type[0] & r_bht[1])      // BRANCH: bimodal direction
+        | ( r_type[0] & ras_valid)     // RET: RAS valid
+    );
+
+    // bp_target: 3-way AND-OR MUX (one-hot selects)
+    //   JAL/CALL/BRANCH → BTB target (ID stage needs it for redirect)
+    //   RET + ras_valid → RAS top
+    //   otherwise       → PC+4 (sequential)
+    wire sel_btb = btb_hit_w & ~(r_type[1] & r_type[0]);          // JAL/CALL/BRANCH
+    wire sel_ras = btb_hit_w &   r_type[1] & r_type[0] & ras_valid; // RET
+    wire sel_seq = ~sel_btb & ~sel_ras;                             // default
+
+    assign bp_target = ({32{sel_btb}} & {r_tgt, 2'b00})
+                     | ({32{sel_ras}} & ras_top)
+                     | ({32{sel_seq}} & (if_pc + 32'd4));
 
     // ---- Snapshot outputs ----
     assign bp_ghr_snap = ghr;
@@ -244,13 +236,15 @@ module branch_predictor (
     //  Sequential update (all at posedge clk)
     // ================================================================
 
-    // ---- BTB: direct-mapped, reset only valid bits ----
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            for (int i = 0; i < BTB_ENTRIES; i++) begin
-                btb_valid[i] <= 1'b0;
-            end
-        end else if (ex_btb_write) begin
+    // ---- BTB: direct-mapped, all LUTRAM (no reset) ----
+    // Cold-start safe: uninitialized valid may cause wrong predictions,
+    // but branch_unit will detect misprediction and flush → functionally correct.
+    // Same pattern as PHT and selector.
+    initial begin
+        for (int i = 0; i < BTB_ENTRIES; i++) btb_valid[i] = 1'b0;
+    end
+    always_ff @(posedge clk) begin
+        if (ex_btb_write) begin
             btb_valid[ex_idx] <= 1'b1;
             btb_tag  [ex_idx] <= ex_tag;
             btb_tgt  [ex_idx] <= ex_wr_tgt;
