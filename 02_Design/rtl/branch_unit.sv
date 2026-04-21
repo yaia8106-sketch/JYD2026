@@ -9,7 +9,7 @@
 module branch_unit (
     input  logic [31:0] rs1_data,
     input  logic [31:0] rs2_data,
-    input  logic [31:0] alu_result,      // branch/jump target from ALU
+    input  logic [31:0] alu_addr,        // branch/jump target (pure adder, bypasses negate+MUX)
     input  logic [31:0] ex_pc,           // PC of the instruction in EX
     input  logic        is_branch,
     input  logic [ 2:0] branch_cond,
@@ -58,7 +58,7 @@ module branch_unit (
 
     // ---- Actual outcome ----
     assign actual_taken  = is_jal | is_jalr | (is_branch & branch_taken);
-    assign actual_target = is_jalr ? (alu_result & ~32'd1) : alu_result;
+    assign actual_target = is_jalr ? (alu_addr & ~32'd1) : alu_addr;
 
     // ---- Misprediction detection ----
     // Case 1: direction wrong (predicted taken ≠ actual taken)

@@ -505,7 +505,7 @@ module cpu_top (
     branch_unit u_branch_unit (
         .rs1_data         (ex_rs1_data),
         .rs2_data         (ex_rs2_data),
-        .alu_result       (alu_result),
+        .alu_addr         (alu_addr),       // pure adder output (bypasses negate+MUX, saves ~0.9ns)
         .ex_pc            (ex_pc),
         .is_branch        (ex_is_branch),
         .branch_cond      (ex_branch_cond),
