@@ -55,7 +55,7 @@ module branch_predictor (
     // ================================================================
     localparam BTB_ENTRIES = 64;
     localparam BTB_IDX_W   = 6;     // log2(64)
-    localparam BTB_TAG_W   = 7;     // PC[14:8]
+    localparam BTB_TAG_W   = 5;     // PC[12:8] (5-bit: compare+valid fits 1 LUT6)
     localparam BTB_TGT_W   = 30;    // PC[31:2]
 
     localparam GHR_W      = 8;
@@ -102,7 +102,7 @@ module branch_predictor (
 
     // ---- BTB lookup (direct-mapped: single read) ----
     wire [BTB_IDX_W-1:0] if_idx = if_pc[7:2];     // 6 bits for 64 entries
-    wire [BTB_TAG_W-1:0] if_tag = if_pc[14:8];     // 7 bits
+    wire [BTB_TAG_W-1:0] if_tag = if_pc[12:8];     // 5 bits → 1 LUT6 compare
 
     wire                  r_valid = btb_valid[if_idx];
     wire [BTB_TAG_W-1:0]  r_tag   = btb_tag  [if_idx];
@@ -110,7 +110,7 @@ module branch_predictor (
     wire [1:0]            r_type  = btb_type [if_idx];
     wire [1:0]            r_bht   = btb_bht  [if_idx];
 
-    // Tag compare (1 LUT level)
+    // Tag compare: 5-bit == (5 XNOR) + valid = 6 inputs → single LUT6
     wire btb_hit_w = r_valid & (r_tag == if_tag);
 
     // ---- GShare PHT read (parallel, not on critical path) ----
@@ -180,7 +180,7 @@ module branch_predictor (
 
     // BTB addressing (direct-mapped)
     wire [BTB_IDX_W-1:0] ex_idx = ex_pc[7:2];
-    wire [BTB_TAG_W-1:0] ex_tag = ex_pc[14:8];
+    wire [BTB_TAG_W-1:0] ex_tag = ex_pc[12:8];
 
     // Type for BTB entry
     wire [1:0] ex_wr_type = ex_is_jal_nc ? TYPE_JAL  :

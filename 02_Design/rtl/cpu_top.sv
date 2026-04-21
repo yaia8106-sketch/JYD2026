@@ -31,7 +31,7 @@ module cpu_top (
 
     // ---- PC & IF ----
     wire [31:0] pc;
-    wire [31:0] next_pc;
+    // next_pc eliminated: inlined into irom_addr for 1 fewer LUT level on PC→IROM path
     wire        if_valid;
 
     // ---- IF/ID ----
@@ -256,13 +256,6 @@ module cpu_top (
 
     wire        if_allowin_w = id_allowin;   // for irom_addr mux
 
-    next_pc_mux u_next_pc_mux (
-        .pc       (pc),
-        .bp_taken (bp_taken),
-        .bp_target(bp_target),
-        .next_pc  (next_pc)
-    );
-
     // NLP: ID-stage Tournament verification (L1)
     // Compares L0 (Bimodal bht[1], used in IF) with L1 (Tournament, computed here)
     wire id_bimodal_taken  = (id_bp_btb_bht >= 2'd2);   // = bht[1]
@@ -271,27 +264,36 @@ module cpu_top (
     wire id_tournament_taken = id_use_bimodal ? id_bimodal_taken : id_gshare_taken;
 
     // NLP redirect: L0 and L1 disagree on BRANCH direction
-    // Only triggers for BRANCH type with BTB hit
-    // CRITICAL: must gate with id_ready_go & ex_allowin to ensure the branch
-    // instruction actually transfers to EX on this cycle. Without this gate,
-    // a stall would cause id_flush to destroy the branch while ID/EX can't
-    // capture it, permanently losing the instruction.
-    assign id_bp_redirect = id_valid & ~mem_branch_flush
-                          & id_bp_btb_hit
-                          & (id_bp_btb_type == 2'b10)    // TYPE_BRANCH
-                          & (id_bp_btb_bht[1] != id_tournament_taken)
-                          & id_ready_go & ex_allowin;
+    // Split into raw (fast, for IROM addr) and gated (safe, for flush control):
+    //
+    // id_bp_redirect_raw: condition-only, no stall gating → fast path for irom_addr
+    //   Safe because stall has HIGHER priority than redirect in irom_addr MUX.
+    //   When stalling, irom_addr selects pc regardless of redirect_raw.
+    //
+    // id_bp_redirect: adds id_ready_go & ex_allowin gating → controls id_flush
+    //   Ensures the branch instruction actually transfers to EX before flushing IF/ID.
+    wire id_bp_redirect_raw = id_valid & ~mem_branch_flush
+                            & id_bp_btb_hit
+                            & (id_bp_btb_type == 2'b10)    // TYPE_BRANCH
+                            & (id_bp_btb_bht[1] != id_tournament_taken);
+
+    assign id_bp_redirect = id_bp_redirect_raw & id_ready_go & ex_allowin;
 
     // Redirect target: if Tournament says taken → use BTB target;
     //                  if Tournament says not-taken → use PC+4
     wire [31:0] id_redirect_target = id_tournament_taken ? id_bp_target
                                                          : (id_pc + 32'd4);
 
-    // 250MHz: irom_addr driven by registered mem_branch_flush (short path: reg → MUX → IROM)
-    assign irom_addr = mem_branch_flush ? mem_branch_target :  // MEM flush (highest, registered)
-                       id_bp_redirect   ? id_redirect_target : // NLP: ID redirect
-                       !if_allowin_w    ? pc :                 // 停顿：保持当前地址
-                                          next_pc;             // 正常：预取下一条（含L0预测）
+    // 250MHz: irom_addr = flat 5-way priority MUX
+    // Priority: flush > stall > NLP redirect > L0 prediction > sequential
+    //   - stall above redirect: eliminates hazard detection from IF/ID→IROM path
+    //   - redirect uses raw version (no id_ready_go/ex_allowin gating)
+    //   - bp_taken/bp_target inlined (no next_pc intermediate)
+    assign irom_addr = mem_branch_flush    ? mem_branch_target :  // MEM flush (highest, registered)
+                       !if_allowin_w       ? pc :                 // 停顿：保持当前地址
+                       id_bp_redirect_raw  ? id_redirect_target : // NLP: ID redirect (raw, fast)
+                       bp_taken            ? bp_target :          // L0 预测 taken
+                                             (pc + 32'd4);       // 顺序取指
 
     pc_reg u_pc_reg (
         .clk           (clk),

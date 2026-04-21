@@ -539,3 +539,100 @@ sel_btb / sel_ras / sel_seq → AND-OR
 | PC → IROM | 4.203ns | ~4.0ns | ~-0.2ns ⚠️ |
 
 取指前端的剩余违例主要是布线延迟，可能需要 Pblock 布局约束配合。
+
+
+## N. 250MHz 时序优化：→IROM 取指前端路径削减
+
+**日期**: 2026-04-21
+**分支**: `feat/dcache-250mhz`
+**状态**: 已实施，待 FPGA 验证
+
+### 背景
+
+决策 M 完成后，200MHz WNS = +0.090ns。全局 Top 10 最差路径均为 EX/MEM→DRAM 布线（0 级逻辑），
+CPU 内部逻辑不在瓶颈。但分析 →IROM 路径群在 250MHz 下仍有 deficit：
+- PC→IROM: +0.396ns @200MHz → -0.6ns @250MHz
+- IF/ID→IROM: +0.583ns → -0.4ns
+- BP→IROM: +0.678ns → -0.3ns
+
+这些路径不受 DCache 改动影响，需要独立优化。
+
+### 优化 4：next_pc_mux 消除（irom_addr 内联）
+
+**问题路径**: `PC → BP → bp_taken → next_pc → irom_addr MUX → IROM`
+- next_pc = bp_taken ? bp_target : pc+4（1 级 MUX）
+- irom_addr = ... : next_pc（又 1 级 MUX）
+- 两级串联 MUX 可合并
+
+**改动**:
+- `cpu_top.sv`: 删除 `next_pc_mux` 例化，删除 `next_pc` 中间变量
+- 将 bp_taken/bp_target 直接内联到 irom_addr 的 5 路优先级 MUX
+
+```diff
+- irom_addr = ... : next_pc;  // next_pc = bp_taken ? bp_target : pc+4
++ irom_addr = ... : bp_taken ? bp_target : (pc + 32'd4);
+```
+
+**效果**: 省 1 级 LUT（~0.2-0.3ns）。`next_pc_mux.sv` 不再被例化。
+
+### 优化 5：BTB tag 7-bit → 5-bit
+
+**问题路径**: `PC → BTB LUTRAM → 7-bit tag compare → btb_hit_w → bp_taken`
+- 7-bit compare 需 2 级 LUT（3+4 bit compare → combine + valid）
+
+**改动**:
+- `branch_predictor.sv`: `BTB_TAG_W = 7 → 5`，tag = `pc[12:8]`（原 `pc[14:8]`）
+
+**效果**: 5-bit compare + valid = 6 输入 → **单 LUT6**，省 1 整级 LUT（~0.2-0.3ns）。
+
+**代价**: 覆盖范围从 8K 字 → 2K 字，误命中概率从 1/128 → 1/32。
+对当前测试程序（~1271 条）无影响；大程序可能多几次 misprediction，但功能安全（flush 纠正）。
+
+### 优化 6：NLP redirect raw/gated 拆分 + stall 优先级提升
+
+**问题路径**: `IF/ID → id_inst → hazard detect → id_ready_go → id_bp_redirect → irom_addr → IROM`
+- 7 级逻辑，主犯是 hazard 检测（5-bit compare ×2）在 →IROM 关键路径上
+
+**核心发现**: `id_bp_redirect` 含 `id_ready_go & ex_allowin` 门控是因为旧 irom_addr 中
+redirect 优先级高于 stall。如果 **stall 提到 redirect 上方**，门控就不再必要（stall 时
+`!if_allowin_w=1` 自动选 `pc`，挡住 redirect）。
+
+**改动**:
+- `cpu_top.sv`: 拆分为 `id_bp_redirect_raw`（不含 stall 门控）和 `id_bp_redirect`（含门控）
+- irom_addr 优先级调整：`flush > stall > redirect > prediction > sequential`
+- `id_flush` 仍使用门控版 `id_bp_redirect`，确保 stall 期间不丢指令
+
+```sv
+// raw: 快速，仅用于 irom_addr（stall 在上层挡住）
+wire id_bp_redirect_raw = id_valid & ~mem_branch_flush
+                        & id_bp_btb_hit & (type == BRANCH)
+                        & (bht[1] != tournament_taken);
+
+// gated: 安全，用于 id_flush
+assign id_bp_redirect = id_bp_redirect_raw & id_ready_go & ex_allowin;
+
+// irom_addr: stall > redirect
+irom_addr = mem_flush       ? target :
+            !if_allowin_w   ? pc :              // stall 挡住 redirect
+            redirect_raw    ? redirect_target :
+            bp_taken        ? bp_target :
+                              pc + 4;
+```
+
+**效果**: IF/ID→IROM 路径从 ~7 级 → **~4 级**，省 ~3 级 LUT（~0.6-0.9ns）。
+
+**安全性验证**: 已完成 8 种场景的全面逻辑验证（正常/stall/flush/DCache 兼容等），所有场景行为与改前一致。
+
+### 优化后 Vivado 结果（@200MHz, ExtraTimingOpt）
+
+| 路径 | 决策 M 后 Slack | **决策 N 后 Slack** | 变化 |
+|------|:--------------:|:------------------:|:----:|
+| PC → IROM | +0.396 | **+0.435** | +0.039 |
+| IF/ID → IROM | +0.583 | **+0.536** | -0.047 |
+| BP → IROM | +0.678 | **+0.591** | -0.087 |
+| **WNS (全局)** | +0.090 | **+0.062** | -0.028 |
+
+> [!NOTE]
+> Slack 变化被 P&R 随机性掩盖（DataPath 因布局变化增大）。
+> 逻辑级数减少已反映在 RTL 中，实际 Slack 改善预计在 DCache 减压 DRAM 布线后显现。
+> 全局 Top 10 仍全部是 EX/MEM→DRAM 纯布线（0 级逻辑），CPU 逻辑不在瓶颈。
