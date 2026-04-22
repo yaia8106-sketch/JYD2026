@@ -22,7 +22,7 @@ HEX_DIR="work/hex"
 WORK_DIR="work"
 SIMULATOR="${1:-iverilog}"
 
-# RTL 源文件 (cpu_top 及其子模块, 不含 platform)
+# RTL 源文件 (cpu_top + dcache + 子模块, 不含 platform)
 RTL_FILES="
     $RTL_DIR/cpu_defs.sv
     $RTL_DIR/pc_reg.sv
@@ -41,7 +41,9 @@ RTL_FILES="
     $RTL_DIR/ex_mem_reg.sv
     $RTL_DIR/mem_wb_reg.sv
     $RTL_DIR/wb_mux.sv
+    $RTL_DIR/dcache.sv
     $RTL_DIR/cpu_top.sv
+    $SCRIPT_DIR/work/dcache_data_ram.v
     $SCRIPT_DIR/tb_riscv_tests.sv
 "
 
@@ -58,7 +60,8 @@ TESTS="simple \
        sb sh sw \
        ld_st st_ld \
        bp_stress \
-       coprime"
+       coprime \
+       dcache_test"
 
 mkdir -p "$WORK_DIR"
 

@@ -2,15 +2,9 @@
 // ============================================================
 // Testbench: tb_riscv_tests
 // Description: 自动化 riscv-tests 验证平台
-//   - 直接例化 cpu_top，内联 IROM/DRAM 仿真模型
+//   - 直接例化 cpu_top + dcache，内联 IROM/DRAM 仿真模型
 //   - 通过 $readmemh + plusarg 加载测试程序
 //   - 监控 tohost (DRAM[0]) 判定 pass/fail
-//
-// 用法 (Vivado xsim):
-//   xelab tb_riscv_tests -prj <prj>
-//   xsim tb_riscv_tests -testplusarg "irom=hex/rv32ui-p-add.irom.hex" \
-//                       -testplusarg "dram=hex/rv32ui-p-add.dram.hex" \
-//                       -testplusarg "test=add"
 //
 // 用法 (iverilog):
 //   iverilog -g2012 -o sim tb_riscv_tests.sv <rtl_files>
@@ -29,16 +23,34 @@ module tb_riscv_tests;
     always #10 clk = ~clk;   // 50MHz, 20ns period
 
     // ================================================================
-    //  CPU ↔ Memory interfaces
-       wire [31:0] irom_addr;
+    //  CPU ↔ DCache interface
+    // ================================================================
+    wire [31:0] irom_addr;
     reg  [31:0] irom_data;
 
-    wire [31:0] perip_addr;
-    wire [31:0] perip_addr_sum;
-    wire [31:0] perip_wr_addr;     // FIX-C: MEM stage write address
-    wire [3:0]  perip_wea;
-    wire [31:0] perip_wdata;
-    wire [31:0] perip_rdata;
+    // DCache interface (cpu_top ↔ dcache)
+    wire        cache_req;
+    wire        cache_wr;
+    wire [31:0] cache_addr;
+    wire [ 3:0] cache_wea;
+    wire [31:0] cache_wdata;
+    wire [31:0] cache_rdata;
+    wire        cache_ready;
+    wire        cache_flush;
+
+    // MMIO interface (for uncacheable accesses — unused in riscv-tests)
+    wire [31:0] mmio_addr;
+    wire [31:0] mmio_wr_addr;
+    wire [ 3:0] mmio_wea;
+    wire [31:0] mmio_wdata;
+    reg  [31:0] mmio_rdata;
+
+    // DCache ↔ DRAM
+    wire [15:0] dram_rd_addr;
+    wire [31:0] dram_rdata_w;
+    wire [15:0] dram_wr_addr;
+    wire [ 3:0] dram_wea;
+    wire [31:0] dram_wdata;
 
     // ================================================================
     //  CPU Core
@@ -48,54 +60,95 @@ module tb_riscv_tests;
         .rst_n          (rst_n),
         .irom_addr      (irom_addr),
         .irom_data      (irom_data),
-        .perip_addr     (perip_addr),
-        .perip_addr_sum (perip_addr_sum),
-        .perip_wr_addr  (perip_wr_addr),    // FIX-C
-        .perip_wea      (perip_wea),
-        .perip_wdata    (perip_wdata),
-        .perip_rdata    (perip_rdata)
+        .cache_req      (cache_req),
+        .cache_wr       (cache_wr),
+        .cache_addr     (cache_addr),
+        .cache_wea      (cache_wea),
+        .cache_wdata    (cache_wdata),
+        .cache_rdata    (cache_rdata),
+        .cache_ready    (cache_ready),
+        .cache_flush    (cache_flush),
+        .mmio_addr      (mmio_addr),
+        .mmio_wr_addr   (mmio_wr_addr),
+        .mmio_wea       (mmio_wea),
+        .mmio_wdata     (mmio_wdata),
+        .mmio_rdata     (mmio_rdata)
     );
 
     // ================================================================
-    //  IROM Model (1-cycle latency: BRAM primitive register only)
-    //  cpu_top 使用 irom_addr = next_pc 预取，补偿 1 cycle 延迟
+    //  DCache
+    // ================================================================
+    dcache u_dcache (
+        .clk         (clk),
+        .rst_n       (rst_n),
+        .cpu_req     (cache_req),
+        .cpu_wr      (cache_wr),
+        .cpu_addr    (cache_addr),
+        .cpu_wea     (cache_wea),
+        .cpu_wdata   (cache_wdata),
+        .cpu_rdata   (cache_rdata),
+        .cpu_ready   (cache_ready),
+        .flush       (cache_flush),      // pipeline flush → abort refill
+        .dram_rd_addr(dram_rd_addr),
+        .dram_rdata  (dram_rdata_w),
+        .dram_wr_addr(dram_wr_addr),
+        .dram_wea    (dram_wea),
+        .dram_wdata  (dram_wdata)
+    );
+
+    // ================================================================
+    //  IROM Model (1-cycle latency, same as real BRAM)
     //  Address: 0x80000000 ~ 0x80003FFF, 4096 x 32-bit words
     //  Word address = irom_addr[13:2]
     // ================================================================
     reg [31:0] irom [0:4095];
 
     always @(posedge clk) begin
-        irom_data <= irom[irom_addr[13:2]];   // 1-cycle: addr → data
+        irom_data <= irom[irom_addr[13:2]];
     end
 
     // ================================================================
-    //  DRAM Model — Simple Dual Port (FIX-C)
-    //   Write port: perip_wr_addr (MEM stage, registered)
-    //   Read port:  perip_addr (EX stage, combinational)
+    //  DRAM Model — Simple Dual Port with Output Register
+    //   Write port (Port A): dram_wr_addr + dram_wea + dram_wdata
+    //   Read port (Port B):  dram_rd_addr → dram_rdata (2 cycles: BRAM + output reg)
+    //  65536 x 32-bit words = 256KB
     // ================================================================
     reg [31:0] dram [0:65535];
-    reg [31:0] dram_dout;
-
-    // Write side: MEM stage address
-    wire wr_is_dram = (perip_wr_addr[31:18] == 14'b1000_0000_0001_00);
-    wire [15:0] dram_wr_word_addr = perip_wr_addr[17:2];
-    wire [3:0]  dram_wea = {4{wr_is_dram}} & perip_wea;
-
-    // Read side: EX stage address
-    wire [15:0] dram_rd_word_addr = perip_addr[17:2];
+    reg [31:0] dram_dout_internal;  // BRAM internal read (1st cycle)
+    reg [31:0] dram_dout;           // Output register  (2nd cycle)
 
     always @(posedge clk) begin
-        // Write port (MEM stage)
-        if (dram_wea[0]) dram[dram_wr_word_addr][ 7: 0] <= perip_wdata[ 7: 0];
-        if (dram_wea[1]) dram[dram_wr_word_addr][15: 8] <= perip_wdata[15: 8];
-        if (dram_wea[2]) dram[dram_wr_word_addr][23:16] <= perip_wdata[23:16];
-        if (dram_wea[3]) dram[dram_wr_word_addr][31:24] <= perip_wdata[31:24];
-        // Read port (EX stage address → available in MEM)
-        dram_dout <= dram[dram_rd_word_addr];
+        // Write port (from DCache store buffer drain)
+        if (dram_wea[0]) dram[dram_wr_addr][ 7: 0] <= dram_wdata[ 7: 0];
+        if (dram_wea[1]) dram[dram_wr_addr][15: 8] <= dram_wdata[15: 8];
+        if (dram_wea[2]) dram[dram_wr_addr][23:16] <= dram_wdata[23:16];
+        if (dram_wea[3]) dram[dram_wr_addr][31:24] <= dram_wdata[31:24];
+        // Read port: 2-cycle latency (BRAM + output register)
+        dram_dout_internal <= dram[dram_rd_addr];  // cycle 1: BRAM
+        dram_dout          <= dram_dout_internal;   // cycle 2: output register
     end
 
-    // Read data MUX (simplified: for riscv-tests, only DRAM is accessed)
-    assign perip_rdata = dram_dout;
+    assign dram_rdata_w = dram_dout;
+
+    // MMIO: In simulation, also map to DRAM for non-cacheable accesses
+    // This handles riscv-tests that access addresses outside DRAM range
+    // (e.g., stack at sp=0xFFFFFFFC). In real hardware, these would be
+    // handled by mmio_bridge; in TB, we route them to DRAM.
+    wire [15:0] mmio_rd_word_addr = mmio_addr[17:2];
+    wire [15:0] mmio_wr_word_addr = mmio_wr_addr[17:2];
+    reg  [31:0] mmio_rd_reg;
+
+    always @(posedge clk) begin
+        // MMIO read: map to DRAM
+        mmio_rd_reg <= dram[mmio_rd_word_addr];
+        // MMIO write: map to DRAM
+        if (mmio_wea[0]) dram[mmio_wr_word_addr][ 7: 0] <= mmio_wdata[ 7: 0];
+        if (mmio_wea[1]) dram[mmio_wr_word_addr][15: 8] <= mmio_wdata[15: 8];
+        if (mmio_wea[2]) dram[mmio_wr_word_addr][23:16] <= mmio_wdata[23:16];
+        if (mmio_wea[3]) dram[mmio_wr_word_addr][31:24] <= mmio_wdata[31:24];
+    end
+
+    assign mmio_rdata = mmio_rd_reg;
 
     // ================================================================
     //  tohost Monitoring
@@ -103,6 +156,10 @@ module tb_riscv_tests;
     //  Protocol:
     //    tohost == 1           → PASS
     //    tohost == (n<<1)|1    → FAIL at test #n
+    //
+    //  Detection: watch for DRAM writes to word address 0.
+    //  With DCache (WT+WA): stores go through cache → store buffer → DRAM.
+    //  So we monitor the DRAM write port from dcache.
     // ================================================================
     localparam TOHOST_WORD_ADDR = 16'd0;
 
@@ -115,9 +172,9 @@ module tb_riscv_tests;
             tohost_value    <= 32'd0;
         end else if (!tohost_detected &&
                      |dram_wea &&
-                     dram_wr_word_addr == TOHOST_WORD_ADDR) begin
+                     dram_wr_addr == TOHOST_WORD_ADDR) begin
             tohost_detected <= 1'b1;
-            tohost_value    <= perip_wdata;
+            tohost_value    <= dram_wdata;
         end
     end
 

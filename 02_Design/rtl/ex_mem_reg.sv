@@ -37,6 +37,9 @@ module ex_mem_reg (
     input  logic [ 3:0] ex_store_wea,        // gated byte WEA from mem_interface
     input  logic [31:0] ex_store_data,       // shifted store data from mem_interface
 
+    // DCache: cacheable flag
+    input  logic        ex_is_cacheable,
+
     // Data out (to MEM stage)
     output logic [31:0] mem_alu_result,
     output logic [31:0] mem_pc,
@@ -49,7 +52,10 @@ module ex_mem_reg (
 
     // FIX-C: Registered store signals (MEM stage → DRAM write port)
     output logic [ 3:0] mem_store_wea,
-    output logic [31:0] mem_store_data
+    output logic [31:0] mem_store_data,
+
+    // DCache: registered cacheable flag
+    output logic        mem_is_cacheable
 );
 
     // ---- Handshake ----
@@ -72,6 +78,7 @@ module ex_mem_reg (
             mem_mem_unsigned  <= 1'b0;
             mem_store_wea     <= 4'd0;
             mem_store_data    <= 32'd0;
+            mem_is_cacheable  <= 1'b0;
         end else if (mem_branch_flush) begin
             // 250MHz: flush spurious EX instruction — prevent it from entering MEM
             mem_valid         <= 1'b0;
@@ -88,6 +95,7 @@ module ex_mem_reg (
             mem_mem_unsigned  <= ex_mem_unsigned;
             mem_store_wea     <= ex_store_wea;
             mem_store_data    <= ex_store_data;
+            mem_is_cacheable  <= ex_is_cacheable;
         end
     end
 

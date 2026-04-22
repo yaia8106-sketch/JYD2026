@@ -2,7 +2,8 @@
 // Module: cpu_top
 // Description: RV32I 5-stage pipeline processor top-level
 // Rule: WIRING ONLY — no logic, no assign expressions with operators
-// IROM/DRAM: 外部例化，通过端口访问
+// IROM: 外部例化，通过端口访问
+// DRAM: 通过 DCache 访问（student_top 中例化）
 // Branch Prediction: Tournament (BTB+GShare+Selector+RAS)
 // ============================================================
 
@@ -14,15 +15,22 @@ module cpu_top (
     output logic [31:0] irom_addr,       // = next_pc（预取，IF 阶段）
     input  logic [31:0] irom_data,       // 指令（BRAM 1拍 Clk-to-Q，IF 阶段有效）
 
-    // Peripheral bus
-    //   Read path: EX stage (combinational)
-    //   Write path: MEM stage (registered, FIX-C)
-    output logic [31:0] perip_addr,      // EX stage: alu_addr (DRAM read addr)
-    output logic [31:0] perip_addr_sum,  // 兼容保留 (= perip_addr)
-    output logic [31:0] perip_wr_addr,   // MEM stage: store address (DRAM write addr)
-    output logic [3:0]  perip_wea,       // MEM stage: store WEA (registered)
-    output logic [31:0] perip_wdata,     // MEM stage: store data (registered)
-    input  logic [31:0] perip_rdata      // MEM stage: read data
+    // DCache 接口 (EX → MEM stage)
+    output logic        cache_req,       // EX stage: 有访存请求
+    output logic        cache_wr,        // EX stage: 0=load, 1=store
+    output logic [31:0] cache_addr,      // EX stage: 访存地址
+    output logic [ 3:0] cache_wea,       // EX stage: 字节写使能
+    output logic [31:0] cache_wdata,     // EX stage: 写数据
+    input  logic [31:0] cache_rdata,     // MEM stage: 读数据 (from DCache)
+    input  logic        cache_ready,     // MEM stage: 命中或完成
+    output logic        cache_flush,     // MEM stage: pipeline flush (abort refill)
+
+    // MMIO 接口 (保留原有 perip 风格)
+    output logic [31:0] mmio_addr,       // EX stage: 地址
+    output logic [31:0] mmio_wr_addr,    // MEM stage: 写地址
+    output logic [ 3:0] mmio_wea,        // MEM stage: 写使能
+    output logic [31:0] mmio_wdata,      // MEM stage: 写数据
+    input  logic [31:0] mmio_rdata       // MEM stage: 读数据
 );
 
     // ================================================================
@@ -112,9 +120,10 @@ module cpu_top (
     // ---- Store interface (EX stage) ----
     wire [31:0] store_data_shifted;
 
-    // ---- DRAM ----
+    // ---- Memory interface ----
     wire [ 3:0] dram_wea;
-    wire [31:0] dram_dout;             // = perip_rdata (from bridge, MEM stage)
+    wire [31:0] mem_load_data;         // MEM stage: from cache (cacheable) or mmio (uncacheable)
+    wire        is_cacheable;          // EX stage: addr in DRAM range
 
     // ---- EX/MEM ----
     wire        mem_valid;
@@ -142,41 +151,64 @@ module cpu_top (
     wire [ 1:0] wb_mem_size;
     wire        wb_mem_unsigned;
     wire [ 1:0] wb_addr_low;
-    wire [31:0] wb_dram_dout;   // registered BRAM output (1-cycle BRAM, captured in MEM/WB)
+    wire [31:0] wb_load_rdata;  // registered cache/mmio output (captured in MEM/WB)
 
     // ---- WB ----
     wire [31:0] wb_load_data;
     wire [31:0] wb_write_data;
 
-    // ---- Handshake constants ----
-    wire if_ready_go_w  = 1'b1;     // BRAM latency absorbed by pipeline
+    // MEM-stage cacheable flag (registered from EX via EX/MEM reg)
+    wire is_cacheable_mem;
 
-    // FIX-C: Store-load hazard detection
-    //   MEM 有 store + EX 有 load + DRAM word 地址相同 → stall 1 拍
-    wire store_load_hazard = (|mem_store_wea)
-                           & ex_valid & ex_mem_read_en
-                           & (mem_alu_result[17:2] == alu_addr[17:2]);
-    wire ex_ready_go_w  = ~store_load_hazard;
-    wire mem_ready_go_w = 1'b1;     // BRAM latency absorbed by pipeline
+    // ---- Handshake ----
+    wire if_ready_go_w  = 1'b1;     // BRAM latency absorbed by pipeline
+    // Non-cacheable store-load hazard: EX load + MEM store to same DRAM word (MMIO path)
+    // DCache handles cacheable RAW, but MMIO path has no forwarding — stall 1 cycle.
+    //
+    // 250MHz: Conservative check using ONLY registered signals (no ALU dependency).
+    // Removes ~is_cacheable and address comparison to break the critical path:
+    //   ALU→is_cacheable→ex_ready_go→ex_allowin→id_allowin→irom_addr→IROM
+    // False positives: EX has any load + MEM has MMIO store → extra 1-cycle stall (very rare).
+    wire mmio_st_ld_hazard = ex_mem_read_en &
+                             mem_valid & (|mem_store_wea) & ~is_cacheable_mem;
+    wire ex_ready_go_w  = ~mmio_st_ld_hazard;
+    wire mem_ready_go_w = cache_ready; // DCache controls MEM stage flow
+    assign cache_flush = 1'b0; // DCache manages refill independently; no abort needed
 
     // ---- Flush (250MHz: uses registered mem_branch_flush instead of combinational branch_flush) ----
     wire id_bp_redirect;            // NLP: ID-stage Tournament redirect
     wire id_flush = mem_branch_flush | id_bp_redirect;
-    wire ex_flush = mem_branch_flush;   // 250MHz: flush EX too (3-stage flush: IF+ID+EX)
+    wire ex_flush = mem_branch_flush;   // 250MHz: flush EX on MEM mispredict only
 
     // ---- Register addresses from instruction (ID stage, from IF/ID reg) ----
     wire [4:0] id_rs1_addr = id_inst[19:15];
     wire [4:0] id_rs2_addr = id_inst[24:20];
     wire [4:0] id_rd_addr  = id_inst[11:7];
 
-    // ---- Port assignments ----
-    // FIX-C: 读写分离——读(EX) + 写(MEM)
-    assign perip_addr     = alu_addr;             // EX stage: 读地址
-    assign perip_addr_sum = alu_addr;             // 兼容保留
-    assign perip_wr_addr  = mem_alu_result;       // MEM stage: 写地址（已打拍）
-    assign perip_wea      = mem_valid ? mem_store_wea : 4'b0000;  // 门控：MEM 无效时禁写
-    assign perip_wdata    = mem_store_data;       // MEM stage: 写数据（已打拍）
-    assign dram_dout   = perip_rdata;       // bridge 读数据 (MEM stage)
+    // ---- Cacheable判定 (EX stage, 1 LUT) ----
+    // DRAM区域: 0x8010_0000 ~ 0x8013_FFFF → addr[20]=1, addr[21]=0, addr[19:18]=00
+    assign is_cacheable = alu_addr[20] & ~alu_addr[21] & ~alu_addr[19] & ~alu_addr[18];
+
+    // ---- DCache 端口 (EX stage) ----
+    // Only cacheable (DRAM) accesses go through DCache; MMIO bypasses
+    // Gate with ~mem_branch_flush AND ~branch_flush to prevent wrong-path
+    // instructions from triggering DCache requests:
+    //   - branch_flush: catches wrong-path instruction entering EX same cycle as branch resolves
+    //   - mem_branch_flush: catches wrong-path instruction in EX one cycle after branch resolves
+    assign cache_req   = ex_valid & ~mem_branch_flush & ~branch_flush & (ex_mem_read_en | ex_mem_write_en) & is_cacheable;
+    assign cache_wr    = ex_mem_write_en;
+    assign cache_addr  = alu_addr;
+    assign cache_wea   = dram_wea;               // from mem_interface (EX stage)
+    assign cache_wdata = store_data_shifted;      // from mem_interface (EX stage)
+
+    // ---- MMIO 端口 ----
+    assign mmio_addr    = alu_addr;               // EX stage: 读地址
+    assign mmio_wr_addr = mem_alu_result;          // MEM stage: 写地址（已打拍）
+    assign mmio_wea     = (mem_valid & ~is_cacheable_mem) ? mem_store_wea : 4'b0000;
+    assign mmio_wdata   = mem_store_data;          // MEM stage: 写数据（已打拍）
+
+    // MEM-stage load data: mux between cache and MMIO
+    assign mem_load_data = is_cacheable_mem ? cache_rdata : mmio_rdata;
 
     // ================================================================
     //  Branch prediction wires
@@ -522,7 +554,7 @@ module cpu_top (
         .actual_target    (actual_target)
     );
 
-    // Store interface (EX stage → DRAM)
+    // Store interface (EX stage → DCache)
     mem_interface u_mem_interface (
         // Store side (EX stage)
         .store_valid     (ex_valid),
@@ -536,11 +568,9 @@ module cpu_top (
         .load_addr_low   (wb_addr_low),
         .load_mem_size   (wb_mem_size),
         .load_unsigned   (wb_mem_unsigned),
-        .load_dram_dout  (wb_dram_dout),    // from MEM/WB register (1-cycle BRAM)
+        .load_dram_dout  (wb_load_rdata),   // from MEM/WB register (cache or mmio)
         .load_data_out   (wb_load_data)
     );
-
-    // ==================== DRAM: 外部例化，通过 perip 端口 ====================
 
     // ==================== EX/MEM ====================
 
@@ -554,10 +584,10 @@ module cpu_top (
         .mem_ready_go     (mem_ready_go_w),
         .wb_allowin       (wb_allowin),
         // 250MHz: register branch_flush into MEM stage
-        // Gate with ~mem_branch_flush: suppress flush from wrong-path instructions
-        // that entered EX before the registered flush could stop them
-        // (e.g., 'j fail' on not-taken path would otherwise generate a second flush)
-        .ex_branch_flush  (branch_flush & ~mem_branch_flush),
+        // Gate with mem_allowin: don't propagate flush while pipeline is stalled
+        // (DCache refill). This ensures the flush-generating instruction advances
+        // to MEM first, rather than being killed by its own registered flush.
+        .ex_branch_flush  (branch_flush & ~mem_branch_flush & mem_allowin),
         .ex_branch_target (branch_target),
         .mem_branch_flush (mem_branch_flush),
         .mem_branch_target(mem_branch_target),
@@ -569,8 +599,10 @@ module cpu_top (
         .ex_mem_read_en   (ex_mem_read_en),
         .ex_mem_size      (ex_mem_size),
         .ex_mem_unsigned  (ex_mem_unsigned),
-        .ex_store_wea     (dram_wea),            // FIX-C: latch WEA
-        .ex_store_data    (store_data_shifted),   // FIX-C: latch shifted data
+        .ex_store_wea     (dram_wea),
+        .ex_store_data    (store_data_shifted),
+        // DCache: pass is_cacheable to MEM
+        .ex_is_cacheable  (is_cacheable),
         .mem_alu_result   (mem_alu_result),
         .mem_pc           (mem_pc),
         .mem_rd           (mem_rd),
@@ -579,8 +611,9 @@ module cpu_top (
         .mem_mem_read_en  (mem_mem_read_en),
         .mem_mem_size     (mem_mem_size),
         .mem_mem_unsigned (mem_mem_unsigned),
-        .mem_store_wea    (mem_store_wea),        // FIX-C: to perip_wea
-        .mem_store_data   (mem_store_data)        // FIX-C: to perip_wdata
+        .mem_store_wea    (mem_store_wea),
+        .mem_store_data   (mem_store_data),
+        .mem_is_cacheable (is_cacheable_mem)
     );
 
     // ==================== MEM/WB ====================
@@ -610,8 +643,8 @@ module cpu_top (
         .wb_mem_size      (wb_mem_size),
         .wb_mem_unsigned  (wb_mem_unsigned),
         .wb_addr_low      (wb_addr_low),
-        .mem_dram_dout    (dram_dout),      // BRAM output (MEM stage, 1-cycle latency)
-        .wb_dram_dout     (wb_dram_dout)    // registered for WB stage
+        .mem_load_rdata   (mem_load_data),   // from DCache (cacheable) or MMIO
+        .wb_load_rdata    (wb_load_rdata)    // registered for WB stage
     );
 
     // ==================== WB stage ====================
