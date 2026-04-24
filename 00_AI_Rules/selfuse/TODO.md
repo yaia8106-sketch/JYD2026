@@ -96,13 +96,15 @@
   - [X] 4 个 COE 程序 ISA 级访存 trace 仿真
   - [X] 9 种 Cache 配置命中率 + 性能对比
   - [X] 确认 DM 4KB/32B 方案：平均命中率 98.8%，250MHz 加速 +24.6%
-- [X] **Data Cache 实现** ✅ (已完成，见 M9 + 决策 O)
+- [X] **Data Cache 实现** ✅ (已完成，见 M9 + 决策 O/Q)
   > 最终配置：2-way 2KB/16B (set-associative, WT+WA, 1-entry Store Buffer)
   - [X] Cache 控制器 RTL (dcache.sv)
   - [X] CPU stall 信号适配 (cache_ready 控制 MEM 级)
   - [X] 集成到 student_top (CPU ↔ DCache ↔ DRAM, perip_bridge 瘦身为 mmio_bridge)
   - [X] riscv-tests 43/43 PASS (iverilog)
-  - [X] FPGA 上板验证通过 (current + src2)
+  - [X] FPGA 上板验证通过 (current ✅)
+  - [X] **Synth 8-7137 修复**: forwarding 寄存器显式复位（决策 Q），修复指令条数 00 的 bug
+  - [ ] **FPGA 验证 src0、src1、src2**（新 bitstream 尚未测试）
 - [X] **PC+4 预算优化 + iverilog 兼容性修复** ✅ (决策 P)
   - [X] EX 级预算 pc+4，通过寄存器传递，消除 forwarding/wb_mux 中 3 处加法器
   - [X] dcache/mem_interface 改为 AND-OR assign 风格，修复 iverilog 兼容性

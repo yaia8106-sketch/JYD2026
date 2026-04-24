@@ -169,9 +169,12 @@ module dcache (
     logic [INDEX_W-1:0] rf_fwd_idx;
 
     always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n)
+        if (!rst_n) begin
             rf_fwd_valid <= 1'b0;
-        else begin
+            rf_fwd_way   <= 1'b0;
+            rf_fwd_tag   <= '0;
+            rf_fwd_idx   <= '0;
+        end else begin
             if (state == S_DONE) begin
                 rf_fwd_valid <= 1'b1;
                 rf_fwd_way <= rf_way;
@@ -254,9 +257,12 @@ module dcache (
     logic [31:0] rf_last_fwd_data;
 
     always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n)
+        if (!rst_n) begin
             rf_last_fwd_valid <= 1'b0;
-        else begin
+            rf_last_fwd_way   <= 1'b0;
+            rf_last_fwd_addr  <= '0;
+            rf_last_fwd_data  <= 32'd0;
+        end else begin
             if (refill_wr) begin
                 rf_last_fwd_valid <= 1'b1;
                 rf_last_fwd_way  <= rf_way;
@@ -498,6 +504,10 @@ module dcache (
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             st_fwd_valid <= 1'b0;
+            st_fwd_way   <= 1'b0;
+            st_fwd_addr  <= '0;
+            st_fwd_data  <= 32'd0;
+            st_fwd_wea   <= 4'd0;
         end else begin
             st_fwd_valid <= doing_store;
             if (doing_store) begin

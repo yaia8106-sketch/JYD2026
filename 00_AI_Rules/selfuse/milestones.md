@@ -59,8 +59,11 @@
   1. `cache_flush` 连接 `mem_branch_flush`（原硬编码为 0，refill 不会被 flush 中止）
   2. Refill 开始时先失效 victim tag（防止 flush 中止后部分覆写的 line 被命中）
   3. **DRAM 延迟修复**: `rf_data_valid` 从 `>= 2` 改为 `>= DRAM_LATENCY(3)`——DRAM4MyOwn 有 DOB_REG=1（2-cycle 读延迟），原代码提前 1 拍采样，导致 refill 数据全错
-- **验证结果**: current 程序 + src2 程序 FPGA 上板通过。**src0、src1 尚未测试。**
-- **⚠️ 教训**: student_top.sv 注释 "无 output register" 与 IP 实际配置（DOB_REG=1）不符，导致 DCache 延迟参数设错
+  4. **Synth 8-7137 修复**: DCache forwarding 寄存器（`rf_fwd_way/tag/idx`、`rf_last_fwd_*`、`st_fwd_*`）在 `!rst_n` 分支缺少显式复位，Vivado 综合行为与仿真不一致，导致 current 程序指令条数显示为 00。添加 10 个寄存器的显式复位后修复。（决策 Q）
+- **验证结果**: current 程序 FPGA 上板通过（指令条数 37 ✅ + 对勾 + 运行时间）。**src0、src1、src2 尚未在新 bitstream 上验证。**
+- **⚠️ 教训**:
+  1. student_top.sv 注释 "无 output register" 与 IP 实际配置（DOB_REG=1）不符，导致 DCache 延迟参数设错
+  2. Vivado Synth 8-7137 是严重 warning——异步复位块中**所有寄存器**必须有显式复位值
 
 ---
 

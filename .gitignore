@@ -28,4 +28,4 @@ xsim.dir/
 # Branch prediction simulation output
 02_Design/coe/sim_output/
 copy_bitstream.sh
-clear the buffer.sh
+clear_the_buffer.sh
