@@ -172,21 +172,22 @@ Cycle N+1 (MEM stage):
 ### 5.4 MEM 级控制信号
 
 ```sv
-// Cache hit 判定 (MEM stage, 组合逻辑)
-wire hit_way0 = tag_valid[0] && (tag_data[0] == mem_addr_tag);
-wire hit_way1 = tag_valid[1] && (tag_data[1] == mem_addr_tag);
-wire cache_hit = hit_way0 | hit_way1;
-wire hit_way = hit_way1;  // 0=way0, 1=way1 (for data MUX)
+// Cache hit 判定 (dcache.sv 内部, MEM stage 组合逻辑)
+wire hit_w0 = mem_tag_vld[0] & (mem_tag_rd[0] == mem_tag) | (rf_fwd_match & ~rf_fwd_way);
+wire hit_w1 = mem_tag_vld[1] & (mem_tag_rd[1] == mem_tag) | (rf_fwd_match &  rf_fwd_way);
+wire cache_hit = hit_w0 | hit_w1;
 
-// MEM stage ready_go
-wire mem_ready_go = !mem_valid
-                  | !mem_is_mem_access          // 非访存指令
-                  | !mem_cacheable_r             // MMIO: 假设 1 cycle 直通
-                  | (mem_cacheable_r & cache_hit) // Cache hit
-                  | fsm_done;                    // Miss refill 完成
+// cpu_ready 由 dcache.sv 内部生成:
+//   IDLE + cache_hit & ~sb_conflict → ready
+//   S_DONE → ready
+//   其他状态 → not ready
 
+// cpu_top.sv 中:
+wire mem_ready_go_w = cache_ready;  // DCache 控制 MEM stage flow
 wire mem_allowin = !mem_valid | (mem_ready_go & wb_allowin);
 ```
+
+> **注意**: 实际实现还包括 refill tag 前递、store 字节级前递、refill 最后一个 word 前递等机制。详见 `dcache.sv` 源码。
 
 ---
 
@@ -195,30 +196,33 @@ wire mem_allowin = !mem_valid | (mem_ready_go & wb_allowin);
 ### 6.1 状态定义
 
 ```
-         ┌──────────────────────────────────────────────┐
-         │                                              │
+         ┌──────────────────────────────────────────────────┐
+         │                                      flush   │
          ▼                                              │
-      ┌──────┐   miss    ┌──────────┐  done  ┌──────┐  │
- ────→│ IDLE │──────────→│  REFILL  │───────→│ DONE │──┘
-      └──┬───┘           └────┬─────┘        └──────┘
-         │                    │
-         │ sb_valid &         │ word_cnt++
-         │ sb_drain           │ DRAM read
-         ▼                    │
-      ┌──────────┐            │
-      │ SB_DRAIN │            │
-      │(Store Buf│            │
-      │  排空)   │            │
-      └──────────┘            │
-                              │
+      ┌──────┐   miss  ┌───────────┐  ┌─────────┐  ┌────────┐  ┌──────┐  │
+ ────→│ IDLE │─────→│ REFILL    │─→│ REFILL  │─→│DONE_RD │─→│ DONE │──┘
+      └──┬───┘       │ _BURST    │  │ _DRAIN  │  │(BRAM rd)│  │(完成) │
+         │          └────┬──────┘  └────┬────┘  └────────┘  └──────┘
+         │ sb_valid      │ addr done    │ all data
+         │ (always       │              │ received
+         │  drain first) │              │
+         ▼               │              │
+      ┌──────────┐       │              │
+      │ SB_DRAIN │       │              │
+      └──────────┘       │              │
 ```
 
 | 状态 | 行为 | 持续 |
 |------|------|:----:|
-| **IDLE** | 正常运行，cache hit 1 cycle 通过 | 1 cycle |
-| **REFILL** | 从 DRAM 逐字读取，填充 cache line | 4 × N cycles |
-| **DONE** | 写入 tag，解除 stall | 1 cycle |
-| **SB_DRAIN** | Store buffer 排空到 DRAM | N cycles |
+| **S_IDLE** | 正常运行，cache hit 1 cycle 通过 | 1 cycle |
+| **S_REFILL_BURST** | 发送地址 + 接收数据（pipeline 重叠） | ~4 cycles |
+| **S_REFILL_DRAIN** | 地址发送完毕，等剩余数据到达 | ~2 cycles |
+| **S_DONE_RD** | DCache BRAM 读取 hit word | 1 cycle |
+| **S_DONE** | 写入 tag，解除 stall，输出数据 | 1 cycle |
+| **S_SB_DRAIN** | Store buffer 排空到 DRAM | 1 cycle |
+
+> **flush 处理**: 任何非 IDLE/SB_DRAIN 状态下收到 flush 立即回 IDLE。
+> Refill 开始时先失效 victim tag，防止 flush 中断后部分覆写的 line 被命中。
 
 ### 6.2 REFILL 流程（DRAM 2 cycle read latency，DOB_REG=1）
 
@@ -254,12 +258,13 @@ Timeline (4 words, DRAM_LATENCY=3):
 
 ```
 FSM 在 IDLE 状态检查:
-  if (sb_valid && !new_miss) → SB_DRAIN
-  SB_DRAIN: 将 sb_addr/sb_data/sb_wea 写入 DRAM (1-2 cycles)
-  完成后 → IDLE, sb_valid ← 0
+  if (sb_valid) → S_SB_DRAIN  // 无论是否有 miss，先排 SB
+  SB_DRAIN: 将 sb_addr/sb_data/sb_wea 写入 DRAM (1 cycle)
+  完成后 → IDLE, sb_valid ← 0, 重新评估 miss
 
 如果 miss 和 sb_drain 同时需要:
-  miss 优先（CPU 在等），store buffer 等 refill 完成后再排
+  SB drain 优先！否则 refill 从 DRAM 读到的是过时数据（SB 还没写回）。
+  drain 后 FSM 回 IDLE，重新检测 miss 并启动 refill。
 ```
 
 ---
@@ -284,13 +289,13 @@ FSM 在 IDLE 状态检查:
 4. 解除 stall
 ```
 
-### 7.3 Store Buffer 满
+### 7.3 Store Buffer 满（sb_conflict）
 
 ```
-如果新 store 来了但 sb_valid=1（上一次还没排空完）:
-  → mem_ready_go = 0, stall 1 cycle
-  → FSM 排空 store buffer → sb_valid=0
-  → 重试 store
+如果 store hit 但 sb_valid=1（上一次还没排空）:
+  → sb_conflict = 1 → FSM 进入 S_SB_DRAIN
+  → cpu_ready = 0 (cache_hit & ~sb_conflict = 0)
+  → SB_DRAIN 排空后回 IDLE，重新评估 store hit，此时 sb_valid=0，正常写入
 ```
 
 ---
@@ -345,26 +350,26 @@ FSM 在 IDLE 状态检查:
 ### 8.3 CPU 端口变更
 
 ```sv
-// cpu_top.sv 新增端口
+// cpu_top.sv 端口定义
 module cpu_top (
     ...
-    // DCache 接口 (替代原 perip_* 端口)
-    output logic        cache_req,          // 有访存请求
-    output logic        cache_cacheable,    // 可缓存
-    output logic        cache_wr,           // 0=load, 1=store
-    output logic [31:0] cache_addr,         // 地址 (EX stage)
-    output logic [ 3:0] cache_wea,          // 字节写使能
-    output logic [31:0] cache_wdata,        // 写数据
-    input  logic [31:0] cache_rdata,        // 读数据 (MEM stage)
-    input  logic        cache_ready,        // hit 或 refill 完成
+    // DCache 接口 (EX → MEM stage)
+    output logic        cache_req,              // EX: 有访存请求
+    output logic        cache_wr,               // EX: 0=load, 1=store
+    output logic [31:0] cache_addr,             // EX: 访存地址
+    output logic [ 3:0] cache_wea,              // EX: 字节写使能
+    output logic [31:0] cache_wdata,            // EX: 写数据
+    input  logic [31:0] cache_rdata,            // MEM: 读数据
+    input  logic        cache_ready,            // MEM: 命中或完成
+    output logic        cache_flush,            // MEM: flush（分支错误中断 refill）
+    output logic        cache_pipeline_stall,   // ~mem_allowin（同步 DCache EX→MEM）
 
-    // MMIO 接口 (保留原有)
+    // MMIO 接口
     output logic [31:0] mmio_addr,
     output logic [31:0] mmio_wr_addr,
     output logic [ 3:0] mmio_wea,
     output logic [31:0] mmio_wdata,
-    input  logic [31:0] mmio_rdata,
-    ...
+    input  logic [31:0] mmio_rdata
 );
 ```
 
@@ -392,15 +397,15 @@ EX/MEM_reg Clk-to-Q                       ~0.3ns
 ### 9.2 DRAM 访问路径（Miss FSM）
 
 ```
-需要 pipeline register 将 4.71ns 路径分成两段:
+DRAM4MyOwn 已配置 DOB_REG=1，读延迟 = 2 cycle。加上 registered addr 总延迟 = 3 cycle = DRAM_LATENCY。
 
 段 1: FSM addr_reg → [routing] → DRAM BRAM addr pin
       ~2.4ns < 4.0ns ✅
 
-段 2: DRAM BRAM output → [routing] → FSM data_reg
+段 2: DRAM BRAM output (DOB_REG) → [routing] → DCache data path
       ~2.4ns < 4.0ns ✅
 
-如果时序允许，可去掉 pipeline register (1 cycle/word)
+DOB_REG 既提供时序分段（降低布线压力），又是 DRAM IP 固有配置。
 ```
 
 ---

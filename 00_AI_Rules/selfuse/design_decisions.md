@@ -441,27 +441,32 @@ wire [31:0] mem_fwd_val = (mem_wb_sel == 2'b10) ? (mem_pc + 32'd4) : mem_alu_res
 - src0 和 src2 工作集较大，但在 4KB 下也有 97%+ 命中率
 - **组相联对这些程序收益甚微**，直接映射即可
 
-### 推荐方案
+### 推荐方案（模拟阶段）
 
-**DM 4KB/32B**（直接映射，4KB 容量，32B 行大小 = 8 words/line）
+~~**DM 4KB/32B**（直接映射，4KB 容量，32B 行大小 = 8 words/line）~~
 
-理由：
-1. 命中率最高（98.8%），加速比最大（+24.6%）
-2. 直接映射实现最简单（无 LRU 逻辑，无 tag 比较器阵列）
-3. 仅需 1 个 BRAM36（4KB data + tag RAM 可用分布式 RAM）
-4. 32B 行大小：DRAM BRAM 天然按行读取，bus width 匹配
+### 最终实现
 
-### 实现要点（待编码）
+**2-way 2KB/16B**（2-way set-associative，2KB 容量，16B 行大小 = 4 words/line）
+
+最终选择理由：
+1. 2KB vs 4KB 仅差 0.5% hit rate，省一半 BRAM
+2. 2-way 在 src0/src2（工作集大）上比 DM 更稳定，减少 conflict miss
+3. 16B 行 vs 32B 在无 CWF 下差距小，refill 周期更短（8 vs 14 cycles）
+4. 2-way LRU 只需 1 bit/set，实现简单
+
+### 实现要点（已完成）
 
 ```
-CPU ←→ Cache (1-2 BRAM) ←→ DRAM (68 BRAM)
-     关键路径: ≤2ns         多周期状态机, 非关键路径
+CPU ←→ DCache (2×BRAM18) ←→ DRAM (64×BRAM36, SDP, DOB_REG=1)
+     关键路径: ≤2ns           多周期 FSM, 非关键路径
 ```
 
-- Cache 仅 1-2 BRAM，扇出小→布线短→250MHz 可行
-- Miss 处理走多周期状态机（stall CPU，逐 word/burst 从 DRAM 取整行）
-- Write-through 策略（简单，store 同时写 cache 和 DRAM）
-- 需要新增 CPU stall 信号（cache miss 时暂停流水线）
+- Cache 仅 2×BRAM18（每 way 1 个），扇出小→布线短
+- Miss: 6 状态 FSM（BURST→DRAIN→DONE_RD→DONE），pipeline overlap，8 cycles/miss
+- Write-through + 1-entry Store Buffer，SB drain 优先于 refill（保证 DRAM 数据一致性）
+- flush 中断 refill，victim tag 提前失效防止部分覆写命中
+- 详见 `02_Design/spec/dcache_spec.md` v1.1
 
 
 ## M. 250MHz 时序优化：非 DRAM 关键路径削减

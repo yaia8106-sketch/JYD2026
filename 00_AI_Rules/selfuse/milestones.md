@@ -59,7 +59,7 @@
   1. `cache_flush` 连接 `mem_branch_flush`（原硬编码为 0，refill 不会被 flush 中止）
   2. Refill 开始时先失效 victim tag（防止 flush 中止后部分覆写的 line 被命中）
   3. **DRAM 延迟修复**: `rf_data_valid` 从 `>= 2` 改为 `>= DRAM_LATENCY(3)`——DRAM4MyOwn 有 DOB_REG=1（2-cycle 读延迟），原代码提前 1 拍采样，导致 refill 数据全错
-- **验证结果**: current 程序 + src2 程序均 FPGA 上板通过
+- **验证结果**: current 程序 + src2 程序 FPGA 上板通过。**src0、src1 尚未测试。**
 - **⚠️ 教训**: student_top.sv 注释 "无 output register" 与 IP 实际配置（DOB_REG=1）不符，导致 DCache 延迟参数设错
 
 ---
