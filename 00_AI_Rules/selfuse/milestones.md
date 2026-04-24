@@ -51,6 +51,17 @@
 - **瓶颈**: DRAM 68×BRAM36 高扇出布线（CPU 逻辑已具备 250MHz 能力）
 - **性能**: current 程序 ~180+ms（flush penalty +1 cycle）
 
+### 🏁 M9: DCache 实现 + FPGA 验证通过（current + src2）✅
+- **日期**: 2026-04-24
+- **说明**: 2KB 2-way set-associative DCache (16B line, Write-Through + Write-Allocate, 1-entry Store Buffer)
+- **架构变更**: DRAM 从 CPU 直连改为 DCache 管理；perip_bridge 瘦身为 mmio_bridge
+- **关键修复**:
+  1. `cache_flush` 连接 `mem_branch_flush`（原硬编码为 0，refill 不会被 flush 中止）
+  2. Refill 开始时先失效 victim tag（防止 flush 中止后部分覆写的 line 被命中）
+  3. **DRAM 延迟修复**: `rf_data_valid` 从 `>= 2` 改为 `>= DRAM_LATENCY(3)`——DRAM4MyOwn 有 DOB_REG=1（2-cycle 读延迟），原代码提前 1 拍采样，导致 refill 数据全错
+- **验证结果**: current 程序 + src2 程序均 FPGA 上板通过
+- **⚠️ 教训**: student_top.sv 注释 "无 output register" 与 IP 实际配置（DOB_REG=1）不符，导致 DCache 延迟参数设错
+
 ---
 
 ## 重要回滚点
@@ -63,6 +74,7 @@
 | **🔒 预测器前最终基线** | `bb094dd` | 纯净 EX-only，FPGA 功能正确 (tag: M6-baseline) | ⭐⭐⭐⭐⭐ |
 | **Tournament BP** | `ddc0be4` | NLP 分支预测器，FPGA 验证通过 @ 200MHz | ⭐⭐⭐⭐⭐ |
 | **250MHz 尝试** | `2f84a77` | flush 延迟优化，200MHz 收敛，250MHz 未收敛 | ⭐⭐⭐ |
+| **DCache 验证** | (当前) | DCache 实现，current + src2 FPGA 通过 | ⭐⭐⭐⭐⭐ |
 
 ---
 

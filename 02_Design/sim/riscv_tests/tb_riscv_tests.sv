@@ -52,6 +52,9 @@ module tb_riscv_tests;
     wire [ 3:0] dram_wea;
     wire [31:0] dram_wdata;
 
+    // DCache pipeline sync
+    wire cache_pipeline_stall;
+
     // ================================================================
     //  CPU Core
     // ================================================================
@@ -68,6 +71,7 @@ module tb_riscv_tests;
         .cache_rdata    (cache_rdata),
         .cache_ready    (cache_ready),
         .cache_flush    (cache_flush),
+        .cache_pipeline_stall (cache_pipeline_stall),
         .mmio_addr      (mmio_addr),
         .mmio_wr_addr   (mmio_wr_addr),
         .mmio_wea       (mmio_wea),
@@ -88,6 +92,7 @@ module tb_riscv_tests;
         .cpu_wdata   (cache_wdata),
         .cpu_rdata   (cache_rdata),
         .cpu_ready   (cache_ready),
+        .pipeline_stall (cache_pipeline_stall),
         .flush       (cache_flush),      // pipeline flush → abort refill
         .dram_rd_addr(dram_rd_addr),
         .dram_rdata  (dram_rdata_w),
@@ -108,14 +113,14 @@ module tb_riscv_tests;
     end
 
     // ================================================================
-    //  DRAM Model — Simple Dual Port with Output Register
+    //  DRAM Model — Simple Dual Port, NO Output Register
     //   Write port (Port A): dram_wr_addr + dram_wea + dram_wdata
-    //   Read port (Port B):  dram_rd_addr → dram_rdata (2 cycles: BRAM + output reg)
+    //   Read port (Port B):  dram_rd_addr → dram_rdata (1 cycle BRAM, no output reg)
     //  65536 x 32-bit words = 256KB
+    //  NOTE: Must match actual DRAM IP config (C_PIPELINE_STAGES=0, non_registered)
     // ================================================================
     reg [31:0] dram [0:65535];
-    reg [31:0] dram_dout_internal;  // BRAM internal read (1st cycle)
-    reg [31:0] dram_dout;           // Output register  (2nd cycle)
+    reg [31:0] dram_dout;           // BRAM read (1 cycle latency)
 
     always @(posedge clk) begin
         // Write port (from DCache store buffer drain)
@@ -123,9 +128,8 @@ module tb_riscv_tests;
         if (dram_wea[1]) dram[dram_wr_addr][15: 8] <= dram_wdata[15: 8];
         if (dram_wea[2]) dram[dram_wr_addr][23:16] <= dram_wdata[23:16];
         if (dram_wea[3]) dram[dram_wr_addr][31:24] <= dram_wdata[31:24];
-        // Read port: 2-cycle latency (BRAM + output register)
-        dram_dout_internal <= dram[dram_rd_addr];  // cycle 1: BRAM
-        dram_dout          <= dram_dout_internal;   // cycle 2: output register
+        // Read port: 1-cycle latency (BRAM only, no output register)
+        dram_dout <= dram[dram_rd_addr];
     end
 
     assign dram_rdata_w = dram_dout;

@@ -29,6 +29,9 @@ module dcache (
     output logic [31:0] cpu_rdata,
     output logic        cpu_ready,
 
+    // Pipeline synchronization
+    input  logic        pipeline_stall,  // from cpu_top: ~mem_allowin (keep EX→MEM reg in sync)
+
     // Pipeline flush
     input  logic        flush,
 
@@ -69,7 +72,11 @@ module dcache (
     logic [ 3:0]        mem_wea;
     logic [31:0]        mem_wdata;
 
-    wire pipeline_advance = cpu_ready | flush;
+    // pipeline_advance must match cpu_top's mem_allowin to keep DCache's
+    // internal EX→MEM register synchronized with cpu_top's ex_mem_reg.
+    // Without this, a hit (cpu_ready=1) while wb_allowin=0 would advance
+    // DCache but not cpu_top, causing a desync.
+    wire pipeline_advance = ~pipeline_stall | flush;
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -103,10 +110,10 @@ module dcache (
     // Async read with EX-stage index
     wire [TAG_W-1:0] tag_rd_data [WAYS-1:0];
     wire             tag_rd_vld  [WAYS-1:0];
-    assign tag_rd_data[0] = tag_mem[0][ex_index];
-    assign tag_rd_vld[0]  = tag_vld[0][ex_index];
-    assign tag_rd_data[1] = tag_mem[1][ex_index];
-    assign tag_rd_vld[1]  = tag_vld[1][ex_index];
+    wire [TAG_W-1:0] tag_rd_data_fwd0 = (state == S_DONE && rf_way == 0 && rf_idx == ex_index) ? rf_tag : tag_mem[0][ex_index];
+    wire [TAG_W-1:0] tag_rd_data_fwd1 = (state == S_DONE && rf_way == 1 && rf_idx == ex_index) ? rf_tag : tag_mem[1][ex_index];
+    wire             tag_rd_vld_fwd0  = (state == S_DONE && rf_way == 0 && rf_idx == ex_index) ? 1'b1   : tag_vld[0][ex_index];
+    wire             tag_rd_vld_fwd1  = (state == S_DONE && rf_way == 1 && rf_idx == ex_index) ? 1'b1   : tag_vld[1][ex_index];
 
     // Latch tag read results EX→MEM
     logic [TAG_W-1:0] mem_tag_rd [WAYS-1:0];
@@ -117,8 +124,10 @@ module dcache (
             mem_tag_rd[0]  <= '0;  mem_tag_vld[0] <= 1'b0;
             mem_tag_rd[1]  <= '0;  mem_tag_vld[1] <= 1'b0;
         end else if (pipeline_advance) begin
-            mem_tag_rd[0]  <= tag_rd_data[0];  mem_tag_vld[0] <= tag_rd_vld[0];
-            mem_tag_rd[1]  <= tag_rd_data[1];  mem_tag_vld[1] <= tag_rd_vld[1];
+            mem_tag_rd[0]  <= tag_rd_data_fwd0;
+            mem_tag_vld[0] <= tag_rd_vld_fwd0;
+            mem_tag_rd[1]  <= tag_rd_data_fwd1;
+            mem_tag_vld[1] <= tag_rd_vld_fwd1;
         end
     end
 
@@ -137,11 +146,13 @@ module dcache (
         if (!rst_n)
             rf_fwd_valid <= 1'b0;
         else begin
-            rf_fwd_valid <= (state == S_DONE);
             if (state == S_DONE) begin
+                rf_fwd_valid <= 1'b1;
                 rf_fwd_way <= rf_way;
                 rf_fwd_tag <= rf_tag;
                 rf_fwd_idx <= rf_idx;
+            end else if (pipeline_advance) begin
+                rf_fwd_valid <= 1'b0;
             end
         end
     end
@@ -220,12 +231,13 @@ module dcache (
         if (!rst_n)
             rf_last_fwd_valid <= 1'b0;
         else begin
-            // Capture on every refill write (last one persists into S_DONE_RD)
-            rf_last_fwd_valid <= refill_wr;
             if (refill_wr) begin
+                rf_last_fwd_valid <= 1'b1;
                 rf_last_fwd_way  <= rf_way;
                 rf_last_fwd_addr <= rf_wr_data_addr;
                 rf_last_fwd_data <= dram_rdata;
+            end else if (state == S_DONE) begin
+                rf_last_fwd_valid <= 1'b0;
             end
         end
     end
@@ -303,7 +315,7 @@ module dcache (
     //    Cycle 7: S_DONE          output data, update tag, signal ready
     //  Total: LINE_WORDS + DRAM_LATENCY + 2 = 8 cycles
     // ================================================================
-    localparam DRAM_LATENCY = 2;  // BRAM + output register
+    localparam DRAM_LATENCY = 3;  // Wait 2 cycles for 2-cycle latency DRAM (BRAM + output register)
 
     typedef enum logic [2:0] {
         S_IDLE,
@@ -346,10 +358,14 @@ module dcache (
             S_IDLE: begin
                 if (sb_conflict)
                     state_nxt = S_SB_DRAIN;
+                else if (sb_valid)
+                    // MUST drain SB before any refill — otherwise refill
+                    // reads stale DRAM data (SB hasn't written back yet).
+                    // After drain, FSM returns to IDLE and re-evaluates
+                    // the miss, starting the refill with up-to-date DRAM.
+                    state_nxt = S_SB_DRAIN;
                 else if (idle_miss)
                     state_nxt = S_REFILL_BURST;
-                else if (sb_valid & ~idle_miss)
-                    state_nxt = S_SB_DRAIN;
             end
             S_REFILL_BURST: begin
                 if (rf_addr_done)
@@ -372,14 +388,13 @@ module dcache (
 
     // Refill control — simple cycle-based approach
     //
-    // Timeline for DRAM_LATENCY=3, LINE_WORDS=4 (dram_rd_addr is REGISTERED):
+    // Timeline for DRAM_LATENCY=2, LINE_WORDS=4 (dram_rd_addr is REGISTERED):
     //   burst_cycle=0: dram_rd_addr_r<=addr[0] (registered from IDLE transition)
     //   burst_cycle=1: dram_rd_addr_r<=addr[1], DRAM sees addr[0]
-    //   burst_cycle=2: dram_rd_addr_r<=addr[2], DRAM sees addr[1]
-    //   burst_cycle=3: dram_rd_addr_r<=addr[3], DRAM sees addr[2], dram_rdata=data[0] → write
-    //   burst_cycle=4: (DRAIN)                  DRAM sees addr[3], dram_rdata=data[1] → write
-    //   burst_cycle=5: (DRAIN)                                     dram_rdata=data[2] → write
-    //   burst_cycle=6: (DRAIN)                                     dram_rdata=data[3] → write
+    //   burst_cycle=2: dram_rd_addr_r<=addr[2], DRAM sees addr[1], dram_rdata=data[0] → write
+    //   burst_cycle=3: dram_rd_addr_r<=addr[3], DRAM sees addr[2], dram_rdata=data[1] → write
+    //   burst_cycle=4: (DRAIN)                  DRAM sees addr[3], dram_rdata=data[2] → write
+    //   burst_cycle=5: (DRAIN)                                     dram_rdata=data[3] → write
     //
     logic [3:0] rf_burst_cycle;  // total cycle counter since refill start
 
@@ -414,11 +429,11 @@ module dcache (
         end
     end
 
-    // Data valid: DRAM data is available DRAM_LATENCY=3 cycles after address was registered
-    // dram_rd_addr_r is registered → +1 cycle vs direct BRAM connection
-    // addr registered at cycle 0 → DRAM sees it cycle 1 → output reg cycle 2 → data at cycle 3
+    // Data valid: DRAM data is available after address pipeline latency
+    // dram_rd_addr is registered → +1 cycle; DRAM4MyOwn has output register (DOB_REG=1) → +2 cycle BRAM
+    // Total latency = 3 cycles from address computation to data output = DRAM_LATENCY
     // Note: cannot use WORD_W'(LINE_WORDS) since 2'd4 truncates to 0!
-    assign rf_data_valid = (rf_burst_cycle >= 4'd3) &
+    assign rf_data_valid = (rf_burst_cycle >= 4'(DRAM_LATENCY)) &
                            (state == S_REFILL_BURST | state == S_REFILL_DRAIN);
 
     // ================================================================
@@ -508,9 +523,16 @@ module dcache (
                     tag_vld[w][s] <= 1'b0;
                     tag_mem[w][s] <= '0;
                 end
-        end else if (state == S_DONE) begin
-            tag_vld[rf_way][rf_idx] <= 1'b1;
-            tag_mem[rf_way][rf_idx] <= rf_tag;
+        end else begin
+            // Invalidate victim at refill START so a mid-refill flush
+            // leaves no valid-but-corrupted line (BRAM partially overwritten).
+            if (state == S_IDLE && state_nxt == S_REFILL_BURST)
+                tag_vld[lru_victim][mem_index] <= 1'b0;
+            // Validate and write tag only on successful refill completion
+            if (state == S_DONE) begin
+                tag_vld[rf_way][rf_idx] <= 1'b1;
+                tag_mem[rf_way][rf_idx] <= rf_tag;
+            end
         end
     end
 

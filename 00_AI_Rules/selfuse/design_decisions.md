@@ -135,11 +135,12 @@ BRAM Clk-to-Q(2.0) + output MUX(0.2) + mem_interface(0.5)
 
 **IROM：Single Port ROM，32-bit，不启用输出寄存器（1 拍延迟），COE 文件初始化 — 已确定**
 
-**DRAM：Single Port RAM，32-bit，不启用输出寄存器（1 拍延迟），WEA 4-bit 字节使能 — 已确定**
+**DRAM：Simple Dual Port RAM，32-bit，65536 depth (256KB)，4-bit WEA — 已确定**
 
-- 不需要双端口：Load 和 Store 统一用 EX 级 ALU 输出作地址，同一时刻只有一条指令在 EX
-- 地址粒度：word 地址（BRAM 地址 = ALU_result[?:2]）
-- 当前 DRAM 为 65536×32bit（256KB），使用约 64 个 RAMB36E1
+- DCache 实现后改为 SDP：Port A = 写（Store Buffer drain），Port B = 读（Refill FSM）
+- **重要**: Port B 有 output register（`Register_PortB_Output_of_Memory_Primitives = true`，DOB_REG=1）
+- 读延迟 = 2 cycle（BRAM read + output register），加上 registered addr 总延迟 = 3 cycle = DRAM_LATENCY
+- 地址粒度：word 地址（64 个 RAMB36E1）
 
 ### IROM 取指架构（预取方案）
 
@@ -175,10 +176,10 @@ irom_addr = branch_flush  ? branch_target :   // 分支：预取目标
 ### 平台集成架构
 
 1. **IROM**：在 `student_top` 例化，cpu_top 通过 `irom_addr` / `irom_data` 端口访问
-2. **DRAM**：由自研 `perip_bridge` 管理，EX 阶段 ALU 直连 BRAM 地址
-3. **MMIO 读**：组合逻辑，在 MEM 阶段用 `mem_alu_result` 做地址译码（组合路径 ~3ns < BRAM 路径 ~3.5ns，不构成瓶颈）
-4. **MMIO 写**：时序逻辑，与 DRAM 写在同一个时钟沿（EX→MEM）执行
-5. **DRAM 容量**：65536×32bit（256KB），50MHz 下时序余量充足
+2. **DRAM**：由 DCache 管理（SDP BRAM，Port A=写，Port B=读，DOB_REG=1），CPU 不再直连 DRAM
+3. **MMIO 读**：组合逻辑，通过 `mmio_bridge`（原 `perip_bridge` 瘦身）
+4. **MMIO 写**：时序逻辑，通过 `mmio_bridge`
+5. **DRAM 容量**：65536×32bit（256KB），64 个 RAMB36E1
 
 ---
 
@@ -636,3 +637,47 @@ irom_addr = mem_flush       ? target :
 > Slack 变化被 P&R 随机性掩盖（DataPath 因布局变化增大）。
 > 逻辑级数减少已反映在 RTL 中，实际 Slack 改善预计在 DCache 减压 DRAM 布线后显现。
 > 全局 Top 10 仍全部是 EX/MEM→DRAM 纯布线（0 级逻辑），CPU 逻辑不在瓶颈。
+
+---
+
+## O. DCache DRAM 延迟 Bug 修复
+
+**日期**: 2026-04-24
+**状态**: 已修复，FPGA 验证通过（src2 通过）
+
+### 问题
+
+DCache refill FSM 的 `rf_data_valid` 信号使用 `rf_burst_cycle >= 2`，假设 DRAM 读延迟为 1 cycle。
+但 DRAM4MyOwn IP 实际配置了 `Register_PortB_Output_of_Memory_Primitives = true`（DOB_REG=1），
+读延迟为 **2 cycle**。加上 `dram_rd_addr` 寄存器的 1 cycle，总延迟 = 3 cycle。
+
+DCache 在 `rf_burst_cycle=2` 时就开始采样 `dram_rdata`，但此时 DRAM 的 output register 尚未更新，
+读到的是 DOB 寄存器中的**旧值**。结果：每次 refill 的 cache line 数据全错（第一个 word 是垃圾，
+后续 word 各偏移 1 位，最后一个 word 丢失）。
+
+### 为什么 current 程序没发现
+
+current 程序的 DRAM 工作集极小（仅 22 个唯一 word），且以栈操作为主。
+大量 store → load 的访问模式使得数据主要通过 store forwarding 或 cache hit 获取，
+首次 cold miss refill 的错误数据恰好被后续 store 覆盖，未暴露问题。
+
+### 为什么 src2 暴露
+
+src2 工作集大（14,029 个唯一 word），有大量 cold miss 且依赖 refill 拿到的初始数据做计算。
+
+### 修复
+
+```sv
+// dcache.sv: rf_data_valid
+// 修复前:
+assign rf_data_valid = (rf_burst_cycle >= 4'd2) & ...;
+// 修复后:
+assign rf_data_valid = (rf_burst_cycle >= 4'(DRAM_LATENCY)) & ...;
+// DRAM_LATENCY = 3 (registered addr + BRAM read + DOB_REG)
+```
+
+### 教训
+
+> 1. IP 配置参数（XCI）是唯一可信来源，代码注释和文档可能过时或错误。
+> 2. 涉及时序假设的 localparam 必须与实际硬件 IP 配置保持一致，并通过仿真验证。
+> 3. `student_top.sv` 的注释 "无 output register" 与 IP 实际配置不符——已修正注释。

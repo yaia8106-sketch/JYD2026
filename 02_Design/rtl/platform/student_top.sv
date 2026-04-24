@@ -68,6 +68,9 @@ module student_top #(
     // DCache flush — driven by cpu_top's cache_flush output
     logic dcache_flush;
 
+    // DCache pipeline sync — driven by cpu_top's ~mem_allowin
+    logic cache_pipeline_stall;
+
     // ================================================================
     //  CPU Core
     // ================================================================
@@ -88,6 +91,7 @@ module student_top #(
         .cache_rdata (cache_rdata),
         .cache_ready (cache_ready),
         .cache_flush (dcache_flush),
+        .cache_pipeline_stall (cache_pipeline_stall),
 
         // MMIO 接口
         .mmio_addr    (mmio_addr),
@@ -124,6 +128,9 @@ module student_top #(
         .cpu_rdata   (cache_rdata),
         .cpu_ready   (cache_ready),
 
+        // Pipeline synchronization
+        .pipeline_stall (cache_pipeline_stall),
+
         // Flush
         .flush       (dcache_flush),
 
@@ -137,7 +144,7 @@ module student_top #(
 
     // ================================================================
     //  DRAM (Block Memory Generator RAM, SDP)
-    //  配置: 32bit, 65536 depth (256KB), 4-bit WEA, 无 output register
+    //  配置: 32bit, 65536 depth (256KB), 4-bit WEA, 有 output register (DOB_REG=1, 2-cycle read latency)
     //  Port A = 写端口 (from DCache store buffer drain)
     //  Port B = 读端口 (from DCache refill FSM)
     // ================================================================

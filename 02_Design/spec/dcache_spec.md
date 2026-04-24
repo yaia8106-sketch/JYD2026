@@ -1,8 +1,8 @@
 # DCache 设计规格书
 
-> **版本**: v1.0
-> **日期**: 2026-04-21
-> **状态**: 设计阶段
+> **版本**: v1.1
+> **日期**: 2026-04-24
+> **状态**: 已实现，FPGA 验证通过（src2 通过）
 > **关联决策**: design_decisions.md 决策 L/N
 
 ---
@@ -220,34 +220,35 @@ wire mem_allowin = !mem_valid | (mem_ready_go & wb_allowin);
 | **DONE** | 写入 tag，解除 stall | 1 cycle |
 | **SB_DRAIN** | Store buffer 排空到 DRAM | N cycles |
 
-### 6.2 REFILL 流程（DRAM 2 cycle/word，含 pipeline register）
+### 6.2 REFILL 流程（DRAM 2 cycle read latency，DOB_REG=1）
 
 ```
-                Pipeline reg
-Cache FSM ───→ [addr_pipe] ───→ DRAM BRAM
-                                   │
-DRAM BRAM ───→ [data_pipe] ───→ Cache FSM
+                Registered addr
+Cache FSM ───→ [dram_rd_addr] ───→ DRAM BRAM (DOB_REG=1)
+                                        │
+DRAM BRAM output register ───→ Cache FSM (dram_rdata)
 
-Cycle 1: addr_pipe ← {miss_addr.index, word_cnt=0}
-Cycle 2: DRAM latches addr           (addr_pipe → BRAM)
-Cycle 3: data_pipe ← DRAM output     (BRAM → data_pipe)
-         addr_pipe ← {index, word_cnt=1}  (overlap!)
-Cycle 4: cache_data[0] ← data_pipe
-         DRAM reading word 1...
-  ...
-Cycle 9: cache_data[3] ← data_pipe   → REFILL done
+Timeline (4 words, DRAM_LATENCY=3):
+  burst_cycle=0: dram_rd_addr_r<=addr[0] (registered from IDLE transition)
+  burst_cycle=1: dram_rd_addr_r<=addr[1], DRAM sees addr[0]
+  burst_cycle=2: dram_rd_addr_r<=addr[2], DRAM sees addr[1], dram_rdata=data[0] → write
+  burst_cycle=3: dram_rd_addr_r<=addr[3], DRAM sees addr[2], dram_rdata=data[1] → write
+  burst_cycle=4: (DRAIN)                  DRAM sees addr[3], dram_rdata=data[2] → write
+  burst_cycle=5: (DRAIN)                                     dram_rdata=data[3] → write
+  burst_cycle=6: S_DONE_RD  DCache BRAM read for hit word
+  burst_cycle=7: S_DONE     output data, update tag, signal ready
 
-启动延迟 = 2 cycles
-稳态吞吐 = 1 word / 2 cycles (with overlap)
-4 字 refill = 2 + 4×2 - 1 = 9 cycles (含 overlap)
+启动延迟 = DRAM_LATENCY = 3 cycles (registered addr + BRAM read + output register)
+稳态吞吐 = 1 word / cycle (pipeline overlap)
+4 字 refill = 8 cycles total
 
-加 FSM overhead (IDLE→REFILL + DONE→IDLE) = 2 cycles
-总 miss penalty ≈ 11 cycles
+总 miss penalty ≈ 8 cycles
 ```
 
-> [!NOTE]
-> 如果布线允许 1 cycle/word（不需要 pipeline register），miss penalty 降到 ~6 cycles。
-> 实现时先按 2 cycle/word 设计，如果时序满足再去掉 pipeline register。
+> [!IMPORTANT]
+> DRAM4MyOwn IP 配置了 `Register_PortB_Output_of_Memory_Primitives = true`（DOB_REG=1），
+> 读延迟为 2 cycle。加上 `dram_rd_addr` 寄存器的 1 cycle，总延迟 = DRAM_LATENCY = 3。
+> `rf_data_valid = (rf_burst_cycle >= DRAM_LATENCY)` 确保在正确时刻开始采样数据。
 
 ### 6.3 Store Buffer 排空
 

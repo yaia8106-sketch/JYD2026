@@ -24,6 +24,7 @@ module cpu_top (
     input  logic [31:0] cache_rdata,     // MEM stage: 读数据 (from DCache)
     input  logic        cache_ready,     // MEM stage: 命中或完成
     output logic        cache_flush,     // MEM stage: pipeline flush (abort refill)
+    output logic        cache_pipeline_stall, // DCache sync: ~mem_allowin
 
     // MMIO 接口 (保留原有 perip 风格)
     output logic [31:0] mmio_addr,       // EX stage: 地址
@@ -173,7 +174,8 @@ module cpu_top (
                              mem_valid & (|mem_store_wea) & ~is_cacheable_mem;
     wire ex_ready_go_w  = ~mmio_st_ld_hazard;
     wire mem_ready_go_w = cache_ready; // DCache controls MEM stage flow
-    assign cache_flush = 1'b0; // DCache manages refill independently; no abort needed
+    assign cache_flush = mem_branch_flush; // Abort wrong-path refill on branch misprediction
+    assign cache_pipeline_stall = ~mem_allowin; // sync DCache EX→MEM with cpu pipeline
 
     // ---- Flush (250MHz: uses registered mem_branch_flush instead of combinational branch_flush) ----
     wire id_bp_redirect;            // NLP: ID-stage Tournament redirect
