@@ -101,6 +101,32 @@ module dcache (
     wire [15:0] mem_word_addr = {mem_tag, mem_index, mem_word};
 
     // ================================================================
+    //  FSM types & signals (declared early for iverilog compatibility)
+    // ================================================================
+    localparam DRAM_LATENCY = 3;  // Wait 2 cycles for 2-cycle latency DRAM (BRAM + output register)
+
+    typedef enum logic [2:0] {
+        S_IDLE,
+        S_REFILL_BURST,   // sending addresses (may also receive data)
+        S_REFILL_DRAIN,   // receiving remaining data after all addrs sent
+        S_DONE_RD,        // DCache BRAM read cycle after refill
+        S_DONE,
+        S_SB_DRAIN
+    } state_t;
+
+    state_t state, state_nxt;
+    logic [WORD_W-1:0]  rf_addr_cnt;  // counts addresses sent (0..LINE_WORDS-1)
+    logic [WORD_W-1:0]  rf_data_cnt;  // counts data words received (0..LINE_WORDS-1)
+    logic               rf_addr_done; // all addresses sent
+    wire                rf_data_valid; // current cycle has valid DRAM data
+    logic               rf_way;
+    logic [TAG_W-1:0]   rf_tag;
+    logic [INDEX_W-1:0] rf_idx;
+    logic [3:0]         rf_burst_cycle;
+    wire [INDEX_W+WORD_W-1:0] rf_wr_data_addr;
+    wire                refill_wr;
+
+    // ================================================================
     //  Tag RAM (LUTRAM, async read)
     // ================================================================
     (* ram_style = "distributed" *)
@@ -180,9 +206,9 @@ module dcache (
                                             : data_rd_addr;
 
     // BRAM write port signals (unified MUX, defined later)
-    logic [ 3:0] bram_wea  [WAYS-1:0];
-    logic [INDEX_W+WORD_W-1:0] bram_waddr [WAYS-1:0];
-    logic [31:0] bram_wdata [WAYS-1:0];
+    wire  [ 3:0] bram_wea  [WAYS-1:0];
+    wire  [INDEX_W+WORD_W-1:0] bram_waddr [WAYS-1:0];
+    wire  [31:0] bram_wdata [WAYS-1:0];
 
     // BRAM read port enable: read on pipeline advance or refill-done
     wire bram_rd_en = pipeline_advance | bram_rd_for_refill;
@@ -265,24 +291,20 @@ module dcache (
     wire fwd_hit_w0 = st_fwd_valid & ~st_fwd_way & (mem_data_addr == st_fwd_addr);
     wire fwd_hit_w1 = st_fwd_valid &  st_fwd_way & (mem_data_addr == st_fwd_addr);
 
-    // Apply byte-level forwarding to produce corrected data
-    logic [31:0] data_rd_fwd [WAYS-1:0];
-    always_comb begin
-        data_rd_fwd[0] = data_rd[0];
-        data_rd_fwd[1] = data_rd[1];
-        if (fwd_hit_w0) begin
-            if (st_fwd_wea[0]) data_rd_fwd[0][ 7: 0] = st_fwd_data[ 7: 0];
-            if (st_fwd_wea[1]) data_rd_fwd[0][15: 8] = st_fwd_data[15: 8];
-            if (st_fwd_wea[2]) data_rd_fwd[0][23:16] = st_fwd_data[23:16];
-            if (st_fwd_wea[3]) data_rd_fwd[0][31:24] = st_fwd_data[31:24];
-        end
-        if (fwd_hit_w1) begin
-            if (st_fwd_wea[0]) data_rd_fwd[1][ 7: 0] = st_fwd_data[ 7: 0];
-            if (st_fwd_wea[1]) data_rd_fwd[1][15: 8] = st_fwd_data[15: 8];
-            if (st_fwd_wea[2]) data_rd_fwd[1][23:16] = st_fwd_data[23:16];
-            if (st_fwd_wea[3]) data_rd_fwd[1][31:24] = st_fwd_data[31:24];
-        end
-    end
+    // Apply byte-level forwarding to produce corrected data (AND-OR, no always_comb)
+    wire [31:0] data_rd_fwd [WAYS-1:0];
+
+    // Way 0: per-byte MUX — forward if fwd_hit_w0 && wea bit set, else keep BRAM data
+    assign data_rd_fwd[0][ 7: 0] = (fwd_hit_w0 & st_fwd_wea[0]) ? st_fwd_data[ 7: 0] : data_rd[0][ 7: 0];
+    assign data_rd_fwd[0][15: 8] = (fwd_hit_w0 & st_fwd_wea[1]) ? st_fwd_data[15: 8] : data_rd[0][15: 8];
+    assign data_rd_fwd[0][23:16] = (fwd_hit_w0 & st_fwd_wea[2]) ? st_fwd_data[23:16] : data_rd[0][23:16];
+    assign data_rd_fwd[0][31:24] = (fwd_hit_w0 & st_fwd_wea[3]) ? st_fwd_data[31:24] : data_rd[0][31:24];
+
+    // Way 1: same structure
+    assign data_rd_fwd[1][ 7: 0] = (fwd_hit_w1 & st_fwd_wea[0]) ? st_fwd_data[ 7: 0] : data_rd[1][ 7: 0];
+    assign data_rd_fwd[1][15: 8] = (fwd_hit_w1 & st_fwd_wea[1]) ? st_fwd_data[15: 8] : data_rd[1][15: 8];
+    assign data_rd_fwd[1][23:16] = (fwd_hit_w1 & st_fwd_wea[2]) ? st_fwd_data[23:16] : data_rd[1][23:16];
+    assign data_rd_fwd[1][31:24] = (fwd_hit_w1 & st_fwd_wea[3]) ? st_fwd_data[31:24] : data_rd[1][31:24];
 
     // ================================================================
     //  LRU (1-bit per set)
@@ -315,27 +337,6 @@ module dcache (
     //    Cycle 7: S_DONE          output data, update tag, signal ready
     //  Total: LINE_WORDS + DRAM_LATENCY + 2 = 8 cycles
     // ================================================================
-    localparam DRAM_LATENCY = 3;  // Wait 2 cycles for 2-cycle latency DRAM (BRAM + output register)
-
-    typedef enum logic [2:0] {
-        S_IDLE,
-        S_REFILL_BURST,   // sending addresses (may also receive data)
-        S_REFILL_DRAIN,   // receiving remaining data after all addrs sent
-        S_DONE_RD,        // DCache BRAM read cycle after refill
-        S_DONE,
-        S_SB_DRAIN
-    } state_t;
-
-    state_t state, state_nxt;
-    logic [WORD_W-1:0]  rf_addr_cnt;  // counts addresses sent (0..LINE_WORDS-1)
-    logic [WORD_W-1:0]  rf_data_cnt;  // counts data words received (0..LINE_WORDS-1)
-    logic               rf_addr_done; // all addresses sent
-    wire                rf_data_valid; // current cycle has valid DRAM data
-    logic               rf_way;
-    logic [TAG_W-1:0]   rf_tag;
-    logic [INDEX_W-1:0] rf_idx;
-
-
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n)
             state <= S_IDLE;
@@ -396,7 +397,7 @@ module dcache (
     //   burst_cycle=4: (DRAIN)                  DRAM sees addr[3], dram_rdata=data[2] → write
     //   burst_cycle=5: (DRAIN)                                     dram_rdata=data[3] → write
     //
-    logic [3:0] rf_burst_cycle;  // total cycle counter since refill start
+    // rf_burst_cycle declared early (iverilog compat)
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -440,7 +441,7 @@ module dcache (
     //  Data RAM write — unified write port MUX for BRAM IP
     //  Refill and store are mutually exclusive, so they share Port A.
     // ================================================================
-    wire [INDEX_W+WORD_W-1:0] rf_wr_data_addr = {rf_idx, rf_data_cnt};
+    assign rf_wr_data_addr = {rf_idx, rf_data_cnt};
     wire [INDEX_W+WORD_W-1:0] st_data_addr    = {mem_index, mem_word};
 
     // Track whether a store is being written this cycle (for forwarding)
@@ -474,29 +475,24 @@ module dcache (
     end
 
     // Refill write: when DRAM data is valid during burst/drain
-    wire refill_wr = rf_data_valid & (state == S_REFILL_BURST || state == S_REFILL_DRAIN);
+    assign refill_wr = rf_data_valid & (state == S_REFILL_BURST || state == S_REFILL_DRAIN);
 
-    // Unified BRAM write port MUX per way
+    // Unified BRAM write port MUX per way (unrolled, no for-loop w[0])
     // Priority: refill > store (they are mutually exclusive by FSM design)
-    always_comb begin
-        for (int w = 0; w < WAYS; w++) begin
-            bram_wea[w]   = 4'b0000;
-            bram_waddr[w] = '0;
-            bram_wdata[w] = 32'd0;
 
-            if (refill_wr && rf_way == w[0]) begin
-                // Refill: full-word write
-                bram_wea[w]   = 4'b1111;
-                bram_waddr[w] = rf_wr_data_addr;
-                bram_wdata[w] = dram_rdata;
-            end else if (doing_store && doing_store_way == w[0]) begin
-                // Store: byte-masked write
-                bram_wea[w]   = doing_store_wea;
-                bram_waddr[w] = doing_store_addr;
-                bram_wdata[w] = doing_store_data;
-            end
-        end
-    end
+    // Way 0
+    wire refill_w0 = refill_wr & ~rf_way;
+    wire store_w0  = doing_store & ~doing_store_way;
+    assign bram_wea[0]   = refill_w0 ? 4'b1111          : store_w0 ? doing_store_wea  : 4'b0000;
+    assign bram_waddr[0] = refill_w0 ? rf_wr_data_addr   : store_w0 ? doing_store_addr : '0;
+    assign bram_wdata[0] = refill_w0 ? dram_rdata         : store_w0 ? doing_store_data : 32'd0;
+
+    // Way 1
+    wire refill_w1 = refill_wr &  rf_way;
+    wire store_w1  = doing_store &  doing_store_way;
+    assign bram_wea[1]   = refill_w1 ? 4'b1111          : store_w1 ? doing_store_wea  : 4'b0000;
+    assign bram_waddr[1] = refill_w1 ? rf_wr_data_addr   : store_w1 ? doing_store_addr : '0;
+    assign bram_wdata[1] = refill_w1 ? dram_rdata         : store_w1 ? doing_store_data : 32'd0;
 
     // Store forward register: capture store info at clock edge
     always_ff @(posedge clk or negedge rst_n) begin

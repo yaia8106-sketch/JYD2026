@@ -24,8 +24,8 @@ module forwarding (
     input  logic        ex_mem_read,
     input  logic [ 4:0] ex_rd,
     input  logic [31:0] ex_alu_result,
-    input  logic [31:0] ex_pc,          // NEW: for JAL/JALR link address
-    input  logic [ 1:0] ex_wb_sel,      // NEW: 00=ALU, 01=DRAM, 10=PC+4
+    input  logic [31:0] ex_pc_plus_4,   // pre-computed in EX stage
+    input  logic [ 1:0] ex_wb_sel,      // 00=ALU, 01=DRAM, 10=PC+4
 
     // MEM stage
     input  logic        mem_valid,
@@ -33,8 +33,8 @@ module forwarding (
     input  logic        mem_is_load,
     input  logic [ 4:0] mem_rd,
     input  logic [31:0] mem_alu_result,
-    input  logic [31:0] mem_pc,         // NEW: for JAL/JALR link address
-    input  logic [ 1:0] mem_wb_sel,     // NEW: 00=ALU, 01=DRAM, 10=PC+4
+    input  logic [31:0] mem_pc_plus_4,  // pre-computed, registered in EX/MEM
+    input  logic [ 1:0] mem_wb_sel,     // 00=ALU, 01=DRAM, 10=PC+4
 
     // WB stage
     input  logic        wb_valid,
@@ -53,8 +53,8 @@ module forwarding (
     //  For EX/MEM stages: if wb_sel==10 (JAL/JALR), forward PC+4
     //  For wb_sel==01 (load), value not ready yet → handled by stall
     // ================================================================
-    wire [31:0] ex_fwd_val  = (ex_wb_sel  == 2'b10) ? (ex_pc  + 32'd4) : ex_alu_result;
-    wire [31:0] mem_fwd_val = (mem_wb_sel == 2'b10) ? (mem_pc + 32'd4) : mem_alu_result;
+    wire [31:0] ex_fwd_val  = (ex_wb_sel  == 2'b10) ? ex_pc_plus_4  : ex_alu_result;
+    wire [31:0] mem_fwd_val = (mem_wb_sel == 2'b10) ? mem_pc_plus_4 : mem_alu_result;
 
     // ================================================================
     //  RS1 Forwarding MUX

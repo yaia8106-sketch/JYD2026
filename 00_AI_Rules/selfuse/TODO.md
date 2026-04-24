@@ -49,7 +49,7 @@
 
 ### 数字孪生平台集成（进行中）
 
-- [X] 确定 DRAM Output Register 策略：不勾选（1 拍延迟）
+- [X] 确定 DRAM Output Register 策略：DOB_REG=1（2 拍延迟）
 - [X] `mem_wb_reg.sv`：新增 `mem_dram_dout` / `wb_dram_dout` 传递
 - [X] `cpu_top.sv`：`dram_dout` 改走 MEM/WB 寄存器
 - [X] `mem_interface.sv`：修复 `* 4'd8` → `{addr, 3'b0}`
@@ -96,16 +96,21 @@
   - [X] 4 个 COE 程序 ISA 级访存 trace 仿真
   - [X] 9 种 Cache 配置命中率 + 性能对比
   - [X] 确认 DM 4KB/32B 方案：平均命中率 98.8%，250MHz 加速 +24.6%
-- [ ] **Data Cache 实现** ← **🔥 下一待办**
-  > 配置：DM 4KB/32B (直接映射，128 lines × 32B/line)
-  > 写策略：Write-through
-  > 预期：Cache 仅 1-2 BRAM，解决 68×BRAM36 扇出瓶颈，冲击 250MHz
-  - [ ] Cache 控制器 RTL (data_cache.sv)
-  - [ ] CPU stall 信号适配 (miss 时暂停流水线)
-  - [ ] 集成到 perip_bridge (CPU ↔ Cache ↔ DRAM)
-  - [ ] riscv-tests 回归验证
-  - [ ] 250MHz 时序验证
-  - [ ] FPGA 上板验证
+- [X] **Data Cache 实现** ✅ (已完成，见 M9 + 决策 O)
+  > 最终配置：2-way 2KB/16B (set-associative, WT+WA, 1-entry Store Buffer)
+  - [X] Cache 控制器 RTL (dcache.sv)
+  - [X] CPU stall 信号适配 (cache_ready 控制 MEM 级)
+  - [X] 集成到 student_top (CPU ↔ DCache ↔ DRAM, perip_bridge 瘦身为 mmio_bridge)
+  - [X] riscv-tests 43/43 PASS (iverilog)
+  - [X] FPGA 上板验证通过 (current + src2)
+- [X] **PC+4 预算优化 + iverilog 兼容性修复** ✅ (决策 P)
+  - [X] EX 级预算 pc+4，通过寄存器传递，消除 forwarding/wb_mux 中 3 处加法器
+  - [X] dcache/mem_interface 改为 AND-OR assign 风格，修复 iverilog 兼容性
+  - [X] TB DRAM 模型加 output register（匹配 DOB_REG=1）
+  - [X] riscv-tests 43/43 PASS (iverilog)
+- [ ] **250MHz 时序验证** ← **🔥 下一待办**
+  - [ ] Vivado 综合 + Implementation @250MHz
+  - [ ] FPGA 上板验证 (src0, src1 尚未测试)
 - [ ] **优化分支预测器预测率**
   > 冷启动 10M 指令模拟结果：整体准确率 59.7–78.1%，CPI ≈ 1.16–1.18
   > 模拟脚本：`02_Design/coe/bp_coldstart_sim.py`

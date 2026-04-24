@@ -19,12 +19,16 @@
 | `ex_mem_read` | input | 1 | 控制 | EX 级 Load 标志 |
 | `ex_rd` | input | 5 | 数据 | EX 级目标寄存器 |
 | `ex_alu_result` | input | 32 | 数据 | EX 级 ALU 组合逻辑输出 |
+| `ex_pc_plus_4` | input | 32 | 数据 | EX 级预算的 PC+4（用于 JAL/JALR 前递） |
+| `ex_wb_sel` | input | 2 | 控制 | EX 级写回选择（00=ALU, 01=DRAM, 10=PC+4） |
 | **MEM 级信号** |
 | `mem_valid` | input | 1 | 控制 | MEM 级有效 |
 | `mem_reg_write` | input | 1 | 控制 | MEM 级写寄存器使能 |
 | `mem_is_load` | input | 1 | 控制 | MEM 级 Load 标志 |
 | `mem_rd` | input | 5 | 数据 | MEM 级目标寄存器 |
 | `mem_alu_result` | input | 32 | 数据 | MEM 级 ALU 结果（EX/MEM_reg 输出） |
+| `mem_pc_plus_4` | input | 32 | 数据 | MEM 级预算的 PC+4（EX/MEM_reg 输出） |
+| `mem_wb_sel` | input | 2 | 控制 | MEM 级写回选择（00=ALU, 01=DRAM, 10=PC+4） |
 | **WB 级信号** |
 | `wb_valid` | input | 1 | 控制 | WB 级有效 |
 | `wb_reg_write` | input | 1 | 控制 | WB 级写寄存器使能 |
@@ -68,6 +72,8 @@ load_use_hazard = load_in_ex | load_in_mem
 
 - 纯组合逻辑
 - 关键路径：EX 级 ALU 组合输出 → 前递 MUX → ID/EX_reg（跨级组合路径）
+- PC+4 前递值由 EX 级预算（`ex_pc + 4`），通过 EX/MEM 寄存器传递，不在前递模块内计算
+- 前递值选择：`wb_sel==10` 时用 `pc_plus_4`，否则用 `alu_result`（单级 MUX，无加法器）
 
 ---
 

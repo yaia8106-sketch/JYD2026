@@ -17,7 +17,7 @@ module mem_wb_reg (
 
     // Data in (from MEM stage)
     input  logic [31:0] mem_alu_result,
-    input  logic [31:0] mem_pc,
+    input  logic [31:0] mem_pc_plus_4,
     input  logic [ 4:0] mem_rd,
     input  logic        mem_reg_write_en,
     input  logic [ 1:0] mem_wb_sel,
@@ -29,7 +29,7 @@ module mem_wb_reg (
 
     // Data out (to WB stage)
     output logic [31:0] wb_alu_result,
-    output logic [31:0] wb_pc,
+    output logic [31:0] wb_pc_plus_4,
     output logic [ 4:0] wb_rd,
     output logic        wb_reg_write_en,
     output logic [ 1:0] wb_wb_sel,
@@ -49,7 +49,7 @@ module mem_wb_reg (
         if (!rst_n) begin
             wb_valid         <= 1'b0;
             wb_alu_result    <= 32'd0;
-            wb_pc            <= 32'd0;
+            wb_pc_plus_4     <= 32'd0;
             wb_rd            <= 5'd0;
             wb_reg_write_en  <= 1'b0;
             wb_wb_sel        <= 2'd0;
@@ -61,7 +61,7 @@ module mem_wb_reg (
         end else if (wb_allowin) begin
             wb_valid         <= mem_valid & mem_ready_go;
             wb_alu_result    <= mem_alu_result;
-            wb_pc            <= mem_pc;
+            wb_pc_plus_4     <= mem_pc_plus_4;
             wb_rd            <= mem_rd;
             wb_reg_write_en  <= mem_reg_write_en;
             wb_wb_sel        <= mem_wb_sel;

@@ -126,11 +126,15 @@ module cpu_top (
     wire [31:0] mem_load_data;         // MEM stage: from cache (cacheable) or mmio (uncacheable)
     wire        is_cacheable;          // EX stage: addr in DRAM range
 
+    // ---- EX pre-computed ----
+    wire [31:0] ex_pc_plus_4 = ex_pc + 32'd4;  // pre-compute for forwarding & WB
+
     // ---- EX/MEM ----
     wire        mem_valid;
     wire        mem_allowin;
     wire [31:0] mem_alu_result;
     wire [31:0] mem_pc;
+    wire [31:0] mem_pc_plus_4;
     wire [ 4:0] mem_rd;
     wire        mem_reg_write_en;
     wire [ 1:0] mem_wb_sel;
@@ -144,7 +148,7 @@ module cpu_top (
     wire        wb_valid;
     wire        wb_allowin;
     wire [31:0] wb_alu_result;
-    wire [31:0] wb_pc;
+    wire [31:0] wb_pc_plus_4;
     wire [ 4:0] wb_rd;
     wire        wb_reg_write_en;
     wire [ 1:0] wb_wb_sel;
@@ -426,14 +430,14 @@ module cpu_top (
         .ex_mem_read    (ex_mem_read_en),
         .ex_rd          (ex_rd),
         .ex_alu_result  (alu_result),
-        .ex_pc          (ex_pc),
+        .ex_pc_plus_4   (ex_pc_plus_4),
         .ex_wb_sel      (ex_wb_sel),
         .mem_valid      (mem_valid),
         .mem_reg_write  (mem_reg_write_en),
         .mem_is_load    (mem_mem_read_en),
         .mem_rd         (mem_rd),
         .mem_alu_result (mem_alu_result),
-        .mem_pc         (mem_pc),
+        .mem_pc_plus_4  (mem_pc_plus_4),
         .mem_wb_sel     (mem_wb_sel),
         .wb_valid       (wb_valid),
         .wb_reg_write   (wb_reg_write_en),
@@ -595,6 +599,7 @@ module cpu_top (
         .mem_branch_target(mem_branch_target),
         .ex_alu_result    (alu_result),
         .ex_pc            (ex_pc),
+        .ex_pc_plus_4     (ex_pc_plus_4),
         .ex_rd            (ex_rd),
         .ex_reg_write_en  (ex_reg_write_en),
         .ex_wb_sel        (ex_wb_sel),
@@ -607,6 +612,7 @@ module cpu_top (
         .ex_is_cacheable  (is_cacheable),
         .mem_alu_result   (mem_alu_result),
         .mem_pc           (mem_pc),
+        .mem_pc_plus_4    (mem_pc_plus_4),
         .mem_rd           (mem_rd),
         .mem_reg_write_en (mem_reg_write_en),
         .mem_wb_sel       (mem_wb_sel),
@@ -628,7 +634,7 @@ module cpu_top (
         .wb_allowin       (wb_allowin),
         .wb_valid         (wb_valid),
         .mem_alu_result   (mem_alu_result),
-        .mem_pc           (mem_pc),
+        .mem_pc_plus_4    (mem_pc_plus_4),
         .mem_rd           (mem_rd),
         .mem_reg_write_en (mem_reg_write_en),
         .mem_wb_sel       (mem_wb_sel),
@@ -637,7 +643,7 @@ module cpu_top (
         .mem_mem_unsigned (mem_mem_unsigned),
         .mem_addr_low     (mem_alu_result[1:0]),
         .wb_alu_result    (wb_alu_result),
-        .wb_pc            (wb_pc),
+        .wb_pc_plus_4     (wb_pc_plus_4),
         .wb_rd            (wb_rd),
         .wb_reg_write_en  (wb_reg_write_en),
         .wb_wb_sel        (wb_wb_sel),
@@ -654,7 +660,7 @@ module cpu_top (
     wb_mux u_wb_mux (
         .wb_alu_result (wb_alu_result),
         .wb_load_data  (wb_load_data),
-        .wb_pc         (wb_pc),
+        .wb_pc_plus_4  (wb_pc_plus_4),
         .wb_sel        (wb_wb_sel),
         .wb_write_data (wb_write_data)
     );

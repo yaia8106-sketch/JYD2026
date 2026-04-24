@@ -686,3 +686,39 @@ assign rf_data_valid = (rf_burst_cycle >= 4'(DRAM_LATENCY)) & ...;
 > 1. IP 配置参数（XCI）是唯一可信来源，代码注释和文档可能过时或错误。
 > 2. 涉及时序假设的 localparam 必须与实际硬件 IP 配置保持一致，并通过仿真验证。
 > 3. `student_top.sv` 的注释 "无 output register" 与 IP 实际配置不符——已修正注释。
+
+## P. PC+4 预算优化 + iverilog 兼容性修复
+
+**日期**: 2026-04-24
+**分支**: `feat/300mhz-optimization`
+**状态**: 已实施，riscv-tests 43/43 PASS
+
+### 背景
+
+WB→ID 前递路径是 CPU 内部最长路径（4.225ns），其中 `forwarding.sv` 和 `wb_mux.sv` 内部各有一个
+`pc + 32'd4` 加法器。将 PC+4 的计算从 WB/MEM 级提前到 EX 级，通过寄存器传递，可消除后续级的加法器。
+
+### 改动
+
+1. **`cpu_top.sv`**: EX 级新增 `ex_pc_plus_4 = ex_pc + 32'd4`
+2. **`ex_mem_reg.sv`**: 新增 `ex_pc_plus_4` 输入 / `mem_pc_plus_4` 输出
+3. **`mem_wb_reg.sv`**: `mem_pc`/`wb_pc` → `mem_pc_plus_4`/`wb_pc_plus_4`（WB 级不再需要原始 PC）
+4. **`forwarding.sv`**: `ex_pc`/`mem_pc` → `ex_pc_plus_4`/`mem_pc_plus_4`，去掉 `+ 32'd4` 加法器
+5. **`wb_mux.sv`**: `wb_pc` + 加法器 → `wb_pc_plus_4` 直接输入，去掉加法器
+
+**消除的加法器**: 3 处（forwarding EX/MEM 各 1 处 + wb_mux 1 处）→ 统一为 EX 级 1 处预算 + 寄存器传递
+
+### iverilog 兼容性修复（同一 session）
+
+iverilog 对 SystemVerilog `always_comb` 中的常量位选（`shifted[7:0]`）和前向引用支持不完整，
+导致仿真测试全部 UNKNOWN 或 load 测试 FAIL。修复：
+
+1. **`dcache.sv`**: FSM 信号（`state`/`rf_way`/`rf_idx` 等）声明移到使用之前
+2. **`dcache.sv`**: store forwarding 的 `always_comb` byte-merge → per-byte `assign` ternary MUX
+3. **`dcache.sv`**: BRAM write MUX 的 `for (int w)` 循环展开为 Way0/Way1 显式 `assign`
+4. **`mem_interface.sv`**: `always_comb` case → AND-OR MUX `assign`（store WEA + load byte extract）
+5. **`tb_riscv_tests.sv`**: DRAM 模型从 1-cycle 改为 2-cycle 延迟（匹配 DOB_REG=1）
+
+### 验证
+
+riscv-tests 43/43 PASS（iverilog），包含 lb/lbu/lh/lhu/lw/dcache_test 等全部测试。

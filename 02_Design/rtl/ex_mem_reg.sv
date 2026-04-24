@@ -26,6 +26,7 @@ module ex_mem_reg (
     // Data in (from EX stage)
     input  logic [31:0] ex_alu_result,
     input  logic [31:0] ex_pc,
+    input  logic [31:0] ex_pc_plus_4,
     input  logic [ 4:0] ex_rd,
     input  logic        ex_reg_write_en,
     input  logic [ 1:0] ex_wb_sel,
@@ -43,6 +44,7 @@ module ex_mem_reg (
     // Data out (to MEM stage)
     output logic [31:0] mem_alu_result,
     output logic [31:0] mem_pc,
+    output logic [31:0] mem_pc_plus_4,
     output logic [ 4:0] mem_rd,
     output logic        mem_reg_write_en,
     output logic [ 1:0] mem_wb_sel,
@@ -70,6 +72,7 @@ module ex_mem_reg (
             mem_valid         <= 1'b0;
             mem_alu_result    <= 32'd0;
             mem_pc            <= 32'd0;
+            mem_pc_plus_4     <= 32'd0;
             mem_rd            <= 5'd0;
             mem_reg_write_en  <= 1'b0;
             mem_wb_sel        <= 2'd0;
@@ -87,6 +90,7 @@ module ex_mem_reg (
             mem_valid         <= ex_valid & ex_ready_go;
             mem_alu_result    <= ex_alu_result;
             mem_pc            <= ex_pc;
+            mem_pc_plus_4     <= ex_pc_plus_4;
             mem_rd            <= ex_rd;
             mem_reg_write_en  <= ex_reg_write_en;
             mem_wb_sel        <= ex_wb_sel;

@@ -74,13 +74,15 @@ set PIPELINE_GROUPS [list \
     [list "MEM/WB"       "u_cpu/u_mem_wb_reg"    ] \
     [list "RegFile"      "u_cpu/u_regfile"        ] \
     [list "BP(pred)"     "u_cpu/u_bp"             ] \
+    [list "DCache(FSM)"  "u_dcache"               ] \
 ]
 
 # ---- BRAM 组（特殊时序端点）----
 # BRAM 不是普通 FF，需要用 PRIMITIVE_TYPE 过滤
 set BRAM_GROUPS [list \
     [list "IROM(BRAM)"   "u_irom"                ] \
-    [list "DRAM(BRAM)"   "u_bridge"              ] \
+    [list "DRAM(BRAM)"   "u_dram"                ] \
+    [list "DC_Data(BRAM)" "u_dcache"             ] \
 ]
 
 # ────────────────────────────────────────────────────────────────

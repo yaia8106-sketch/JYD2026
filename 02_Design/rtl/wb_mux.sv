@@ -7,13 +7,11 @@
 module wb_mux (
     input  logic [31:0] wb_alu_result,
     input  logic [31:0] wb_load_data,      // from mem_interface load side
-    input  logic [31:0] wb_pc,
+    input  logic [31:0] wb_pc_plus_4,     // pre-computed, no adder needed
     input  logic [ 1:0] wb_sel,            // 00=ALU, 01=DRAM, 10=PC+4
 
     output logic [31:0] wb_write_data
 );
-
-    wire [31:0] pc_plus_4 = wb_pc + 32'd4;
 
     // ---- 3-way AND-OR MUX ----
     wire sel_alu  = (wb_sel == 2'b00);
@@ -22,6 +20,6 @@ module wb_mux (
 
     assign wb_write_data = ({32{sel_alu}}  & wb_alu_result)
                          | ({32{sel_mem}}  & wb_load_data)
-                         | ({32{sel_link}} & pc_plus_4);
+                         | ({32{sel_link}} & wb_pc_plus_4);
 
 endmodule

@@ -21,7 +21,7 @@ module mem_interface (
     input  logic [ 1:0] load_mem_size,     // 00=B, 01=H, 10=W
     input  logic        load_unsigned,     // 0=sign-ext, 1=zero-ext
     input  logic [31:0] load_dram_dout,    // raw 32-bit BRAM output
-    output logic [31:0] load_data_out      // extracted + extended result
+    output wire  [31:0] load_data_out      // extracted + extended result
 );
 
     // ================================================================
@@ -29,15 +29,13 @@ module mem_interface (
     // ================================================================
 
     // WEA: which bytes to write (gated by valid & enable)
-    logic [3:0] wea_raw;
-    always_comb begin
-        case (store_mem_size)
-            2'b00:   wea_raw = 4'b0001 << store_addr_low;       // SB
-            2'b01:   wea_raw = 4'b0011 << store_addr_low;       // SH
-            2'b10:   wea_raw = 4'b1111;                          // SW
-            default: wea_raw = 4'b0000;
-        endcase
-    end
+    wire st_byte = (store_mem_size == 2'b00);
+    wire st_half = (store_mem_size == 2'b01);
+    wire st_word = (store_mem_size == 2'b10);
+
+    wire [3:0] wea_raw = ({4{st_byte}} & (4'b0001 << store_addr_low))
+                       | ({4{st_half}} & (4'b0011 << store_addr_low))
+                       | ({4{st_word}} & 4'b1111);
 
     assign store_wea = (store_valid & store_en) ? wea_raw : 4'b0000;
 
@@ -51,20 +49,16 @@ module mem_interface (
     // Step 1: shift dout right to align target bytes to LSB
     wire [31:0] shifted = load_dram_dout >> {load_addr_low, 3'b0};
 
-    // Step 2: extract + extend
-    always_comb begin
-        case (load_mem_size)
-            2'b00:   // LB / LBU
-                load_data_out = load_unsigned ? {24'd0, shifted[7:0]}
-                                              : {{24{shifted[7]}}, shifted[7:0]};
-            2'b01:   // LH / LHU
-                load_data_out = load_unsigned ? {16'd0, shifted[15:0]}
-                                              : {{16{shifted[15]}}, shifted[15:0]};
-            2'b10:   // LW
-                load_data_out = shifted;
-            default:
-                load_data_out = 32'd0;
-        endcase
-    end
+    // Step 2: extract + extend (AND-OR MUX, no always_comb)
+    wire is_byte = (load_mem_size == 2'b00);
+    wire is_half = (load_mem_size == 2'b01);
+    wire is_word = (load_mem_size == 2'b10);
+
+    wire [31:0] byte_ext = load_unsigned ? {24'd0, shifted[7:0]}  : {{24{shifted[7]}},  shifted[7:0]};
+    wire [31:0] half_ext = load_unsigned ? {16'd0, shifted[15:0]} : {{16{shifted[15]}}, shifted[15:0]};
+
+    assign load_data_out = ({32{is_byte}} & byte_ext)
+                         | ({32{is_half}} & half_ext)
+                         | ({32{is_word}} & shifted);
 
 endmodule
