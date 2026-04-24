@@ -60,7 +60,7 @@
   2. Refill 开始时先失效 victim tag（防止 flush 中止后部分覆写的 line 被命中）
   3. **DRAM 延迟修复**: `rf_data_valid` 从 `>= 2` 改为 `>= DRAM_LATENCY(3)`——DRAM4MyOwn 有 DOB_REG=1（2-cycle 读延迟），原代码提前 1 拍采样，导致 refill 数据全错
   4. **Synth 8-7137 修复**: DCache forwarding 寄存器（`rf_fwd_way/tag/idx`、`rf_last_fwd_*`、`st_fwd_*`）在 `!rst_n` 分支缺少显式复位，Vivado 综合行为与仿真不一致，导致 current 程序指令条数显示为 00。添加 10 个寄存器的显式复位后修复。（决策 Q）
-- **验证结果**: current 程序 FPGA 上板通过（指令条数 37 ✅ + 对勾 + 运行时间）。**src0、src1、src2 尚未在新 bitstream 上验证。**
+- **验证结果**: 全部 4 个 COE 程序 FPGA 上板通过 ✅（current + src0 + src1 + src2）
 - **⚠️ 教训**:
   1. student_top.sv 注释 "无 output register" 与 IP 实际配置（DOB_REG=1）不符，导致 DCache 延迟参数设错
   2. Vivado Synth 8-7137 是严重 warning——异步复位块中**所有寄存器**必须有显式复位值
@@ -77,7 +77,7 @@
 | **🔒 预测器前最终基线** | `bb094dd` | 纯净 EX-only，FPGA 功能正确 (tag: M6-baseline) | ⭐⭐⭐⭐⭐ |
 | **Tournament BP** | `ddc0be4` | NLP 分支预测器，FPGA 验证通过 @ 200MHz | ⭐⭐⭐⭐⭐ |
 | **250MHz 尝试** | `2f84a77` | flush 延迟优化，200MHz 收敛，250MHz 未收敛 | ⭐⭐⭐ |
-| **DCache 验证** | (当前) | DCache 实现，current + src2 FPGA 通过 | ⭐⭐⭐⭐⭐ |
+| **DCache 验证** | (当前) | DCache 实现，4/4 COE 全部 FPGA 通过 | ⭐⭐⭐⭐⭐ |
 
 ---
 

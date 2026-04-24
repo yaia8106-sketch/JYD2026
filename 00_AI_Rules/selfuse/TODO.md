@@ -104,7 +104,7 @@
   - [X] riscv-tests 43/43 PASS (iverilog)
   - [X] FPGA 上板验证通过 (current ✅)
   - [X] **Synth 8-7137 修复**: forwarding 寄存器显式复位（决策 Q），修复指令条数 00 的 bug
-  - [ ] **FPGA 验证 src0、src1、src2**（新 bitstream 尚未测试）
+  - [X] **FPGA 验证 src0、src1、src2** ✅（4/4 COE 全部通过）
 - [X] **PC+4 预算优化 + iverilog 兼容性修复** ✅ (决策 P)
   - [X] EX 级预算 pc+4，通过寄存器传递，消除 forwarding/wb_mux 中 3 处加法器
   - [X] dcache/mem_interface 改为 AND-OR assign 风格，修复 iverilog 兼容性
