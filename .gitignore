@@ -31,3 +31,7 @@ copy_bitstream.sh
 clear_the_buffer.sh
 __pycache__/
 .vscode/
+
+# Contest raw files (PDF/DOCX/PPTX, large binaries)
+00_AI_Rules/contest/raw/
+04_Submission/
