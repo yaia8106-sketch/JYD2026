@@ -29,3 +29,5 @@ xsim.dir/
 02_Design/coe/sim_output/
 copy_bitstream.sh
 clear_the_buffer.sh
+__pycache__/
+.vscode/

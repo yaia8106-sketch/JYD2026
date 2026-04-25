@@ -2,7 +2,7 @@
 """
 Test current Tournament branch predictor accuracy against all COE programs.
 Matches the RTL in branch_predictor.sv exactly:
-  - BTB: 64-entry direct-mapped, 7-bit tag (PC[14:8]), idx=PC[7:2]
+  - BTB: 64-entry direct-mapped, 5-bit tag (PC[12:8]), idx=PC[7:2]
   - BHT: 2-bit saturating counter embedded in BTB entry (Bimodal)
   - GShare: 8-bit GHR XOR PC[9:2] → 256-entry PHT (2-bit)
   - Selector: 256-entry sel_table indexed by GHR (2-bit)
@@ -193,7 +193,7 @@ class RV32ISim:
 class TournamentBP:
     """
     Exact RTL match of branch_predictor.sv:
-      BTB: 64-entry direct-mapped, tag=PC[14:8] (7 bits), idx=PC[7:2]
+      BTB: 64-entry direct-mapped, tag=PC[12:8] (5 bits), idx=PC[7:2]
       BHT: 2-bit per BTB entry (Bimodal)
       GShare: GHR(8) XOR PC[9:2] → PHT[256] (2-bit)
       Selector: sel_table[256] indexed by GHR (2-bit)
@@ -201,7 +201,7 @@ class TournamentBP:
     """
     BTB_ENTRIES = 64
     BTB_IDX_W = 6
-    BTB_TAG_W = 7
+    BTB_TAG_W = 5
     GHR_W = 8
     PHT_SIZE = 256
     SEL_SIZE = 256
@@ -241,6 +241,12 @@ class TournamentBP:
             'gshare_correct': 0,
             'selector_chose_bimodal': 0,
             'selector_chose_gshare': 0,
+            # BRANCH misprediction breakdown
+            'br_btb_miss_taken': 0,     # BTB miss + actual taken → always wrong
+            'br_btb_miss_nt': 0,        # BTB miss + actual not-taken → free correct
+            'br_dir_wrong': 0,          # BTB hit, direction wrong
+            'br_tgt_wrong': 0,          # BTB hit, direction right, target wrong
+            'br_btb_hit_correct': 0,    # BTB hit, all correct
         }
 
     def _idx(self, pc): return (pc >> 2) & (self.BTB_ENTRIES - 1)
@@ -345,6 +351,19 @@ class TournamentBP:
             if l1_correct:
                 self.stats['l1_branch_correct'] += 1
                 self.stats['branch_correct'] += 1
+            # Misprediction breakdown
+            if not btb_hit:
+                if actual_taken:
+                    self.stats['br_btb_miss_taken'] += 1
+                else:
+                    self.stats['br_btb_miss_nt'] += 1
+            else:
+                if l1_taken != actual_taken:
+                    self.stats['br_dir_wrong'] += 1
+                elif l1_taken and l0_target != actual_target:
+                    self.stats['br_tgt_wrong'] += 1
+                else:
+                    self.stats['br_btb_hit_correct'] += 1
         elif itype == 'JAL':
             final_correct = l0_correct
             self.stats['jal_total'] += 1
@@ -557,6 +576,20 @@ def main():
             print(f"    L1 (Tournament):     {l1_rate:6.2f}%  (improvement: {l1_rate-l0_rate:+.2f}%)")
             print(f"    Bimodal accuracy:    {bim_cor/bt*100:6.2f}%  (selected {bim_chose} times)")
             print(f"    GShare accuracy:     {gsh_cor/bt*100:6.2f}%  (selected {gsh_chose} times)")
+
+            # Misprediction breakdown
+            miss_taken = s['br_btb_miss_taken']
+            miss_nt    = s['br_btb_miss_nt']
+            dir_wrong  = s['br_dir_wrong']
+            tgt_wrong  = s['br_tgt_wrong']
+            hit_ok     = s['br_btb_hit_correct']
+            br_misses  = miss_taken + dir_wrong + tgt_wrong
+            print(f"\n  BRANCH misprediction breakdown ({br_misses} total misses):")
+            print(f"    BTB miss + taken:    {miss_taken:>8,}  ({miss_taken/bt*100:5.2f}%)  ← BTB 没命中，taken 分支漏判")
+            print(f"    BTB miss + NT:       {miss_nt:>8,}  ({miss_nt/bt*100:5.2f}%)  ← BTB 没命中，NT 白送正确")
+            print(f"    BTB hit, 方向错:     {dir_wrong:>8,}  ({dir_wrong/bt*100:5.2f}%)  ← 预测器方向判断错误")
+            print(f"    BTB hit, 目标错:     {tgt_wrong:>8,}  ({tgt_wrong/bt*100:5.2f}%)  ← 方向对但目标被别名覆盖")
+            print(f"    BTB hit, 全对:       {hit_ok:>8,}  ({hit_ok/bt*100:5.2f}%)")
 
         # CPI estimation (flush penalty = 3 cycles with delayed flush)
         FLUSH_PENALTY = 3  # MEM-stage flush: 3 cycles
