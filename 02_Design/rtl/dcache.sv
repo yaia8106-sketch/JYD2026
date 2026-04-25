@@ -37,7 +37,7 @@ module dcache (
 
     // DRAM BRAM interface (SDP)
     output logic [15:0] dram_rd_addr,
-    input  logic [31:0] dram_rdata,
+    input  logic [31:0] dram_rdata,      // raw DRAM output (registered internally as dram_rdata_r)
     output logic [15:0] dram_wr_addr,
     output logic [ 3:0] dram_wea,
     output logic [31:0] dram_wdata
@@ -103,7 +103,7 @@ module dcache (
     // ================================================================
     //  FSM types & signals (declared early for iverilog compatibility)
     // ================================================================
-    localparam DRAM_LATENCY = 3;  // Wait 2 cycles for 2-cycle latency DRAM (BRAM + output register)
+    localparam DRAM_LATENCY = 4;  // registered addr(1) + BRAM read(1) + DOB_REG(1) + dram_rdata_r(1)
 
     typedef enum logic [2:0] {
         S_IDLE,
@@ -125,6 +125,14 @@ module dcache (
     logic [3:0]         rf_burst_cycle;
     wire [INDEX_W+WORD_W-1:0] rf_wr_data_addr;
     wire                refill_wr;
+
+    // ================================================================
+    //  DRAM read-data pipeline register (breaks DRAM output MUX → DCache BRAM path)
+    // ================================================================
+    logic [31:0] dram_rdata_r;
+    always_ff @(posedge clk) begin
+        dram_rdata_r <= dram_rdata;
+    end
 
     // ================================================================
     //  Tag RAM (LUTRAM, async read)
@@ -267,7 +275,7 @@ module dcache (
                 rf_last_fwd_valid <= 1'b1;
                 rf_last_fwd_way  <= rf_way;
                 rf_last_fwd_addr <= rf_wr_data_addr;
-                rf_last_fwd_data <= dram_rdata;
+                rf_last_fwd_data <= dram_rdata_r;
             end else if (state == S_DONE) begin
                 rf_last_fwd_valid <= 1'b0;
             end
@@ -332,16 +340,17 @@ module dcache (
     //  Refill sends addresses in consecutive cycles (burst), and
     //  receives data starting 2 cycles later.
     //
-    //  Timeline (4 words, DRAM latency = 2):
+    //  Timeline (4 words, DRAM_LATENCY = 4 with dram_rdata_r):
     //    Cycle 0: S_REFILL_BURST  send addr[0]
     //    Cycle 1: S_REFILL_BURST  send addr[1]
-    //    Cycle 2: S_REFILL_BURST  send addr[2], receive data[0] → write
-    //    Cycle 3: S_REFILL_BURST  send addr[3], receive data[1] → write
-    //    Cycle 4: S_REFILL_DRAIN               receive data[2] → write
-    //    Cycle 5: S_REFILL_DRAIN               receive data[3] → write
-    //    Cycle 6: S_DONE_RD       DCache BRAM read for hit word
-    //    Cycle 7: S_DONE          output data, update tag, signal ready
-    //  Total: LINE_WORDS + DRAM_LATENCY + 2 = 8 cycles
+    //    Cycle 2: S_REFILL_BURST  send addr[2]
+    //    Cycle 3: S_REFILL_BURST  send addr[3],              dram_rdata_r=data[0] → write
+    //    Cycle 4: S_REFILL_DRAIN               dram_rdata_r=data[1] → write
+    //    Cycle 5: S_REFILL_DRAIN               dram_rdata_r=data[2] → write
+    //    Cycle 6: S_REFILL_DRAIN               dram_rdata_r=data[3] → write
+    //    Cycle 7: S_DONE_RD       DCache BRAM read for hit word
+    //    Cycle 8: S_DONE          output data, update tag, signal ready
+    //  Total: LINE_WORDS + DRAM_LATENCY + 1 = 9 cycles
     // ================================================================
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n)
@@ -437,8 +446,8 @@ module dcache (
     end
 
     // Data valid: DRAM data is available after address pipeline latency
-    // dram_rd_addr is registered → +1 cycle; DRAM4MyOwn has output register (DOB_REG=1) → +2 cycle BRAM
-    // Total latency = 3 cycles from address computation to data output = DRAM_LATENCY
+    // dram_rd_addr registered(+1) + BRAM read(+1) + DOB_REG(+1) + dram_rdata_r(+1) = 4 cycles
+    // Total latency = 4 cycles from address computation to registered data = DRAM_LATENCY
     // Note: cannot use WORD_W'(LINE_WORDS) since 2'd4 truncates to 0!
     assign rf_data_valid = (rf_burst_cycle >= 4'(DRAM_LATENCY)) &
                            (state == S_REFILL_BURST | state == S_REFILL_DRAIN);
@@ -491,14 +500,14 @@ module dcache (
     wire store_w0  = doing_store & ~doing_store_way;
     assign bram_wea[0]   = refill_w0 ? 4'b1111          : store_w0 ? doing_store_wea  : 4'b0000;
     assign bram_waddr[0] = refill_w0 ? rf_wr_data_addr   : store_w0 ? doing_store_addr : '0;
-    assign bram_wdata[0] = refill_w0 ? dram_rdata         : store_w0 ? doing_store_data : 32'd0;
+    assign bram_wdata[0] = refill_w0 ? dram_rdata_r       : store_w0 ? doing_store_data : 32'd0;
 
     // Way 1
     wire refill_w1 = refill_wr &  rf_way;
     wire store_w1  = doing_store &  doing_store_way;
     assign bram_wea[1]   = refill_w1 ? 4'b1111          : store_w1 ? doing_store_wea  : 4'b0000;
     assign bram_waddr[1] = refill_w1 ? rf_wr_data_addr   : store_w1 ? doing_store_addr : '0;
-    assign bram_wdata[1] = refill_w1 ? dram_rdata         : store_w1 ? doing_store_data : 32'd0;
+    assign bram_wdata[1] = refill_w1 ? dram_rdata_r       : store_w1 ? doing_store_data : 32'd0;
 
     // Store forward register: capture store info at clock edge
     always_ff @(posedge clk or negedge rst_n) begin
