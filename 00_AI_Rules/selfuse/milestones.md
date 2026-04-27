@@ -51,7 +51,7 @@
 - **瓶颈**: DRAM 68×BRAM36 高扇出布线（CPU 逻辑已具备 250MHz 能力）
 - **性能**: current 程序 ~180+ms（flush penalty +1 cycle）
 
-### 🏁 M9: DCache 实现 + FPGA 验证通过（current + src2）✅
+### 🏁 M9: DCache 实现 + FPGA 验证通过（4/4 COE 全部通过）✅
 - **日期**: 2026-04-24
 - **说明**: 2KB 2-way set-associative DCache (16B line, Write-Through + Write-Allocate, 1-entry Store Buffer)
 - **架构变更**: DRAM 从 CPU 直连改为 DCache 管理；perip_bridge 瘦身为 mmio_bridge

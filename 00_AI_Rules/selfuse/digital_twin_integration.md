@@ -1,6 +1,12 @@
-# 数字孪生平台适配记录
+# 数字孞生平台适配记录
 
-> 本文档记录 cpu_top 集成到 `JYD2025_Contest-rv32i/` 数字孪生平台工程过程中的分析、决策和待定事项。
+> 本文档记录 cpu_top 集成到 `JYD2025_Contest-rv32i/` 数字孞生平台工程过程中的分析、决策和待定事项。
+>
+> ⚠️ **过时警告**（M9 DCache 重构后）：
+> - **§1 架构图**已更新为当前版本
+> - **§3 存储体选型**：IROM 实际有 output register（2 拍），DRAM 现由 DCache 管理且有 DOB_REG=1
+> - **§4-5 流水线适配/perip_bridge**：旧版 perip_bridge 已被拆分为 dcache + mmio_bridge，cpu_top 端口已改为 cache_* + mmio_* 接口
+> - 详细的当前架构见 `design_decisions.md` 决策 L/O/Q
 
 ---
 
@@ -9,16 +15,15 @@
 ```
 top.sv
 ├── PLL (差分时钟 → clk_50MHz + cpu_clk)
-├── UART + twin_controller (数字孪生通信)
+├── UART + twin_controller (数字孞生通信)
 └── student_top.sv ← 我们写的，CPU 在这里
-    ├── cpu_top         (我们的处理器)
-    ├── IROM            (指令存储)
-    ├── perip_bridge    (自研外设桥)
-    │   ├── DRAM        (数据存储)
-    │   ├── LED / SEG 寄存器
-    │   ├── SW / KEY 读取
-    │   └── counter     (模板的，不能改，CDC)
-    └── display_seg     (模板的七段驱动)
+    ├── cpu_top          (自研 RV32I 五级流水线)
+    ├── IROM             (Block RAM ROM, 16KB, 有 output register, 2 拍)
+    ├── dcache           (2KB 2-way WT+WA data cache)
+    │   └── DRAM         (Block RAM, SDP, 256KB, DOB_REG=1)
+    ├── mmio_bridge      (自研外设桥: LED/SEG/SW/KEY/CNT)
+    │   └── counter      (模板的，不能改，CDC gray 码同步)
+    └── display_seg      (模板的七段驱动)
 ```
 
 ### 不可修改的模块
@@ -59,7 +64,11 @@ top.sv
 | 给下游留的时间 (5ns) | 全部 5ns | ~3.0ns | ~4.4ns |
 | 容量效率 | 差（1 LUT6 = 64bit） | 好（1 BRAM36 = 36Kbit） | 好 |
 
-### 决策：BRAM 无 Output Register（已确定，IROM 和 DRAM 均如此）
+### 决策（已过时，见 `design_decisions.md` §G）
+
+> ⚠️ 以下分析基于早期设计。实际现状：
+> - **IROM**：有 output register（2 拍延迟），配合预取方案工作
+> - **DRAM**：SDP BRAM，有 DOB_REG=1（2 拍读延迟），由 DCache 管理，CPU 不再直连
 
 理由：
 - 分布式 RAM：大容量（>16KB）时消耗大量 LUT，不适合 DRAM

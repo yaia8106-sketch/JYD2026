@@ -18,7 +18,9 @@
 
 ## B. 分支 Flush 代价
 
-**决策：Flush 代价 = 2 拍气泡**
+**决策：初版 Flush 代价 = 2 拍气泡（决策 K 后变为 3 拍）**
+
+> ⚠️ **更新**：决策 K 将 `branch_flush` 延迟一拍（EX→MEM）以优化 250MHz 时序，导致 flush penalty 从 2 拍增加到 3 拍。以下为初版分析，保留作为历史记录。
 
 - 分支在 EX 级判断，默认顺序执行，错了 flush
 - IROM 为 1 拍 BRAM（无 Output Register），flush 时 `irom_addr` 立即切换到 `branch_target`
@@ -36,13 +38,13 @@
 
 ## C. JAL/JALR 跳转处理
 
-**决策：初版全部在 EX 级处理，后期优化 JAL 提前到 ID 级**
+**决策：全部在 EX 级处理（JAL 提前到 ID 级已尝试并放弃）**
 
-- 初版：BEQ/BNE/BLT/BGE/BLTU/BGEU/JAL/JALR 全部在 EX 级判断，flush 代价统一 2 拍
-- 后期优化（时序允许时）：JAL 提前到 ID 级判断，penalty 从 2 拍降到 1 拍
-  - JAL 在 ID 级只需要 PC + imm 的加法，组合路径可控
-  - JALR 需要读寄存器 + 加立即数，组合路径可能太长，暂不考虑提前
-- 理由：先保证正确性和架构简洁，性能优化后面再做
+- 初版：BEQ/BNE/BLT/BGE/BLTU/BGEU/JAL/JALR 全部在 EX 级判断，flush 代价统一 2 拍（决策 K 后变为 3 拍）
+- ~~后期优化：JAL 提前到 ID 级判断~~
+  - ✅ 已尝试，但 **FPGA 上跑飞**，放弃
+  - ~~JALR 提前到 ID 级~~——200MHz 时序不收敛，放弃
+- 最终方案：用 NLP Tournament 分支预测器代替 JAL/JALR 提前，达到更好效果
 
 ---
 
@@ -133,7 +135,10 @@ BRAM Clk-to-Q(2.0) + output MUX(0.2) + mem_interface(0.5)
 
 ## G. IROM/DRAM Vivado IP 配置
 
-**IROM：Single Port ROM，32-bit，不启用输出寄存器（1 拍延迟），COE 文件初始化 — 已确定**
+**IROM：Single Port ROM，32-bit，有 output register（2 拍延迟），COE 文件初始化 — 已确定**
+
+> ⚠️ 本节原写“不启用输出寄存器（1 拍）”，与 `student_top.sv` 注释（“有 output register (2 拍)”）不符。已修正为 2 拍。
+> 预取方案在 2 拍 IROM 下仍然有效：PC 复位值为 TEXT_BASE-4，首拍发出地址，2 拍后 IROM 输出首条指令。
 
 **DRAM：Simple Dual Port RAM，32-bit，65536 depth (256KB)，4-bit WEA — 已确定**
 
@@ -144,9 +149,10 @@ BRAM Clk-to-Q(2.0) + output MUX(0.2) + mem_interface(0.5)
 
 ### IROM 取指架构（预取方案）
 
-IROM 为 1 拍 BRAM（无 Output Register），采用预取方案：
+IROM 有 output register（2 拍延迟），采用预取方案（决策 N 后已扩展为 5 路优先级 MUX）：
 
 ```
+// 初版 3 路 MUX（已过时，当前为 5 路，见决策 N）
 irom_addr = branch_flush  ? branch_target :   // 分支：预取目标
             !if_allowin   ? pc :               // 停顿：保持当前地址
                             next_pc;           // 正常：预取下一条
@@ -158,9 +164,12 @@ irom_addr = branch_flush  ? branch_target :   // 分支：预取目标
 - IF/ID 寄存器同时锁存 PC 和指令（`id_pc` + `id_inst`），确保 ID 阶段天然对齐
 - PC 复位值 = `0x7FFF_FFFC`（= text_base - 4），使首拍 `next_pc = 0x8000_0000`
 
-### DRAM Output Register 决策
+### DRAM Output Register 决策（历史记录）
 
-三种方案对比后确定不勾选 output register：
+> ⚠️ **已过时**：早期决策为“不勾选”，但实际 DRAM IP (DRAM4MyOwn) 配置了 DOB_REG=1，读延迟为 2 拍。
+> DCache 重构后 CPU 不再直连 DRAM，延迟由 DCache FSM 管理（DRAM_LATENCY=3）。详见决策 O。
+
+早期分析（保留作为参考）：
 - 内建 output reg（2 拍）：MUX 在输出寄存器之后，WB 的 Clk-to-Q = 2.1ns
 - 手动加 reg（2 拍）：MEM 阶段压力与不勾选完全相同（3.5ns），多等 1 拍无优势
 - 不勾选（1 拍）：MEM/WB 寄存器承担原来 output register 的角色
