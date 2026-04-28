@@ -35,3 +35,5 @@ __pycache__/
 # Contest raw files (PDF/DOCX/PPTX, large binaries)
 00_AI_Rules/contest/raw/
 04_Submission/
+
+coremark/

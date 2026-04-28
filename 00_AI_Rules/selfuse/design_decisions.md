@@ -307,6 +307,13 @@ Phase 1 + Phase 2 覆盖 ~90% 的收益。
 
 详见 `02_Design/coe/sim_output/bp_coldstart_results.md`。
 
+> **⚠️ 2026-04-28 更新** (决策 R):
+> `bp_sweep.py` 精确匹配 RTL 的全配置扫描表明：
+> - RAS 4→8/16 对所有程序**零效果** (调用链深度 ≤ 2)
+> - src0 瓶颈实为 **BTB 容量不足** (37,940 BTB miss+taken), BTB 64→128 后降至 202
+> - 上述冷启动数据的 src1 RET 71.2% 问题在 5M 指令热身后改善, 不需要增加 RAS 深度
+> - 详见 `selfuse/bp_analysis.md`
+
 ---
 
 ## 决策 D-11: 前递值修复（预测器集成时发现的隐藏 bug）
@@ -463,6 +470,14 @@ wire [31:0] mem_fwd_val = (mem_wb_sel == 2'b10) ? (mem_pc + 32'd4) : mem_alu_res
 2. 2-way 在 src0/src2（工作集大）上比 DM 更稳定，减少 conflict miss
 3. 16B 行 vs 32B 在无 CWF 下差距小，refill 周期更短（8 vs 14 cycles）
 4. 2-way LRU 只需 1 bit/set，实现简单
+
+> **⚠️ 2026-04-28 更新** (决策 R):
+> 精确 cache 仿真 (`cache_sim.py`) + 时序分析表明应升级到 **2-way 4KB/16B**:
+> - 2KB 和 4KB 使用**完全相同的 2 个 BRAM18** (50%→100% 利用率), 零 BRAM 成本
+> - 时序零风险: 全局最差路径 (DCache→DRAM 0.082ns) 是纯布线, 与 cache 容量无关
+> - src0 命中率 +2.05%, CPI -0.019
+> - 仅修改 `SETS` 参数 (64→128)
+> - 详见 `selfuse/cache_analysis.md`
 
 ### 实现要点（已完成）
 
@@ -786,3 +801,45 @@ always_ff @(posedge clk or negedge rst_n) begin
 > 1. `always_ff @(posedge clk or negedge rst_n)` 块中的**所有寄存器**都必须在 `!rst_n` 分支有显式赋值，即使功能上由 valid 信号门控。
 > 2. Vivado **Synth 8-7137** 是严重 warning，不能忽略——它直接导致综合/仿真行为不一致。
 > 3. 仿真通过 ≠ FPGA 正确：综合 warning 可能引入仅在硬件中出现的 bug。
+
+---
+
+## R. BP + DCache 参数优化分析（数据驱动决策）
+
+**日期**: 2026-04-28
+**状态**: 分析完成，待实施 RTL 改动
+**工具**: `bp_sweep.py` (24 核并行, 107s), `cache_sim.py`, `stage_timing_report.txt`
+**详细报告**: `selfuse/bp_analysis.md`, `selfuse/cache_analysis.md`
+
+### 方法
+
+1. **ISA 仿真**: RV32I 全指令模拟, 4 程序各 5M 指令
+2. **BP 模型**: 精确匹配 RTL `branch_predictor.sv` 三级流水 (IF L0 + ID L1 + EX update)
+3. **Cache 模型**: 精确匹配 RTL `dcache.sv` (WT+WA, SB, refill FSM)
+4. **时序约束**: 基于 250MHz 实际时序报告 (worst slack 0.082ns) 评估改动风险
+
+### 关键发现
+
+| 发现 | 数据 | 影响 |
+|------|------|------|
+| src0 BTB 容量瓶颈 | 37,940 次 BTB miss+taken (64-entry) → 202 (128-entry) | BTB=128 是最大单一改善 |
+| RAS 深度无效果 | 2/4/8/16 深度完全相同, 所有程序 | 不改 RAS |
+| GHR=12+ 时序违例 | PHT 4096 entries → LUTRAM MUX 6+ 级, ID/EX→BP 仅 0.339ns slack | 排除 GHR≥12 |
+| GHR=10 中等风险 | PHT 1024 → +2 级 MUX ≈ +0.2-0.4ns vs 0.339ns slack | 需综合验证 |
+| DCache 全局瓶颈是布线 | Top 5 最差路径全是 dram_rd_addr→DRAM BRAM (0 级逻辑, 纯布线) | Cache 扩容不影响关键路径 |
+| DCache 2→4KB 零成本 | 同 2 个 BRAM18, 利用率 50%→100% | 免费升级 |
+
+### 决策
+
+| 优先级 | 改动 | CPI 收益 | 时序 | RTL 改动 |
+|:------:|------|:--------:|:----:|----------|
+| **1** | DCache SETS 64→128 (2KB→4KB) | -0.005 | ✅ 零风险 | `dcache.sv` 参数 |
+| **2** | BTB_ENTRIES 64→128 | -0.014 | ✅ 安全 | `branch_predictor.sv` 参数 |
+| 3 | GHR_W 8→10 | -0.009 | ⚠️ 需验证 | 参数 + PHT/SEL 自动扩展 |
+
+### 理由
+
+- **DCache 4KB**: 零 BRAM 成本、零时序风险、src0 hit +2.05%。唯一理由就是"BRAM18 白白空了一半"。
+- **BTB 128**: 消除 src0 的最大瓶颈 (BTB miss+taken 37,940→202)。BTB 读路径 slack=0.936ns, 扩容后仍有 ~0.7ns, 远离全局关键路径。
+- **GHR 10**: CPI 额外 -0.009, 但 PHT 写路径 (ID/EX→BP, 0.339ns slack, 10 级 logic) 余量不足, 需实际综合后确认。
+- **不做**: RAS 改动 (零效果)、GHR≥12 (时序违例)、BTB=256 (vs 128 无差异)。

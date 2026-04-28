@@ -105,12 +105,10 @@ class RV32ISim:
             base = self.read_reg(rs1)
             target = (to_signed(base) + to_signed(imm)) & 0xFFFFFFFE & 0xFFFFFFFF
             self.write_reg(rd, self.pc + 4)
+            # Match RTL: only JAL can be CALL, JALR with rd=1 is non-RET JALR
             is_ret = (rs1 == 1 and rd == 0)
-            is_call = (rd == 1)
             if is_ret:
                 self.trace.append((self.pc, 'RET', True, target, rd, rs1))
-            elif is_call:
-                self.trace.append((self.pc, 'CALL', True, target, rd, rs1))
             else:
                 self.trace.append((self.pc, 'JALR', True, target, rd, rs1))
             next_pc = target

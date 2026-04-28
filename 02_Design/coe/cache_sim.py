@@ -39,7 +39,7 @@ class RV32ISim:
             addr = i * 4
             if addr + 4 <= self.DRAM_SIZE:
                 struct.pack_into('<I', self.dram, addr, w)
-        self.mem_trace = []  # (addr, 'R'|'W', size)
+        self.mem_trace = []  # (addr, 'R'|'W', size, inst_idx)
         self.cycle_count = 0
         self.halted = False
         self.branch_count = 0
@@ -57,7 +57,7 @@ class RV32ISim:
     def mem_read(self, addr, size):
         addr &= 0xFFFFFFFF
         if self.DRAM_BASE <= addr < self.DRAM_END:
-            self.mem_trace.append((addr, 'R', size))
+            self.mem_trace.append((addr, 'R', size, self.cycle_count))
             offset = addr - self.DRAM_BASE
             if offset + size > self.DRAM_SIZE: return 0
             if size == 1: return self.dram[offset]
@@ -69,7 +69,7 @@ class RV32ISim:
         addr &= 0xFFFFFFFF
         if addr >= 0x80200000: return
         if not (self.DRAM_BASE <= addr < self.DRAM_END): return
-        self.mem_trace.append((addr, 'W', size))
+        self.mem_trace.append((addr, 'W', size, self.cycle_count))
         offset = addr - self.DRAM_BASE
         if offset + size > self.DRAM_SIZE: return
         if size == 1: self.dram[offset] = val & 0xFF
@@ -183,9 +183,17 @@ class RV32ISim:
 # ==============================
 
 class CacheSim:
-    """Direct-mapped or N-way set-associative write-through cache."""
+    """N-way set-associative Write-Through + Write-Allocate DCache with 1-entry Store Buffer.
 
-    def __init__(self, name, total_bytes, line_bytes, assoc=1):
+    Models the RTL dcache.sv behavior:
+      - Hit detection per access
+      - Store Buffer (1-entry): store hit enqueues SB, next access with SB
+        pending may stall (SB conflict on store hit, SB drain before refill)
+      - Miss: refill LINE_WORDS + DRAM_LATENCY + 1 cycles, plus SB drain if pending
+    """
+
+    def __init__(self, name, total_bytes, line_bytes, assoc=1,
+                 line_words=4, dram_latency=4):
         self.name = name
         self.line_bytes = line_bytes
         self.assoc = assoc
@@ -195,11 +203,20 @@ class CacheSim:
         self.index_bits = (self.n_sets - 1).bit_length() if self.n_sets > 1 else 0
         self.index_mask = self.n_sets - 1
 
+        # RTL timing parameters
+        self.line_words = line_words
+        self.dram_latency = dram_latency
+        # LINE_WORDS + DRAM_LATENCY + 1  (burst + drain + DONE_RD + DONE)
+        self.refill_cycles = line_words + dram_latency + 1
+        # SB drain adds 2 cycles: S_SB_DRAIN(1) + re-enter S_IDLE(1)
+        self.sb_drain_cycles = 2
+
         # Cache state: each set has `assoc` ways, each way = (valid, tag)
         self.cache = [[(False, 0) for _ in range(assoc)] for _ in range(self.n_sets)]
         self.lru = [[0] * assoc for _ in range(self.n_sets)]  # LRU counters
         self.lru_counter = 0
 
+        # Hit/miss counters
         self.hits = 0
         self.misses = 0
         self.load_hits = 0
@@ -207,19 +224,37 @@ class CacheSim:
         self.store_hits = 0
         self.store_misses = 0
 
+        # Cycle-accurate stall counters
+        self.refill_stall_cycles = 0      # stall from cache line refill
+        self.sb_drain_stall_cycles = 0    # stall from SB drain (before refill or SB conflict)
+        self.sb_conflict_stalls = 0       # count of SB conflicts (store hit while SB valid)
+
+        # Store Buffer state
+        self.sb_valid = False
+        self.last_mem_inst_idx = -100  # large negative so first access doesn't false-trigger
+
     def _decompose(self, addr):
         idx = (addr >> self.offset_bits) & self.index_mask
         tag = addr >> (self.offset_bits + self.index_bits)
         return idx, tag
 
-    def access(self, addr, rw):
+    def access(self, addr, rw, inst_idx=0):
         idx, tag = self._decompose(addr)
         s = self.cache[idx]
 
+        # SB background drain: if there have been non-memory instruction cycles
+        # since the last memory access, the FSM had time to drain SB (1 cycle).
+        # RTL: S_SB_DRAIN takes 1 cycle, then returns to S_IDLE.
+        if self.sb_valid and (inst_idx - self.last_mem_inst_idx) >= 2:
+            self.sb_valid = False  # drained in background
+
+        self.last_mem_inst_idx = inst_idx
+
         # Check for hit
+        hit = False
         for w in range(self.assoc):
             if s[w][0] and s[w][1] == tag:
-                # Hit
+                hit = True
                 self.hits += 1
                 if rw == 'R':
                     self.load_hits += 1
@@ -227,24 +262,63 @@ class CacheSim:
                     self.store_hits += 1
                 self.lru_counter += 1
                 self.lru[idx][w] = self.lru_counter
-                return True
+                break
 
-        # Miss
+        if hit:
+            if rw == 'W':
+                # Store hit: enqueue SB → DRAM (WT)
+                # If SB already valid → SB conflict → need S_SB_DRAIN first (2 cyc stall)
+                if self.sb_valid:
+                    self.sb_conflict_stalls += 1
+                    self.sb_drain_stall_cycles += self.sb_drain_cycles
+                self.sb_valid = True
+            else:
+                # Load hit: no stall for the load itself.
+                # RTL: cpu_ready = cache_hit & ~sb_conflict = 1 (load, not sb_conflict).
+                # FSM goes to S_SB_DRAIN next cycle if sb_valid, but load completes.
+                # If NEXT memory access is the very next instruction, it sees
+                # FSM in S_SB_DRAIN → cpu_ready=0 for 1 cycle (handled by gap check above
+                # and by the "next access" logic when that access arrives).
+                # For simplicity: SB drain after load takes 1 FSM cycle, so if next
+                # mem access is ≥2 instructions away, SB is drained. If exactly 1
+                # instruction away, the next access sees S_SB_DRAIN:
+                #   - next is store hit → treated as sb_conflict (handled above)
+                #   - next is load hit → 1-cycle stall (FSM in S_SB_DRAIN, cpu_ready=0)
+                #   - next is miss → SB drain before refill (handled below)
+                # We keep sb_valid=True; the gap check at the top handles the free drain.
+                pass
+            return True
+
+        # Miss — need refill
         self.misses += 1
         if rw == 'R':
             self.load_misses += 1
         else:
             self.store_misses += 1
 
-        # Find victim (LRU)
+        # RTL: must drain SB before refill if SB valid
+        if self.sb_valid:
+            self.sb_drain_stall_cycles += self.sb_drain_cycles
+            self.sb_valid = False
+
+        # Refill stall
+        self.refill_stall_cycles += self.refill_cycles
+
+        # Install line in cache (LRU replacement)
         min_lru = min(self.lru[idx])
         victim = self.lru[idx].index(min_lru)
-
-        # Install
         s[victim] = (True, tag)
         self.lru_counter += 1
         self.lru[idx][victim] = self.lru_counter
+
+        # After refill, if it was a store, the data is also written (SB enqueued)
+        if rw == 'W':
+            self.sb_valid = True
+
         return False
+
+    def total_stall_cycles(self):
+        return self.refill_stall_cycles + self.sb_drain_stall_cycles
 
     def hit_rate(self):
         total = self.hits + self.misses
@@ -259,6 +333,11 @@ class CacheSim:
         self.hits = self.misses = 0
         self.load_hits = self.load_misses = 0
         self.store_hits = self.store_misses = 0
+        self.refill_stall_cycles = 0
+        self.sb_drain_stall_cycles = 0
+        self.sb_conflict_stalls = 0
+        self.sb_valid = False
+        self.last_mem_inst_idx = -100
 
 
 def load_coe(filepath):
@@ -281,39 +360,99 @@ def load_coe(filepath):
     return words
 
 
+def count_load_use_stalls(irom, dram, max_cycles=5000000):
+    """Count load-use hazards by replaying execution.
+
+    RTL (forwarding.sv):
+      load_in_ex:  load in EX, consumer in ID uses load rd → 2-cycle stall
+      load_in_mem: load in MEM, consumer in ID uses load rd → 1-cycle stall
+    MEM forwarding excludes loads (~mem_is_load), so load data only available at WB.
+
+    IMPORTANT: When a load MISSES the cache, the pipeline stalls from
+    mem_ready_go=0 (DCache refill). The load-use stall is absorbed into
+    the cache miss stall and costs 0 extra cycles. Only stalls from
+    cache-HITTING loads are additive. Caller must scale by load hit rate.
+
+    Returns: (total_instructions, n1_stalls, n2_stalls)
+      n1_stalls: immediate successor depends on load (2-cycle stall each)
+      n2_stalls: two-back successor depends on load (1-cycle stall each)
+    """
+    sim = RV32ISim(irom, dram)
+    n1_stalls = 0  # load_in_ex: consumer is next instruction
+    n2_stalls = 0  # load_in_mem: consumer is 2 instructions after load
+    prev_load_rd = 0       # rd of instruction at i-1 if it was a load
+    prev_prev_load_rd = 0  # rd of instruction at i-2 if it was a load
+
+    while sim.cycle_count < max_cycles and not sim.halted:
+        inst = sim.fetch()
+        opcode = inst & 0x7F
+        rd = (inst >> 7) & 0x1F
+        rs1 = (inst >> 15) & 0x1F
+        rs2 = (inst >> 20) & 0x1F
+
+        uses_rs1 = opcode in (0x03, 0x13, 0x33, 0x23, 0x63, 0x67)  # Load/ALU-I/ALU-R/Store/Branch/JALR
+        uses_rs2 = opcode in (0x33, 0x23, 0x63)                     # ALU-R/Store/Branch
+
+        # load_in_ex: previous instruction was a load, current depends on it
+        if prev_load_rd != 0:
+            if (uses_rs1 and rs1 == prev_load_rd) or \
+               (uses_rs2 and rs2 == prev_load_rd):
+                n1_stalls += 1
+
+        # load_in_mem: two-back instruction was a load (and i-1 was NOT a stall
+        # on the same load — that case is already counted as n1 with 2 cycles).
+        # Only count if i-1 did NOT also depend on this load (otherwise absorbed).
+        if prev_prev_load_rd != 0 and prev_prev_load_rd != prev_load_rd:
+            if (uses_rs1 and rs1 == prev_prev_load_rd) or \
+               (uses_rs2 and rs2 == prev_prev_load_rd):
+                n2_stalls += 1
+
+        # Shift history
+        prev_prev_load_rd = prev_load_rd
+        if opcode == 0x03 and rd != 0:
+            prev_load_rd = rd
+        else:
+            prev_load_rd = 0
+
+        sim.step()
+
+    return sim.cycle_count, n1_stalls, n2_stalls
+
+
 def main():
     base = os.path.dirname(os.path.abspath(__file__))
     programs = ['current', 'src0', 'src1', 'src2']
 
     # Cache configurations to test
-    # (name, total_bytes, line_bytes, assoc)
+    # (name, total_bytes, line_bytes, assoc, line_words)
     configs = [
-        # Direct-mapped, 16B line (4 words)
-        ("DM  1KB/16B",  1024, 16, 1),
-        ("DM  2KB/16B",  2048, 16, 1),
-        ("DM  4KB/16B",  4096, 16, 1),
-        ("DM  8KB/16B",  8192, 16, 1),
-        # Direct-mapped, 32B line (8 words)
-        ("DM  2KB/32B",  2048, 32, 1),
-        ("DM  4KB/32B",  4096, 32, 1),
-        # 2-way, 16B line
-        ("2W  2KB/16B",  2048, 16, 2),
-        ("2W  4KB/16B",  4096, 16, 2),
-        # 4-way, 16B line
-        ("4W  4KB/16B",  4096, 16, 4),
+        # ---- Direct-mapped, 16B line (current line size) ----
+        ("DM  1KB/16B",  1024, 16, 1, 4),
+        ("DM  2KB/16B",  2048, 16, 1, 4),
+        ("DM  4KB/16B",  4096, 16, 1, 4),
+        ("DM  8KB/16B",  8192, 16, 1, 4),
+        # ---- 2-way, 16B line ----
+        ("2W  1KB/16B",  1024, 16, 2, 4),
+        ("2W  2KB/16B",  2048, 16, 2, 4),  # ← current RTL config
+        ("2W  4KB/16B",  4096, 16, 2, 4),
+        ("2W  8KB/16B",  8192, 16, 2, 4),
+        # ---- 4-way, 16B line ----
+        ("4W  2KB/16B",  2048, 16, 4, 4),
+        ("4W  4KB/16B",  4096, 16, 4, 4),
+        # ---- 2-way, 32B line (larger line, more spatial locality) ----
+        ("2W  2KB/32B",  2048, 32, 2, 8),
+        ("2W  4KB/32B",  4096, 32, 2, 8),
     ]
 
-    # Performance model parameters
-    FREQ_BASE = 200  # MHz (current stable)
-    FREQ_CACHE = 250  # MHz (target with cache)
-    MISS_PENALTY = 3  # cycles to fetch from DRAM on miss
-    BP_MISPRED_RATE = 0.10  # ~10% branch misprediction
-    BP_FLUSH_PENALTY = 3  # cycles per misprediction
+    # Performance model parameters (matching RTL)
+    FREQ_BASE = 200     # MHz (current stable, no DCache)
+    FREQ_CACHE = 250    # MHz (target with DCache, pending timing closure)
+    DRAM_LATENCY = 4    # registered addr(1) + BRAM read(1) + DOB_REG(1) + dram_rdata_r(1)
 
-    print("=" * 90)
-    print(" Data Cache Hit Rate & Performance Simulation")
-    print(" (DRAM access trace from ISA simulation)")
-    print("=" * 90)
+    print("=" * 110)
+    print(" Data Cache Hit Rate & Cycle-Accurate Performance Simulation")
+    print(" (Matches RTL dcache.sv: WT+WA, 1-entry SB, DRAM_LATENCY=4)")
+    print("=" * 110)
 
     # Per-config summary across all programs
     summary = {c[0]: [] for c in configs}
@@ -324,92 +463,166 @@ def main():
         if not os.path.exists(irom_path):
             continue
 
-        print(f"\n{'─' * 90}")
+        print(f"\n{'─' * 110}")
         print(f"  Program: {prog}")
-        print(f"{'─' * 90}")
+        print(f"{'─' * 110}")
 
         irom = load_coe(irom_path)
         dram = load_coe(dram_path) if os.path.exists(dram_path) else []
 
+        # Run ISA sim to collect memory trace
         sim = RV32ISim(irom, dram)
         trace = sim.run(max_cycles=5000000)
 
         total_insts = sim.cycle_count
-        n_loads = sum(1 for _, rw, _ in trace if rw == 'R')
-        n_stores = sum(1 for _, rw, _ in trace if rw == 'W')
+        n_loads = sum(1 for _, rw, _, _ in trace if rw == 'R')
+        n_stores = sum(1 for _, rw, _, _ in trace if rw == 'W')
+
+        # Run load-use hazard analysis
+        _, n1_stalls, n2_stalls = count_load_use_stalls(irom, dram, max_cycles=5000000)
+        # Raw penalty: n1 = 2 cycles (load_in_ex), n2 = 1 cycle (load_in_mem)
+        raw_lu_penalty = n1_stalls * 2 + n2_stalls * 1
 
         # Unique addresses accessed
-        unique_addrs = len(set((a >> 2) for a, _, _ in trace))
+        unique_addrs = len(set((a >> 2) for a, _, _, _ in trace))
         addr_range = 0
         if trace:
-            min_a = min(a for a, _, _ in trace)
-            max_a = max(a for a, _, _ in trace)
+            min_a = min(a for a, _, _, _ in trace)
+            max_a = max(a for a, _, _, _ in trace)
             addr_range = max_a - min_a
+
+        # Count consecutive stores in trace (for SB pressure analysis)
+        consec_stores = 0
+        max_consec_st = 0
+        cur_consec = 0
+        for _, rw, _, _ in trace:
+            if rw == 'W':
+                cur_consec += 1
+                if cur_consec >= 2:
+                    consec_stores += 1
+                max_consec_st = max(max_consec_st, cur_consec)
+            else:
+                cur_consec = 0
 
         print(f"  Instructions:     {total_insts:,}")
         print(f"  DRAM accesses:    {len(trace):,} (loads={n_loads:,}, stores={n_stores:,})")
         print(f"  Unique words:     {unique_addrs:,}")
         print(f"  Address range:    {addr_range:,} bytes ({addr_range/1024:.1f} KB)")
+        print(f"  Consec store pairs: {consec_stores:,}  (max burst: {max_consec_st})")
+        print(f"  Load-use hazards: {n1_stalls:,} (N+1, 2cyc) + {n2_stalls:,} (N+2, 1cyc) = {raw_lu_penalty:,} raw stall cycles")
 
+        # ---- Baseline: no DCache @ 200MHz ----
+        # Without cache, every DRAM access is a direct DRAM read/write.
+        # DRAM read latency = DRAM_LATENCY cycles per load.
+        # Stores go directly to DRAM (assume 1 cycle if no contention).
+        # Load-use stalls are absorbed into DRAM read latency (every load stalls MEM).
+        base_dram_penalty = n_loads * DRAM_LATENCY + n_stores * 1
+        base_cpi = 1.0 + base_dram_penalty / total_insts
+        base_time_factor = base_cpi / FREQ_BASE
+
+        # ---- Table header ----
+        W = 110
         print(f"\n  {'Config':<16s} {'Hit%':>7s} {'LdHit%':>7s} {'StHit%':>7s} "
-              f"{'Miss':>8s} {'MissCyc':>8s} {'CPI@250':>8s} {'vs200MHz':>9s}")
-        print(f"  {'-'*16} {'-'*7} {'-'*7} {'-'*7} {'-'*8} {'-'*8} {'-'*8} {'-'*9}")
+              f"{'Refill':>8s} {'SBstall':>8s} {'TotStall':>9s} "
+              f"{'CPI@250':>8s} {'vs200MHz':>9s}")
+        print(f"  {'-'*16} {'-'*7} {'-'*7} {'-'*7} "
+              f"{'-'*8} {'-'*8} {'-'*9} "
+              f"{'-'*8} {'-'*9}")
 
-        # Baseline: no cache @ 200MHz
-        # Estimate CPI with branch predictor
-        base_bp_penalty = int(total_insts * BP_MISPRED_RATE * BP_FLUSH_PENALTY)
-        base_cpi = 1.0 + base_bp_penalty / total_insts
-        base_time_factor = base_cpi / FREQ_BASE  # relative execution time
+        for name, total_b, line_b, assoc, lw in configs:
+            cache = CacheSim(name, total_b, line_b, assoc,
+                             line_words=lw, dram_latency=DRAM_LATENCY)
 
-        for name, total_b, line_b, assoc in configs:
-            cache = CacheSim(name, total_b, line_b, assoc)
-
-            for addr, rw, sz in trace:
-                cache.access(addr, rw)
+            for addr, rw, sz, iidx in trace:
+                cache.access(addr, rw, inst_idx=iidx)
 
             hr = cache.hit_rate()
-            lhr = cache.load_hits / (cache.load_hits + cache.load_misses) * 100 if (cache.load_hits + cache.load_misses) else 0
-            shr = cache.store_hits / (cache.store_hits + cache.store_misses) * 100 if (cache.store_hits + cache.store_misses) else 0
+            lhr = cache.load_hits / (cache.load_hits + cache.load_misses) * 100 \
+                if (cache.load_hits + cache.load_misses) else 0
+            shr = cache.store_hits / (cache.store_hits + cache.store_misses) * 100 \
+                if (cache.store_hits + cache.store_misses) else 0
 
-            # CPI impact at 250MHz
-            miss_cycles = cache.misses * MISS_PENALTY
-            cache_bp_penalty = int(total_insts * BP_MISPRED_RATE * BP_FLUSH_PENALTY)
-            cache_cpi = 1.0 + (miss_cycles + cache_bp_penalty) / total_insts
+            # CPI estimation at 250MHz with cache
+            # Load-use stalls only cost extra cycles for cache-HITTING loads.
+            # Cache-MISSING loads already stall the pipeline (refill), absorbing load-use.
+            # Approximate: scale raw load-use penalty by load hit rate.
+            dcache_stall = cache.total_stall_cycles()
+            load_hr_frac = lhr / 100 if lhr > 0 else 0
+            effective_lu = int(raw_lu_penalty * load_hr_frac)
+            cache_cpi = 1.0 + (dcache_stall + effective_lu) / total_insts
             cache_time_factor = cache_cpi / FREQ_CACHE
 
             speedup = base_time_factor / cache_time_factor if cache_time_factor > 0 else 0
             speedup_pct = (speedup - 1) * 100
 
+            is_current = (name == "2W  2KB/16B")
+            marker = " ◄" if is_current else ""
+
             print(f"  {name:<16s} {hr:6.2f}% {lhr:6.2f}% {shr:6.2f}% "
-                  f"{cache.misses:>8,} {miss_cycles:>8,} {cache_cpi:>7.3f}  "
-                  f"{'%+.1f%%' % speedup_pct:>8s}")
+                  f"{cache.refill_stall_cycles:>8,} {cache.sb_drain_stall_cycles:>8,} "
+                  f"{dcache_stall:>9,} "
+                  f"{cache_cpi:>7.3f}  "
+                  f"{'%+.1f%%' % speedup_pct:>8s}{marker}")
 
             summary[name].append({
                 'prog': prog, 'hit_rate': hr, 'misses': cache.misses,
-                'miss_cycles': miss_cycles, 'cpi': cache_cpi,
-                'speedup': speedup_pct
+                'refill_stall': cache.refill_stall_cycles,
+                'sb_stall': cache.sb_drain_stall_cycles,
+                'sb_conflicts': cache.sb_conflict_stalls,
+                'total_stall': dcache_stall,
+                'cpi': cache_cpi, 'speedup': speedup_pct,
             })
 
-    # ---- Summary across all programs ----
-    print(f"\n{'=' * 90}")
-    print(f"  Cross-program Summary (average)")
-    print(f"{'=' * 90}")
-    print(f"\n  {'Config':<16s} {'AvgHit%':>8s} {'AvgCPI':>8s} {'AvgSpeedup':>11s} {'BRAM':>6s}")
-    print(f"  {'-'*16} {'-'*8} {'-'*8} {'-'*11} {'-'*6}")
+        # Show baseline info
+        print(f"\n  Baseline (no cache @200MHz): CPI={base_cpi:.3f} "
+              f"(DRAM penalty={base_dram_penalty:,}, load-use absorbed)")
 
-    for name, total_b, line_b, assoc in configs:
+    # ================================================================
+    #  Cross-program Summary
+    # ================================================================
+    print(f"\n{'=' * 110}")
+    print(f"  Cross-program Summary (average over {len(programs)} programs)")
+    print(f"{'=' * 110}")
+    print(f"\n  {'Config':<16s} {'AvgHit%':>8s} {'AvgCPI':>8s} {'AvgSpeedup':>11s} "
+          f"{'AvgRefill':>10s} {'AvgSBstall':>11s} {'BRAM18':>7s}")
+    print(f"  {'-'*16} {'-'*8} {'-'*8} {'-'*11} "
+          f"{'-'*10} {'-'*11} {'-'*7}")
+
+    for name, total_b, line_b, assoc, lw in configs:
         entries = summary[name]
         if not entries: continue
-        avg_hr = sum(e['hit_rate'] for e in entries) / len(entries)
-        avg_cpi = sum(e['cpi'] for e in entries) / len(entries)
-        avg_sp = sum(e['speedup'] for e in entries) / len(entries)
-        bram_count = total_b * 8 // 36864 + 1  # rough BRAM36 estimate
-        print(f"  {name:<16s} {avg_hr:7.2f}% {avg_cpi:>7.3f}  "
-              f"{'%+.1f%%' % avg_sp:>10s} {bram_count:>5}×")
+        n = len(entries)
+        avg_hr = sum(e['hit_rate'] for e in entries) / n
+        avg_cpi = sum(e['cpi'] for e in entries) / n
+        avg_sp = sum(e['speedup'] for e in entries) / n
+        avg_rf = sum(e['refill_stall'] for e in entries) / n
+        avg_sb = sum(e['sb_stall'] for e in entries) / n
+        # BRAM18 estimate: each way needs data_depth * 32b.
+        # data_depth = (total_b / assoc) / 4 bytes_per_word = entries_per_way
+        # Each BRAM18 = 1024 x 18b or 512 x 36b. For 32b width: 512 entries/BRAM18.
+        data_bram18 = assoc * max(1, (total_b // assoc // 4) // 512)
+        # Tag RAM: LUTRAM (no BRAM), so only count data BRAM
+        is_current = (name == "2W  2KB/16B")
+        marker = " ◄" if is_current else ""
 
-    print(f"\n  Note: Speedup = (CPI@200MHz/200) / (CPI@250MHz/250)")
-    print(f"        miss_penalty = {MISS_PENALTY} cycles, BP mispred = {BP_MISPRED_RATE*100:.0f}%")
-    print(f"        Positive % = faster than current 200MHz baseline")
+        print(f"  {name:<16s} {avg_hr:7.2f}% {avg_cpi:>7.3f}  "
+              f"{'%+.1f%%' % avg_sp:>10s} "
+              f"{avg_rf:>10,.0f} {avg_sb:>11,.0f} "
+              f"{data_bram18:>6}×{marker}")
+
+    # ================================================================
+    #  Performance model notes
+    # ================================================================
+    print(f"\n  ── Performance Model ──")
+    print(f"  Refill penalty:   LINE_WORDS + DRAM_LATENCY + 1 = 4 + {DRAM_LATENCY} + 1 = "
+          f"{4 + DRAM_LATENCY + 1} cycles/miss")
+    print(f"  SB drain penalty: 2 cycles (S_SB_DRAIN + re-enter S_IDLE)")
+    print(f"  SB conflict:      store hit while SB valid → drain first")
+    print(f"  Load-use stall:   2 cycles (load_in_ex) or 1 cycle (load_in_mem)")
+    print(f"                    Only effective for cache-hitting loads (miss absorbs stall)")
+    print(f"  Baseline (no cache): every load costs {DRAM_LATENCY} cycles DRAM latency")
+    print(f"  Speedup = (baseline_CPI/200) / (cache_CPI/250)")
+    print(f"  ◄ = current RTL config (2W 2KB/16B)")
     print()
 
 
