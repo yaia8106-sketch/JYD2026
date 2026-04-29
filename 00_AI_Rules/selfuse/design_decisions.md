@@ -843,3 +843,92 @@ always_ff @(posedge clk or negedge rst_n) begin
 - **BTB 128**: 消除 src0 的最大瓶颈 (BTB miss+taken 37,940→202)。BTB 读路径 slack=0.936ns, 扩容后仍有 ~0.7ns, 远离全局关键路径。
 - **GHR 10**: CPI 额外 -0.009, 但 PHT 写路径 (ID/EX→BP, 0.339ns slack, 10 级 logic) 余量不足, 需实际综合后确认。
 - **不做**: RAS 改动 (零效果)、GHR≥12 (时序违例)、BTB=256 (vs 128 无差异)。
+
+---
+
+## S. 250MHz 时序收敛（Pblock + RTL 关键路径优化）
+
+**日期**: 2026-04-29
+**状态**: 时序收敛，WNS = +0.025ns，riscv-tests 43/43 PASS
+**分支**: 当前工作分支
+
+### 背景
+
+M8（feat/250mhz-timing）通过 flush 延迟 EX→MEM 使 CPU 逻辑具备 250MHz 能力，但 DRAM 高扇出布线导致时序不收敛。M9 引入 DCache 后 DRAM 扇出由 DCache 管理，但 250MHz 仍有 -0.414ns 违例，瓶颈转为 IROM BRAM 地址端口的长布线延迟。
+
+### 改动一览
+
+| 序号 | 改动 | 文件 | WNS 变化 |
+|:----:|------|------|:--------:|
+| 1 | DCache 4KB→2KB 回退 | `dcache.sv`, `dcache_data_ram.v` | (为 Pblock 留空间) |
+| 2 | Pblock 约束 | `digital_twin.xdc` | -0.414 → -0.284ns |
+| 3 | `pc_plus4` 寄存器 | `cpu_top.sv` | -0.125 → -0.005ns |
+| 4 | `bp_target` sel_seq 删除 | `branch_predictor.sv` | -0.005 → **+0.025ns** |
+
+### 改动 1: DCache 4KB→2KB 回退
+
+DCache SETS 128→64，减少 cell 面积，为 Pblock 约束提供更多放置空间。CPI 代价很小（平均 +0.005）。
+
+### 改动 2: Pblock 约束
+
+将 `student_top_inst/u_cpu`、`student_top_inst/u_irom`、`student_top_inst/u_dcache` 三个模块约束到 `CLOCKREGION_X0Y3:CLOCKREGION_X1Y3` 两个时钟区域。减少 CPU→IROM 布线延迟 ~0.5ns。
+
+```tcl
+# digital_twin.xdc
+create_pblock pblock_cpu_irom_dcache
+resize_pblock pblock_cpu_irom_dcache -add {CLOCKREGION_X0Y3:CLOCKREGION_X1Y3}
+add_cells_to_pblock pblock_cpu_irom_dcache [get_cells student_top_inst/u_cpu]
+add_cells_to_pblock pblock_cpu_irom_dcache [get_cells student_top_inst/u_irom]
+add_cells_to_pblock pblock_cpu_irom_dcache [get_cells student_top_inst/u_dcache]
+```
+
+### 改动 3: `pc_plus4` 寄存器
+
+**问题**: `irom_addr` 默认路径 `pc + 32'd4` 包含 32-bit carry chain（3 个 CARRY4 级），从 `pc_reg` 到 IROM 共 8 级逻辑，-0.125ns 违例。
+
+**方案**: 新增 `pc_plus4` 寄存器，每拍预计算下一拍的 PC+4。寄存器的更新优先级与 `irom_addr` MUX **完全镜像**，每个分支从各自的**寄存器源**独立 `+4`，避免反馈环路：
+
+```sv
+// cpu_top.sv
+always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n)            pc_plus4 <= 32'h8000_0000;
+    else if (flush)        pc_plus4 <= branch_target + 4;   // 寄存器源
+    else if (stall)        ;                                // hold
+    else if (redirect)     pc_plus4 <= redirect_target + 4; // IF/ID 寄存器源
+    else if (bp_taken)     pc_plus4 <= bp_target + 4;       // LUTRAM 源
+    else                   pc_plus4 <= pc_plus4 + 4;        // 自增
+end
+```
+
+**不变式**: 当 `irom_addr` 选中默认分支时，`pc_plus4 == pc + 4` 恒成立。
+
+### 改动 4: `bp_target` sel_seq 删除
+
+**问题**: `bp_target` 的 `sel_seq` 分支包含 `if_pc + 32'd4`（= `pc + 4` carry chain），形成 `pc_reg → bp_target → irom_addr → IROM` 8 级路径，-0.005ns。
+
+**关键发现**: 当 `sel_seq = 1` 时，必然 `btb_hit_w = 0` 或 `(type=RET & !ras_valid)`，两种情况下 `bp_taken = 0`。因此 `bp_target` 的值不会被 `irom_addr` MUX 选中，也不会被 NLP redirect 使用——是 don't-care。
+
+**修复**: 直接删除 `sel_seq` 项，`bp_target` 简化为 BTB target OR RAS top。
+
+```sv
+// branch_predictor.sv — 修复前:
+assign bp_target = ({32{sel_btb}} & {r_tgt, 2'b00})
+                 | ({32{sel_ras}} & ras_top)
+                 | ({32{sel_seq}} & (if_pc + 32'd4));  // ← carry chain!
+// 修复后:
+assign bp_target = ({32{sel_btb}} & {r_tgt, 2'b00})
+                 | ({32{sel_ras}} & ras_top);           // sel_seq → don't-care
+```
+
+### 最终时序
+
+WNS = +0.025ns，全部路径 slack 为正。Top 3 最紧路径：
+1. +0.025ns: Pre_IF(PC) → IROM（8 级，BP 预测路径）
+2. +0.034ns: ID/EX → BP LUTRAM WE（8 级，BTB 更新路径）
+3. +0.035ns: DCache → DRAM（0 级，纯布线）
+
+### 教训
+
+> 1. FPGA 时序优化要**物理约束和 RTL 并行推进**——Pblock 解决布线，RTL 解决逻辑级数。
+> 2. 关键路径上的 `+4` 加法器在 RISC-V CPU 中反复出现，要注意 carry chain 对 FPGA 的影响。
+> 3. 组合逻辑中的 don't-care 路径仍会被时序分析报告为违例——主动消除 don't-care 分支可改善 WNS。

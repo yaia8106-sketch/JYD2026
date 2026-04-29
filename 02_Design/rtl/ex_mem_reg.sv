@@ -82,12 +82,15 @@ module ex_mem_reg (
             mem_store_wea     <= 4'd0;
             mem_store_data    <= 32'd0;
             mem_is_cacheable  <= 1'b0;
-        end else if (mem_branch_flush) begin
-            // 250MHz: flush spurious EX instruction — prevent it from entering MEM
-            mem_valid         <= 1'b0;
-            mem_store_wea     <= 4'd0;
         end else if (mem_allowin) begin
-            mem_valid         <= ex_valid & ex_ready_go;
+            // 250MHz: when mem_branch_flush fires, the instruction in EX is spurious
+            // (it entered EX before the registered flush could stop it).
+            // Gate incoming valid with ~mem_branch_flush to prevent it entering MEM.
+            // NOTE: Do NOT kill current MEM instruction unconditionally — if it has
+            // a pending DCache miss (mem_allowin was 0), it must stay valid until
+            // the DCache completes. The old priority "else if (mem_branch_flush)"
+            // killed the flush-generating instruction itself on cache miss.
+            mem_valid         <= ex_valid & ex_ready_go & ~mem_branch_flush;
             mem_alu_result    <= ex_alu_result;
             mem_pc            <= ex_pc;
             mem_pc_plus_4     <= ex_pc_plus_4;

@@ -43,6 +43,10 @@ module cpu_top (
     // next_pc eliminated: inlined into irom_addr for 1 fewer LUT level on PC→IROM path
     wire        if_valid;
 
+    // 250MHz: Pre-computed PC+4 register — eliminates carry chain from irom_addr default path
+    // Each branch computes +4 independently from its registered source (no irom_addr feedback)
+    logic [31:0] pc_plus4;
+
     // ---- IF/ID ----
     wire        id_valid;
     wire        id_allowin;
@@ -197,11 +201,12 @@ module cpu_top (
 
     // ---- DCache 端口 (EX stage) ----
     // Only cacheable (DRAM) accesses go through DCache; MMIO bypasses
-    // Gate with ~mem_branch_flush AND ~branch_flush to prevent wrong-path
-    // instructions from triggering DCache requests:
-    //   - branch_flush: catches wrong-path instruction entering EX same cycle as branch resolves
-    //   - mem_branch_flush: catches wrong-path instruction in EX one cycle after branch resolves
-    assign cache_req   = ex_valid & ~mem_branch_flush & ~branch_flush & (ex_mem_read_en | ex_mem_write_en) & is_cacheable;
+    // Gate with ~mem_branch_flush to prevent wrong-path instructions from
+    // triggering DCache requests (wrong-path enters EX one cycle after branch resolves).
+    // NOTE: Do NOT gate with ~branch_flush — the EX-stage instruction that generates
+    // branch_flush is the instruction that *detected* the misprediction (e.g., a load
+    // with a false BTB hit). It is NOT wrong-path and its DCache request must proceed.
+    assign cache_req   = ex_valid & ~mem_branch_flush & (ex_mem_read_en | ex_mem_write_en) & is_cacheable;
     assign cache_wr    = ex_mem_write_en;
     assign cache_addr  = alu_addr;
     assign cache_wea   = dram_wea;               // from mem_interface (EX stage)
@@ -331,7 +336,24 @@ module cpu_top (
                        !if_allowin_w       ? pc :                 // 停顿：保持当前地址
                        id_bp_redirect_raw  ? id_redirect_target : // NLP: ID redirect (raw, fast)
                        bp_taken            ? bp_target :          // L0 预测 taken
-                                             (pc + 32'd4);       // 顺序取指
+                                             pc_plus4;           // 顺序取指（pre-registered, no carry chain）
+
+    // pc_plus4: mirrors irom_addr MUX priority, each branch adds +4 from its registered source
+    // Invariant: when irom_addr selects pc_plus4 (default), pc_plus4 == pc + 4
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n)
+            pc_plus4 <= 32'h8000_0000;              // reset PC (0x7FFFFFFC) + 4
+        else if (mem_branch_flush)
+            pc_plus4 <= mem_branch_target + 32'd4;  // flush: registered source
+        else if (!if_allowin_w)
+            ;                                       // stall: hold
+        else if (id_bp_redirect_raw)
+            pc_plus4 <= id_redirect_target + 32'd4; // NLP redirect: IF/ID regs
+        else if (bp_taken)
+            pc_plus4 <= bp_target + 32'd4;          // L0 prediction: LUTRAM
+        else
+            pc_plus4 <= pc_plus4 + 32'd4;           // sequential: self-increment
+    end
 
     pc_reg u_pc_reg (
         .clk           (clk),

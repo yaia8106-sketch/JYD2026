@@ -6,7 +6,7 @@
 //   EX stage: all state updates (no speculative update)
 //
 //   Architecture change (NLP optimization):
-//   - BTB: 64-entry direct-mapped (was 2-way 32-set)
+//   - BTB: 128-entry direct-mapped (was 2-way 32-set)
 //   - IF: uses bht[1] for BRANCH direction (was full Tournament)
 //   - Critical path: PC → LUTRAM read → tag compare → bht MUX → IROM
 //     = 2-3 logic levels (~3.3ns), down from 8 levels (~7.5ns)
@@ -53,9 +53,9 @@ module branch_predictor (
     // ================================================================
     //  Parameters
     // ================================================================
-    localparam BTB_ENTRIES = 64;
-    localparam BTB_IDX_W   = 6;     // log2(64)
-    localparam BTB_TAG_W   = 5;     // PC[12:8] (5-bit: compare+valid fits 1 LUT6)
+    localparam BTB_ENTRIES = 128;
+    localparam BTB_IDX_W   = 7;     // log2(128)
+    localparam BTB_TAG_W   = 5;     // PC[13:9] (5-bit: compare+valid fits 1 LUT6)
     localparam BTB_TGT_W   = 30;    // PC[31:2]
 
     localparam GHR_W      = 8;
@@ -101,8 +101,8 @@ module branch_predictor (
     // ================================================================
 
     // ---- BTB lookup (direct-mapped: single read) ----
-    wire [BTB_IDX_W-1:0] if_idx = if_pc[7:2];     // 6 bits for 64 entries
-    wire [BTB_TAG_W-1:0] if_tag = if_pc[12:8];     // 5 bits → 1 LUT6 compare
+    wire [BTB_IDX_W-1:0] if_idx = if_pc[8:2];     // 7 bits for 128 entries
+    wire [BTB_TAG_W-1:0] if_tag = if_pc[13:9];     // 5 bits → 1 LUT6 compare
 
     wire                  r_valid = btb_valid[if_idx];
     wire [BTB_TAG_W-1:0]  r_tag   = btb_tag  [if_idx];
@@ -146,11 +146,12 @@ module branch_predictor (
     //   otherwise       → PC+4 (sequential)
     wire sel_btb = btb_hit_w & ~(r_type[1] & r_type[0]);          // JAL/CALL/BRANCH
     wire sel_ras = btb_hit_w &   r_type[1] & r_type[0] & ras_valid; // RET
-    wire sel_seq = ~sel_btb & ~sel_ras;                             // default
+    // sel_seq removed: when neither sel_btb nor sel_ras, bp_taken=0
+    // guarantees bp_target is unused (irom_addr MUX skips it)
+    // Removing if_pc+4 eliminates carry chain from pc→bp_target→IROM path
 
     assign bp_target = ({32{sel_btb}} & {r_tgt, 2'b00})
-                     | ({32{sel_ras}} & ras_top)
-                     | ({32{sel_seq}} & (if_pc + 32'd4));
+                     | ({32{sel_ras}} & ras_top);
 
     // ---- Snapshot outputs ----
     assign bp_ghr_snap = ghr;
@@ -179,8 +180,8 @@ module branch_predictor (
                          (ex_is_branch & (ex_actual_taken | ex_btb_hit)));
 
     // BTB addressing (direct-mapped)
-    wire [BTB_IDX_W-1:0] ex_idx = ex_pc[7:2];
-    wire [BTB_TAG_W-1:0] ex_tag = ex_pc[12:8];
+    wire [BTB_IDX_W-1:0] ex_idx = ex_pc[8:2];
+    wire [BTB_TAG_W-1:0] ex_tag = ex_pc[13:9];
 
     // Type for BTB entry
     wire [1:0] ex_wr_type = ex_is_jal_nc ? TYPE_JAL  :

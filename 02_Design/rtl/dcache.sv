@@ -74,9 +74,10 @@ module dcache (
 
     // pipeline_advance must match cpu_top's mem_allowin to keep DCache's
     // internal EX→MEM register synchronized with cpu_top's ex_mem_reg.
-    // Without this, a hit (cpu_ready=1) while wb_allowin=0 would advance
-    // DCache but not cpu_top, causing a desync.
-    wire pipeline_advance = ~pipeline_stall | flush;
+    // NOTE: Do NOT add "| flush" — flush no longer force-kills the current
+    // MEM instruction in ex_mem_reg (see fix: gate ~mem_branch_flush inside
+    // mem_allowin path). Both must stall/advance together.
+    wire pipeline_advance = ~pipeline_stall;
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
