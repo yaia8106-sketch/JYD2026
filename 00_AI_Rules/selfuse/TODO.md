@@ -6,11 +6,11 @@
 
 ## 当前状态
 
-**M10 里程碑已完成。** 250MHz 时序收敛（WNS = +0.025ns），DCache 2KB，Pblock 约束生效。
+**M10+ 时序持续优化中。** 250MHz 时序收敛（WNS = +0.120ns），DCache 2KB，Pblock 约束生效。
 
 - ✅ riscv-tests 43/43 PASS（iverilog）
 - ✅ FPGA 4/4 COE 全部通过 @ 200MHz（current + src0 + src1 + src2）
-- ✅ **250MHz 时序收敛**（WNS = +0.025ns，全部路径 slack 为正）
+- ✅ **250MHz 时序收敛**（WNS = +0.120ns，全部路径 slack 为正）
 - ✅ BP 配置扫描完成（24 配置 × 4 程序, 详见 `selfuse/bp_analysis.md`）
 - ✅ DCache 配置扫描完成（12 配置 × 4 程序, 详见 `selfuse/cache_analysis.md`）
 - ⚠️ **250MHz 版本尚未 FPGA 上板验证稳定性**
@@ -39,7 +39,22 @@
 
 详见 `contest/README.md`。Markdown 初稿已在 `04_Submission/技术文档/` 中完成。
 
-### 4. 性能参数优化（可选，视时间而定）
+### 4. 物理优化：DRAM 拆分（可选）
+
+当前 DCache→DRAM 路径 (0.120ns, 0级纯布线) 是 WNS 瓶颈之一。
+考虑将 1×32bit DRAM（64×BRAM36）拆为 4×8bit DRAM（各 16×BRAM36）：
+
+- 地址扇出从 64 降到 16（4× 改善）
+- 每组 16 BRAM 可紧凑放置
+- DCache 接口不变，仅改 `student_top.sv` 连线
+- 预计 slack 从 0.120 → 0.3+ ns
+
+- [ ] 创建 4 个 8-bit BRAM IP
+- [ ] 修改 `student_top.sv` 拆分/合并连线
+- [ ] 拆分 COE 初始化文件
+- [ ] 综合验证时序
+
+### 5. 性能参数优化（可选，视时间而定）
 
 250MHz 稳定后如有余力，可实施以下改动提升 CPI：
 
@@ -79,6 +94,7 @@
 - [X] Pblock 约束 CPU+IROM+DCache 共置（决策 S）
 - [X] pc_plus4 寄存器优化：消除 irom_addr 默认路径 carry chain（决策 S）
 - [X] bp_target sel_seq 删除：消除 pc→bp_target→IROM carry chain（决策 S）
+- [X] bp_target sel_btb/sel_ras 去 tag_match 依赖：并行化省 3 级（决策 T）
 
 ### DCache
 - [X] 可行性评估 cache_sim.py（决策 L）

@@ -932,3 +932,66 @@ WNS = +0.025ns，全部路径 slack 为正。Top 3 最紧路径：
 > 1. FPGA 时序优化要**物理约束和 RTL 并行推进**——Pblock 解决布线，RTL 解决逻辑级数。
 > 2. 关键路径上的 `+4` 加法器在 RISC-V CPU 中反复出现，要注意 carry chain 对 FPGA 的影响。
 > 3. 组合逻辑中的 don't-care 路径仍会被时序分析报告为违例——主动消除 don't-care 分支可改善 WNS。
+
+---
+
+## T. bp_target 串行链并行化（WNS +0.025 → +0.120ns）
+
+**日期**: 2026-04-29
+**状态**: 已实施，riscv-tests 43/43 PASS
+
+### 问题
+
+PC→IROM 关键路径 9 级逻辑，WNS = +0.025ns。分析逻辑链发现 `bp_target` 的计算存在不必要的串行依赖：
+
+```
+LUTRAM → tag_match (2级) → btb_hit_w (1级) → sel_btb (1级) → bp_target AND-OR (1级)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+              串行链：3级等待 tag_match
+```
+
+`sel_btb` 和 `sel_ras` 通过 `btb_hit_w = r_valid & tag_match` 依赖 tag 比较结果，而 tag 比较是 5-bit 比较器需要 2-3 级 LUT。
+
+### 关键洞察
+
+**bp_target 在 bp_taken=0 时是 don't-care**：
+- `bp_taken = bp_taken_raw & tag_match`
+- 当 `tag_match = 0` → `bp_taken = 0` → `irom_addr` MUX 选 `pc_plus4`，不看 `bp_target`
+- 所以 `bp_target` 不需要等 `tag_match`
+
+### 改动
+
+```sv
+// 修复前（串行，6级从 pc）：
+wire sel_btb = btb_hit_w & ~(r_type[1] & r_type[0]);           // 等 tag_match
+wire sel_ras = btb_hit_w &  r_type[1] & r_type[0] & ras_valid; // 等 tag_match
+
+// 修复后（并行，3级从 pc）：
+wire sel_btb = r_valid & ~(r_type[1] & r_type[0]);             // 不等 tag_match
+wire sel_ras = r_valid &  r_type[1] & r_type[0] & ras_valid;   // 不等 tag_match
+```
+
+不改动 `btb_hit_w`、`bp_btb_hit`、`bp_btb_type` 等快照输出（它们走 IF/ID 寄存器，不在关键路径上）。
+
+### 安全性验证
+
+1. **irom_addr MUX**: bp_target 被 bp_taken 门控，tag_match=0 时不选中 ✅
+2. **ID redirect**: 被 id_bp_btb_hit 门控（仍含 tag_match），tag_match=0 时不触发 ✅
+3. **EX branch_unit**: 用 actual_target flush，不用 predicted target ✅
+4. **sel_btb/sel_ras 互斥**: `~(type[1]&type[0])` 和 `type[1]&type[0]` 互斥，AND-OR 仍 one-hot ✅
+
+### 效果
+
+| 路径 | 改前 Slack | 改前级数 | **改后 Slack** | **改后级数** |
+|------|:----------:|:-------:|:-------------:|:-----------:|
+| PC → IROM | +0.025 | 9 | **+0.120** | **6** |
+| BP → IROM | +0.067 | 8 | **+0.393** | **5** |
+| BP → Pre_IF | +0.337 | 7 | **+0.769** | **5** |
+| Pre_IF → IF/ID | +0.460 | 7 | **+0.701** | **4** |
+
+全局 WNS 从 +0.025ns → **+0.120ns**，提升 **4.8×**。
+
+### 教训
+
+> 1. 组合逻辑中如果下游 MUX 的 select 信号已包含某个条件的门控，则数据路径不需要重复门控——这是 don't-care 优化的通用模式。
+> 2. 串行→并行的优化空间在 "select 信号已经包含的条件" 中寻找——如果 bp_taken 已经 AND 了 tag_match，那 bp_target 的 sel 就不需要再 AND tag_match。

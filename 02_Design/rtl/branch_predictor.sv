@@ -110,8 +110,9 @@ module branch_predictor (
     wire [1:0]            r_type  = btb_type [if_idx];
     wire [1:0]            r_bht   = btb_bht  [if_idx];
 
-    // Tag compare: 5-bit == (5 XNOR) + valid = 6 inputs → single LUT6
-    wire btb_hit_w = r_valid & (r_tag == if_tag);
+    // Tag compare (used by bp_taken in parallel, not serial)
+    wire tag_match  = (r_tag == if_tag);
+    wire btb_hit_w  = r_valid & tag_match;
 
     // ---- GShare PHT read (parallel, not on critical path) ----
     wire [GHR_W-1:0] if_pht_idx = ghr ^ if_pc[9:2];
@@ -125,27 +126,32 @@ module branch_predictor (
     wire [31:0] ras_top   = ras[0];
     wire        ras_valid = (ras_count != 3'd0);
 
-    // ---- L0 Fast prediction (AND-OR, flat logic) ----
+    // ---- L0 Fast prediction (parallelized: tag_match as late AND) ----
     // NLP key: BRANCH direction uses bht[1] only (Bimodal)
     // Full Tournament verification deferred to ID stage
-
-    // bp_taken: 5 inputs → single LUT6
-    //   hit=0 → 0
-    //   JAL/CALL (type[1]=0) → 1 (always taken)
-    //   BRANCH  (type=10)    → bht[1] (bimodal direction)
-    //   RET     (type=11)    → ras_valid
-    assign bp_taken = btb_hit_w & (
+    //
+    // Parallel structure:
+    //   Path A (slow): tag_match = (r_tag == if_tag)          ~2 LUT levels
+    //   Path B (fast): bp_taken_raw = r_vld & direction_logic ~1 LUT level
+    //   Merge: bp_taken = bp_taken_raw & tag_match            1 AND
+    //   Total: max(2,1)+1 = 3 levels (was 4-5 serial)
+    wire bp_taken_raw = r_valid & (
           ~r_type[1]                    // JAL/CALL: always taken
         | (~r_type[0] & r_bht[1])      // BRANCH: bimodal direction
         | ( r_type[0] & ras_valid)     // RET: RAS valid
     );
+    assign bp_taken = bp_taken_raw & tag_match;
 
     // bp_target: 3-way AND-OR MUX (one-hot selects)
     //   JAL/CALL/BRANCH → BTB target (ID stage needs it for redirect)
     //   RET + ras_valid → RAS top
-    //   otherwise       → PC+4 (sequential)
-    wire sel_btb = btb_hit_w & ~(r_type[1] & r_type[0]);          // JAL/CALL/BRANCH
-    wire sel_ras = btb_hit_w &   r_type[1] & r_type[0] & ras_valid; // RET
+    //   otherwise       → don't-care (bp_taken=0 → irom_addr skips bp_target)
+    //
+    // 250MHz: use r_valid instead of btb_hit_w (removes tag_match from
+    //   serial chain). Safe because bp_target is only consumed when
+    //   bp_taken=1, which already implies tag_match=1.
+    wire sel_btb = r_valid & ~(r_type[1] & r_type[0]);             // JAL/CALL/BRANCH
+    wire sel_ras = r_valid &  r_type[1] & r_type[0] & ras_valid;   // RET
     // sel_seq removed: when neither sel_btb nor sel_ras, bp_taken=0
     // guarantees bp_target is unused (irom_addr MUX skips it)
     // Removing if_pc+4 eliminates carry chain from pc→bp_target→IROM path
@@ -174,10 +180,12 @@ module branch_predictor (
     // Any update-worthy instruction in EX
     wire ex_update = ex_valid & (ex_is_branch | ex_is_jal | ex_is_jalr);
 
-    // ---- BTB write decision ----
-    wire ex_btb_write = ex_update & ~ex_is_jalr_nr &
-                        (ex_is_jal | ex_is_ret |
-                         (ex_is_branch & (ex_actual_taken | ex_btb_hit)));
+    // ---- BTB write decision (parallelized: actual_taken as late MUX select) ----
+    wire ex_btb_write_if_taken     = ex_update & ~ex_is_jalr_nr &
+                                     (ex_is_jal | ex_is_ret | ex_is_branch);
+    wire ex_btb_write_if_not_taken = ex_update & ~ex_is_jalr_nr &
+                                     (ex_is_jal | ex_is_ret | (ex_is_branch & ex_btb_hit));
+    wire ex_btb_write = ex_actual_taken ? ex_btb_write_if_taken : ex_btb_write_if_not_taken;
 
     // BTB addressing (direct-mapped)
     wire [BTB_IDX_W-1:0] ex_idx = ex_pc[8:2];
@@ -189,16 +197,13 @@ module branch_predictor (
                             ex_is_ret    ? TYPE_RET  :
                                            TYPE_BRANCH;
 
-    // BHT value for BTB entry
+    // BHT value for BTB entry (parallelized: actual_taken as late MUX select)
     wire [1:0] ex_bht_inc = (ex_btb_bht == 2'd3) ? 2'd3 : ex_btb_bht + 2'd1;
     wire [1:0] ex_bht_dec = (ex_btb_bht == 2'd0) ? 2'd0 : ex_btb_bht - 2'd1;
 
-    wire [1:0] ex_wr_bht;
-    assign ex_wr_bht = ex_is_branch ?
-                           (ex_btb_hit ?
-                               (ex_actual_taken ? ex_bht_inc : ex_bht_dec) :
-                               (ex_actual_taken ? 2'b10 : 2'b01)) :
-                           2'b11;
+    wire [1:0] ex_wr_bht_if_taken     = ex_is_branch ? (ex_btb_hit ? ex_bht_inc : 2'b10) : 2'b11;
+    wire [1:0] ex_wr_bht_if_not_taken = ex_is_branch ? (ex_btb_hit ? ex_bht_dec : 2'b01) : 2'b11;
+    wire [1:0] ex_wr_bht = ex_actual_taken ? ex_wr_bht_if_taken : ex_wr_bht_if_not_taken;
 
     // Target for BTB entry
     wire [BTB_TGT_W-1:0] ex_wr_tgt = ex_actual_target[31:2];
@@ -218,16 +223,18 @@ module branch_predictor (
     wire ex_bimodal_pred = (ex_btb_bht >= 2'd2);
     wire ex_gshare_pred  = (ex_pht_cnt >= 2'd2);
 
-    wire ex_bimodal_ok = (ex_bimodal_pred == ex_actual_taken);
-    wire ex_gshare_ok  = (ex_gshare_pred  == ex_actual_taken);
-
     wire ex_sel_write = ex_valid & ex_is_branch & ex_btb_hit &
                         (ex_bimodal_pred != ex_gshare_pred);
 
     wire [GHR_W-1:0] ex_sel_idx = ex_ghr_snap;
     wire [1:0] ex_sel_inc = (ex_sel_cnt == 2'd3) ? 2'd3 : ex_sel_cnt + 2'd1;
     wire [1:0] ex_sel_dec = (ex_sel_cnt == 2'd0) ? 2'd0 : ex_sel_cnt - 2'd1;
-    wire [1:0] ex_new_sel = ex_bimodal_ok ? ex_sel_inc : ex_sel_dec;
+    // Parallelized: actual_taken as late MUX select
+    // if taken:     bimodal_ok = bimodal_pred  → inc if pred=1, dec if pred=0
+    // if not taken: bimodal_ok = ~bimodal_pred → dec if pred=1, inc if pred=0
+    wire [1:0] ex_new_sel_if_taken     = ex_bimodal_pred ? ex_sel_inc : ex_sel_dec;
+    wire [1:0] ex_new_sel_if_not_taken = ex_bimodal_pred ? ex_sel_dec : ex_sel_inc;
+    wire [1:0] ex_new_sel = ex_actual_taken ? ex_new_sel_if_taken : ex_new_sel_if_not_taken;
 
     // ---- RAS push/pop ----
     wire ex_ras_push = ex_valid & ex_is_call;

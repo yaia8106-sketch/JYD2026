@@ -327,13 +327,13 @@ module cpu_top (
     wire [31:0] id_redirect_target = id_tournament_taken ? id_bp_target
                                                          : (id_pc + 32'd4);
 
-    // 250MHz: irom_addr = flat 5-way priority MUX
-    // Priority: flush > stall > NLP redirect > L0 prediction > sequential
-    //   - stall above redirect: eliminates hazard detection from IF/ID→IROM path
+    // 250MHz: irom_addr = flat 4-way priority MUX (stall branch removed)
+    // Priority: flush > NLP redirect > L0 prediction > sequential
+    //   - stall handling moved to irom_data_held register (see below)
+    //   - removes allowin chain (cache_ready→mem→ex→id) from IROM critical path
     //   - redirect uses raw version (no id_ready_go/ex_allowin gating)
     //   - bp_taken/bp_target inlined (no next_pc intermediate)
     assign irom_addr = mem_branch_flush    ? mem_branch_target :  // MEM flush (highest, registered)
-                       !if_allowin_w       ? pc :                 // 停顿：保持当前地址
                        id_bp_redirect_raw  ? id_redirect_target : // NLP: ID redirect (raw, fast)
                        bp_taken            ? bp_target :          // L0 预测 taken
                                              pc_plus4;           // 顺序取指（pre-registered, no carry chain）
@@ -368,6 +368,29 @@ module cpu_top (
 
     // ==================== IROM: 外部例化，通过 irom_addr/irom_data 端口 ====================
 
+    // ==================== Instruction hold register ====================
+    // When pipeline stalls (id_allowin=0), BRAM output may change (irom_addr
+    // no longer holds pc). Capture the correct instruction on stall entry
+    // so IF/ID can use it when the stall ends.
+    logic [31:0] irom_data_held;
+    logic        irom_held_valid;
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n)
+            irom_held_valid <= 1'b0;
+        else if (mem_branch_flush | id_allowin)   // flush or not stalling: clear
+            irom_held_valid <= 1'b0;
+        else if (!irom_held_valid)                // entering stall: mark
+            irom_held_valid <= 1'b1;
+    end
+
+    always_ff @(posedge clk) begin
+        if (!irom_held_valid && !id_allowin && !mem_branch_flush)
+            irom_data_held <= irom_data;
+    end
+
+    wire [31:0] irom_data_out = irom_held_valid ? irom_data_held : irom_data;
+
     // ==================== IF/ID ====================
 
     if_id_reg u_if_id_reg (
@@ -381,7 +404,7 @@ module cpu_top (
         .ex_allowin   (ex_allowin),
         .id_flush     (id_flush),
         .if_pc        (pc),
-        .if_inst      (irom_data),       // BRAM output captured in IF stage
+        .if_inst      (irom_data_out),   // held or live BRAM output
         .id_pc        (id_pc),
         .id_inst      (id_inst),         // registered instruction for ID
         // Branch prediction passthrough

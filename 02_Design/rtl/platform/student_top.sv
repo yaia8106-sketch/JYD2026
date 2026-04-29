@@ -103,7 +103,7 @@ module student_top #(
 
     // ================================================================
     //  IROM (Block Memory Generator ROM)
-    //  配置: 32bit, 4096 depth (16KB), 有 output register (2 拍)
+    //  配置: 32bit, 4096 depth (16KB), 无 output register (1 拍)
     //  地址: word 地址 = irom_addr[13:2], 12 bit
     // ================================================================
     IROM4MyOwn u_irom (

@@ -77,6 +77,20 @@
 - **验证结果**: riscv-tests 43/43 PASS（iverilog）
 - **⚠️**: 250MHz 版本尚未 FPGA 上板验证稳定性
 
+### 🏁 M10+: 250MHz 时序优化加强（WNS = +0.120ns）
+- **日期**: 2026-04-29
+- **说明**: bp_target 串行链并行化，显著提升 PC→IROM 路径时序
+- **关键改动**:
+  1. `bp_target` 的 `sel_btb`/`sel_ras` 从 `btb_hit_w`（含 tag_match）改为 `r_valid`（去掉 tag 比较串行依赖）
+  2. 原理：bp_target 在 bp_taken=0 时是 don't-care，而 bp_taken 已包含 tag_match 门控
+- **路径改善**:
+  - PC→IROM: 9级 → **6级**（-3级），slack 0.025 → **0.120ns**
+  - BP→IROM: 8级 → **5级**（-3级），slack 0.067 → **0.393ns**
+  - BP→Pre_IF: 7级 → **5级**，slack 0.337 → **0.769ns**
+- **当前瓶颈**: DCache→DRAM (0.120ns, 0级纯布线) 与 PC→IROM (0.120ns, 6级) 并列
+- **验证结果**: riscv-tests 43/43 PASS（iverilog）
+- **⚠️**: 尚未 FPGA 上板验证
+
 ---
 
 ## 重要回滚点
@@ -90,7 +104,8 @@
 | **Tournament BP** | `ddc0be4` | NLP 分支预测器，FPGA 验证通过 @ 200MHz | ⭐⭐⭐⭐⭐ |
 | **250MHz 尝试** | `2f84a77` | flush 延迟优化，200MHz 收敛，250MHz 未收敛 | ⭐⭐⭐ |
 | **DCache 验证** | (M9) | DCache 实现，4/4 COE 全部 FPGA 通过 | ⭐⭐⭐⭐⭐ |
-| **250MHz 收敛** | (当前) | WNS=+0.025ns，仿真通过，**FPGA 待验证** | ⭐⭐⭐ |
+| **250MHz 收敛** | (M10) | WNS=+0.025ns，仿真通过，**FPGA 待验证** | ⭐⭐⭐ |
+| **250MHz 优化** | (当前) | WNS=+0.120ns，bp_target 并行化，**FPGA 待验证** | ⭐⭐⭐ |
 
 ---
 
