@@ -135,39 +135,41 @@ BRAM Clk-to-Q(2.0) + output MUX(0.2) + mem_interface(0.5)
 
 ## G. IROM/DRAM Vivado IP 配置
 
-**IROM：Single Port ROM，32-bit，有 output register（2 拍延迟），COE 文件初始化 — 已确定**
+**IROM：Single Port ROM，32-bit，无 output register（1 拍延迟），COE 文件初始化 — 已确定**
 
-> ⚠️ 本节原写“不启用输出寄存器（1 拍）”，与 `student_top.sv` 注释（“有 output register (2 拍)”）不符。已修正为 2 拍。
-> 预取方案在 2 拍 IROM 下仍然有效：PC 复位值为 TEXT_BASE-4，首拍发出地址，2 拍后 IROM 输出首条指令。
+> ⚠️ 本节曾被错误修正为"有 output register（2 拍）"。经代码逻辑验证：`if_id_reg` 在同一 posedge 同时锁存 `pc` 和 `irom_data`，
+> 若 IROM 为 2 拍则 PC 与指令会错位 1 拍，流水线功能直接错误。现已还原为 1 拍（无 output register）。
 
 **DRAM：Simple Dual Port RAM，32-bit，65536 depth (256KB)，4-bit WEA — 已确定**
 
 - DCache 实现后改为 SDP：Port A = 写（Store Buffer drain），Port B = 读（Refill FSM）
 - **重要**: Port B 有 output register（`Register_PortB_Output_of_Memory_Primitives = true`，DOB_REG=1）
-- 读延迟 = 2 cycle（BRAM read + output register），加上 registered addr 总延迟 = 3 cycle = DRAM_LATENCY
+- 读延迟 = 2 cycle（BRAM read + output register），加上 registered addr 和 DCache 内部 `dram_rdata_r`，当前总延迟 = 4 cycle = DRAM_LATENCY
 - 地址粒度：word 地址（64 个 RAMB36E1）
 
 ### IROM 取指架构（预取方案）
 
-IROM 有 output register（2 拍延迟），采用预取方案（决策 N 后已扩展为 5 路优先级 MUX）：
+IROM 无 output register（1 拍延迟），采用预取方案。当前 M10+ 版本为 **4 路优先级 MUX + `irom_data_held` 停顿保持**：
 
 ```
-// 初版 3 路 MUX（已过时，当前为 5 路，见决策 N）
-irom_addr = branch_flush  ? branch_target :   // 分支：预取目标
-            !if_allowin   ? pc :               // 停顿：保持当前地址
-                            next_pc;           // 正常：预取下一条
+irom_addr = mem_branch_flush    ? mem_branch_target :
+            id_bp_redirect_raw  ? id_redirect_target :
+            bp_taken            ? bp_target :
+                                  pc_plus4;
 ```
 
-- **正常执行**：`irom_addr = next_pc = pc + 4`，BRAM 提前 1 拍锁存下一条指令地址
-- **分支 flush**：`irom_addr = branch_target`，BRAM 立即锁存目标地址，1 拍后出正确指令
-- **load-use stall**：`irom_addr = pc`，BRAM 保持当前地址，stall 解除后出正确指令
+- **正常执行**：`irom_addr = pc_plus4`，BRAM 提前 1 拍锁存下一条指令地址
+- **分支 flush**：`irom_addr = mem_branch_target`，BRAM 立即锁存目标地址，1 拍后出正确指令
+- **ID redirect**：`irom_addr = id_redirect_target`，用 L1 Tournament 结果纠正 L0 方向
+- **L0 prediction**：`irom_addr = bp_target`
+- **stall**：不再进入 IROM 地址 MUX，进入停顿时用 `irom_data_held` 保存正确指令，恢复后送入 IF/ID
 - IF/ID 寄存器同时锁存 PC 和指令（`id_pc` + `id_inst`），确保 ID 阶段天然对齐
 - PC 复位值 = `0x7FFF_FFFC`（= text_base - 4），使首拍 `next_pc = 0x8000_0000`
 
 ### DRAM Output Register 决策（历史记录）
 
 > ⚠️ **已过时**：早期决策为“不勾选”，但实际 DRAM IP (DRAM4MyOwn) 配置了 DOB_REG=1，读延迟为 2 拍。
-> DCache 重构后 CPU 不再直连 DRAM，延迟由 DCache FSM 管理（DRAM_LATENCY=3）。详见决策 O。
+> DCache 重构后 CPU 不再直连 DRAM，延迟由 DCache FSM 管理；当前 `DRAM_LATENCY=4`。详见决策 O/P。
 
 早期分析（保留作为参考）：
 - 内建 output reg（2 拍）：MUX 在输出寄存器之后，WB 的 Clk-to-Q = 2.1ns
@@ -177,7 +179,7 @@ irom_addr = branch_flush  ? branch_target :   // 分支：预取目标
 ### 已完成的改动
 
 - `if_id_reg.sv`：新增 `if_inst` / `id_inst` 传递（锁存指令到 ID 阶段）
-- `cpu_top.sv`：`irom_addr` 三路 MUX（branch_target / pc / next_pc）
+- `cpu_top.sv`：`irom_addr` 4 路 MUX（mem flush / ID redirect / L0 prediction / pc_plus4）+ `irom_data_held` 停顿保持
 - `cpu_top.sv`：decoder/imm_gen/regfile 读地址从 `irom_data` 改为 `id_inst`
 - `pc_reg.sv`：复位值改为 `0x7FFF_FFFC`（预取方案需要 text_base - 4）
 - `mem_wb_reg.sv`：新增 `mem_dram_dout` → `wb_dram_dout` 传递
@@ -194,12 +196,13 @@ irom_addr = branch_flush  ? branch_target :   // 分支：预取目标
 
 ## H. Flush / Stall 时 IROM 地址控制
 
-**决策：通过 `irom_addr` 三路 MUX + valid gating 处理**
+**决策：通过 `irom_addr` 4 路 MUX + `irom_data_held` 停顿保持处理**
 
-- **分支 flush**：`irom_addr = branch_target`，BRAM 立即锁存正确地址。flush 沿 IF/ID.valid = 0（1 拍气泡），下一拍 BRAM 输出正确指令，IF/ID 正常锁存
-- **load-use stall**：`irom_addr = pc`（不是 next_pc），BRAM 保持锁存当前指令地址。stall 解除时 BRAM 输出的是正确指令（不会跳过一条）
-- **正常执行**：`irom_addr = next_pc`，预取下一条
-- 关键：三路 MUX 优先级为 `branch_flush > !if_allowin > default`
+- **分支 flush**：`irom_addr = mem_branch_target`，BRAM 立即锁存正确地址。flush 沿 IF/ID.valid = 0，下一拍 BRAM 输出正确指令
+- **ID redirect**：`id_bp_redirect_raw` 直接进入 IROM 地址快速路径，门控版 `id_bp_redirect` 只用于 flush 控制
+- **load-use / cache miss stall**：IROM 地址不走 `!if_allowin` 分支；进入停顿时锁存 `irom_data_held`，恢复时用保持的指令送入 IF/ID
+- **正常执行**：默认选择 `pc_plus4`，预取下一条
+- 关键：4 路 MUX 优先级为 `mem_branch_flush > id_bp_redirect_raw > bp_taken > pc_plus4`
 - 不需要额外的 BRAM flush 或 enable 控制机制
 
 ---
@@ -246,7 +249,7 @@ irom_addr = branch_flush  ? branch_target :   // 分支：预取目标
 **状态：已实施（NLP Tournament 架构）**
 
 > 以下规划已全部完成。最终实现为 NLP Tournament 分支预测器：
-> - BTB 64-entry 直接映射 + 嵌入 2-bit Bimodal BHT
+> - BTB 128-entry 直接映射 + 嵌入 2-bit Bimodal BHT
 > - GShare: 8-bit GHR XOR PC[9:2] → 256-entry PHT
 > - Selector: 256-entry, GHR 索引
 > - RAS: 4-deep shift stack
@@ -301,7 +304,7 @@ Phase 1 + Phase 2 覆盖 ~90% 的收益。
 
 **薄弱环节**：
 - 非 RET 的 JALR（间接跳转）0% — 设计上不写入 BTB，无法预测
-- src0 的 CALL 仅 35.6% — BTB 64-entry 直接映射 index 冲突
+- src0 的 CALL 仅 35.6% — 旧 64 项 BTB 直接映射 index 冲突
 - src1 的 RET 仅 71.2% — 调用深度可能超过 RAS 4 层
 - 条件分支 59-78%，受 BTB 容量和 aliasing 限制
 
@@ -432,7 +435,7 @@ wire [31:0] mem_fwd_val = (mem_wb_sel == 2'b10) ? (mem_pc + 32'd4) : mem_alu_res
 
 ### 模拟方法
 
-使用 `cache_sim.py` 进行 ISA 级仿真：运行 4 个 COE 程序各 5M 周期，记录所有 DRAM Load/Store 访问地址，送入 9 种 Cache 配置模拟命中率。
+使用 `cache_sim.py` 进行 ISA 级仿真：运行 4 个 COE 程序各 5M 周期，记录所有 DRAM Load/Store 访问地址，送入 12 种 Cache 配置模拟命中率。
 
 ### 访存特征
 
@@ -487,7 +490,7 @@ CPU ←→ DCache (2×BRAM18) ←→ DRAM (64×BRAM36, SDP, DOB_REG=1)
 ```
 
 - Cache 仅 2×BRAM18（每 way 1 个），扇出小→布线短
-- Miss: 6 状态 FSM（BURST→DRAIN→DONE_RD→DONE），pipeline overlap，8 cycles/miss
+- Miss: 6 状态 FSM（BURST→DRAIN→DONE_RD→DONE），pipeline overlap，约 9 cycles/miss
 - Write-through + 1-entry Store Buffer，SB drain 优先于 refill（保证 DRAM 数据一致性）
 - flush 中断 refill，victim tag 提前失效防止部分覆写命中
 - 详见 `02_Design/spec/dcache_spec.md` v1.1
@@ -596,7 +599,7 @@ CPU 内部逻辑不在瓶颈。但分析 →IROM 路径群在 250MHz 下仍有 d
 
 **改动**:
 - `cpu_top.sv`: 删除 `next_pc_mux` 例化，删除 `next_pc` 中间变量
-- 将 bp_taken/bp_target 直接内联到 irom_addr 的 5 路优先级 MUX
+- 将 bp_taken/bp_target 直接内联到 irom_addr 优先级 MUX（当时为 5 路；M10+ 后 stall 分支移入 `irom_data_held`，当前为 4 路）
 
 ```diff
 - irom_addr = ... : next_pc;  // next_pc = bp_taken ? bp_target : pc+4
@@ -611,7 +614,7 @@ CPU 内部逻辑不在瓶颈。但分析 →IROM 路径群在 250MHz 下仍有 d
 - 7-bit compare 需 2 级 LUT（3+4 bit compare → combine + valid）
 
 **改动**:
-- `branch_predictor.sv`: `BTB_TAG_W = 7 → 5`，tag = `pc[12:8]`（原 `pc[14:8]`）
+- `branch_predictor.sv`: `BTB_TAG_W = 7 → 5`，当前 BTB128 配置下 tag = `pc[13:9]`
 
 **效果**: 5-bit compare + valid = 6 输入 → **单 LUT6**，省 1 整级 LUT（~0.2-0.3ns）。
 
@@ -623,17 +626,17 @@ CPU 内部逻辑不在瓶颈。但分析 →IROM 路径群在 250MHz 下仍有 d
 **问题路径**: `IF/ID → id_inst → hazard detect → id_ready_go → id_bp_redirect → irom_addr → IROM`
 - 7 级逻辑，主犯是 hazard 检测（5-bit compare ×2）在 →IROM 关键路径上
 
-**核心发现**: `id_bp_redirect` 含 `id_ready_go & ex_allowin` 门控是因为旧 irom_addr 中
-redirect 优先级高于 stall。如果 **stall 提到 redirect 上方**，门控就不再必要（stall 时
-`!if_allowin_w=1` 自动选 `pc`，挡住 redirect）。
+**核心发现**: `id_bp_redirect` 含 `id_ready_go & ex_allowin` 门控会把 hazard 检测带进 IROM 地址关键路径。
+先通过 raw/gated 拆分把快速路径和安全 flush 控制拆开；M10+ 进一步把 stall 分支移出 `irom_addr` MUX，
+由 `irom_data_held` 保存停顿入口处的正确指令。
 
 **改动**:
 - `cpu_top.sv`: 拆分为 `id_bp_redirect_raw`（不含 stall 门控）和 `id_bp_redirect`（含门控）
-- irom_addr 优先级调整：`flush > stall > redirect > prediction > sequential`
+- irom_addr 优先级调整：当前为 `flush > redirect > prediction > sequential`，stall 由 `irom_data_held` 处理
 - `id_flush` 仍使用门控版 `id_bp_redirect`，确保 stall 期间不丢指令
 
 ```sv
-// raw: 快速，仅用于 irom_addr（stall 在上层挡住）
+// raw: 快速，仅用于 irom_addr
 wire id_bp_redirect_raw = id_valid & ~mem_branch_flush
                         & id_bp_btb_hit & (type == BRANCH)
                         & (bht[1] != tournament_taken);
@@ -641,12 +644,11 @@ wire id_bp_redirect_raw = id_valid & ~mem_branch_flush
 // gated: 安全，用于 id_flush
 assign id_bp_redirect = id_bp_redirect_raw & id_ready_go & ex_allowin;
 
-// irom_addr: stall > redirect
+// irom_addr: 4-way fast path; stall handled by irom_data_held
 irom_addr = mem_flush       ? target :
-            !if_allowin_w   ? pc :              // stall 挡住 redirect
             redirect_raw    ? redirect_target :
             bp_taken        ? bp_target :
-                              pc + 4;
+                              pc_plus4;
 ```
 
 **效果**: IF/ID→IROM 路径从 ~7 级 → **~4 级**，省 ~3 级 LUT（~0.6-0.9ns）。
@@ -702,7 +704,7 @@ src2 工作集大（14,029 个唯一 word），有大量 cold miss 且依赖 ref
 assign rf_data_valid = (rf_burst_cycle >= 4'd2) & ...;
 // 修复后:
 assign rf_data_valid = (rf_burst_cycle >= 4'(DRAM_LATENCY)) & ...;
-// DRAM_LATENCY = 3 (registered addr + BRAM read + DOB_REG)
+// DRAM_LATENCY = 4 (registered addr + BRAM read + DOB_REG + dram_rdata_r)
 ```
 
 ### 教训
@@ -807,7 +809,7 @@ always_ff @(posedge clk or negedge rst_n) begin
 ## R. BP + DCache 参数优化分析（数据驱动决策）
 
 **日期**: 2026-04-28
-**状态**: 分析完成，待实施 RTL 改动
+**状态**: 已按时序约束取舍后部分实施。BTB=128 已采用；DCache 4KB 曾验证后为 Pblock/250MHz 收敛回退到 2KB；GHR=10 未实施。
 **工具**: `bp_sweep.py` (24 核并行, 107s), `cache_sim.py`, `stage_timing_report.txt`
 **详细报告**: `selfuse/bp_analysis.md`, `selfuse/cache_analysis.md`
 
@@ -822,7 +824,7 @@ always_ff @(posedge clk or negedge rst_n) begin
 
 | 发现 | 数据 | 影响 |
 |------|------|------|
-| src0 BTB 容量瓶颈 | 37,940 次 BTB miss+taken (64-entry) → 202 (128-entry) | BTB=128 是最大单一改善 |
+| src0 BTB 容量瓶颈 | 37,940 次 BTB miss+taken（旧 64 项）→ 202（128 项） | BTB=128 是最大单一改善 |
 | RAS 深度无效果 | 2/4/8/16 深度完全相同, 所有程序 | 不改 RAS |
 | GHR=12+ 时序违例 | PHT 4096 entries → LUTRAM MUX 6+ 级, ID/EX→BP 仅 0.339ns slack | 排除 GHR≥12 |
 | GHR=10 中等风险 | PHT 1024 → +2 级 MUX ≈ +0.2-0.4ns vs 0.339ns slack | 需综合验证 |
@@ -833,13 +835,165 @@ always_ff @(posedge clk or negedge rst_n) begin
 
 | 优先级 | 改动 | CPI 收益 | 时序 | RTL 改动 |
 |:------:|------|:--------:|:----:|----------|
-| **1** | DCache SETS 64→128 (2KB→4KB) | -0.005 | ✅ 零风险 | `dcache.sv` 参数 |
-| **2** | BTB_ENTRIES 64→128 | -0.014 | ✅ 安全 | `branch_predictor.sv` 参数 |
-| 3 | GHR_W 8→10 | -0.009 | ⚠️ 需验证 | 参数 + PHT/SEL 自动扩展 |
+| **1** | DCache SETS 64→128 (2KB→4KB) | -0.005 | 物理布局风险 | 曾实施，后为 250MHz Pblock 收敛回退至 2KB |
+| **2** | BTB_ENTRIES 64→128 | -0.014 | ✅ 安全 | 已采用 |
+| 3 | GHR_W 8→10 | -0.009 | ⚠️ 需验证 | 未实施，保留为复赛/赛后优化项 |
 
 ### 理由
 
-- **DCache 4KB**: 零 BRAM 成本、零时序风险、src0 hit +2.05%。唯一理由就是"BRAM18 白白空了一半"。
-- **BTB 128**: 消除 src0 的最大瓶颈 (BTB miss+taken 37,940→202)。BTB 读路径 slack=0.936ns, 扩容后仍有 ~0.7ns, 远离全局关键路径。
-- **GHR 10**: CPI 额外 -0.009, 但 PHT 写路径 (ID/EX→BP, 0.339ns slack, 10 级 logic) 余量不足, 需实际综合后确认。
+- **DCache 4KB**: 纯性能模型收益存在，但实际 250MHz Pblock 约束下 cell 面积更紧，最终提交回退到 2KB。
+- **BTB 128**: 消除 src0 的最大瓶颈 (BTB miss+taken 37,940→202)，且远离全局关键路径，最终采用。
+- **GHR 10**: CPI 额外 -0.009, 但 PHT 写路径余量不足，未进入初赛提交版本。
 - **不做**: RAS 改动 (零效果)、GHR≥12 (时序违例)、BTB=256 (vs 128 无差异)。
+
+---
+
+## S. 250MHz 时序收敛（Pblock + RTL 关键路径优化）
+
+**日期**: 2026-04-29
+**状态**: 时序收敛，WNS = +0.025ns，riscv-tests 43/43 PASS
+**分支**: 当前工作分支
+
+### 背景
+
+M8（feat/250mhz-timing）通过 flush 延迟 EX→MEM 使 CPU 逻辑具备 250MHz 能力，但 DRAM 高扇出布线导致时序不收敛。M9 引入 DCache 后 DRAM 扇出由 DCache 管理，但 250MHz 仍有 -0.414ns 违例，瓶颈转为 IROM BRAM 地址端口的长布线延迟。
+
+### 改动一览
+
+| 序号 | 改动 | 文件 | WNS 变化 |
+|:----:|------|------|:--------:|
+| 1 | DCache 4KB→2KB 回退 | `dcache.sv`, `dcache_data_ram.v` | (为 Pblock 留空间) |
+| 2 | Pblock 约束 | `digital_twin.xdc` | -0.414 → -0.284ns |
+| 3 | `pc_plus4` 寄存器 | `cpu_top.sv` | -0.125 → -0.005ns |
+| 4 | `bp_target` sel_seq 删除 | `branch_predictor.sv` | -0.005 → **+0.025ns** |
+
+### 改动 1: DCache 4KB→2KB 回退
+
+DCache SETS 128→64，减少 cell 面积，为 Pblock 约束提供更多放置空间。CPI 代价很小（平均 +0.005）。
+
+### 改动 2: Pblock 约束
+
+将 `student_top_inst/u_cpu`、`student_top_inst/u_irom`、`student_top_inst/u_dcache` 三个模块约束到 `CLOCKREGION_X0Y3:CLOCKREGION_X1Y3` 两个时钟区域。减少 CPU→IROM 布线延迟 ~0.5ns。
+
+```tcl
+# digital_twin.xdc
+create_pblock pblock_cpu_irom_dcache
+resize_pblock pblock_cpu_irom_dcache -add {CLOCKREGION_X0Y3:CLOCKREGION_X1Y3}
+add_cells_to_pblock pblock_cpu_irom_dcache [get_cells student_top_inst/u_cpu]
+add_cells_to_pblock pblock_cpu_irom_dcache [get_cells student_top_inst/u_irom]
+add_cells_to_pblock pblock_cpu_irom_dcache [get_cells student_top_inst/u_dcache]
+```
+
+### 改动 3: `pc_plus4` 寄存器
+
+**问题**: `irom_addr` 默认路径 `pc + 32'd4` 包含 32-bit carry chain（3 个 CARRY4 级），从 `pc_reg` 到 IROM 共 8 级逻辑，-0.125ns 违例。
+
+**方案**: 新增 `pc_plus4` 寄存器，每拍预计算下一拍的 PC+4。寄存器的更新优先级与 `irom_addr` MUX **完全镜像**，每个分支从各自的**寄存器源**独立 `+4`，避免反馈环路：
+
+```sv
+// cpu_top.sv
+always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n)            pc_plus4 <= 32'h8000_0000;
+    else if (flush)        pc_plus4 <= branch_target + 4;   // 寄存器源
+    else if (stall)        ;                                // hold
+    else if (redirect)     pc_plus4 <= redirect_target + 4; // IF/ID 寄存器源
+    else if (bp_taken)     pc_plus4 <= bp_target + 4;       // LUTRAM 源
+    else                   pc_plus4 <= pc_plus4 + 4;        // 自增
+end
+```
+
+**不变式**: 当 `irom_addr` 选中默认分支时，`pc_plus4 == pc + 4` 恒成立。
+
+### 改动 4: `bp_target` sel_seq 删除
+
+**问题**: `bp_target` 的 `sel_seq` 分支包含 `if_pc + 32'd4`（= `pc + 4` carry chain），形成 `pc_reg → bp_target → irom_addr → IROM` 8 级路径，-0.005ns。
+
+**关键发现**: 当 `sel_seq = 1` 时，必然 `btb_hit_w = 0` 或 `(type=RET & !ras_valid)`，两种情况下 `bp_taken = 0`。因此 `bp_target` 的值不会被 `irom_addr` MUX 选中，也不会被 NLP redirect 使用——是 don't-care。
+
+**修复**: 直接删除 `sel_seq` 项，`bp_target` 简化为 BTB target OR RAS top。
+
+```sv
+// branch_predictor.sv — 修复前:
+assign bp_target = ({32{sel_btb}} & {r_tgt, 2'b00})
+                 | ({32{sel_ras}} & ras_top)
+                 | ({32{sel_seq}} & (if_pc + 32'd4));  // ← carry chain!
+// 修复后:
+assign bp_target = ({32{sel_btb}} & {r_tgt, 2'b00})
+                 | ({32{sel_ras}} & ras_top);           // sel_seq → don't-care
+```
+
+### 最终时序
+
+WNS = +0.025ns，全部路径 slack 为正。Top 3 最紧路径：
+1. +0.025ns: Pre_IF(PC) → IROM（8 级，BP 预测路径）
+2. +0.034ns: ID/EX → BP LUTRAM WE（8 级，BTB 更新路径）
+3. +0.035ns: DCache → DRAM（0 级，纯布线）
+
+### 教训
+
+> 1. FPGA 时序优化要**物理约束和 RTL 并行推进**——Pblock 解决布线，RTL 解决逻辑级数。
+> 2. 关键路径上的 `+4` 加法器在 RISC-V CPU 中反复出现，要注意 carry chain 对 FPGA 的影响。
+> 3. 组合逻辑中的 don't-care 路径仍会被时序分析报告为违例——主动消除 don't-care 分支可改善 WNS。
+
+---
+
+## T. bp_target 串行链并行化（WNS +0.025 → +0.120ns）
+
+**日期**: 2026-04-29
+**状态**: 已实施，riscv-tests 43/43 PASS
+
+### 问题
+
+PC→IROM 关键路径 9 级逻辑，WNS = +0.025ns。分析逻辑链发现 `bp_target` 的计算存在不必要的串行依赖：
+
+```
+LUTRAM → tag_match (2级) → btb_hit_w (1级) → sel_btb (1级) → bp_target AND-OR (1级)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+              串行链：3级等待 tag_match
+```
+
+`sel_btb` 和 `sel_ras` 通过 `btb_hit_w = r_valid & tag_match` 依赖 tag 比较结果，而 tag 比较是 5-bit 比较器需要 2-3 级 LUT。
+
+### 关键洞察
+
+**bp_target 在 bp_taken=0 时是 don't-care**：
+- `bp_taken = bp_taken_raw & tag_match`
+- 当 `tag_match = 0` → `bp_taken = 0` → `irom_addr` MUX 选 `pc_plus4`，不看 `bp_target`
+- 所以 `bp_target` 不需要等 `tag_match`
+
+### 改动
+
+```sv
+// 修复前（串行，6级从 pc）：
+wire sel_btb = btb_hit_w & ~(r_type[1] & r_type[0]);           // 等 tag_match
+wire sel_ras = btb_hit_w &  r_type[1] & r_type[0] & ras_valid; // 等 tag_match
+
+// 修复后（并行，3级从 pc）：
+wire sel_btb = r_valid & ~(r_type[1] & r_type[0]);             // 不等 tag_match
+wire sel_ras = r_valid &  r_type[1] & r_type[0] & ras_valid;   // 不等 tag_match
+```
+
+不改动 `btb_hit_w`、`bp_btb_hit`、`bp_btb_type` 等快照输出（它们走 IF/ID 寄存器，不在关键路径上）。
+
+### 安全性验证
+
+1. **irom_addr MUX**: bp_target 被 bp_taken 门控，tag_match=0 时不选中 ✅
+2. **ID redirect**: 被 id_bp_btb_hit 门控（仍含 tag_match），tag_match=0 时不触发 ✅
+3. **EX branch_unit**: 用 actual_target flush，不用 predicted target ✅
+4. **sel_btb/sel_ras 互斥**: `~(type[1]&type[0])` 和 `type[1]&type[0]` 互斥，AND-OR 仍 one-hot ✅
+
+### 效果
+
+| 路径 | 改前 Slack | 改前级数 | **改后 Slack** | **改后级数** |
+|------|:----------:|:-------:|:-------------:|:-----------:|
+| PC → IROM | +0.025 | 9 | **+0.120** | **6** |
+| BP → IROM | +0.067 | 8 | **+0.393** | **5** |
+| BP → Pre_IF | +0.337 | 7 | **+0.769** | **5** |
+| Pre_IF → IF/ID | +0.460 | 7 | **+0.701** | **4** |
+
+全局 WNS 从 +0.025ns → **+0.120ns**，提升 **4.8×**。
+
+### 教训
+
+> 1. 组合逻辑中如果下游 MUX 的 select 信号已包含某个条件的门控，则数据路径不需要重复门控——这是 don't-care 优化的通用模式。
+> 2. 串行→并行的优化空间在 "select 信号已经包含的条件" 中寻找——如果 bp_taken 已经 AND 了 tag_match，那 bp_target 的 sel 就不需要再 AND tag_match。

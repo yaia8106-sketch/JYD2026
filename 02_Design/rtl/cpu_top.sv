@@ -43,6 +43,10 @@ module cpu_top (
     // next_pc eliminated: inlined into irom_addr for 1 fewer LUT level on PC→IROM path
     wire        if_valid;
 
+    // 250MHz: Pre-computed PC+4 register — eliminates carry chain from irom_addr default path
+    // Each branch computes +4 independently from its registered source (no irom_addr feedback)
+    logic [31:0] pc_plus4;
+
     // ---- IF/ID ----
     wire        id_valid;
     wire        id_allowin;
@@ -197,11 +201,12 @@ module cpu_top (
 
     // ---- DCache 端口 (EX stage) ----
     // Only cacheable (DRAM) accesses go through DCache; MMIO bypasses
-    // Gate with ~mem_branch_flush AND ~branch_flush to prevent wrong-path
-    // instructions from triggering DCache requests:
-    //   - branch_flush: catches wrong-path instruction entering EX same cycle as branch resolves
-    //   - mem_branch_flush: catches wrong-path instruction in EX one cycle after branch resolves
-    assign cache_req   = ex_valid & ~mem_branch_flush & ~branch_flush & (ex_mem_read_en | ex_mem_write_en) & is_cacheable;
+    // Gate with ~mem_branch_flush to prevent wrong-path instructions from
+    // triggering DCache requests (wrong-path enters EX one cycle after branch resolves).
+    // NOTE: Do NOT gate with ~branch_flush — the EX-stage instruction that generates
+    // branch_flush is the instruction that *detected* the misprediction (e.g., a load
+    // with a false BTB hit). It is NOT wrong-path and its DCache request must proceed.
+    assign cache_req   = ex_valid & ~mem_branch_flush & (ex_mem_read_en | ex_mem_write_en) & is_cacheable;
     assign cache_wr    = ex_mem_write_en;
     assign cache_addr  = alu_addr;
     assign cache_wea   = dram_wea;               // from mem_interface (EX stage)
@@ -304,9 +309,9 @@ module cpu_top (
     // NLP redirect: L0 and L1 disagree on BRANCH direction
     // Split into raw (fast, for IROM addr) and gated (safe, for flush control):
     //
-    // id_bp_redirect_raw: condition-only, no stall gating → fast path for irom_addr
-    //   Safe because stall has HIGHER priority than redirect in irom_addr MUX.
-    //   When stalling, irom_addr selects pc regardless of redirect_raw.
+    // id_bp_redirect_raw: condition-only, no stall gating → fast path for irom_addr.
+    //   Stall no longer sits on the IROM address MUX; the instruction hold
+    //   register below preserves the correct BRAM output across stalls.
     //
     // id_bp_redirect: adds id_ready_go & ex_allowin gating → controls id_flush
     //   Ensures the branch instruction actually transfers to EX before flushing IF/ID.
@@ -322,16 +327,33 @@ module cpu_top (
     wire [31:0] id_redirect_target = id_tournament_taken ? id_bp_target
                                                          : (id_pc + 32'd4);
 
-    // 250MHz: irom_addr = flat 5-way priority MUX
-    // Priority: flush > stall > NLP redirect > L0 prediction > sequential
-    //   - stall above redirect: eliminates hazard detection from IF/ID→IROM path
+    // 250MHz: irom_addr = flat 4-way priority MUX (stall branch removed)
+    // Priority: flush > NLP redirect > L0 prediction > sequential
+    //   - stall handling moved to irom_data_held register (see below)
+    //   - removes allowin chain (cache_ready→mem→ex→id) from IROM critical path
     //   - redirect uses raw version (no id_ready_go/ex_allowin gating)
     //   - bp_taken/bp_target inlined (no next_pc intermediate)
     assign irom_addr = mem_branch_flush    ? mem_branch_target :  // MEM flush (highest, registered)
-                       !if_allowin_w       ? pc :                 // 停顿：保持当前地址
                        id_bp_redirect_raw  ? id_redirect_target : // NLP: ID redirect (raw, fast)
                        bp_taken            ? bp_target :          // L0 预测 taken
-                                             (pc + 32'd4);       // 顺序取指
+                                             pc_plus4;           // 顺序取指（pre-registered, no carry chain）
+
+    // pc_plus4: mirrors irom_addr MUX priority, each branch adds +4 from its registered source
+    // Invariant: when irom_addr selects pc_plus4 (default), pc_plus4 == pc + 4
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n)
+            pc_plus4 <= 32'h8000_0000;              // reset PC (0x7FFFFFFC) + 4
+        else if (mem_branch_flush)
+            pc_plus4 <= mem_branch_target + 32'd4;  // flush: registered source
+        else if (!if_allowin_w)
+            ;                                       // stall: hold
+        else if (id_bp_redirect_raw)
+            pc_plus4 <= id_redirect_target + 32'd4; // NLP redirect: IF/ID regs
+        else if (bp_taken)
+            pc_plus4 <= bp_target + 32'd4;          // L0 prediction: LUTRAM
+        else
+            pc_plus4 <= pc_plus4 + 32'd4;           // sequential: self-increment
+    end
 
     pc_reg u_pc_reg (
         .clk           (clk),
@@ -346,6 +368,29 @@ module cpu_top (
 
     // ==================== IROM: 外部例化，通过 irom_addr/irom_data 端口 ====================
 
+    // ==================== Instruction hold register ====================
+    // When pipeline stalls (id_allowin=0), BRAM output may change (irom_addr
+    // no longer holds pc). Capture the correct instruction on stall entry
+    // so IF/ID can use it when the stall ends.
+    logic [31:0] irom_data_held;
+    logic        irom_held_valid;
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n)
+            irom_held_valid <= 1'b0;
+        else if (mem_branch_flush | id_allowin)   // flush or not stalling: clear
+            irom_held_valid <= 1'b0;
+        else if (!irom_held_valid)                // entering stall: mark
+            irom_held_valid <= 1'b1;
+    end
+
+    always_ff @(posedge clk) begin
+        if (!irom_held_valid && !id_allowin && !mem_branch_flush)
+            irom_data_held <= irom_data;
+    end
+
+    wire [31:0] irom_data_out = irom_held_valid ? irom_data_held : irom_data;
+
     // ==================== IF/ID ====================
 
     if_id_reg u_if_id_reg (
@@ -359,7 +404,7 @@ module cpu_top (
         .ex_allowin   (ex_allowin),
         .id_flush     (id_flush),
         .if_pc        (pc),
-        .if_inst      (irom_data),       // BRAM output captured in IF stage
+        .if_inst      (irom_data_out),   // held or live BRAM output
         .id_pc        (id_pc),
         .id_inst      (id_inst),         // registered instruction for ID
         // Branch prediction passthrough

@@ -74,9 +74,10 @@ module dcache (
 
     // pipeline_advance must match cpu_top's mem_allowin to keep DCache's
     // internal EX→MEM register synchronized with cpu_top's ex_mem_reg.
-    // Without this, a hit (cpu_ready=1) while wb_allowin=0 would advance
-    // DCache but not cpu_top, causing a desync.
-    wire pipeline_advance = ~pipeline_stall | flush;
+    // NOTE: Do NOT add "| flush" — flush no longer force-kills the current
+    // MEM instruction in ex_mem_reg (see fix: gate ~mem_branch_flush inside
+    // mem_allowin path). Both must stall/advance together.
+    wire pipeline_advance = ~pipeline_stall;
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -141,13 +142,15 @@ module dcache (
     logic [TAG_W-1:0] tag_mem [WAYS-1:0][SETS-1:0];
     logic             tag_vld [WAYS-1:0][SETS-1:0];
 
-    // Async read with EX-stage index
+    // Async read with EX-stage index (no forwarding MUX needed:
+    // tag is written in S_DONE_RD, pipeline_advance=0 during S_DONE_RD,
+    // so by S_DONE when pipeline_advance=1, LUTRAM already has new value)
     wire [TAG_W-1:0] tag_rd_data [WAYS-1:0];
     wire             tag_rd_vld  [WAYS-1:0];
-    wire [TAG_W-1:0] tag_rd_data_fwd0 = (state == S_DONE && rf_way == 0 && rf_idx == ex_index) ? rf_tag : tag_mem[0][ex_index];
-    wire [TAG_W-1:0] tag_rd_data_fwd1 = (state == S_DONE && rf_way == 1 && rf_idx == ex_index) ? rf_tag : tag_mem[1][ex_index];
-    wire             tag_rd_vld_fwd0  = (state == S_DONE && rf_way == 0 && rf_idx == ex_index) ? 1'b1   : tag_vld[0][ex_index];
-    wire             tag_rd_vld_fwd1  = (state == S_DONE && rf_way == 1 && rf_idx == ex_index) ? 1'b1   : tag_vld[1][ex_index];
+    assign tag_rd_data[0] = tag_mem[0][ex_index];
+    assign tag_rd_data[1] = tag_mem[1][ex_index];
+    assign tag_rd_vld[0]  = tag_vld[0][ex_index];
+    assign tag_rd_vld[1]  = tag_vld[1][ex_index];
 
     // Latch tag read results EX→MEM
     logic [TAG_W-1:0] mem_tag_rd [WAYS-1:0];
@@ -158,10 +161,10 @@ module dcache (
             mem_tag_rd[0]  <= '0;  mem_tag_vld[0] <= 1'b0;
             mem_tag_rd[1]  <= '0;  mem_tag_vld[1] <= 1'b0;
         end else if (pipeline_advance) begin
-            mem_tag_rd[0]  <= tag_rd_data_fwd0;
-            mem_tag_vld[0] <= tag_rd_vld_fwd0;
-            mem_tag_rd[1]  <= tag_rd_data_fwd1;
-            mem_tag_vld[1] <= tag_rd_vld_fwd1;
+            mem_tag_rd[0]  <= tag_rd_data[0];
+            mem_tag_vld[0] <= tag_rd_vld[0];
+            mem_tag_rd[1]  <= tag_rd_data[1];
+            mem_tag_vld[1] <= tag_rd_vld[1];
         end
     end
 
@@ -543,8 +546,10 @@ module dcache (
             // leaves no valid-but-corrupted line (BRAM partially overwritten).
             if (state == S_IDLE && state_nxt == S_REFILL_BURST)
                 tag_vld[lru_victim][mem_index] <= 1'b0;
-            // Validate and write tag only on successful refill completion
-            if (state == S_DONE) begin
+            // Validate and write tag in S_DONE_RD (one cycle before S_DONE).
+            // By S_DONE, LUTRAM has the new value, so pipeline_advance can
+            // latch correct tag without forwarding MUX.
+            if (state == S_DONE_RD) begin
                 tag_vld[rf_way][rf_idx] <= 1'b1;
                 tag_mem[rf_way][rf_idx] <= rf_tag;
             end

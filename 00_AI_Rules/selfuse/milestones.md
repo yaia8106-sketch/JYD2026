@@ -65,6 +65,42 @@
   1. student_top.sv 注释 "无 output register" 与 IP 实际配置（DOB_REG=1）不符，导致 DCache 延迟参数设错
   2. Vivado Synth 8-7137 是严重 warning——异步复位块中**所有寄存器**必须有显式复位值
 
+### 🏁 M10: 250MHz 时序收敛（WNS = +0.025ns）✅
+- **日期**: 2026-04-29
+- **说明**: 通过 Pblock 约束 + RTL 关键路径优化实现 250MHz 时序收敛
+- **关键改动**:
+  1. DCache 4KB→2KB 回退（减少 cell 面积，给 Pblock 留空间）
+  2. Pblock 约束：CPU + IROM + DCache 共置于 `CLOCKREGION_X0Y3:CLOCKREGION_X1Y3`
+  3. `pc_plus4` 寄存器：消除 irom_addr 默认路径 `pc+4` carry chain（-0.125ns → -0.005ns）
+  4. `bp_target` sel_seq 删除：消除 `pc→bp_target→IROM` carry chain（-0.005ns → +0.025ns）
+- **时序改善历程**: -0.414ns → -0.284ns → -0.125ns → -0.005ns → **+0.025ns** ✅
+- **验证结果**: riscv-tests 43/43 PASS（iverilog）
+- **⚠️**: 250MHz 版本尚未 FPGA 上板验证稳定性
+
+### 🏁 M10+: 250MHz 时序优化加强（WNS = +0.120ns）
+- **日期**: 2026-04-29
+- **说明**: bp_target 串行链并行化，显著提升 PC→IROM 路径时序
+- **关键改动**:
+  1. `bp_target` 的 `sel_btb`/`sel_ras` 从 `btb_hit_w`（含 tag_match）改为 `r_valid`（去掉 tag 比较串行依赖）
+  2. 原理：bp_target 在 bp_taken=0 时是 don't-care，而 bp_taken 已包含 tag_match 门控
+- **路径改善**:
+  - PC→IROM: 9级 → **6级**（-3级），slack 0.025 → **0.120ns**
+  - BP→IROM: 8级 → **5级**（-3级），slack 0.067 → **0.393ns**
+  - BP→Pre_IF: 7级 → **5级**，slack 0.337 → **0.769ns**
+- **当前瓶颈**: DCache→DRAM (0.120ns, 0级纯布线) 与 PC→IROM (0.120ns, 6级) 并列
+- **验证结果**: riscv-tests 43/43 PASS（iverilog）
+- **⚠️**: 尚未 FPGA 上板验证
+
+### 🏁 M11: 初赛提交包定稿 ✅
+- **日期**: 2026-05-02
+- **说明**: 初赛技术文档、技术数据和演示视频整理完成，提交版本采用 200MHz 稳定 bit 文件
+- **交付物**:
+  1. 技术文档：设计文档、测评报告、仿真报告、上板验证报告（均含 `.docx` + `.pdf`）
+  2. 技术数据：`CICC1004706+初赛+bit文件.zip`，内含 src0 / src1 / src2 三个 bit 文件
+  3. 演示视频：`CICC1004706+初赛+演示视频.mp4`
+- **最终策略**: 以 200MHz 上板稳定性为提交优先级；250MHz 作为时序收敛和后续优化成果保留
+- **剩余外部动作**: 橙色云平台上传核对；中期报告表单填写
+
 ---
 
 ## 重要回滚点
@@ -77,7 +113,10 @@
 | **🔒 预测器前最终基线** | `bb094dd` | 纯净 EX-only，FPGA 功能正确 (tag: M6-baseline) | ⭐⭐⭐⭐⭐ |
 | **Tournament BP** | `ddc0be4` | NLP 分支预测器，FPGA 验证通过 @ 200MHz | ⭐⭐⭐⭐⭐ |
 | **250MHz 尝试** | `2f84a77` | flush 延迟优化，200MHz 收敛，250MHz 未收敛 | ⭐⭐⭐ |
-| **DCache 验证** | (当前) | DCache 实现，4/4 COE 全部 FPGA 通过 | ⭐⭐⭐⭐⭐ |
+| **DCache 验证** | (M9) | DCache 实现，4/4 COE 全部 FPGA 通过 | ⭐⭐⭐⭐⭐ |
+| **250MHz 收敛** | (M10) | WNS=+0.025ns，仿真通过，**FPGA 待验证** | ⭐⭐⭐ |
+| **250MHz 优化** | (当前) | WNS=+0.120ns，bp_target 并行化，**FPGA 待验证** | ⭐⭐⭐ |
+| **初赛提交包** | (M11) | 文档、bit 压缩包、演示视频齐备；200MHz 稳定版 | ⭐⭐⭐⭐⭐ |
 
 ---
 

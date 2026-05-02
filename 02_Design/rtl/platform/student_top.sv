@@ -7,7 +7,7 @@
 //   top.sv (模板，不可修改)
 //     └── student_top (本文件)
 //           ├── cpu_top         (自研 RV32I 五级流水线)
-//           ├── IROM            (BRAM ROM, 有 output register, 2 拍)
+//           ├── IROM            (BRAM ROM, 无 output register, 1 拍)
 //           ├── dcache          (2KB 2-way WT+WA data cache)
 //           │     └── DRAM      (BRAM RAM, SDP, 65536×32)
 //           └── mmio_bridge     (LED/SEG/SW/KEY/CNT)
@@ -103,7 +103,7 @@ module student_top #(
 
     // ================================================================
     //  IROM (Block Memory Generator ROM)
-    //  配置: 32bit, 4096 depth (16KB), 有 output register (2 拍)
+    //  配置: 32bit, 4096 depth (16KB), 无 output register (1 拍)
     //  地址: word 地址 = irom_addr[13:2], 12 bit
     // ================================================================
     IROM4MyOwn u_irom (

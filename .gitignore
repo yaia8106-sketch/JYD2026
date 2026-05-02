@@ -21,6 +21,9 @@ rt-thread/
 !02_Design/sim/riscv_tests/work/.gitkeep
 xsim.dir/
 
+# Debug scratchpad (AI working memory, transient)
+02_Design/sim/debug/debug_state.md
+
 # Logs and Journals
 *.log
 *.jou

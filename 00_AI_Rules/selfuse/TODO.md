@@ -1,106 +1,77 @@
 # TODO 清单
 
-> 最后更新：2026-04-28
+> 最后更新：2026-05-02
 
 ---
 
 ## 当前状态
 
-**M9 里程碑已完成。** DCache 上线后全部 4 个 COE 程序 FPGA 验证通过。
-**性能分析完成。** BP sweep + Cache sim + 时序报告分析 → 优化方案已确定。
+**初赛提交包已整理完成。** 当前提交采用 200MHz 稳定版本；250MHz 时序收敛成果保留为设计亮点和后续优化方向。
 
-- ✅ riscv-tests 43/43 PASS（iverilog）
-- ✅ FPGA 4/4 COE 全部通过（current + src0 + src1 + src2）
-- ✅ 200MHz 时序收敛（250MHz worst slack = 0.082ns, DCache→DRAM 布线瓶颈）
+- ✅ riscv-tests 43/43 PASS（iverilog：37 官方指令测试 + 6 自定义功能测试）
+- ✅ FPGA src0 / src1 / src2 赛方程序全部通过 @ 200MHz
+- ✅ **250MHz 时序收敛**（WNS = +0.120ns，全部路径 slack 为正）
 - ✅ BP 配置扫描完成（24 配置 × 4 程序, 详见 `selfuse/bp_analysis.md`）
 - ✅ DCache 配置扫描完成（12 配置 × 4 程序, 详见 `selfuse/cache_analysis.md`）
+- ✅ 初赛技术文档、bit 文件压缩包、演示视频均已放入 `04_Submission/`
+- ⚠️ **250MHz 版本尚未 FPGA 上板验证稳定性**
+
+> **提交策略**：提交 **200MHz** 版本（已验证稳定）。250MHz 上板验证为可选项，不影响提交。
 
 ---
 
 ## 🔥 当前待办（按优先级排列）
 
-### 1. 比赛文档撰写 — **最高优先级**
+### 1. 初赛平台提交
 
-**截止时间：2026-05-07 23:59**（还剩 ~10 天）
+**截止时间：2026-05-07 23:59**
 
-提交物清单（详见 `contest/README.md`）：
+- [ ] 登录橙色云提交平台，按二级目录上传 `04_Submission/` 中的材料
+- [ ] 上传后逐项核对文件名、路径、大小和提交状态
+- [ ] 填写中期报告检查表单（不影响初赛成绩，但要求提交）
 
-| 材料 | 模板 | 状态 |
-|------|------|------|
-| CPU 设计文档 | `contest/parsed/templates/设计报告模版.txt` | 🟡 Markdown 初稿已完成，待补实际数据 + 转 Word/PDF |
-| 仿真报告 | `contest/parsed/templates/仿真报告模版.txt` | 🟡 Markdown 初稿已完成，待贴入实际仿真输出 + 转 Word/PDF |
-| 上板验证报告 | `contest/parsed/templates/上板验证报告模版.txt` | 🟡 Markdown 初稿已完成，待填写性能数据/资源利用率/截图 + 转 Word/PDF |
-| bit 文件 | — | ❌ 待放到 `04_Submission/技术数据/` |
-| 演示视频（≤10min） | — | ❌ 需录制 |
-| 中期报告表单 | `contest/parsed/中期报告检查通知.md` | ❓ 需确认 |
+### 2. 提交前最后自检
 
-每份文档通用要求：
-- 封面页（作品名称 + 队伍编号 + 大赛 LOGO）
-- 快速预览简介页（1-2页，放封面/目录后第一页）
-- AI 工具使用声明（工具名+版本、使用场景、生成占比）
-- **禁止出现学校/老师信息**
-- Word(.docx) + PDF 同时提交，命名：`队伍编号+初赛+文件性质`
+- [x] 技术文档：设计文档 `.docx + .pdf`
+- [x] 技术文档：测评报告 `.docx + .pdf`
+- [x] 技术文档：仿真报告 `.docx + .pdf`（补充材料）
+- [x] 技术文档：上板验证报告 `.docx + .pdf`（补充材料）
+- [x] 技术数据：`CICC1004706+初赛+bit文件.zip`（src0/src1/src2）
+- [x] 演示视频：`CICC1004706+初赛+演示视频.mp4`
+- [x] AI 工具使用声明已写入技术文档
 
-工作计划：Markdown 初稿已在 `04_Submission/技术文档/` 中完成 → 下一步：
-1. 运行 `run_all.sh` 贴入实际仿真输出
-2. 填写上板性能数据、资源利用率、时序信息
-3. 添加数字孞生平台截图
-4. 转 Word/PDF + 加封面页
+### 3.（可选）稳定性排查（250MHz FPGA 验证）
 
-### 2. 性能优化实施 — 低风险参数调整
+250MHz 时序已收敛但尚未作为提交版本进行 FPGA 稳定性验证。如后续进入复赛或有余力，可继续验证。
 
-**已完成分析**, 待实施 RTL 改动。详见 `selfuse/bp_analysis.md` 和 `selfuse/cache_analysis.md`。
+- [ ] 梳理当前设计中可能导致 FPGA 运行不稳定的所有因素
+- [ ] 250MHz 烧录 FPGA，src0 / src1 / src2 全部通过
+- [ ] 稳定性测试：长时间运行 / 多次复位 / 边界条件
 
-| 优先级 | 改动 | CPI 收益 | 时序风险 | 资源成本 | 状态 |
-|:------:|------|:--------:|:--------:|:--------:|:----:|
-| **1** | **DCache 2KB→4KB** (SETS 64→128) | -0.005 | ✅ 零 | ✅ 零 BRAM (填满已有 BRAM18) | ❌ 待实施 |
-| **2** | **BTB 64→128** (BTB_ENTRIES) | -0.014 | ✅ 安全 (读路径余量 0.7ns+) | +2,560 bits LUTRAM | ❌ 待实施 |
-| 3 | GHR 8→10 (GHR_W) | -0.009 | ⚠️ 需综合验证 | +4,096 bits LUTRAM | ❌ 待验证 |
+### 4. 物理优化：DRAM 拆分（复赛/赛后可选）
 
-**关键发现** (bp_sweep.py, 24 核并行, 152 个评估):
-- **src0 BTB 容量瓶颈**: 64-entry BTB 有 37,940 次 BTB miss+taken → BTB=128 后降到 202
-- **RAS 深度无效果**: 2/4/8/16 全部相同 (调用链深度 ≤ 2)
-- **GHR=12+时序违例**: PHT 4096+ entries → LUTRAM MUX 6+ 级, 超出 ID/EX→BP 路径余量 (0.339ns)
+当前 DCache→DRAM 路径 (0.120ns, 0级纯布线) 是 WNS 瓶颈之一。
+考虑将 1×32bit DRAM（64×BRAM36）拆为 4×8bit DRAM（各 16×BRAM36）：
 
-### 3. 250MHz 偶尔跑飞排查 — 有空再做
+- 地址扇出从 64 降到 16（4× 改善）
+- 每组 16 BRAM 可紧凑放置
+- DCache 接口不变，仅改 `student_top.sv` 连线
+- 预计 slack 从 0.120 → 0.3+ ns
 
-**现象**：WNS 不报红但 FPGA 上偶尔跑飞。
+- [ ] 创建 4 个 8-bit BRAM IP
+- [ ] 修改 `student_top.sv` 拆分/合并连线
+- [ ] 拆分 COE 初始化文件
+- [ ] 综合验证时序
 
-**时序报告 Top-5** (250MHz, `stage_timing_report.txt`):
-| # | Slack | Levels | 路径 |
-|:-:|:-----:|:------:|------|
-| 1 | 0.082ns | 0 | DCache dram_rd_addr → DRAM BRAM (纯布线, 64×BRAM36 扇出) |
-| 2 | 0.087ns | 0 | 同上 |
-| 3 | 0.092ns | 0 | 同上 |
-| 4 | 0.096ns | 0 | 同上 |
-| 5 | 0.114ns | 7 | DCache mem_index → IROM BRAM |
+### 5. 性能参数优化（复赛/赛后可选）
 
-**根因确认**: 全局最差 5 条全是 DCache→DRAM **纯布线**延迟 (0 级逻辑), CPU 逻辑不是瓶颈。
+250MHz 稳定后如有余力，可实施以下改动提升 CPI：
 
-**排查步骤**：
-- [ ] 查 Vivado Timing Summary：WNS / WHS / TPWS 三个值
-- [ ] 查综合/实现日志里的 Timing-6 / Timing-18 类 warning
-- [ ] 考虑 Pblock 约束（把 CPU 和 DRAM BRAM 放相邻区域）
-- [ ] 如果布线拥塞严重，考虑 Performance_ExtraTimingOpt 策略
-
-### 4. 分支预测器 — 已完成分析, 不做 TAGE
-
-分析脚本:
-
-| 脚本 | 用途 |
-|------|------|
-| `02_Design/coe/bp_sweep.py` | **24 核并行配置扫描** (BTB×GHR×RAS, 152 评估, 107s) |
-| `02_Design/coe/bp_test_current.py` | 当前配置详细诊断（L0/L1 breakdown） |
-| `02_Design/coe/bp_coldstart_sim.py` | 冷启动 10M 指令精确仿真 |
-
-最新预测率 (bp_sweep.py, 精确匹配 RTL, 5M 指令):
-
-| 程序 | Overall | Branch | BTBm+T | CPI |
-|:---:|:---:|:---:|:---:|:---:|
-| current | 92.17% | 91.71% | 16 | 1.118 |
-| src0 | **74.63%** | 74.34% | **37,940** | **1.193** |
-| src1 | 85.27% | 85.15% | 10,282 | 1.159 |
-| src2 | 85.29% | 84.10% | 33 | 1.148 |
+| 优先级 | 改动 | CPI 收益 | 时序风险 | 状态 |
+|:------:|------|:--------:|:--------:|:----:|
+| 1 | DCache 2KB→4KB | -0.005 | ⚠️ 布局风险 | 曾实施后回退，复赛可重评 |
+| 2 | GHR 8→10 | -0.009 | ⚠️ 需验证 | 暂缓 |
+| 3 | DRAM 4×8bit 拆分 | 时序余量 | ⚠️ 需改 IP/连线 | 暂缓 |
 
 ---
 
@@ -119,7 +90,7 @@
 
 ### 验证
 - [X] riscv-tests 43/43 PASS（iverilog）
-- [X] FPGA 4/4 COE 全部通过 @ 200MHz
+- [X] FPGA src0 / src1 / src2 全部通过 @ 200MHz（另有 current 调试程序通过）
 
 ### 时序优化
 - [X] perip_bridge AND-OR 优化（决策 I）
@@ -129,15 +100,19 @@
 - [X] L0 预测 AND-OR 平坦化（决策 M）
 - [X] next_pc_mux 消除 + BTB tag 7→5 bit + NLP redirect 拆分（决策 N）
 - [X] PC+4 EX 级预算（决策 P）
+- [X] Pblock 约束 CPU+IROM+DCache 共置（决策 S）
+- [X] pc_plus4 寄存器优化：消除 irom_addr 默认路径 carry chain（决策 S）
+- [X] bp_target sel_seq 删除：消除 pc→bp_target→IROM carry chain（决策 S）
+- [X] bp_target sel_btb/sel_ras 去 tag_match 依赖：并行化省 3 级（决策 T）
 
 ### DCache
 - [X] 可行性评估 cache_sim.py（决策 L）
 - [X] 2KB 2-way WT+WA + 1-entry SB（决策 L）
-- [X] DRAM 延迟 bug 修复 DRAM_LATENCY=3（决策 O）
+- [X] DRAM 延迟 bug 修复，当前 DCache `DRAM_LATENCY=4`（决策 O/P）
 - [X] Synth 8-7137 forwarding 寄存器复位修复（决策 Q）
 
 ### Tournament 分支预测器
-- [X] BTB64 + Bimodal BHT + GShare 256 + Selector 256 + RAS 4
+- [X] BTB128 + Bimodal BHT + GShare 256 + Selector 256 + RAS 4
 - [X] NLP: IF(L0) Bimodal, ID(L1) Tournament
 - [X] bp_stress 测试程序
 
@@ -151,6 +126,7 @@
 - [x] ~~JALR 提前到 ID 级~~ — 200MHz 时序不收敛
 - [x] ~~RAS 4→8~~ — bp_sweep 证实 RAS 深度对所有程序零效果 (调用链深度 ≤ 2)
 - [x] ~~GHR 12/14~~ — 时序分析证实 PHT 4096+ entries 导致 LUTRAM MUX 违例
+- [x] ~~DCache 4KB~~ — 为时序收敛回退至 2KB（节省 cell 面积给 Pblock 空间）
 
 </details>
 
@@ -160,4 +136,3 @@
 
 - [ ] TCL 脚本一键创建 Vivado 工程 — **暂缓**
   > 过于复杂，等以后有空再研究。
-
