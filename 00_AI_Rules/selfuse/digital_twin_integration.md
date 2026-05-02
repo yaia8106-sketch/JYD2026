@@ -1,10 +1,11 @@
-# 数字孞生平台适配记录
+# 数字孪生平台适配记录
 
-> 本文档记录 cpu_top 集成到 `JYD2025_Contest-rv32i/` 数字孞生平台工程过程中的分析、决策和待定事项。
+> 本文档记录 cpu_top 集成到 `JYD2025_Contest-rv32i/` 数字孪生平台工程过程中的分析、决策和待定事项。
+> 当前状态（2026-05-02）：平台集成、200MHz bit 生成、src0/src1/src2 数字孪生验证和初赛材料整理均已完成。本文档作为集成过程归档。
 >
 > ⚠️ **过时警告**（M9 DCache 重构后）：
 > - **§1 架构图**已更新为当前版本
-> - **§3 存储体选型**：IROM 实际有 output register（2 拍），DRAM 现由 DCache 管理且有 DOB_REG=1
+> - **§3 存储体选型**：IROM 无 output register（1 拍），DRAM 现由 DCache 管理且有 DOB_REG=1
 > - **§4-5 流水线适配/perip_bridge**：旧版 perip_bridge 已被拆分为 dcache + mmio_bridge，cpu_top 端口已改为 cache_* + mmio_* 接口
 > - 详细的当前架构见 `design_decisions.md` 决策 L/O/Q
 
@@ -15,10 +16,10 @@
 ```
 top.sv
 ├── PLL (差分时钟 → clk_50MHz + cpu_clk)
-├── UART + twin_controller (数字孞生通信)
+├── UART + twin_controller (数字孪生通信)
 └── student_top.sv ← 我们写的，CPU 在这里
     ├── cpu_top          (自研 RV32I 五级流水线)
-    ├── IROM             (Block RAM ROM, 16KB, 有 output register, 2 拍)
+    ├── IROM             (Block RAM ROM, 16KB, 无 output register, 1 拍)
     ├── dcache           (2KB 2-way WT+WA data cache)
     │   └── DRAM         (Block RAM, SDP, 256KB, DOB_REG=1)
     ├── mmio_bridge      (自研外设桥: LED/SEG/SW/KEY/CNT)
@@ -67,7 +68,7 @@ top.sv
 ### 决策（已过时，见 `design_decisions.md` §G）
 
 > ⚠️ 以下分析基于早期设计。实际现状：
-> - **IROM**：有 output register（2 拍延迟），配合预取方案工作
+> - **IROM**：无 output register（1 拍延迟），配合预取方案工作
 > - **DRAM**：SDP BRAM，有 DOB_REG=1（2 拍读延迟），由 DCache 管理，CPU 不再直连
 
 理由：
@@ -146,7 +147,7 @@ WB 阶段（Edge3 ~）:
 | 文件 | 改动 |
 |---|---|
 | `if_id_reg.sv` | ✅已完成：新增 `if_inst` / `id_inst` 传递，锁存指令到 ID 阶段 |
-| `cpu_top.sv` | ✅已完成：`irom_addr` 三路 MUX + decoder/imm_gen 使用 `id_inst` |
+| `cpu_top.sv` | ✅已完成：`irom_addr` 预取 MUX + decoder/imm_gen 使用 `id_inst` |
 | `pc_reg.sv` | ✅已完成：复位值改为 `0x7FFF_FFFC`（预取方案） |
 | `mem_interface.sv` | ✅已完成：`* 4'd8` → `{addr, 3'b0}` 修复 |
 | `student_top.sv` | ✅已完成：CPU + IROM + bridge 连线 |
@@ -159,7 +160,7 @@ module cpu_top (
     input  logic        clk,
     input  logic        rst_n,
     // IROM 接口 (IF stage)
-    output logic [31:0] irom_addr,      // = branch_target / pc / next_pc 三路 MUX
+    output logic [31:0] irom_addr,      // 取指预取地址（当前 RTL 已演进为 4 路快速 MUX）
     input  logic [31:0] irom_data,      // 指令（BRAM 1拍 Clk-to-Q，IF 阶段有效）
     // 外设总线 (EX stage → bridge)
     output logic [31:0] perip_addr,     // = alu_result
@@ -187,9 +188,9 @@ PC 复位值 = `0x7FFF_FFFC`（= text_base - 4），使首拍 `next_pc = 0x8000_
 
 ## 5. 自研 perip_bridge 设计要点
 
-### 读路径：DRAM 1 拍 + MMIO 组合，MEM 阶段统一输出
+### 读路径：DRAM 1 拍 + MMIO 组合，MEM 阶段统一输出（旧版，DCache 重构后不再适用）
 
-- **DRAM**：BRAM 无 output register。EX 地址直连 → Edge2 锁存 → MEM 阶段 Clk-to-Q
+- **旧版 DRAM**：BRAM 无 output register。EX 地址直连 → Edge2 锁存 → MEM 阶段 Clk-to-Q
 - **MMIO**：MEM 阶段用 `mem_alu_result`（从 EX/MEM 寄存器来）做地址译码 → 组合读
 - 两者在 MEM 阶段并行产生数据，最终 MUX 选择输出
 - **MMIO 组合路径（~3ns）< BRAM 路径（~3.5ns），不构成瓶颈**

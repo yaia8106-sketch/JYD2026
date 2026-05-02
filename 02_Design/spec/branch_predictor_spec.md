@@ -1,6 +1,6 @@
 # 分支预测器架构规格书
 
-> 状态：✅ RTL 实现完成，FPGA 验证通过 | 最后更新：2026-04-19
+> 状态：✅ RTL 实现完成，riscv-tests 43/43 PASS | 最后更新：2026-04-30
 
 ---
 
@@ -27,9 +27,9 @@
 
 ┌──────────────────────────────────────────────────────┐
 │  BTB (Branch Target Buffer)                          │
-│  64 entry, direct-mapped (NLP: 消除 way 选择逻辑)   │
-│  每条目: valid(1)+tag(7)+target(30)+type(2)+bht(2)   │
-│  = 42 bit/entry，无 LRU                              │
+│  128 entry, direct-mapped (NLP: 消除 way 选择逻辑)  │
+│  每条目: valid(1)+tag(5)+target(30)+type(2)+bht(2)   │
+│  = 40 bit/entry，无 LRU                              │
 │  实现: LUTRAM                                        │
 ├──────────────────────────────────────────────────────┤
 │  GShare 预测器                                       │
@@ -66,7 +66,7 @@
 │  · Selector 读      │   │  → id_bp_redirect   │   │ 误预测时:            │
 │                     │   │  → flush IF, 1bubble│   │  · branch_flush      │
 └─────────────────────┘   └─────────────────────┘   └──────────────────────┘
-     2-3 级逻辑 ~3.3ns         纯组合，不限时序           纯时序
+     短取指路径，250MHz 正时序        纯组合，不限时序           纯时序
 ```
 
 **关键原则**：
@@ -83,11 +83,11 @@
 
 | 参数 | 值 | 验证方式 |
 |------|:--:|---------|
-| **容量** | 64 entry | 仿真：BTB64 比 BTB32 平均命中率高 5-7% |
+| **容量** | 128 entry | bp_sweep：消除 src0 的 BTB 容量瓶颈（BTB miss+taken 从 37,940 降至 202） |
 | **映射方式** | **直接映射** | NLP 优化：消除 way 选择 MUXF7，减少 IF 级逻辑级数 |
 | **索引方式** | PC 直接取位 | 仿真：Direct 80.1% vs XOR 79.8% |
-| **索引位** | `PC[7:2]` | 6 bit → 64 entry |
-| **Tag 位** | `PC[14:8]` | 7 bit |
+| **索引位** | `PC[8:2]` | 7 bit → 128 entry |
+| **Tag 位** | `PC[13:9]` | 5 bit |
 | **替换策略** | 直接覆盖 | 直接映射无需 LRU |
 
 > [!NOTE]
@@ -100,13 +100,13 @@
 ```
 PC[31:0] 的用途分配（NLP 直接映射）：
 
-  31     13  12     8  7     2    1  0
+  31     14  13     9  8     2    1  0
  ┌─────────┬──────────┬─────────┬──────┐
- │ 不使用  │ Tag (5b) │Index(6b)│ 00   │
- │(高位)   │ PC[12:8] │PC[7:2]  │(对齐)│
+ │ 不使用  │ Tag (5b) │Index(7b)│ 00   │
+ │(高位)   │ PC[13:9] │PC[8:2]  │(对齐)│
  └─────────┴──────────┴─────────┴──────┘
 
-覆盖范围: PC[12:2] = 11 bits = 2K 字 (8KB)
+覆盖范围: PC[13:2] = 12 bits = 4K 字 (16KB)
 5-bit tag + valid = 6 输入 → 单 LUT6 比较（省 1 级 LUT，优化 PC→IROM 路径）
 ```
 
@@ -123,7 +123,7 @@ PC[31:0] 的用途分配（NLP 直接映射）：
 | 字段 | 位宽 | 说明 |
 |------|:---:|------|
 | `valid` | 1 | 条目有效标志，LUTRAM（无 reset，冷启动安全：误命中由 flush 纠正） |
-| `tag` | 5 | `PC[12:8]`，5-bit + valid = 6 输入 → 单 LUT6 比较 |
+| `tag` | 5 | `PC[13:9]`，5-bit + valid = 6 输入 → 单 LUT6 比较 |
 | `target` | 30 | 预测跳转目标 `PC[31:2]`，低 2 位恒为 0 |
 | `type` | 2 | 指令类型编码（NLP：ID 级用于判断是否需要 Tournament 验证） |
 | `bht` | 2 | Bimodal 2-bit 饱和计数器（NLP：bht[1] 用于 IF 级 L0 快速方向决策） |
@@ -145,7 +145,7 @@ PC[31:0] 的用途分配（NLP 直接映射）：
 ### 3.6 存储布局
 
 ```
-64 entry × 42 bit = 2,688 bit 总计（无 LRU，全 LUTRAM）
+128 entry × 40 bit = 5,120 bit 总计（无 LRU，全 LUTRAM）
 ```
 
 ---
@@ -258,21 +258,22 @@ Selector: 256 × 2-bit = 512 bit（LUTRAM）
 
 ── L0 快速预测（AND-OR 平坦逻辑）──
 
-bp_taken（单 LUT6，5 输入）:
-  = btb_hit & (
+bp_taken（tag_match 后置门控）:
+  bp_taken_raw = r_valid & (
       ~type[1]                      // JAL/CALL: always taken
     | (~type[0] & bht[1])           // BRANCH: bimodal direction
     | ( type[0] & ras_valid)        // RET: RAS valid
   )
+  bp_taken = bp_taken_raw & tag_match
 
-bp_target（3 路 AND-OR MUX，one-hot select）:
-  sel_btb = btb_hit & ~(type[1] & type[0])              // JAL/CALL/BRANCH
-  sel_ras = btb_hit &   type[1] & type[0] & ras_valid   // RET
-  sel_seq = ~sel_btb & ~sel_ras                          // default
+bp_target（2 路 AND-OR MUX，one-hot select）:
+  sel_btb = r_valid & ~(type[1] & type[0])              // JAL/CALL/BRANCH
+  sel_ras = r_valid &   type[1] & type[0] & ras_valid   // RET
 
   bp_target = (sel_btb & {target, 2'b00})     // BTB target（ID 级 redirect 也需要）
-            | (sel_ras & ras_top)              // RAS top
-            | (sel_seq & (PC + 4))            // sequential
+              | (sel_ras & ras_top)              // RAS top
+
+  // sequential 分支为 don't-care：bp_taken=0 时 irom_addr 选 pc_plus4，不消费 bp_target
 ```
 
 ### 6.2 IF 级关键路径（AND-OR + tag 缩减 + MUX 合并后）
@@ -308,7 +309,7 @@ tournament_taken = use_bimodal ? bimodal_taken : gshare_taken
 
 // L0 和 L1 是否一致？
 // raw 版（快速，用于 IROM 地址选择）：
-id_bp_redirect_raw = id_valid & ~branch_flush
+id_bp_redirect_raw = id_valid & ~mem_branch_flush
                    & btb_hit & (btb_type == BRANCH)
                    & (bht[1] != tournament_taken)
 
@@ -338,24 +339,24 @@ id_bp_redirect = id_bp_redirect_raw & id_ready_go & ex_allowin
 > **设计变更**：redirect 信号拆分为 raw 和 gated 两个版本。
 >
 > - `id_bp_redirect_raw`：不含 stall 门控，用于 `irom_addr` 选择（快速路径）。
->   安全保证：`irom_addr` 中 **stall 优先级高于 redirect**，stall 时自动选 `pc`。
+>   停顿期间 IF/ID 不接收新指令，`irom_data_held` 会保存停顿入口处的正确 BRAM 输出。
 >
 > - `id_bp_redirect`：加 `id_ready_go & ex_allowin` 门控，用于 `id_flush` 控制。
 >   确保分支指令必须能转入 EX 后才 flush IF/ID，防止指令丢失。
 
-### 6A.5 irom_addr 优先级（5 路扁平 MUX）
+### 6A.5 irom_addr 优先级（4 路扁平 MUX）
 
 ```
 irom_addr = mem_branch_flush    ? mem_branch_target :  // (1) MEM flush（最高优先，寄存器值）
-            !if_allowin_w       ? pc :                  // (2) 停顿（高于 redirect！）
-            id_bp_redirect_raw  ? id_redirect_target :  // (3) NLP: ID redirect（raw 快速版）
-            bp_taken            ? bp_target :           // (4) L0 预测 taken
-                                  (pc + 4) ;           // (5) 顺序取指
+            id_bp_redirect_raw  ? id_redirect_target :  // (2) NLP: ID redirect（raw 快速版）
+            bp_taken            ? bp_target :           // (3) L0 预测 taken
+                                  pc_plus4 ;            // (4) 顺序取指（预计算寄存器）
 ```
 
 > [!NOTE]
 > next_pc_mux 模块已被消除：bp_taken/bp_target 直接内联到 irom_addr，
-> 省掉了 next_pc 中间变量的 1 级 MUX。
+> 省掉了 next_pc 中间变量的 1 级 MUX。stall 不再进入 IROM 地址 MUX，
+> 而由 `irom_data_held` 指令保持寄存器保证停顿恢复后的指令正确性。
 
 ---
 
@@ -485,16 +486,16 @@ PC(0.3ns) → BTB LUTRAM(1.0ns) → 5-bit tag比较(0.3ns, 1 LUT6) → AND-OR(0.
 注2: next_pc_mux 已消除，bp_taken/bp_target 直接内联入 irom_addr 扁平 MUX
 ```
 
-### 9.3 实际 Vivado 时序结果（@200MHz, xc7k325t）
+### 9.3 当前 Vivado 时序结果（@250MHz, xc7k325t）
 
 | 路径 | WNS | 逻辑级数 | 说明 |
 |------|:---:|:------:|------|
-| **EX flush → IROM** | -0.647ns | 10 级 | ALU→branch_flush→irom_addr MUX→IROM |
-| IF L0 → IROM | 正时序 | 2-3 级 | **NLP 优化成功，不再是最差路径** |
+| PC → IROM | +0.120ns | 6 级 | L0 预测 → 取指地址，当前全局最紧路径之一 |
+| BP → IROM | +0.393ns | 5 级 | `bp_target` 去 tag_match 串行依赖后改善 |
+| BP → Pre_IF | +0.769ns | 5 级 | L0 预测 → PC 更新 |
 
 > [!NOTE]
-> NLP 优化成功将 BTB→IROM 路径移出关键路径。当前瓶颈是 EX flush 路径（branch_unit 的
-> 32-bit 目标地址比较 CARRY4 链），这是实现层面的优化范围，与预测器架构无关。
+> NLP 优化后，IF 级只保留轻量 L0 预测；完整 Tournament 逻辑在 ID 级验证，EX 级非推测更新。
 
 ---
 
@@ -502,7 +503,7 @@ PC(0.3ns) → BTB LUTRAM(1.0ns) → 5-bit tag比较(0.3ns, 1 LUT6) → AND-OR(0.
 
 | 结构 | 位数 | 实现方式 |
 |------|:---:|:-------:|
-| BTB（64 × 40 bit） | 2,560 | LUTRAM |
+| BTB（128 × 40 bit） | 5,120 | LUTRAM |
 | PHT（256 × 2 bit） | 512 | LUTRAM |
 | Selector（256 × 2 bit） | 512 | LUTRAM |
 | GHR（8 bit） | 8 | 寄存器 |
@@ -539,12 +540,12 @@ Vivado 综合实际使用 **8 × RAM128X1D**（LUTRAM）。
 
 | 参数 | 测试范围 | 最终选择 |
 |------|---------|---------|
-| BTB 大小 | 32, 64 | **64** |
+| BTB 大小 | 32, 64, 128, 256 | **128** |
 | 映射方式 | 直接, 2路 | **直接映射**（NLP: 为时序牺牲 ~2% 准确率） |
 | BHT 模式 | 内嵌, 独立128, 独立256 | **内嵌** |
 | RAS 深度 | 0, 2, 4, 8 | **4** |
 | 索引方式 | Direct, XOR | **Direct** |
-| Tag 宽度 | 4, 6, 7, 8, 12, 24 | **7 bit**（直接映射，index 占 6 bit） |
+| Tag 宽度 | 4, 5, 6, 7, 8, 12, 24 | **5 bit**（compare + valid 合入单个 LUT6） |
 | Target 宽度 | 30 bit vs 偏移量 | **30 bit** |
 | JALR 策略 | 存 vs 不存 | **不存** |
 | RAS 更新时机 | IF vs EX | **EX** |

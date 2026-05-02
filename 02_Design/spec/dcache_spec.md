@@ -232,26 +232,27 @@ Cache FSM ───→ [dram_rd_addr] ───→ DRAM BRAM (DOB_REG=1)
                                         │
 DRAM BRAM output register ───→ Cache FSM (dram_rdata)
 
-Timeline (4 words, DRAM_LATENCY=3):
-  burst_cycle=0: dram_rd_addr_r<=addr[0] (registered from IDLE transition)
-  burst_cycle=1: dram_rd_addr_r<=addr[1], DRAM sees addr[0]
-  burst_cycle=2: dram_rd_addr_r<=addr[2], DRAM sees addr[1], dram_rdata=data[0] → write
-  burst_cycle=3: dram_rd_addr_r<=addr[3], DRAM sees addr[2], dram_rdata=data[1] → write
-  burst_cycle=4: (DRAIN)                  DRAM sees addr[3], dram_rdata=data[2] → write
-  burst_cycle=5: (DRAIN)                                     dram_rdata=data[3] → write
-  burst_cycle=6: S_DONE_RD  DCache BRAM read for hit word
-  burst_cycle=7: S_DONE     output data, update tag, signal ready
+Timeline (4 words, DRAM_LATENCY=4, including dram_rdata_r):
+  burst_cycle=0: S_REFILL_BURST  send addr[0]
+  burst_cycle=1: S_REFILL_BURST  send addr[1]
+  burst_cycle=2: S_REFILL_BURST  send addr[2]
+  burst_cycle=3: S_REFILL_BURST  send addr[3], dram_rdata_r=data[0] → write
+  burst_cycle=4: S_REFILL_DRAIN                dram_rdata_r=data[1] → write
+  burst_cycle=5: S_REFILL_DRAIN                dram_rdata_r=data[2] → write
+  burst_cycle=6: S_REFILL_DRAIN                dram_rdata_r=data[3] → write
+  burst_cycle=7: S_DONE_RD       DCache BRAM read for hit word
+  burst_cycle=8: S_DONE          output data, update tag, signal ready
 
-启动延迟 = DRAM_LATENCY = 3 cycles (registered addr + BRAM read + output register)
+启动延迟 = DRAM_LATENCY = 4 cycles (registered addr + BRAM read + output register + dram_rdata_r)
 稳态吞吐 = 1 word / cycle (pipeline overlap)
-4 字 refill = 8 cycles total
+4 字 refill = 9 cycles total
 
-总 miss penalty ≈ 8 cycles
+总 miss penalty ≈ 9 cycles
 ```
 
 > [!IMPORTANT]
 > DRAM4MyOwn IP 配置了 `Register_PortB_Output_of_Memory_Primitives = true`（DOB_REG=1），
-> 读延迟为 2 cycle。加上 `dram_rd_addr` 寄存器的 1 cycle，总延迟 = DRAM_LATENCY = 3。
+> 读延迟为 2 cycle。再加上 `dram_rd_addr` 寄存器和 DCache 内部 `dram_rdata_r` 寄存器，总延迟 = DRAM_LATENCY = 4。
 > `rf_data_valid = (rf_burst_cycle >= DRAM_LATENCY)` 确保在正确时刻开始采样数据。
 
 ### 6.3 Store Buffer 排空
@@ -397,7 +398,7 @@ EX/MEM_reg Clk-to-Q                       ~0.3ns
 ### 9.2 DRAM 访问路径（Miss FSM）
 
 ```
-DRAM4MyOwn 已配置 DOB_REG=1，读延迟 = 2 cycle。加上 registered addr 总延迟 = 3 cycle = DRAM_LATENCY。
+DRAM4MyOwn 已配置 DOB_REG=1，读延迟 = 2 cycle。加上 registered addr 和 `dram_rdata_r`，总延迟 = 4 cycle = DRAM_LATENCY。
 
 段 1: FSM addr_reg → [routing] → DRAM BRAM addr pin
       ~2.4ns < 4.0ns ✅

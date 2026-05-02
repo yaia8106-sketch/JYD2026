@@ -7,7 +7,7 @@
 //   top.sv (模板，不可修改)
 //     └── student_top (本文件)
 //           ├── cpu_top         (自研 RV32I 五级流水线)
-//           ├── IROM            (BRAM ROM, 有 output register, 2 拍)
+//           ├── IROM            (BRAM ROM, 无 output register, 1 拍)
 //           ├── dcache          (2KB 2-way WT+WA data cache)
 //           │     └── DRAM      (BRAM RAM, SDP, 65536×32)
 //           └── mmio_bridge     (LED/SEG/SW/KEY/CNT)

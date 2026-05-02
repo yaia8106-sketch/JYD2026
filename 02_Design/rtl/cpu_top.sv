@@ -309,9 +309,9 @@ module cpu_top (
     // NLP redirect: L0 and L1 disagree on BRANCH direction
     // Split into raw (fast, for IROM addr) and gated (safe, for flush control):
     //
-    // id_bp_redirect_raw: condition-only, no stall gating → fast path for irom_addr
-    //   Safe because stall has HIGHER priority than redirect in irom_addr MUX.
-    //   When stalling, irom_addr selects pc regardless of redirect_raw.
+    // id_bp_redirect_raw: condition-only, no stall gating → fast path for irom_addr.
+    //   Stall no longer sits on the IROM address MUX; the instruction hold
+    //   register below preserves the correct BRAM output across stalls.
     //
     // id_bp_redirect: adds id_ready_go & ex_allowin gating → controls id_flush
     //   Ensures the branch instruction actually transfers to EX before flushing IF/ID.

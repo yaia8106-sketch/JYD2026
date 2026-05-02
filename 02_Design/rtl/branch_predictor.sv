@@ -9,7 +9,7 @@
 //   - BTB: 128-entry direct-mapped (was 2-way 32-set)
 //   - IF: uses bht[1] for BRANCH direction (was full Tournament)
 //   - Critical path: PC → LUTRAM read → tag compare → bht MUX → IROM
-//     = 2-3 logic levels (~3.3ns), down from 8 levels (~7.5ns)
+//     current 250MHz implementation closes timing (PC→IROM WNS +0.120ns)
 //
 // Spec: 02_Design/spec/branch_predictor_spec.md
 // ============================================================
@@ -74,7 +74,7 @@ module branch_predictor (
     //  Storage declarations
     // ================================================================
 
-    // ---- BTB: Direct-mapped, 64 entries ----
+    // ---- BTB: Direct-mapped, 128 entries ----
     // NLP: 1 way only (no way selection → fewer logic levels in IF)
     // All fields are LUTRAM (no reset → 1-level read, vs FF 64:1 MUX ~2-3 levels)
     (* ram_style = "distributed" *) logic                  btb_valid [0:BTB_ENTRIES-1];
