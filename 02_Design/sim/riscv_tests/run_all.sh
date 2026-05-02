@@ -22,7 +22,7 @@ HEX_DIR="work/hex"
 WORK_DIR="work"
 SIMULATOR="${1:-iverilog}"
 
-# RTL 源文件 (cpu_top + dcache + 子模块, 不含 platform)
+# RTL 源文件 (cpu_top + dcache + 子模块)
 RTL_FILES="
     $RTL_DIR/cpu_defs.sv
     $RTL_DIR/pc_reg.sv
@@ -59,9 +59,9 @@ TESTS="simple \
        lb lbu lh lhu lw \
        sb sh sw \
        ld_st st_ld \
-       bp_stress \
-       coprime \
-       dcache_test"
+       dcache_stress \
+       counter_stress \
+       bp_stress"
 
 mkdir -p "$WORK_DIR"
 

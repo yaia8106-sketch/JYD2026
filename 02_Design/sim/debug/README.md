@@ -26,4 +26,4 @@
 ## 注意
 
 - `.vcd` 等大文件建议在 `.gitignore` 中排除
-- 重要的调试结论请归档到 `00_AI_Rules/selfuse/` 或相关文档中
+- 重要的调试结论请归档到 `00_AI_Rules/full/design_decisions.md` 并同步更新 `brief/design_decisions_brief.md`

@@ -30,9 +30,9 @@ TESTS="simple \
        lb lbu lh lhu lw \
        sb sh sw \
        ld_st st_ld \
-       bp_stress \
-       coprime \
-       dcache_test"
+       dcache_stress \
+       counter_stress \
+       bp_stress"
 
 mkdir -p "$HEX_DIR"
 

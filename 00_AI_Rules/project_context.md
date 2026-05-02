@@ -18,17 +18,18 @@
 
 - **`00_AI_Rules/` (全局规则基石)**
   - `design_rules/`：设计时必须遵守的规范。
-  - `selfuse/`：架构师笔记（`design_decisions.md`、`TODO.md`）。**每次设计改动后检查是否需要同步更新。**
+  - `brief/`：精简版架构师笔记（`design_decisions_brief.md`、`status.md`）。**AI 每次新对话首先读这里。**
+  - `full/`：完整版归档（`design_decisions.md`、`milestones.md` 等）。需要深挖某个决策时才读。
 
 - **`01_Docs/` (参考资料)**
   - 板卡数据手册、引脚定义 PDF 等。AI 仅做参考，不应修改。
 
 - **`02_Design/` (核心设计区 — AI 的代码输出地)**
-  - `spec/`：`<Module>_spec.md`，模块规格文档。**是生成 RTL 的唯一依据。**
-  - `rtl/`：`<Module>.sv`，由 Spec 驱动生成的 SystemVerilog 代码。
-  - `rtl/platform/`：`student_top.sv`、`perip_bridge.sv`（平台接口层）。
-  - `contest_readonly/`：赛方原版文件归档（RTL、IP `.xci`、XDC、仿真 TB），**禁止修改**，供 TCL 脚本一键导入。
-  - `coe/`：BRAM 初始化文件（`current/` 为当前使用版本）。
+  - `spec/`：复杂模块规格文档（`dcache_spec.md`、`branch_predictor_spec.md`、`forwarding_spec.md`）。
+  - `rtl/`：自研 CPU RTL 源码（含 `student_top.sv`、`mmio_bridge.sv`）。
+  - `contest_readonly/`：赛方原版文件归档（RTL、IP `.xci`、XDC、仿真 TB），**禁止修改**。
+  - `coe/`：BRAM 初始化文件 + COE 分析工具（`current/` 为当前版本）。
+  - `param_evaluation/`：BP/DCache 参数评估脚本（ISA 级模拟 + 多核并行扫描）。
   - `sim/`：仿真验证区。
     - `riscv_tests/`：riscv-tests 全自动回归环境（TB、脚本、hex 全在内）
     - `debug/`：调试 TB（`tb_student_top.sv`）+ 仿真输出。路径：`/home/anokyai/桌面/CPU_Workspace/02_Design/sim/debug`
@@ -37,14 +38,10 @@
   - 赛事方提供的模板工程，已完成核心集成。通过 `$PPRDIR/../02_Design/` 链接源码，实现实时同步。
   - 用于综合、实现、FPGA 烧录。
 
-- **`cdp-tests/` (赛事方功能测试框架)**
-  - Verilator 仿真测试程序，用于验证指令级功能正确性。
-  - `mySoC/` 内含一份独立的 RTL 副本，由用户自行维护。**AI 编写代码时不应参考此目录。**
-
 ---
 
 ## 3. 标准操作流 (Standard Operating Procedure - SOP)
-1. **构思阶段**：在 `selfuse/` 中协助架构师推演架构。
+1. **构思阶段**：在 `brief/` 或 `full/` 中协助架构师推演架构。
 2. **定频阶段**：协助提炼出无歧义的 `_spec.md`。
 3. **黑盒生成**：严格按照 `_spec.md` 输出 `<Module>.sv`。
 4. **迭代修复**：接收用户反馈的逻辑错误日志或 `03_Timing_Analysis` 中的时序报告，先给出修改建议，在取得修改批准后修改重构后的 `.sv` 代码。
@@ -75,10 +72,11 @@ always @(posedge clk) begin
 end
 ```
 
-**注意**：
+**⚠️ 硬性规定**：
+- **禁止在其他位置创建新的调试 TB 或仿真脚本**。所有调试工作必须复用本目录下的 `tb_student_top.sv` 和 `run_vivado_sim.sh`
 - AI 可以随时修改此 TB 文件进行调试，无需用户批准
 - 调试完成后应清理临时的 `$display` 语句，保持 TB 整洁
-- 重要的调试发现应记录到 `selfuse/` 文档中
+- 重要的调试发现应记录到 `full/design_decisions.md` 并同步更新 `brief/design_decisions_brief.md`
 
 ## 4. 调试状态快照机制 (Debug Scratchpad)
 
@@ -116,7 +114,7 @@ end
 | 调试开始 | 创建 `debug_state.md`，写入症状和初始假设 |
 | 每次有新发现 | **覆盖**整个文件，更新已排除/当前假设/下一步 |
 | 新对话接手调试 | **先读 `debug_state.md`**，恢复上下文后继续 |
-| Bug 修复 | 将根因和教训精华搬入 `selfuse/design_decisions.md`，然后**删除** `debug_state.md` |
+| Bug 修复 | 将根因和教训精华搬入 `full/design_decisions.md`，并同步更新 `brief/design_decisions_brief.md`，然后**删除** `debug_state.md` |
 | 无活跃调试 | 文件不应存在（存在即表示有未关闭的 bug） |
 
 ### 4.5 关键约束

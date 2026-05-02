@@ -1,42 +1,34 @@
+# ============================================================
+# CPU_Workspace .gitignore
+# ============================================================
+
+# --- Large / External Directories ---
 01_Docs/
 JYD2025_Contest-rv32i/
-cdp-tests/
-digital_twin.gen/
-CPU4MyOwn/
-03_Timing_Analysis/reports/
 riscv-tests/
 rt-thread/
 
-# --- Editor / Tool Caches ---
-.Xil/
-.obsidian/
+# --- Timing Reports (regenerable) ---
+03_Timing_Analysis/reports/
 
 # --- Simulation Artifacts ---
-# Waveforms
+02_Design/sim/riscv_tests/work/*
+!02_Design/sim/riscv_tests/work/.gitkeep
+02_Design/sim/debug/debug_state.md
 *.vcd
 *.wcfg
 
-# iverilog/xsim work directory (hex, binaries, etc.)
-02_Design/sim/riscv_tests/work/*
-!02_Design/sim/riscv_tests/work/.gitkeep
-xsim.dir/
+# --- Contest Submission ---
+04_Submission/
 
-# Debug scratchpad (AI working memory, transient)
-02_Design/sim/debug/debug_state.md
-
-# Logs and Journals
+# --- Build Logs & Journals ---
 *.log
 *.jou
 
-# Branch prediction simulation output
-02_Design/coe/sim_output/
-copy_bitstream.sh
-clear_the_buffer.sh
-__pycache__/
+# --- Editor / Tool Caches ---
 .vscode/
+__pycache__/
 
-# Contest raw files (PDF/DOCX/PPTX, large binaries)
-00_AI_Rules/contest/raw/
-04_Submission/
-
-coremark/
+# --- Local Scripts ---
+build.sh
+copy_bitstream.sh

@@ -31,76 +31,14 @@ coe/
 - `src0/`、`src1/`、`src2/` 为赛方提供的不同测试程序
 - 所有 COE 文件格式均为 `memory_initialization_radix=16`（十六进制）
 
-## 分析工具
+## COE 工具
 
-| 脚本                | 功能               | 用法                                            |
-| ------------------- | ------------------ | ----------------------------------------------- |
-| `analyze_coe.py`  | 静态指令分布统计   | `python3 analyze_coe.py`                      |
-| `disasm_coe.py`   | COE 反汇编         | `python3 disasm_coe.py <coe文件> [base_addr]` |
-| `bp_simulator.py` | 分支预测器配置对比 | `python3 bp_simulator.py`                     |
-| `bp_sweep.py`     | 多核并行全参数扫描 | `python3 bp_sweep.py`                         |
-| `bp_test_current.py` | 当前 RTL Tournament BP 准确率测试 | `python3 bp_test_current.py`          |
-| `bp_coldstart_sim.py` | 冷启动预测准确率测试（严格复刻 RTL） | `python3 bp_coldstart_sim.py`         |
+| 脚本 | 功能 | 用法 |
+|------|------|------|
+| `analyze_coe.py` | 静态指令分布统计 | `python3 analyze_coe.py` |
+| `disasm_coe.py` | COE 反汇编为 RISC-V 汇编 | `python3 disasm_coe.py [dir...]` |
 
-
-所有仿真结果输出到 `sim_output/` 目录（已加入 `.gitignore`）。
-
----
-
-### bp_simulator.py
-
-**测试内容**：对几组预定义的预测器配置进行对比评估。
-
-**固定变量**：
-
-- 测试程序：current / src0 / src1 / src2（四个程序全部跑）
-- 仿真周期：2,000,000 cycles / 程序
-- JALR 策略：非 RET 的 JALR 不预测、不存入 BTB
-- Tag 宽度：8 bit
-
-**测试变量**（在脚本底部 `configs` 列表中修改）：
-
-| 变量         | 当前测试值           | 说明                 |
-| ------------ | -------------------- | -------------------- |
-| BTB 大小     | 32, 64               | 总 entry 数          |
-| BTB 映射方式 | 直接映射, 2 路组相联 | assoc=1 vs assoc=2   |
-| BHT 模式     | 内嵌, 独立(128)      | embedded vs separate |
-| RAS 深度     | 2, 4                 | entry 数             |
-
-**输出内容**：每个程序的动态指令分布 + 各配置的命中率、CPI 节省、按类型命中率。
-
-**内存映射**（与 `perip_bridge.sv` 一致）：
-
-- IROM: `0x8000_0000` 起
-- DRAM: `0x8010_0000 ~ 0x8014_0000`（256KB）
-- MMIO: `0x8020_0000` 起（读返回 0，写忽略）
-
----
-
-### bp_sweep.py
-
-**测试内容**：多核并行穷举所有参数组合，按平均 CPI 节省排序。
-
-**固定变量**：
-
-- 测试程序：current / src0 / src1 / src2
-- 仿真周期：5,000,000 cycles / 程序
-- JALR 策略：不预测
-- Tag 宽度：8 bit
-- 索引方式：PC 直接取位
-
-**测试变量**（全组合 = 48 种配置）：
-
-| 变量         | 取值范围                   | 维度数 |
-| ------------ | -------------------------- | :----: |
-| BTB 大小     | 32, 64                     |   2   |
-| BTB 映射方式 | 直接映射, 2 路组相联       |   2   |
-| BHT 模式     | 内嵌, 独立(128), 独立(256) |   3   |
-| RAS 深度     | 0, 2, 4, 8                 |   4   |
-
-**输出内容**：Top 15 + 最差 5 配置，含四程序各自命中率和平均 CPI 节省。
-
-**运行方式**：自动检测 CPU 核心数，使用 `multiprocessing.Pool` 并行。
+> 参数评估脚本（BP/DCache 扫描等）已移至 `02_Design/param_evaluation/`。
 
 ## COE 格式参考
 
