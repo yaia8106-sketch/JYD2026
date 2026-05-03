@@ -1,0 +1,31 @@
+#=======================================================================
+# Makefrag for rv32ui tests
+#-----------------------------------------------------------------------
+
+rv32ui_sc_tests = \
+	simple \
+	add addi \
+	and andi \
+	auipc \
+	beq bge bgeu blt bltu bne \
+	branch_single \
+	dual_alu \
+	fence_i \
+	inst_buffer \
+	jal jalr \
+	lb lbu lh lhu lw ld_st loaduse_dual \
+	lui \
+	ma_data \
+	or ori \
+	raw_block \
+	sb sh sw st_ld \
+	sll slli \
+	slt slti sltiu sltu \
+	sra srai \
+	srl srli \
+	sub \
+	waw \
+	xor xori \
+
+rv32ui_p_tests = $(addprefix rv32ui-p-, $(rv32ui_sc_tests))
+rv32ui_v_tests = $(addprefix rv32ui-v-, $(rv32ui_sc_tests))

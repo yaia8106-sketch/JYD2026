@@ -54,7 +54,7 @@ module cpu_top (
     wire [31:0] id_pc;
     wire [31:0] id_inst;           // registered instruction from IF/ID
     wire [31:0] id_inst1;          // registered slot1 candidate instruction
-    wire        id_s1_valid;       // Phase 1: always 0 (slot1 not issued)
+    wire        id_s1_valid;       // registered slot1 issue valid
 
     // ---- IROM ----
     wire [31:0] irom_inst0;        // Phase 0: low 32-bit instruction from 64-bit IROM data
@@ -76,7 +76,7 @@ module cpu_top (
     wire        dec_is_jalr;
     wire [ 2:0] dec_imm_type;
 
-    // ---- Slot 1 decoder outputs (decoded but not issued in Phase 1) ----
+    // ---- Slot 1 decoder outputs ----
     wire [ 3:0] dec1_alu_op;
     wire [ 1:0] dec1_alu_src1_sel;
     wire        dec1_alu_src2_sel;
@@ -236,6 +236,12 @@ module cpu_top (
     wire [31:0] wb_write_data;
     wire [31:0] wb_s1_write_data;
 
+    // ---- Dual-issue performance counter ----
+    localparam [31:0] DUAL_ISSUE_CNT_ADDR = 32'h8020_0060;
+    logic [31:0] dual_issue_count;
+    wire         dual_issue_cnt_read;
+    wire [31:0] mmio_load_data;
+
     // MEM-stage cacheable flag (registered from EX via EX/MEM reg)
     wire is_cacheable_mem;
 
@@ -292,8 +298,12 @@ module cpu_top (
     assign mmio_wea     = (mem_valid & ~is_cacheable_mem) ? mem_store_wea : 4'b0000;
     assign mmio_wdata   = mem_store_data;          // MEM stage: 写数据（已打拍）
 
-    // MEM-stage load data: mux between cache and MMIO
-    assign mem_load_data = is_cacheable_mem ? cache_rdata : mmio_rdata;
+    // MEM-stage load data: mux between cache and MMIO.
+    // The dual-issue counter is implemented inside cpu_top so the sim model
+    // and board bridge can keep their existing MMIO interfaces unchanged.
+    assign dual_issue_cnt_read = (mem_alu_result == DUAL_ISSUE_CNT_ADDR);
+    assign mmio_load_data = dual_issue_cnt_read ? dual_issue_count : mmio_rdata;
+    assign mem_load_data = is_cacheable_mem ? cache_rdata : mmio_load_data;
 
     // ================================================================
     //  Branch prediction wires
@@ -372,8 +382,9 @@ module cpu_top (
     // ==================== Pre-IF ====================
 
     wire        if_allowin_w = id_allowin;   // for irom_addr mux
-    wire        can_dual_issue = 1'b0;       // Phase 1: fetch two, issue slot0 only
+    wire        can_dual_issue;
     wire [31:0] seq_pc_step = can_dual_issue ? 32'd8 : 32'd4;
+    wire [31:0] seq_next_pc = can_dual_issue ? (pc_plus4 + 32'd4) : pc_plus4;
 
     // NLP: ID-stage Tournament verification (L1)
     // Compares L0 (Bimodal bht[1], used in IF) with L1 (Tournament, computed here)
@@ -412,7 +423,7 @@ module cpu_top (
     assign irom_addr = mem_branch_flush    ? mem_branch_target :  // MEM flush (highest, registered)
                        id_bp_redirect_raw  ? id_redirect_target : // NLP: ID redirect (raw, fast)
                        bp_taken            ? bp_target :          // L0 预测 taken
-                                             pc_plus4;           // 顺序取指（pre-registered, no carry chain）
+                                             seq_next_pc;        // 顺序取指（+4/+8）
 
     // pc_plus4: mirrors irom_addr MUX priority, each branch adds +4 from its registered source
     // Invariant: when irom_addr selects pc_plus4 (default), pc_plus4 == pc + 4
@@ -428,7 +439,7 @@ module cpu_top (
         else if (bp_taken)
             pc_plus4 <= bp_target + 32'd4;          // L0 prediction: LUTRAM
         else
-            pc_plus4 <= pc_plus4 + seq_pc_step;     // Phase 1 still resolves to +4
+            pc_plus4 <= pc_plus4 + seq_pc_step;
     end
 
     pc_reg u_pc_reg (
@@ -485,6 +496,58 @@ module cpu_top (
     wire        if_s1_valid  = can_dual_issue;
     wire        if_sequential_fetch = ~mem_branch_flush & ~id_bp_redirect_raw & ~bp_taken;
 
+    // ==================== Dual-issue decision ====================
+    // Slot 1 is ALU-only. Control flow in Slot 0 is kept single-issue so
+    // a taken branch/jump never has to annul a same-cycle Slot 1 instruction.
+    localparam [6:0] OP_R_TYPE_LOCAL = 7'b0110011;
+    localparam [6:0] OP_I_ALU_LOCAL  = 7'b0010011;
+    localparam [6:0] OP_LOAD_LOCAL   = 7'b0000011;
+    localparam [6:0] OP_BRANCH_LOCAL = 7'b1100011;
+    localparam [6:0] OP_LUI_LOCAL    = 7'b0110111;
+    localparam [6:0] OP_AUIPC_LOCAL  = 7'b0010111;
+    localparam [6:0] OP_JAL_LOCAL    = 7'b1101111;
+    localparam [6:0] OP_JALR_LOCAL   = 7'b1100111;
+
+    wire [6:0] if_inst0_opcode = if_inst0_out[6:0];
+    wire [6:0] if_inst1_opcode = if_inst1_out[6:0];
+    wire [4:0] if_inst0_rd     = if_inst0_out[11:7];
+    wire [4:0] if_inst1_rs1    = if_inst1_out[19:15];
+    wire [4:0] if_inst1_rs2    = if_inst1_out[24:20];
+
+    wire if_inst1_is_alu_type = (if_inst1_opcode == OP_R_TYPE_LOCAL)
+                              | (if_inst1_opcode == OP_I_ALU_LOCAL)
+                              | (if_inst1_opcode == OP_LUI_LOCAL)
+                              | (if_inst1_opcode == OP_AUIPC_LOCAL);
+
+    wire if_inst0_writes_rd = (if_inst0_opcode == OP_R_TYPE_LOCAL)
+                            | (if_inst0_opcode == OP_I_ALU_LOCAL)
+                            | (if_inst0_opcode == OP_LOAD_LOCAL)
+                            | (if_inst0_opcode == OP_LUI_LOCAL)
+                            | (if_inst0_opcode == OP_AUIPC_LOCAL)
+                            | (if_inst0_opcode == OP_JAL_LOCAL)
+                            | (if_inst0_opcode == OP_JALR_LOCAL);
+
+    wire if_inst0_is_control = (if_inst0_opcode == OP_BRANCH_LOCAL)
+                             | (if_inst0_opcode == OP_JAL_LOCAL)
+                             | (if_inst0_opcode == OP_JALR_LOCAL);
+
+    wire if_inst1_uses_rs1 = (if_inst1_opcode == OP_R_TYPE_LOCAL)
+                           | (if_inst1_opcode == OP_I_ALU_LOCAL);
+    wire if_inst1_uses_rs2 = (if_inst1_opcode == OP_R_TYPE_LOCAL);
+
+    wire if_pair_raw = if_inst0_writes_rd
+                     & (if_inst0_rd != 5'd0)
+                     & ((if_inst1_uses_rs1 & (if_inst1_rs1 == if_inst0_rd))
+                      | (if_inst1_uses_rs2 & (if_inst1_rs2 == if_inst0_rd)));
+
+    assign can_dual_issue = if_valid
+                          & (pc != 32'h7FFF_FFFC)
+                          & if_sequential_fetch
+                          & ~pc[2]
+                          & if_inst1_is_alu_type
+                          & ~if_pair_raw
+                          & ~if_inst0_is_control;
+
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             inst_buf_valid <= 1'b0;
@@ -495,6 +558,13 @@ module cpu_top (
             inst_buf_valid <= (pc != 32'h7FFF_FFFC) & ~can_dual_issue & if_sequential_fetch;
             inst_buf       <= if_inst1_out;
         end
+    end
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n)
+            dual_issue_count <= 32'd0;
+        else if (wb_s1_valid)
+            dual_issue_count <= dual_issue_count + 32'd1;
     end
 
     // ==================== IF/ID ====================

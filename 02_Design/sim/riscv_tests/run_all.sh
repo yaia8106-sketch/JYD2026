@@ -64,7 +64,8 @@ TESTS="simple \
        ld_st st_ld \
        dcache_stress \
        counter_stress \
-       bp_stress"
+       bp_stress \
+       dual_alu raw_block branch_single waw loaduse_dual inst_buffer"
 
 mkdir -p "$WORK_DIR"
 

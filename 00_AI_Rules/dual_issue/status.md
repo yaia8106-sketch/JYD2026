@@ -7,9 +7,9 @@
 
 ## 当前阶段
 
-**Phase 2 已完成（2026-05-03），进入 Phase 3 前准备。**
+**Phase 3 已完成（2026-05-03），进入 Phase 4 前准备。**
 
-说明：按用户要求暂不修改 Vivado 工程/IP。Phase 2 已完成 RTL/仿真路径：寄存器堆扩展到 4R2W，Slot1 ALU/WB 数据通路就位，前递扩展到双槽 7 选 1；`can_dual_issue=0`，Slot1 仍不产生副作用。
+说明：按用户要求暂不修改 Vivado 工程/IP。Phase 3 已完成 RTL/仿真路径：真实双发射已开启，Slot1 ALU 指令可提交；新增只读 MMIO 计数器 `0x8020_0060` 统计已提交的 Slot1 指令。
 
 ## 里程碑（详细步骤见 `dev_plan.md`）
 
@@ -17,7 +17,7 @@
 - [x] Phase 0：IROM 加宽（仿真路径，不改功能，43/43 PASS）
 - [x] Phase 1：取两条，只发一条（43/43 PASS）
 - [x] Phase 2：数据通路就位（仍不双发，43/43 PASS）
-- [ ] Phase 3：开启双发射 🎯
+- [x] Phase 3：开启双发射（49/49 PASS，含 6 个专项测试） 🎯
 - [ ] Phase 4：综合 + FPGA 上板
 
 ## 关键决策速查

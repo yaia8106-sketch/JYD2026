@@ -60,6 +60,17 @@
 | 4 | 8 个 NOP 后读回 | 流水线排空后 cache 仍有效 |
 | 5 | 函数调用栈操作 + DRAM 读取 | SP 操作与 DRAM 读交错 |
 
+### Phase3 dual-issue tests
+
+| 测试 | 验证重点 |
+|------|----------|
+| `dual_alu` | 对齐 ALU+ALU 无 RAW 时 Slot1 提交，计数器递增 |
+| `raw_block` | inst1 读取 inst0 的 rd 时退化单发，计数器不增 |
+| `branch_single` | Slot0 branch 不双发，taken 后 fall-through 不提交 |
+| `waw` | 同周期 WAW 不阻止双发，Slot1 写回优先 |
+| `loaduse_dual` | Slot0 load + 独立 Slot1 ALU 可双发，后续 load-use stall 正确 |
+| `inst_buffer` | 单发时 slot1 进入缓冲，下拍作为 slot0 执行且不丢失 |
+
 ---
 
 ## 丢失的测试（待重写）
