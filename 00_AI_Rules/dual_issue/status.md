@@ -7,15 +7,15 @@
 
 ## 当前阶段
 
-**Phase 0 仿真路径已完成（2026-05-03），进入 Phase 1 前准备。**
+**Phase 1 已完成（2026-05-03），进入 Phase 2 前准备。**
 
-说明：本轮按用户要求暂不修改 Vivado 工程/IP，仅完成 RTL 64-bit IROM 数据口与 `riscv_tests` 仿真模型适配。Vivado IROM IP 64-bit 重配留到 FPGA/工程阶段处理。
+说明：按用户要求暂不修改 Vivado 工程/IP。Phase 1 已完成 RTL/仿真路径：取两条、指令缓冲、Decoder1、Slot1 空壳寄存器链就位；`can_dual_issue=0`，Slot1 不参与执行。
 
 ## 里程碑（详细步骤见 `dev_plan.md`）
 
 - [x] 总体架构定稿（D1-D13，2026-05-03）
 - [x] Phase 0：IROM 加宽（仿真路径，不改功能，43/43 PASS）
-- [ ] Phase 1：取两条，只发一条
+- [x] Phase 1：取两条，只发一条（43/43 PASS）
 - [ ] Phase 2：数据通路就位（仍不双发）
 - [ ] Phase 3：开启双发射 🎯
 - [ ] Phase 4：综合 + FPGA 上板

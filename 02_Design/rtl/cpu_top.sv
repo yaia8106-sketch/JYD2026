@@ -53,9 +53,12 @@ module cpu_top (
     wire        id_ready_go;
     wire [31:0] id_pc;
     wire [31:0] id_inst;           // registered instruction from IF/ID
+    wire [31:0] id_inst1;          // registered slot1 candidate instruction
+    wire        id_s1_valid;       // Phase 1: always 0 (slot1 not issued)
 
     // ---- IROM ----
     wire [31:0] irom_inst0;        // Phase 0: low 32-bit instruction from 64-bit IROM data
+    wire [31:0] irom_inst1;        // Phase 1: high 32-bit instruction from 64-bit IROM data
 
     // ---- Decoder outputs ----
     wire [ 3:0] dec_alu_op;
@@ -72,6 +75,22 @@ module cpu_top (
     wire        dec_is_jal;
     wire        dec_is_jalr;
     wire [ 2:0] dec_imm_type;
+
+    // ---- Slot 1 decoder outputs (decoded but not issued in Phase 1) ----
+    wire [ 3:0] dec1_alu_op;
+    wire [ 1:0] dec1_alu_src1_sel;
+    wire        dec1_alu_src2_sel;
+    wire        dec1_reg_write_en;
+    wire [ 1:0] dec1_wb_sel;
+    wire        dec1_mem_read_en;
+    wire        dec1_mem_write_en;
+    wire [ 1:0] dec1_mem_size;
+    wire        dec1_mem_unsigned;
+    wire        dec1_is_branch;
+    wire [ 2:0] dec1_branch_cond;
+    wire        dec1_is_jal;
+    wire        dec1_is_jalr;
+    wire [ 2:0] dec1_imm_type;
 
     // ---- Immediate ----
     wire [31:0] id_imm;
@@ -106,6 +125,23 @@ module cpu_top (
     wire [ 2:0] ex_branch_cond;
     wire        ex_is_jal;
     wire        ex_is_jalr;
+
+    // ---- Slot 1 shadow pipeline (valid stays 0 in Phase 1) ----
+    wire        ex_s1_valid;
+    wire [31:0] ex_s1_pc;
+    wire [31:0] ex_s1_inst;
+    wire [ 4:0] ex_s1_rd, ex_s1_rs1_addr, ex_s1_rs2_addr;
+    wire [ 3:0] ex_s1_alu_op;
+    wire        ex_s1_reg_write_en;
+    wire [ 1:0] ex_s1_wb_sel;
+    wire        ex_s1_mem_read_en;
+    wire        ex_s1_mem_write_en;
+    wire [ 1:0] ex_s1_mem_size;
+    wire        ex_s1_mem_unsigned;
+    wire        ex_s1_is_branch;
+    wire [ 2:0] ex_s1_branch_cond;
+    wire        ex_s1_is_jal;
+    wire        ex_s1_is_jalr;
 
     // ---- ALU ----
     wire [31:0] alu_result;
@@ -148,6 +184,14 @@ module cpu_top (
     wire [ 3:0] mem_store_wea;         // FIX-C: registered store WEA
     wire [31:0] mem_store_data;        // FIX-C: registered store data
 
+    // ---- Slot 1 shadow MEM ----
+    wire        mem_s1_valid;
+    wire [31:0] mem_s1_pc;
+    wire [31:0] mem_s1_inst;
+    wire [ 4:0] mem_s1_rd;
+    wire        mem_s1_reg_write_en;
+    wire [ 1:0] mem_s1_wb_sel;
+
     // ---- MEM/WB ----
     wire        wb_valid;
     wire        wb_allowin;
@@ -161,6 +205,14 @@ module cpu_top (
     wire        wb_mem_unsigned;
     wire [ 1:0] wb_addr_low;
     wire [31:0] wb_load_rdata;  // registered cache/mmio output (captured in MEM/WB)
+
+    // ---- Slot 1 shadow WB ----
+    wire        wb_s1_valid;
+    wire [31:0] wb_s1_pc;
+    wire [31:0] wb_s1_inst;
+    wire [ 4:0] wb_s1_rd;
+    wire        wb_s1_reg_write_en;
+    wire [ 1:0] wb_s1_wb_sel;
 
     // ---- WB ----
     wire [31:0] wb_load_data;
@@ -194,6 +246,10 @@ module cpu_top (
     wire [4:0] id_rs1_addr = id_inst[19:15];
     wire [4:0] id_rs2_addr = id_inst[24:20];
     wire [4:0] id_rd_addr  = id_inst[11:7];
+    wire [4:0] id_s1_rs1_addr = id_inst1[19:15];
+    wire [4:0] id_s1_rs2_addr = id_inst1[24:20];
+    wire [4:0] id_s1_rd_addr  = id_inst1[11:7];
+    wire [31:0] id_s1_pc = id_pc + 32'd4;
 
     // ---- Cacheable判定 (EX stage, 1 LUT) ----
     // DRAM区域: 0x8010_0000 ~ 0x8013_FFFF → addr[20]=1, addr[21]=0, addr[19:18]=00
@@ -298,6 +354,8 @@ module cpu_top (
     // ==================== Pre-IF ====================
 
     wire        if_allowin_w = id_allowin;   // for irom_addr mux
+    wire        can_dual_issue = 1'b0;       // Phase 1: fetch two, issue slot0 only
+    wire [31:0] seq_pc_step = can_dual_issue ? 32'd8 : 32'd4;
 
     // NLP: ID-stage Tournament verification (L1)
     // Compares L0 (Bimodal bht[1], used in IF) with L1 (Tournament, computed here)
@@ -352,7 +410,7 @@ module cpu_top (
         else if (bp_taken)
             pc_plus4 <= bp_target + 32'd4;          // L0 prediction: LUTRAM
         else
-            pc_plus4 <= pc_plus4 + 32'd4;           // sequential: self-increment
+            pc_plus4 <= pc_plus4 + seq_pc_step;     // Phase 1 still resolves to +4
     end
 
     pc_reg u_pc_reg (
@@ -369,29 +427,57 @@ module cpu_top (
     // ==================== IROM: 外部例化，通过 irom_addr/irom_data 端口 ====================
 
     assign irom_inst0 = irom_data[31:0];
+    assign irom_inst1 = irom_data[63:32];
+
+    // ==================== Instruction buffer ====================
+    // Single issue leaves the fetched slot1 instruction for the next cycle.
+    logic [31:0] inst_buf;
+    logic        inst_buf_valid;
+    wire         if_accept = if_valid & if_ready_go_w & id_allowin;
 
     // ==================== Instruction hold register ====================
     // When pipeline stalls (id_allowin=0), BRAM output may change (irom_addr
     // no longer holds pc). Capture the correct instruction on stall entry
     // so IF/ID can use it when the stall ends.
-    logic [31:0] irom_data_held;
+    logic [31:0] irom_inst0_held;
+    logic [31:0] irom_inst1_held;
     logic        irom_held_valid;
+
+    wire [31:0] if_inst0_live = inst_buf_valid ? inst_buf : irom_inst0;
+    wire [31:0] if_inst1_live = irom_inst1;
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n)
             irom_held_valid <= 1'b0;
-        else if (mem_branch_flush | id_allowin)   // flush or not stalling: clear
+        else if (id_flush | id_allowin)           // flush or not stalling: clear
             irom_held_valid <= 1'b0;
         else if (!irom_held_valid)                // entering stall: mark
             irom_held_valid <= 1'b1;
     end
 
     always_ff @(posedge clk) begin
-        if (!irom_held_valid && !id_allowin && !mem_branch_flush)
-            irom_data_held <= irom_inst0;
+        if (!irom_held_valid && !id_allowin && !id_flush) begin
+            irom_inst0_held <= if_inst0_live;
+            irom_inst1_held <= if_inst1_live;
+        end
     end
 
-    wire [31:0] irom_data_out = irom_held_valid ? irom_data_held : irom_inst0;
+    wire [31:0] if_inst0_out = irom_held_valid ? irom_inst0_held : if_inst0_live;
+    wire [31:0] if_inst1_out = irom_held_valid ? irom_inst1_held : if_inst1_live;
+    wire        if_s1_valid  = can_dual_issue;
+    wire        if_sequential_fetch = ~mem_branch_flush & ~id_bp_redirect_raw & ~bp_taken;
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            inst_buf_valid <= 1'b0;
+            inst_buf       <= 32'd0;
+        end else if (id_flush | bp_taken | id_bp_redirect_raw) begin
+            inst_buf_valid <= 1'b0;
+        end else if (if_accept) begin
+            inst_buf_valid <= (pc != 32'h7FFF_FFFC) & ~can_dual_issue & if_sequential_fetch;
+            inst_buf       <= if_inst1_out;
+        end
+    end
 
     // ==================== IF/ID ====================
 
@@ -406,9 +492,13 @@ module cpu_top (
         .ex_allowin   (ex_allowin),
         .id_flush     (id_flush),
         .if_pc        (pc),
-        .if_inst      (irom_data_out),   // held or live BRAM output
+        .if_inst      (if_inst0_out),    // held, buffered, or live BRAM output
+        .if_inst1     (if_inst1_out),
+        .if_s1_valid  (if_s1_valid),
         .id_pc        (id_pc),
         .id_inst      (id_inst),         // registered instruction for ID
+        .id_inst1     (id_inst1),
+        .id_s1_valid  (id_s1_valid),
         // Branch prediction passthrough
         .if_bp_taken    (bp_taken),
         .if_bp_target   (bp_target),
@@ -446,7 +536,23 @@ module cpu_top (
         .imm_type       (dec_imm_type)
     );
 
-
+    decoder u_decoder_s1 (
+        .inst           (id_inst1),
+        .alu_op         (dec1_alu_op),
+        .alu_src1_sel   (dec1_alu_src1_sel),
+        .alu_src2_sel   (dec1_alu_src2_sel),
+        .reg_write_en   (dec1_reg_write_en),
+        .wb_sel         (dec1_wb_sel),
+        .mem_read_en    (dec1_mem_read_en),
+        .mem_write_en   (dec1_mem_write_en),
+        .mem_size       (dec1_mem_size),
+        .mem_unsigned   (dec1_mem_unsigned),
+        .is_branch      (dec1_is_branch),
+        .branch_cond    (dec1_branch_cond),
+        .is_jal         (dec1_is_jal),
+        .is_jalr        (dec1_is_jalr),
+        .imm_type       (dec1_imm_type)
+    );
 
     imm_gen u_imm_gen (
         .inst     (id_inst),                   // from IF/ID register
@@ -577,6 +683,48 @@ module cpu_top (
         .ex_bp_sel_cnt    (ex_bp_sel_cnt)
     );
 
+    id_ex_reg_s1 u_id_ex_reg_s1 (
+        .clk                 (clk),
+        .rst_n               (rst_n),
+        .id_s1_valid         (id_s1_valid),
+        .id_ready_go         (id_ready_go),
+        .ex_allowin          (ex_allowin),
+        .ex_flush            (ex_flush),
+        .id_pc               (id_s1_pc),
+        .id_inst             (id_inst1),
+        .id_rd               (id_s1_rd_addr),
+        .id_rs1_addr         (id_s1_rs1_addr),
+        .id_rs2_addr         (id_s1_rs2_addr),
+        .id_alu_op           (dec1_alu_op),
+        .id_reg_write_en     (dec1_reg_write_en),
+        .id_wb_sel           (dec1_wb_sel),
+        .id_mem_read_en      (dec1_mem_read_en),
+        .id_mem_write_en     (dec1_mem_write_en),
+        .id_mem_size         (dec1_mem_size),
+        .id_mem_unsigned     (dec1_mem_unsigned),
+        .id_is_branch        (dec1_is_branch),
+        .id_branch_cond      (dec1_branch_cond),
+        .id_is_jal           (dec1_is_jal),
+        .id_is_jalr          (dec1_is_jalr),
+        .ex_s1_valid         (ex_s1_valid),
+        .ex_s1_pc            (ex_s1_pc),
+        .ex_s1_inst          (ex_s1_inst),
+        .ex_s1_rd            (ex_s1_rd),
+        .ex_s1_rs1_addr      (ex_s1_rs1_addr),
+        .ex_s1_rs2_addr      (ex_s1_rs2_addr),
+        .ex_s1_alu_op        (ex_s1_alu_op),
+        .ex_s1_reg_write_en  (ex_s1_reg_write_en),
+        .ex_s1_wb_sel        (ex_s1_wb_sel),
+        .ex_s1_mem_read_en   (ex_s1_mem_read_en),
+        .ex_s1_mem_write_en  (ex_s1_mem_write_en),
+        .ex_s1_mem_size      (ex_s1_mem_size),
+        .ex_s1_mem_unsigned  (ex_s1_mem_unsigned),
+        .ex_s1_is_branch     (ex_s1_is_branch),
+        .ex_s1_branch_cond   (ex_s1_branch_cond),
+        .ex_s1_is_jal        (ex_s1_is_jal),
+        .ex_s1_is_jalr       (ex_s1_is_jalr)
+    );
+
     // ==================== EX stage ====================
     // ALU operands come directly from ID/EX_reg (pre-selected in ID)
 
@@ -671,6 +819,26 @@ module cpu_top (
         .mem_is_cacheable (is_cacheable_mem)
     );
 
+    ex_mem_reg_s1 u_ex_mem_reg_s1 (
+        .clk                 (clk),
+        .rst_n               (rst_n),
+        .ex_s1_valid         (ex_s1_valid),
+        .ex_ready_go         (ex_ready_go_w),
+        .mem_allowin         (mem_allowin),
+        .mem_branch_flush    (mem_branch_flush),
+        .ex_s1_pc            (ex_s1_pc),
+        .ex_s1_inst          (ex_s1_inst),
+        .ex_s1_rd            (ex_s1_rd),
+        .ex_s1_reg_write_en  (ex_s1_reg_write_en),
+        .ex_s1_wb_sel        (ex_s1_wb_sel),
+        .mem_s1_valid        (mem_s1_valid),
+        .mem_s1_pc           (mem_s1_pc),
+        .mem_s1_inst         (mem_s1_inst),
+        .mem_s1_rd           (mem_s1_rd),
+        .mem_s1_reg_write_en (mem_s1_reg_write_en),
+        .mem_s1_wb_sel       (mem_s1_wb_sel)
+    );
+
     // ==================== MEM/WB ====================
 
     mem_wb_reg u_mem_wb_reg (
@@ -700,6 +868,25 @@ module cpu_top (
         .wb_addr_low      (wb_addr_low),
         .mem_load_rdata   (mem_load_data),   // from DCache (cacheable) or MMIO
         .wb_load_rdata    (wb_load_rdata)    // registered for WB stage
+    );
+
+    mem_wb_reg_s1 u_mem_wb_reg_s1 (
+        .clk                 (clk),
+        .rst_n               (rst_n),
+        .mem_s1_valid        (mem_s1_valid),
+        .mem_ready_go        (mem_ready_go_w),
+        .wb_allowin          (wb_allowin),
+        .mem_s1_pc           (mem_s1_pc),
+        .mem_s1_inst         (mem_s1_inst),
+        .mem_s1_rd           (mem_s1_rd),
+        .mem_s1_reg_write_en (mem_s1_reg_write_en),
+        .mem_s1_wb_sel       (mem_s1_wb_sel),
+        .wb_s1_valid         (wb_s1_valid),
+        .wb_s1_pc            (wb_s1_pc),
+        .wb_s1_inst          (wb_s1_inst),
+        .wb_s1_rd            (wb_s1_rd),
+        .wb_s1_reg_write_en  (wb_s1_reg_write_en),
+        .wb_s1_wb_sel        (wb_s1_wb_sel)
     );
 
     // ==================== WB stage ====================
