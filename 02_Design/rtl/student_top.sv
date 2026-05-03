@@ -40,8 +40,12 @@ module student_top #(
 
     // CPU ↔ IROM
     logic [31:0] irom_addr;
+    logic [31:0] irom_addr_plus4;
     logic [63:0] irom_data;
     logic [31:0] irom_data_inst0;
+    logic [31:0] irom_data_inst1;
+    logic [11:0] irom_word_addr;
+    logic [11:0] irom_plus4_word_addr;
 
     // CPU ↔ DCache
     logic        cache_req;
@@ -80,8 +84,9 @@ module student_top #(
         .rst_n       (~w_clk_rst),
 
         // IROM 接口 (IF stage)
-        .irom_addr   (irom_addr),
-        .irom_data   (irom_data),
+        .irom_addr       (irom_addr),
+        .irom_addr_plus4 (irom_addr_plus4),
+        .irom_data       (irom_data),
 
         // DCache 接口
         .cache_req   (cache_req),
@@ -103,17 +108,27 @@ module student_top #(
     );
 
     // ================================================================
-    //  IROM (Block Memory Generator ROM)
-    //  Phase 0 simulation/RTL interface is 64-bit; Vivado IP is still 32-bit
-    //  until regenerated, so hardware top zero-extends the current low half.
+    //  IROM fetch window
+    //  Reuse the existing 32-bit ROM IP as two read-only banks to present the
+    //  same sliding 64-bit window used by the simulation model:
+    //    irom_data[31:0]  = inst at PC
+    //    irom_data[63:32] = inst at PC + 4
     //  地址: word 地址 = irom_addr[13:2], 12 bit
     // ================================================================
-    assign irom_data = {32'd0, irom_data_inst0};
+    assign irom_word_addr       = irom_addr[13:2];
+    assign irom_plus4_word_addr = irom_addr_plus4[13:2];
+    assign irom_data = {irom_data_inst1, irom_data_inst0};
 
-    IROM4MyOwn u_irom (
+    IROM4MyOwn u_irom_inst0 (
         .clka  (w_cpu_clk),
-        .addra (irom_addr[13:2]),
+        .addra (irom_word_addr),
         .douta (irom_data_inst0)
+    );
+
+    IROM4MyOwn u_irom_inst1 (
+        .clka  (w_cpu_clk),
+        .addra (irom_plus4_word_addr),
+        .douta (irom_data_inst1)
     );
 
     // ================================================================

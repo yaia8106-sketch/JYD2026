@@ -13,6 +13,7 @@ module cpu_top (
 
     // IROM 接口 (IF stage)
     output logic [31:0] irom_addr,       // = next_pc（预取，IF 阶段）
+    output logic [31:0] irom_addr_plus4, // = next_pc + 4（64-bit fetch high half）
     input  logic [63:0] irom_data,       // 64-bit fetch window (Phase 0 uses low 32-bit inst0)
 
     // DCache 接口 (EX → MEM stage)
@@ -46,6 +47,8 @@ module cpu_top (
     // 250MHz: Pre-computed PC+4 register — eliminates carry chain from irom_addr default path
     // Each branch computes +4 independently from its registered source (no irom_addr feedback)
     logic [31:0] pc_plus4;
+    logic [31:0] pc_plus8;
+    logic [31:0] pc_plus12;
 
     // ---- IF/ID ----
     wire        id_valid;
@@ -383,8 +386,12 @@ module cpu_top (
 
     wire        if_allowin_w = id_allowin;   // for irom_addr mux
     wire        can_dual_issue;
-    wire [31:0] seq_pc_step = can_dual_issue ? 32'd8 : 32'd4;
-    wire [31:0] seq_next_pc = can_dual_issue ? (pc_plus4 + 32'd4) : pc_plus4;
+    wire [31:0] seq_next_pc        = can_dual_issue ? pc_plus8  : pc_plus4;
+    wire [31:0] seq_next_pc_plus4  = can_dual_issue ? pc_plus12 : pc_plus8;
+    wire [31:0] seq_pc_plus16      = pc_plus12 + 32'd4;
+    wire [31:0] seq_pc_plus20      = pc_plus12 + 32'd8;
+    wire [31:0] seq_next_pc_plus8  = can_dual_issue ? seq_pc_plus16 : pc_plus12;
+    wire [31:0] seq_next_pc_plus12 = can_dual_issue ? seq_pc_plus20 : seq_pc_plus16;
 
     // NLP: ID-stage Tournament verification (L1)
     // Compares L0 (Bimodal bht[1], used in IF) with L1 (Tournament, computed here)
@@ -425,21 +432,41 @@ module cpu_top (
                        bp_taken            ? bp_target :          // L0 预测 taken
                                              seq_next_pc;        // 顺序取指（+4/+8）
 
-    // pc_plus4: mirrors irom_addr MUX priority, each branch adds +4 from its registered source
-    // Invariant: when irom_addr selects pc_plus4 (default), pc_plus4 == pc + 4
+    // Keep the high-half ROM address off the post-mux +1 carry chain in
+    // student_top; this is a routed 200MHz critical path after dual issue.
+    assign irom_addr_plus4 = mem_branch_flush    ? (mem_branch_target + 32'd4) :
+                             id_bp_redirect_raw  ? (id_redirect_target + 32'd4) :
+                             bp_taken            ? (bp_target + 32'd4) :
+                                                   seq_next_pc_plus4;
+
+    // pc_plus*: mirror irom_addr MUX priority with precomputed sequential
+    // addresses.  Sequential updates select among precomputed values so the
+    // dual-issue decision does not drive a 32-bit incrementer on the IROM path.
+    // Invariant: pc_plus4/8/12 == pc + 4/8/12.
     always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n)
+        if (!rst_n) begin
             pc_plus4 <= 32'h8000_0000;              // reset PC (0x7FFFFFFC) + 4
-        else if (mem_branch_flush)
+            pc_plus8 <= 32'h8000_0004;
+            pc_plus12 <= 32'h8000_0008;
+        end else if (mem_branch_flush) begin
             pc_plus4 <= mem_branch_target + 32'd4;  // flush: registered source
-        else if (!if_allowin_w)
+            pc_plus8 <= mem_branch_target + 32'd8;
+            pc_plus12 <= mem_branch_target + 32'd12;
+        end else if (!if_allowin_w) begin
             ;                                       // stall: hold
-        else if (id_bp_redirect_raw)
+        end else if (id_bp_redirect_raw) begin
             pc_plus4 <= id_redirect_target + 32'd4; // NLP redirect: IF/ID regs
-        else if (bp_taken)
+            pc_plus8 <= id_redirect_target + 32'd8;
+            pc_plus12 <= id_redirect_target + 32'd12;
+        end else if (bp_taken) begin
             pc_plus4 <= bp_target + 32'd4;          // L0 prediction: LUTRAM
-        else
-            pc_plus4 <= pc_plus4 + seq_pc_step;
+            pc_plus8 <= bp_target + 32'd8;
+            pc_plus12 <= bp_target + 32'd12;
+        end else begin
+            pc_plus4 <= seq_next_pc_plus4;
+            pc_plus8 <= seq_next_pc_plus8;
+            pc_plus12 <= seq_next_pc_plus12;
+        end
     end
 
     pc_reg u_pc_reg (
@@ -501,7 +528,6 @@ module cpu_top (
     // a taken branch/jump never has to annul a same-cycle Slot 1 instruction.
     localparam [6:0] OP_R_TYPE_LOCAL = 7'b0110011;
     localparam [6:0] OP_I_ALU_LOCAL  = 7'b0010011;
-    localparam [6:0] OP_LOAD_LOCAL   = 7'b0000011;
     localparam [6:0] OP_BRANCH_LOCAL = 7'b1100011;
     localparam [6:0] OP_LUI_LOCAL    = 7'b0110111;
     localparam [6:0] OP_AUIPC_LOCAL  = 7'b0010111;
@@ -519,14 +545,6 @@ module cpu_top (
                               | (if_inst1_opcode == OP_LUI_LOCAL)
                               | (if_inst1_opcode == OP_AUIPC_LOCAL);
 
-    wire if_inst0_writes_rd = (if_inst0_opcode == OP_R_TYPE_LOCAL)
-                            | (if_inst0_opcode == OP_I_ALU_LOCAL)
-                            | (if_inst0_opcode == OP_LOAD_LOCAL)
-                            | (if_inst0_opcode == OP_LUI_LOCAL)
-                            | (if_inst0_opcode == OP_AUIPC_LOCAL)
-                            | (if_inst0_opcode == OP_JAL_LOCAL)
-                            | (if_inst0_opcode == OP_JALR_LOCAL);
-
     wire if_inst0_is_control = (if_inst0_opcode == OP_BRANCH_LOCAL)
                              | (if_inst0_opcode == OP_JAL_LOCAL)
                              | (if_inst0_opcode == OP_JALR_LOCAL);
@@ -535,10 +553,11 @@ module cpu_top (
                            | (if_inst1_opcode == OP_I_ALU_LOCAL);
     wire if_inst1_uses_rs2 = (if_inst1_opcode == OP_R_TYPE_LOCAL);
 
-    wire if_pair_raw = if_inst0_writes_rd
-                     & (if_inst0_rd != 5'd0)
-                     & ((if_inst1_uses_rs1 & (if_inst1_rs1 == if_inst0_rd))
-                      | (if_inst1_uses_rs2 & (if_inst1_rs2 == if_inst0_rd)));
+    // Conservative for timing: treat Slot 0's rd field as a possible writer.
+    // This may single-issue harmless rd=x0/store pairs, but never lets a true
+    // same-pair RAW dependency issue.
+    wire if_pair_raw = (if_inst1_uses_rs1 & (if_inst1_rs1 == if_inst0_rd))
+                     | (if_inst1_uses_rs2 & (if_inst1_rs2 == if_inst0_rd));
 
     assign can_dual_issue = if_valid
                           & (pc != 32'h7FFF_FFFC)

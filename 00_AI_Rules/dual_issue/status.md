@@ -7,9 +7,9 @@
 
 ## 当前阶段
 
-**Phase 3 已完成（2026-05-03），进入 Phase 4 前准备。**
+**Phase 4 进行中（2026-05-03）。**
 
-说明：按用户要求暂不修改 Vivado 工程/IP。Phase 3 已完成 RTL/仿真路径：真实双发射已开启，Slot1 ALU 指令可提交；新增只读 MMIO 计数器 `0x8020_0060` 统计已提交的 Slot1 指令。
+说明：Phase 3 已完成并提交。Phase 4 已开始做 Vivado/板级路径适配：仿真模型、student_top 双 IROM、Vivado 工程源文件/IP COE 路径、pblock 约束和 timing 脚本均已接入双发射取指。当前 RTL 回归 `49/49 PASS`；Vivado 实现可跑完但 200MHz timing 尚未闭合，当前最好 routed WNS 为 `-0.189ns`，主要违例集中在 IROM BRAM 输出回取指/IROM 地址的路径。
 
 ## 里程碑（详细步骤见 `dev_plan.md`）
 
@@ -18,7 +18,7 @@
 - [x] Phase 1：取两条，只发一条（43/43 PASS）
 - [x] Phase 2：数据通路就位（仍不双发，43/43 PASS）
 - [x] Phase 3：开启双发射（49/49 PASS，含 6 个专项测试） 🎯
-- [ ] Phase 4：综合 + FPGA 上板
+- [ ] Phase 4：综合 + FPGA 上板（仿真通过，Vivado 集成完成，timing 未闭合）
 
 ## 关键决策速查
 

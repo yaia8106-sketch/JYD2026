@@ -31,7 +31,7 @@ set MAX_PATHS 3
 # 时钟端口名与周期（当设计中没有时钟约束时自动创建）
 # cpu_clk 频率：200MHz → 5.0ns；100MHz → 10.0ns；50MHz → 20ns
 set CLK_PORT   "w_cpu_clk"
-set CLK_PERIOD 10.0
+set CLK_PERIOD 5.0
 
 # 设计层级前缀（自动检测）
 # 支持两种顶层配置：
@@ -80,7 +80,7 @@ set PIPELINE_GROUPS [list \
 # ---- BRAM 组（特殊时序端点）----
 # BRAM 不是普通 FF，需要用 PRIMITIVE_TYPE 过滤
 set BRAM_GROUPS [list \
-    [list "IROM(BRAM)"   "u_irom"                ] \
+    [list "IROM(BRAM)"   "u_irom_inst*"          ] \
     [list "DRAM(BRAM)"   "u_dram"                ] \
     [list "DC_Data(BRAM)" "u_dcache"             ] \
 ]
