@@ -8,6 +8,7 @@ JYD2025_Contest-rv32i/
 riscv-tests/
 rt-thread/
 Nutshell/
+NutShell/
 
 # --- Timing Reports (regenerable) ---
 03_Timing_Analysis/reports/
