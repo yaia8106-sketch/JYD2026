@@ -94,18 +94,25 @@ module cpu_top (
 
     // ---- Immediate ----
     wire [31:0] id_imm;
+    wire [31:0] id_s1_imm;
 
     // ---- Regfile ----
     wire [31:0] rf_rs1_data;
     wire [31:0] rf_rs2_data;
+    wire [31:0] rf_s1_rs1_data;
+    wire [31:0] rf_s1_rs2_data;
 
     // ---- Forwarding ----
     wire [31:0] fwd_rs1_data;
     wire [31:0] fwd_rs2_data;
+    wire [31:0] fwd_s1_rs1_data;
+    wire [31:0] fwd_s1_rs2_data;
 
     // ---- ALU src MUX (in ID stage) ----
     wire [31:0] id_alu_src1;
     wire [31:0] id_alu_src2;
+    wire [31:0] id_s1_alu_src1;
+    wire [31:0] id_s1_alu_src2;
 
     // ---- ID/EX ----
     wire        ex_valid;
@@ -142,11 +149,16 @@ module cpu_top (
     wire [ 2:0] ex_s1_branch_cond;
     wire        ex_s1_is_jal;
     wire        ex_s1_is_jalr;
+    wire [31:0] ex_s1_alu_src1, ex_s1_alu_src2;
+    wire [31:0] ex_s1_rs1_data, ex_s1_rs2_data;
 
     // ---- ALU ----
     wire [31:0] alu_result;
     wire [31:0] alu_sum;               // ALU 加法器直出（跳过 output MUX）
     wire [31:0] alu_addr;              // FIX-A: 独立地址加法器（不依赖 alu_op）
+    wire [31:0] alu_s1_result;
+    wire [31:0] alu_s1_sum;
+    wire [31:0] alu_s1_addr;
 
     // ---- Branch ----
     wire        branch_flush;          // EX stage combinational (for predictor update)
@@ -168,6 +180,7 @@ module cpu_top (
 
     // ---- EX pre-computed ----
     wire [31:0] ex_pc_plus_4 = ex_pc + 32'd4;  // pre-compute for forwarding & WB
+    wire [31:0] ex_s1_pc_plus_4 = ex_s1_pc + 32'd4;
 
     // ---- EX/MEM ----
     wire        mem_valid;
@@ -188,6 +201,8 @@ module cpu_top (
     wire        mem_s1_valid;
     wire [31:0] mem_s1_pc;
     wire [31:0] mem_s1_inst;
+    wire [31:0] mem_s1_alu_result;
+    wire [31:0] mem_s1_pc_plus_4;
     wire [ 4:0] mem_s1_rd;
     wire        mem_s1_reg_write_en;
     wire [ 1:0] mem_s1_wb_sel;
@@ -210,6 +225,8 @@ module cpu_top (
     wire        wb_s1_valid;
     wire [31:0] wb_s1_pc;
     wire [31:0] wb_s1_inst;
+    wire [31:0] wb_s1_alu_result;
+    wire [31:0] wb_s1_pc_plus_4;
     wire [ 4:0] wb_s1_rd;
     wire        wb_s1_reg_write_en;
     wire [ 1:0] wb_s1_wb_sel;
@@ -217,6 +234,7 @@ module cpu_top (
     // ---- WB ----
     wire [31:0] wb_load_data;
     wire [31:0] wb_write_data;
+    wire [31:0] wb_s1_write_data;
 
     // MEM-stage cacheable flag (registered from EX via EX/MEM reg)
     wire is_cacheable_mem;
@@ -560,17 +578,31 @@ module cpu_top (
         .imm      (id_imm)
     );
 
+    imm_gen u_imm_gen_s1 (
+        .inst     (id_inst1),
+        .imm_type (dec1_imm_type),
+        .imm      (id_s1_imm)
+    );
+
     regfile u_regfile (
-        .clk      (clk),
-        .rst_n    (rst_n),
-        .rs1_addr (id_rs1_addr),
-        .rs2_addr (id_rs2_addr),
-        .rs1_data (rf_rs1_data),
-        .rs2_data (rf_rs2_data),
-        .rd_addr  (wb_rd),
-        .rd_data  (wb_write_data),
-        .rd_wen   (wb_reg_write_en),
-        .rd_valid (wb_valid)
+        .clk          (clk),
+        .rst_n        (rst_n),
+        .rs1_addr     (id_rs1_addr),
+        .rs2_addr     (id_rs2_addr),
+        .rs1_data     (rf_rs1_data),
+        .rs2_data     (rf_rs2_data),
+        .rs1_addr_s1  (id_s1_rs1_addr),
+        .rs2_addr_s1  (id_s1_rs2_addr),
+        .rs1_data_s1  (rf_s1_rs1_data),
+        .rs2_data_s1  (rf_s1_rs2_data),
+        .rd_addr      (wb_rd),
+        .rd_data      (wb_write_data),
+        .rd_wen       (wb_reg_write_en),
+        .rd_valid     (wb_valid),
+        .rd_addr_s1   (wb_s1_rd),
+        .rd_data_s1   (wb_s1_write_data),
+        .rd_wen_s1    (wb_s1_reg_write_en),
+        .rd_valid_s1  (wb_s1_valid)
     );
 
     forwarding u_forwarding (
@@ -578,6 +610,11 @@ module cpu_top (
         .id_rs2_addr    (id_rs2_addr),
         .rf_rs1_data    (rf_rs1_data),
         .rf_rs2_data    (rf_rs2_data),
+        .id_s1_valid    (id_s1_valid),
+        .id_s1_rs1_addr (id_s1_rs1_addr),
+        .id_s1_rs2_addr (id_s1_rs2_addr),
+        .rf_s1_rs1_data (rf_s1_rs1_data),
+        .rf_s1_rs2_data (rf_s1_rs2_data),
         .ex_valid       (ex_valid),
         .ex_reg_write   (ex_reg_write_en),
         .ex_mem_read    (ex_mem_read_en),
@@ -585,6 +622,13 @@ module cpu_top (
         .ex_alu_result  (alu_result),
         .ex_pc_plus_4   (ex_pc_plus_4),
         .ex_wb_sel      (ex_wb_sel),
+        .ex_s1_valid       (ex_s1_valid),
+        .ex_s1_reg_write   (ex_s1_reg_write_en),
+        .ex_s1_mem_read    (ex_s1_mem_read_en),
+        .ex_s1_rd          (ex_s1_rd),
+        .ex_s1_alu_result  (alu_s1_result),
+        .ex_s1_pc_plus_4   (ex_s1_pc_plus_4),
+        .ex_s1_wb_sel      (ex_s1_wb_sel),
         .mem_valid      (mem_valid),
         .mem_reg_write  (mem_reg_write_en),
         .mem_is_load    (mem_mem_read_en),
@@ -592,12 +636,25 @@ module cpu_top (
         .mem_alu_result (mem_alu_result),
         .mem_pc_plus_4  (mem_pc_plus_4),
         .mem_wb_sel     (mem_wb_sel),
+        .mem_s1_valid       (mem_s1_valid),
+        .mem_s1_reg_write   (mem_s1_reg_write_en),
+        .mem_s1_is_load     (1'b0),
+        .mem_s1_rd          (mem_s1_rd),
+        .mem_s1_alu_result  (mem_s1_alu_result),
+        .mem_s1_pc_plus_4   (mem_s1_pc_plus_4),
+        .mem_s1_wb_sel      (mem_s1_wb_sel),
         .wb_valid       (wb_valid),
         .wb_reg_write   (wb_reg_write_en),
         .wb_rd          (wb_rd),
         .wb_write_data  (wb_write_data),
+        .wb_s1_valid       (wb_s1_valid),
+        .wb_s1_reg_write   (wb_s1_reg_write_en),
+        .wb_s1_rd          (wb_s1_rd),
+        .wb_s1_write_data  (wb_s1_write_data),
         .id_rs1_data    (fwd_rs1_data),
         .id_rs2_data    (fwd_rs2_data),
+        .id_s1_rs1_data (fwd_s1_rs1_data),
+        .id_s1_rs2_data (fwd_s1_rs2_data),
         .id_ready_go    (id_ready_go)
     );
 
@@ -611,6 +668,17 @@ module cpu_top (
         .alu_src2_sel  (dec_alu_src2_sel),
         .alu_src1      (id_alu_src1),
         .alu_src2      (id_alu_src2)
+    );
+
+    alu_src_mux u_alu_src_mux_s1 (
+        .rs1_data      (fwd_s1_rs1_data),
+        .rs2_data      (fwd_s1_rs2_data),
+        .pc            (id_s1_pc),
+        .imm           (id_s1_imm),
+        .alu_src1_sel  (dec1_alu_src1_sel),
+        .alu_src2_sel  (dec1_alu_src2_sel),
+        .alu_src1      (id_s1_alu_src1),
+        .alu_src2      (id_s1_alu_src2)
     );
 
     // ==================== ID/EX ====================
@@ -692,6 +760,10 @@ module cpu_top (
         .ex_flush            (ex_flush),
         .id_pc               (id_s1_pc),
         .id_inst             (id_inst1),
+        .id_alu_src1         (id_s1_alu_src1),
+        .id_alu_src2         (id_s1_alu_src2),
+        .id_rs1_data         (fwd_s1_rs1_data),
+        .id_rs2_data         (fwd_s1_rs2_data),
         .id_rd               (id_s1_rd_addr),
         .id_rs1_addr         (id_s1_rs1_addr),
         .id_rs2_addr         (id_s1_rs2_addr),
@@ -709,6 +781,10 @@ module cpu_top (
         .ex_s1_valid         (ex_s1_valid),
         .ex_s1_pc            (ex_s1_pc),
         .ex_s1_inst          (ex_s1_inst),
+        .ex_s1_alu_src1      (ex_s1_alu_src1),
+        .ex_s1_alu_src2      (ex_s1_alu_src2),
+        .ex_s1_rs1_data      (ex_s1_rs1_data),
+        .ex_s1_rs2_data      (ex_s1_rs2_data),
         .ex_s1_rd            (ex_s1_rd),
         .ex_s1_rs1_addr      (ex_s1_rs1_addr),
         .ex_s1_rs2_addr      (ex_s1_rs2_addr),
@@ -735,6 +811,15 @@ module cpu_top (
         .alu_result (alu_result),
         .alu_sum    (alu_sum),
         .alu_addr   (alu_addr)
+    );
+
+    alu u_alu_s1 (
+        .alu_op     (ex_s1_alu_op),
+        .alu_src1   (ex_s1_alu_src1),
+        .alu_src2   (ex_s1_alu_src2),
+        .alu_result (alu_s1_result),
+        .alu_sum    (alu_s1_sum),
+        .alu_addr   (alu_s1_addr)
     );
 
     branch_unit u_branch_unit (
@@ -828,12 +913,16 @@ module cpu_top (
         .mem_branch_flush    (mem_branch_flush),
         .ex_s1_pc            (ex_s1_pc),
         .ex_s1_inst          (ex_s1_inst),
+        .ex_s1_alu_result    (alu_s1_result),
+        .ex_s1_pc_plus_4     (ex_s1_pc_plus_4),
         .ex_s1_rd            (ex_s1_rd),
         .ex_s1_reg_write_en  (ex_s1_reg_write_en),
         .ex_s1_wb_sel        (ex_s1_wb_sel),
         .mem_s1_valid        (mem_s1_valid),
         .mem_s1_pc           (mem_s1_pc),
         .mem_s1_inst         (mem_s1_inst),
+        .mem_s1_alu_result   (mem_s1_alu_result),
+        .mem_s1_pc_plus_4    (mem_s1_pc_plus_4),
         .mem_s1_rd           (mem_s1_rd),
         .mem_s1_reg_write_en (mem_s1_reg_write_en),
         .mem_s1_wb_sel       (mem_s1_wb_sel)
@@ -878,12 +967,16 @@ module cpu_top (
         .wb_allowin          (wb_allowin),
         .mem_s1_pc           (mem_s1_pc),
         .mem_s1_inst         (mem_s1_inst),
+        .mem_s1_alu_result   (mem_s1_alu_result),
+        .mem_s1_pc_plus_4    (mem_s1_pc_plus_4),
         .mem_s1_rd           (mem_s1_rd),
         .mem_s1_reg_write_en (mem_s1_reg_write_en),
         .mem_s1_wb_sel       (mem_s1_wb_sel),
         .wb_s1_valid         (wb_s1_valid),
         .wb_s1_pc            (wb_s1_pc),
         .wb_s1_inst          (wb_s1_inst),
+        .wb_s1_alu_result    (wb_s1_alu_result),
+        .wb_s1_pc_plus_4     (wb_s1_pc_plus_4),
         .wb_s1_rd            (wb_s1_rd),
         .wb_s1_reg_write_en  (wb_s1_reg_write_en),
         .wb_s1_wb_sel        (wb_s1_wb_sel)
@@ -897,6 +990,14 @@ module cpu_top (
         .wb_pc_plus_4  (wb_pc_plus_4),
         .wb_sel        (wb_wb_sel),
         .wb_write_data (wb_write_data)
+    );
+
+    wb_mux u_wb_mux_s1 (
+        .wb_alu_result (wb_s1_alu_result),
+        .wb_load_data  (32'd0),
+        .wb_pc_plus_4  (wb_s1_pc_plus_4),
+        .wb_sel        (wb_s1_wb_sel),
+        .wb_write_data (wb_s1_write_data)
     );
 
 endmodule

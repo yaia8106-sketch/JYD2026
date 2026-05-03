@@ -1,7 +1,7 @@
 // ============================================================
 // Module: id_ex_reg_s1
 // Description: Slot 1 ID/EX shadow register.
-// Phase 1 keeps id_s1_valid hardwired to 0, so this chain is inert.
+// Phase 2 carries the Slot 1 datapath; until Phase 3, id_s1_valid stays 0.
 // ============================================================
 
 module id_ex_reg_s1 (
@@ -15,6 +15,10 @@ module id_ex_reg_s1 (
 
     input  logic [31:0] id_pc,
     input  logic [31:0] id_inst,
+    input  logic [31:0] id_alu_src1,
+    input  logic [31:0] id_alu_src2,
+    input  logic [31:0] id_rs1_data,
+    input  logic [31:0] id_rs2_data,
     input  logic [ 4:0] id_rd,
     input  logic [ 4:0] id_rs1_addr,
     input  logic [ 4:0] id_rs2_addr,
@@ -33,6 +37,10 @@ module id_ex_reg_s1 (
     output logic        ex_s1_valid,
     output logic [31:0] ex_s1_pc,
     output logic [31:0] ex_s1_inst,
+    output logic [31:0] ex_s1_alu_src1,
+    output logic [31:0] ex_s1_alu_src2,
+    output logic [31:0] ex_s1_rs1_data,
+    output logic [31:0] ex_s1_rs2_data,
     output logic [ 4:0] ex_s1_rd,
     output logic [ 4:0] ex_s1_rs1_addr,
     output logic [ 4:0] ex_s1_rs2_addr,
@@ -54,6 +62,10 @@ module id_ex_reg_s1 (
             ex_s1_valid        <= 1'b0;
             ex_s1_pc           <= 32'd0;
             ex_s1_inst         <= 32'd0;
+            ex_s1_alu_src1     <= 32'd0;
+            ex_s1_alu_src2     <= 32'd0;
+            ex_s1_rs1_data     <= 32'd0;
+            ex_s1_rs2_data     <= 32'd0;
             ex_s1_rd           <= 5'd0;
             ex_s1_rs1_addr     <= 5'd0;
             ex_s1_rs2_addr     <= 5'd0;
@@ -74,6 +86,10 @@ module id_ex_reg_s1 (
             ex_s1_valid        <= id_s1_valid & id_ready_go;
             ex_s1_pc           <= id_pc;
             ex_s1_inst         <= id_inst;
+            ex_s1_alu_src1     <= id_alu_src1;
+            ex_s1_alu_src2     <= id_alu_src2;
+            ex_s1_rs1_data     <= id_rs1_data;
+            ex_s1_rs2_data     <= id_rs2_data;
             ex_s1_rd           <= id_rd;
             ex_s1_rs1_addr     <= id_rs1_addr;
             ex_s1_rs2_addr     <= id_rs2_addr;

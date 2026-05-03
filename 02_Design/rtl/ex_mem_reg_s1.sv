@@ -1,7 +1,7 @@
 // ============================================================
 // Module: ex_mem_reg_s1
 // Description: Slot 1 EX/MEM shadow register.
-// Phase 1 keeps ex_s1_valid at 0, so this chain is inert.
+// Phase 2 carries the Slot 1 datapath; until Phase 3, ex_s1_valid stays 0.
 // ============================================================
 
 module ex_mem_reg_s1 (
@@ -15,6 +15,8 @@ module ex_mem_reg_s1 (
 
     input  logic [31:0] ex_s1_pc,
     input  logic [31:0] ex_s1_inst,
+    input  logic [31:0] ex_s1_alu_result,
+    input  logic [31:0] ex_s1_pc_plus_4,
     input  logic [ 4:0] ex_s1_rd,
     input  logic        ex_s1_reg_write_en,
     input  logic [ 1:0] ex_s1_wb_sel,
@@ -22,6 +24,8 @@ module ex_mem_reg_s1 (
     output logic        mem_s1_valid,
     output logic [31:0] mem_s1_pc,
     output logic [31:0] mem_s1_inst,
+    output logic [31:0] mem_s1_alu_result,
+    output logic [31:0] mem_s1_pc_plus_4,
     output logic [ 4:0] mem_s1_rd,
     output logic        mem_s1_reg_write_en,
     output logic [ 1:0] mem_s1_wb_sel
@@ -32,6 +36,8 @@ module ex_mem_reg_s1 (
             mem_s1_valid        <= 1'b0;
             mem_s1_pc           <= 32'd0;
             mem_s1_inst         <= 32'd0;
+            mem_s1_alu_result   <= 32'd0;
+            mem_s1_pc_plus_4    <= 32'd0;
             mem_s1_rd           <= 5'd0;
             mem_s1_reg_write_en <= 1'b0;
             mem_s1_wb_sel       <= 2'd0;
@@ -39,6 +45,8 @@ module ex_mem_reg_s1 (
             mem_s1_valid        <= ex_s1_valid & ex_ready_go & ~mem_branch_flush;
             mem_s1_pc           <= ex_s1_pc;
             mem_s1_inst         <= ex_s1_inst;
+            mem_s1_alu_result   <= ex_s1_alu_result;
+            mem_s1_pc_plus_4    <= ex_s1_pc_plus_4;
             mem_s1_rd           <= ex_s1_rd;
             mem_s1_reg_write_en <= ex_s1_reg_write_en & ex_s1_valid;
             mem_s1_wb_sel       <= ex_s1_wb_sel;
