@@ -13,7 +13,7 @@ module cpu_top (
 
     // IROM 接口 (IF stage)
     output logic [31:0] irom_addr,       // = next_pc（预取，IF 阶段）
-    input  logic [31:0] irom_data,       // 指令（BRAM 1拍 Clk-to-Q，IF 阶段有效）
+    input  logic [63:0] irom_data,       // 64-bit fetch window (Phase 0 uses low 32-bit inst0)
 
     // DCache 接口 (EX → MEM stage)
     output logic        cache_req,       // EX stage: 有访存请求
@@ -55,7 +55,7 @@ module cpu_top (
     wire [31:0] id_inst;           // registered instruction from IF/ID
 
     // ---- IROM ----
-    wire [31:0] irom_dout;         // instruction from BRAM output register
+    wire [31:0] irom_inst0;        // Phase 0: low 32-bit instruction from 64-bit IROM data
 
     // ---- Decoder outputs ----
     wire [ 3:0] dec_alu_op;
@@ -368,6 +368,8 @@ module cpu_top (
 
     // ==================== IROM: 外部例化，通过 irom_addr/irom_data 端口 ====================
 
+    assign irom_inst0 = irom_data[31:0];
+
     // ==================== Instruction hold register ====================
     // When pipeline stalls (id_allowin=0), BRAM output may change (irom_addr
     // no longer holds pc). Capture the correct instruction on stall entry
@@ -386,10 +388,10 @@ module cpu_top (
 
     always_ff @(posedge clk) begin
         if (!irom_held_valid && !id_allowin && !mem_branch_flush)
-            irom_data_held <= irom_data;
+            irom_data_held <= irom_inst0;
     end
 
-    wire [31:0] irom_data_out = irom_held_valid ? irom_data_held : irom_data;
+    wire [31:0] irom_data_out = irom_held_valid ? irom_data_held : irom_inst0;
 
     // ==================== IF/ID ====================
 

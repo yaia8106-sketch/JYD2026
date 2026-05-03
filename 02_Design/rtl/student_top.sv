@@ -40,7 +40,8 @@ module student_top #(
 
     // CPU ↔ IROM
     logic [31:0] irom_addr;
-    logic [31:0] irom_data;
+    logic [63:0] irom_data;
+    logic [31:0] irom_data_inst0;
 
     // CPU ↔ DCache
     logic        cache_req;
@@ -103,13 +104,16 @@ module student_top #(
 
     // ================================================================
     //  IROM (Block Memory Generator ROM)
-    //  配置: 32bit, 4096 depth (16KB), 无 output register (1 拍)
+    //  Phase 0 simulation/RTL interface is 64-bit; Vivado IP is still 32-bit
+    //  until regenerated, so hardware top zero-extends the current low half.
     //  地址: word 地址 = irom_addr[13:2], 12 bit
     // ================================================================
+    assign irom_data = {32'd0, irom_data_inst0};
+
     IROM4MyOwn u_irom (
         .clka  (w_cpu_clk),
         .addra (irom_addr[13:2]),
-        .douta (irom_data)
+        .douta (irom_data_inst0)
     );
 
     // ================================================================

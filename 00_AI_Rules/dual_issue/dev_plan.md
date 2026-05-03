@@ -12,6 +12,8 @@
 
 ## Phase 0：IROM 加宽（不改功能）
 
+> 2026-05-03 执行说明：按用户要求先不修改 Vivado 工程/IP。本轮完成 RTL 64-bit IROM 数据口和 `riscv_tests` 仿真模型适配；Vivado IROM IP 重配留到 FPGA/工程阶段。
+
 ### 目标
 IROM 从 32-bit 加宽到 64-bit 输出，但仍只使用低 32 位（inst0），CPU 行为与单发射完全一致。
 

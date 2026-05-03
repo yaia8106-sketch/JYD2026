@@ -26,7 +26,7 @@ module tb_riscv_tests;
     //  CPU ↔ DCache interface
     // ================================================================
     wire [31:0] irom_addr;
-    reg  [31:0] irom_data;
+    reg  [63:0] irom_data;
 
     // DCache interface (cpu_top ↔ dcache)
     wire        cache_req;
@@ -103,13 +103,16 @@ module tb_riscv_tests;
 
     // ================================================================
     //  IROM Model (1-cycle latency, same as real BRAM)
+    //  Phase 0 exposes a 64-bit fetch window. cpu_top still consumes only
+    //  irom_data[31:0], so the low half is kept behavior-identical to the
+    //  old 32-bit IROM and the high half carries the following instruction.
     //  Address: 0x80000000 ~ 0x80003FFF, 4096 x 32-bit words
     //  Word address = irom_addr[13:2]
     // ================================================================
     reg [31:0] irom [0:4095];
 
     always @(posedge clk) begin
-        irom_data <= irom[irom_addr[13:2]];
+        irom_data <= {irom[irom_addr[13:2] + 12'd1], irom[irom_addr[13:2]]};
     end
 
     // ================================================================
@@ -157,17 +160,12 @@ module tb_riscv_tests;
     assign mmio_rdata = mmio_rd_reg;
 
     // ================================================================
-    //  tohost Monitoring
-    //  tohost symbol is at DRAM offset 0 (address 0x80100000)
-    //  Protocol:
-    //    tohost == 1           → PASS
-    //    tohost == (n<<1)|1    → FAIL at test #n
-    //
-    //  Detection: watch for DRAM writes to word address 0.
-    //  With DCache (WT+WA): stores go through cache → store buffer → DRAM.
-    //  So we monitor the DRAM write port from dcache.
+    //  Result Monitoring
+    //  The custom riscv-tests environment reports through LED MMIO:
+    //    LED == 1           -> PASS
+    //    LED == (n<<1)|1    -> FAIL at test #n
     // ================================================================
-    localparam TOHOST_WORD_ADDR = 16'd0;
+    localparam LED_MMIO_ADDR = 32'h8020_0040;
 
     reg        tohost_detected;
     reg [31:0] tohost_value;
@@ -177,10 +175,10 @@ module tb_riscv_tests;
             tohost_detected <= 1'b0;
             tohost_value    <= 32'd0;
         end else if (!tohost_detected &&
-                     |dram_wea &&
-                     dram_wr_addr == TOHOST_WORD_ADDR) begin
+                     |mmio_wea &&
+                     mmio_wr_addr == LED_MMIO_ADDR) begin
             tohost_detected <= 1'b1;
-            tohost_value    <= dram_wdata;
+            tohost_value    <= mmio_wdata;
         end
     end
 
