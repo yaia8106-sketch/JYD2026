@@ -60,7 +60,7 @@
 | 4 | 8 个 NOP 后读回 | 流水线排空后 cache 仍有效 |
 | 5 | 函数调用栈操作 + DRAM 读取 | SP 操作与 DRAM 读交错 |
 
-### Phase3 dual-issue tests
+### Phase 3 双发射基础测试（6 个）
 
 | 测试 | 验证重点 |
 |------|----------|
@@ -70,6 +70,46 @@
 | `waw` | 同周期 WAW 不阻止双发，Slot1 写回优先 |
 | `loaduse_dual` | Slot0 load + 独立 Slot1 ALU 可双发，后续 load-use stall 正确 |
 | `inst_buffer` | 单发时 slot1 进入缓冲，下拍作为 slot0 执行且不丢失 |
+
+### Phase 4 双发射补充测试（9 个）
+
+针对 Phase 3 测试未覆盖的关键盲区，按风险等级补充。
+
+#### 前递与数据通路（3 个）
+
+| 测试 | 验证重点 |
+|------|----------|
+| `fwd_s1` | **S1 跨槽前递**：S1 写 rd → 下一对 S0/S1 通过前递读取。分 4 部分分别测试 S1\_EX→S0/S1、S1\_MEM→S0/S1、S1\_WB→S0/S1、以及 S1\_EX 优先级高于 S0\_MEM 的正确性 |
+| `waw_fwd` | **WAW 前递优先级**：S0 与 S1 同时写同一 rd 后，后续指令通过前递读回，验证 S1\_EX > S0\_EX 优先级在 EX/MEM/WB 三阶段均正确。含链式 WAW（连续两对双写） |
+| `loaduse_cross` | **跨对 load-use 与 S1**：上一拍 S0 load → 本拍 S1.rs1 或 S1.rs2 依赖 load 结果 → 必须触发 stall。同时验证 S0 stall 时 S1 被正确冻结 |
+
+#### 指令缓冲与 Flush（2 个）
+
+| 测试 | 验证重点 |
+|------|----------|
+| `flush_instbuf` | **Flush 清空指令缓冲**：sw 单发→S1 入 buf→正常消费；beq taken→buf 中指令必须丢弃（不执行）；jal→buf 清空。若 buf 未清，错误路径指令会写入寄存器 |
+| `instbuf_stall` | **指令缓冲 + 流水线 stall 交互**：sw→S1 缓冲→缓冲指令是 lw→下一拍 load-use stall→缓冲内容必须存活；快速 sw→buf→消费→sw→buf 连续填充-消费链；BP 循环中反复触发缓冲 |
+
+#### 取指对齐与 S1 类型约束（2 个）
+
+| 测试 | 验证重点 |
+|------|----------|
+| `pc_align` | **PC\[2\]=1 强制单发**：分支跳转到非 8 字节对齐地址时仅能取 1 条指令。同时测试 S1 位置为 load/store/branch 时阻止双发，以及 S1 位置为 branch 时正确进入 inst\_buf 并在下一拍作为 S0 执行 |
+| `lui_auipc_s1` | **LUI/AUIPC 在 Slot1**：LUI/AUIPC 属于 ALU-type 但使用特殊操作数选择（alu\_src1=0/PC），验证 S1 解码器和 ALU 源 MUX 正确处理。含 AUIPC 精确 PC 值校验、LUI 结果前递给后续 sw、以及 8 对连续双发的持续吞吐压力测试 |
+
+#### DCache 与分支预测交互（2 个）
+
+| 测试 | 验证重点 |
+|------|----------|
+| `dcache_dual` | **DCache miss + 双发射 stall**：3 个同 set 不同 tag 的 store 驱逐 cache way → lw(miss) + addi(S1) 双发 → refill 期间 S1 流水线寄存器必须保持。第二部分验证 miss 恢复后 S1 结果能被后续指令正确前递。第三部分测试 write-allocate 路径的 store miss |
+| `bp_dual` | **BP 误预测 + 双发射循环**：紧凑循环体内 ALU 双发 + 出口误预测 flush 两个 slot；嵌套循环 + 双发对累加器；JAL 子程序调用后返回点执行双发对并校验 ra；背靠背 branch→双发→branch 连续切换 |
+
+#### Store Buffer 与 RAS（2 个）
+
+| 测试 | 验证重点 |
+|------|----------|
+| `sb_stress` | **Store buffer 冲突 stall**：连续两次 store 命中同一 cache line → `sb_conflict` → S\_SB\_DRAIN 额外 stall 周期；三连 store（含覆盖写）验证 last-store-wins；store + 双发 ALU + store 交错场景 |
+| `ras_overflow` | **RAS 溢出恢复**：4 层嵌套调用（RAS 容量内）验证正常返回；6 层嵌套（溢出 2 层）验证 `branch_flush` 纠正错误 RAS 预测后仍能正确返回；溢出恢复后再做 2 层调用验证 RAS 状态正常 |
 
 ---
 
@@ -85,12 +125,21 @@
 
 ---
 
-## 覆盖盲区（已知未测试）
+## 覆盖盲区
 
-| 场景 | 风险 | 建议 |
+| 场景 | 风险 | 状态 |
 |------|------|------|
-| DCache refill 期间 branch flush | 高——曾出 bug | dcache_stress #6 部分覆盖，但未测 refill 中途 flush |
-| BTB 非分支指令误预测 + Load | 高——曾出 bug | 已修复但无专项回归测试 |
-| Store buffer 满时的 stall | 中——buffer 仅 1 entry | counter_stress 部分覆盖 |
-| 连续多个 cache miss（pipeline stall 叠加） | 中 | dcache_stress #7 部分覆盖 |
-| RAS 溢出（调用深度 > 4） | 低——RAS 4-deep 足够 | bp_stress 已丢失 |
+| S1 跨槽前递 (EX/MEM/WB) | 高 | ✅ `fwd_s1` 覆盖 |
+| WAW 前递优先级 | 高 | ✅ `waw_fwd` 覆盖 |
+| Flush 清空指令缓冲 | 高 | ✅ `flush_instbuf` 覆盖 |
+| PC[2]=1 单发 / S1 类型约束 | 高 | ✅ `pc_align` 覆盖 |
+| 跨对 load-use 与 S1 | 中 | ✅ `loaduse_cross` 覆盖 |
+| LUI/AUIPC 在 S1 | 低 | ✅ `lui_auipc_s1` 覆盖 |
+| DCache miss + 双发射 stall | 高 | ✅ `dcache_dual` 覆盖 |
+| inst_buf + stall 交互 | 中 | ✅ `instbuf_stall` 覆盖 |
+| BP 误预测 + 双发射循环 | 中 | ✅ `bp_dual` 覆盖 |
+| Store buffer 冲突 stall | 中 | ✅ `sb_stress` 覆盖 |
+| RAS 溢出（调用深度 > 4） | 低 | ✅ `ras_overflow` 覆盖（6 层嵌套） |
+| DCache refill 期间 branch flush | 高——曾出 bug | ✅ 架构上不可能：`ex_branch_flush` 被 `mem_allowin` 门控，cache miss 期间 flush 被延迟到 refill 完成后。`dcache_dual` 已隐式覆盖此延迟 flush 行为 |
+| BTB 非分支指令误预测 + Load | 高——曾出 bug | ⚠️ 无法在小测试中复现：BTB alias 需 `PC[13:2]` 完全匹配（16KB 代码间距），小程序无法构造。修复已在 RTL 中（`cache_req` 不门控 `branch_flush`），真实程序上板时隐式覆盖 |
+| FPGA 时序（WNS = -0.189ns） | 高 | ❌ 仿真无法覆盖，需上板验证 |
