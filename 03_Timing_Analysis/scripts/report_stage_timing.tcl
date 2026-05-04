@@ -80,7 +80,7 @@ set PIPELINE_GROUPS [list \
 # ---- BRAM 组（特殊时序端点）----
 # BRAM 不是普通 FF，需要用 PRIMITIVE_TYPE 过滤
 set BRAM_GROUPS [list \
-    [list "IROM(BRAM)"   "u_irom_inst*"          ] \
+    [list "IROM(BRAM)"   "u_irom_*"              ] \
     [list "DRAM(BRAM)"   "u_dram"                ] \
     [list "DC_Data(BRAM)" "u_dcache"             ] \
 ]
@@ -252,6 +252,9 @@ log_msg [string repeat "=" 80]
 array set delay_matrix {}
 array set slack_matrix {}
 array set levels_matrix {}
+array set raw_slack_matrix {}
+array set raw_delay_matrix {}
+array set raw_levels_matrix {}
 
 foreach from_grp $all_groups {
     set from_name   [lindex $from_grp 0]
@@ -261,8 +264,9 @@ foreach from_grp $all_groups {
         set to_name   [lindex $to_grp 0]
         set to_filter [lindex $to_grp 1]
 
-        # 跳过自身
-        if {$from_name eq $to_name} {
+        # 跳过自身（仅 FF 组；BRAM 组保留自反馈路径，如 IROM→IROM）
+        set from_type [lindex $from_grp 2]
+        if {$from_name eq $to_name && $from_type eq "seq"} {
             set delay_matrix($from_name,$to_name) "  ---  "
             set slack_matrix($from_name,$to_name) "  ---  "
             continue
@@ -296,6 +300,9 @@ foreach from_grp $all_groups {
         set delay_matrix($from_name,$to_name) [format_ns $worst_data_delay]
         set slack_matrix($from_name,$to_name) [format_ns $worst_slack]
         set levels_matrix($from_name,$to_name) [format "%4d" $worst_levels]
+        set raw_slack_matrix($from_name,$to_name)  $worst_slack
+        set raw_delay_matrix($from_name,$to_name)  $worst_data_delay
+        set raw_levels_matrix($from_name,$to_name) $worst_levels
 
         # 打印详细信息
         log_msg ""
@@ -380,35 +387,66 @@ foreach from_name $group_names {
     log_msg $row
 }
 
-# ---- 找出全局最差路径 ----
+# ---- 逻辑路径汇总（替代 Top-N 线网报告）----
 log_msg ""
 log_msg [string repeat "=" 80]
-log_msg "\n\[Step 4\] 全局最差路径 Top 10\n"
+log_msg "\n\[Step 4\] 逻辑路径汇总（按 Slack 升序）\n"
+log_msg "  每行 = 一条独立的架构级路径（寄存器组 → 寄存器组）"
+log_msg "  FAIL = 时序违例，tight = slack < 0.5ns\n"
 
-set global_paths [get_timing_paths -quiet \
-    -max_paths 10 \
-    -sort_by slack]
-
-set gidx 0
-log_msg [format "  %-4s  %-10s  %-10s  %-8s  %s" \
-    "#" "Slack" "DataPath" "Levels" "StartPoint → EndPoint"]
-log_msg [string repeat "-" 90]
-
-foreach gp $global_paths {
-    incr gidx
-    set g_slack [get_property SLACK $gp]
-    set g_data  [get_property DATAPATH_DELAY $gp]
-    set g_lvl   [get_property LOGIC_LEVELS $gp]
-    set g_start [get_property STARTPOINT_PIN $gp]
-    set g_end   [get_property ENDPOINT_PIN $gp]
-
-    # 截断长名
-    if {[string length $g_start] > 30} { set g_start "...[string range $g_start end-29 end]" }
-    if {[string length $g_end]   > 30} { set g_end   "...[string range $g_end end-29 end]"   }
-
-    log_msg [format "  %-4d  %10.3f  %10.3f  %6d    %s → %s" \
-        $gidx $g_slack $g_data $g_lvl $g_start $g_end]
+# 收集所有有效路径
+set path_list {}
+foreach from_name $group_names {
+    foreach to_name $group_names {
+        set key "$from_name,$to_name"
+        if {[info exists raw_slack_matrix($key)]} {
+            lappend path_list [list $raw_slack_matrix($key) \
+                $raw_delay_matrix($key) \
+                $raw_levels_matrix($key) \
+                $from_name $to_name]
+        }
+    }
 }
+
+# 按 slack 升序排序
+set sorted_paths [lsort -real -index 0 $path_list]
+
+log_msg [format "  %-4s  %10s  %10s  %6s  %-35s %s" \
+    "#" "Slack(ns)" "DataPath" "Levels" "逻辑路径" "状态"]
+log_msg [string repeat "-" 96]
+
+set pidx 0
+foreach entry $sorted_paths {
+    incr pidx
+    set p_slack  [lindex $entry 0]
+    set p_data   [lindex $entry 1]
+    set p_levels [lindex $entry 2]
+    set p_from   [lindex $entry 3]
+    set p_to     [lindex $entry 4]
+
+    set status ""
+    if {$p_slack < 0} {
+        set status "← FAIL"
+    } elseif {$p_slack < 0.500} {
+        set status "← tight"
+    }
+
+    set path_name "${p_from} → ${p_to}"
+    log_msg [format "  %-4d  %10.3f  %10.3f  %6d  %-35s %s" \
+        $pidx $p_slack $p_data $p_levels $path_name $status]
+}
+
+# 统计
+set fail_count 0
+set tight_count 0
+foreach entry $sorted_paths {
+    set s [lindex $entry 0]
+    if {$s < 0}          { incr fail_count }
+    if {$s >= 0 && $s < 0.500} { incr tight_count }
+}
+log_msg ""
+log_msg [format "  汇总：%d 条违例 (FAIL) / %d 条偏紧 (tight) / %d 条总路径" \
+    $fail_count $tight_count [llength $sorted_paths]]
 
 # ---- 完成 ----
 log_msg ""

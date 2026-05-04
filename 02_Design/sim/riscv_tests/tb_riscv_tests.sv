@@ -26,7 +26,6 @@ module tb_riscv_tests;
     //  CPU ↔ DCache interface
     // ================================================================
     wire [31:0] irom_addr;
-    wire [31:0] irom_addr_plus4;
     reg  [63:0] irom_data;
 
     // DCache interface (cpu_top ↔ dcache)
@@ -62,9 +61,8 @@ module tb_riscv_tests;
     cpu_top u_cpu (
         .clk            (clk),
         .rst_n          (rst_n),
-        .irom_addr       (irom_addr),
-        .irom_addr_plus4 (irom_addr_plus4),
-        .irom_data       (irom_data),
+        .irom_addr      (irom_addr),
+        .irom_data      (irom_data),
         .cache_req      (cache_req),
         .cache_wr       (cache_wr),
         .cache_addr     (cache_addr),
@@ -114,7 +112,7 @@ module tb_riscv_tests;
     reg [31:0] irom [0:4095];
 
     always @(posedge clk) begin
-        irom_data <= {irom[irom_addr_plus4[13:2]], irom[irom_addr[13:2]]};
+        irom_data <= {irom[irom_addr[13:2] + 12'd1], irom[irom_addr[13:2]]};
     end
 
     // ================================================================

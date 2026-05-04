@@ -7,9 +7,9 @@
 
 ## 当前阶段
 
-**Phase 4 进行中（2026-05-03）。**
+**Phase 4 进行中（2026-05-04）。**
 
-说明：Phase 3 已完成并提交。Phase 4 已开始做 Vivado/板级路径适配：仿真模型、student_top 双 IROM、Vivado 工程源文件/IP COE 路径、pblock 约束和 timing 脚本均已接入双发射取指。当前 RTL 回归 `49/49 PASS`；Vivado 实现可跑完但 200MHz timing 尚未闭合，当前最好 routed WNS 为 `-0.189ns`，主要违例集中在 IROM BRAM 输出回取指/IROM 地址的路径。
+说明：Phase 3 已完成并提交。Phase 4 已开始做 Vivado/板级路径适配：取指路径已改为两个 32-bit IROM bank（even/odd），Tcl 自动拆分 COE 并生成 `IROMEven32`/`IROMOdd32`，`student_top` 用一拍对齐的 bank select 还原 64-bit fetch window。当前 RTL 回归 `60/60 PASS`；Vivado `check current 18` 可跑完 synthesis/place/route，综合和实现 DRC 已无 IROM 组合环，但 200MHz timing 尚未闭合，当前 routed WNS 为 `-0.886ns`。主要违例集中在 IROM BRAM 输出回取指/IROM 地址的路径，次要违例包括 DCache→DRAM/IDEX 等路径。
 
 ## 里程碑（详细步骤见 `dev_plan.md`）
 
@@ -18,7 +18,7 @@
 - [x] Phase 1：取两条，只发一条（43/43 PASS）
 - [x] Phase 2：数据通路就位（仍不双发，43/43 PASS）
 - [x] Phase 3：开启双发射（49/49 PASS，含 6 个专项测试） 🎯
-- [ ] Phase 4：综合 + FPGA 上板（仿真通过，Vivado 集成完成，timing 未闭合）
+- [ ] Phase 4：综合 + FPGA 上板（仿真通过，banked IROM Vivado 集成完成，timing 未闭合）
 
 ## 关键决策速查
 

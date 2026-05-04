@@ -13,7 +13,6 @@ module cpu_top (
 
     // IROM 接口 (IF stage)
     output logic [31:0] irom_addr,       // = next_pc（预取，IF 阶段）
-    output logic [31:0] irom_addr_plus4, // = next_pc + 4（64-bit fetch high half）
     input  logic [63:0] irom_data,       // 64-bit fetch window (Phase 0 uses low 32-bit inst0)
 
     // DCache 接口 (EX → MEM stage)
@@ -431,13 +430,6 @@ module cpu_top (
                        id_bp_redirect_raw  ? id_redirect_target : // NLP: ID redirect (raw, fast)
                        bp_taken            ? bp_target :          // L0 预测 taken
                                              seq_next_pc;        // 顺序取指（+4/+8）
-
-    // Keep the high-half ROM address off the post-mux +1 carry chain in
-    // student_top; this is a routed 200MHz critical path after dual issue.
-    assign irom_addr_plus4 = mem_branch_flush    ? (mem_branch_target + 32'd4) :
-                             id_bp_redirect_raw  ? (id_redirect_target + 32'd4) :
-                             bp_taken            ? (bp_target + 32'd4) :
-                                                   seq_next_pc_plus4;
 
     // pc_plus*: mirror irom_addr MUX priority with precomputed sequential
     // addresses.  Sequential updates select among precomputed values so the

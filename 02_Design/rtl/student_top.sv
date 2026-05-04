@@ -40,12 +40,14 @@ module student_top #(
 
     // CPU ↔ IROM
     logic [31:0] irom_addr;
-    logic [31:0] irom_addr_plus4;
     logic [63:0] irom_data;
-    logic [31:0] irom_data_inst0;
-    logic [31:0] irom_data_inst1;
-    logic [11:0] irom_word_addr;
-    logic [11:0] irom_plus4_word_addr;
+    logic [31:0] irom_even_data;
+    logic [31:0] irom_odd_data;
+    logic [10:0] irom_pair_addr;
+    logic [10:0] irom_even_addr;
+    logic [10:0] irom_odd_addr;
+    logic        irom_odd_slot0;
+    logic        irom_odd_slot0_q;
 
     // CPU ↔ DCache
     logic        cache_req;
@@ -84,9 +86,8 @@ module student_top #(
         .rst_n       (~w_clk_rst),
 
         // IROM 接口 (IF stage)
-        .irom_addr       (irom_addr),
-        .irom_addr_plus4 (irom_addr_plus4),
-        .irom_data       (irom_data),
+        .irom_addr   (irom_addr),
+        .irom_data   (irom_data),
 
         // DCache 接口
         .cache_req   (cache_req),
@@ -109,26 +110,38 @@ module student_top #(
 
     // ================================================================
     //  IROM fetch window
-    //  Reuse the existing 32-bit ROM IP as two read-only banks to present the
-    //  same sliding 64-bit window used by the simulation model:
+    //  Two independent 32-bit ROM banks:
+    //    even bank stores word indices 0,2,4...
+    //    odd  bank stores word indices 1,3,5...
+    //  The bank mux presents the same sliding 64-bit window used by sim:
     //    irom_data[31:0]  = inst at PC
     //    irom_data[63:32] = inst at PC + 4
-    //  地址: word 地址 = irom_addr[13:2], 12 bit
     // ================================================================
-    assign irom_word_addr       = irom_addr[13:2];
-    assign irom_plus4_word_addr = irom_addr_plus4[13:2];
-    assign irom_data = {irom_data_inst1, irom_data_inst0};
+    assign irom_pair_addr = irom_addr[13:3];
+    assign irom_odd_slot0 = irom_addr[2];
+    assign irom_odd_addr  = irom_pair_addr;
+    assign irom_even_addr = irom_pair_addr + {10'd0, irom_odd_slot0};
 
-    IROM4MyOwn u_irom_inst0 (
+    always_ff @(posedge w_cpu_clk or posedge w_clk_rst) begin
+        if (w_clk_rst)
+            irom_odd_slot0_q <= 1'b0;
+        else
+            irom_odd_slot0_q <= irom_odd_slot0;
+    end
+
+    assign irom_data      = irom_odd_slot0_q ? {irom_even_data, irom_odd_data}
+                                             : {irom_odd_data,  irom_even_data};
+
+    IROMEven32 u_irom_even (
         .clka  (w_cpu_clk),
-        .addra (irom_word_addr),
-        .douta (irom_data_inst0)
+        .addra (irom_even_addr),
+        .douta (irom_even_data)
     );
 
-    IROM4MyOwn u_irom_inst1 (
+    IROMOdd32 u_irom_odd (
         .clka  (w_cpu_clk),
-        .addra (irom_plus4_word_addr),
-        .douta (irom_data_inst1)
+        .addra (irom_odd_addr),
+        .douta (irom_odd_data)
     );
 
     // ================================================================

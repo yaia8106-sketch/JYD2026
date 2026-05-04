@@ -40,7 +40,7 @@ if {![info exists build_jobs]} {
     if {$argc >= 3} {
         set build_jobs [lindex $argv 2]
     } else {
-        set build_jobs 4
+        set build_jobs 18
     }
 }
 
@@ -61,21 +61,96 @@ proc step_copy_coe {} {
     puts ">>> Copying COE files (${name})..."
     file copy -force "${src}/irom.coe" "${dst}/irom.coe"
     file copy -force "${src}/dram.coe" "${dst}/dram.coe"
+    split_irom_coe "${dst}/irom.coe" "${dst}/irom_even.coe" "${dst}/irom_odd.coe"
     puts ">>> COE copied: [file size ${dst}/irom.coe]B irom, [file size ${dst}/dram.coe]B dram"
+}
+
+proc split_irom_coe {src even_dst odd_dst} {
+    set fp [open $src r]
+    set text [read $fp]
+    close $fp
+
+    set words {}
+    set in_vec 0
+    foreach raw [split $text "\n"] {
+        set line [string trim $raw]
+        if {[regexp -nocase {memory_initialization_vector\s*=(.*)} $line -> rest]} {
+            set in_vec 1
+            set line $rest
+        } elseif {!$in_vec} {
+            continue
+        }
+
+        regsub -all {;} $line "," line
+        foreach item [split $line ","] {
+            set word [string trim $item]
+            if {$word ne ""} {
+                lappend words $word
+            }
+        }
+    }
+
+    if {[llength $words] > 4096} {
+        error "irom.coe has [llength $words] words, but banked IROM supports 4096 words"
+    }
+
+    write_irom_bank_coe $even_dst $words 0
+    write_irom_bank_coe $odd_dst  $words 1
+    puts ">>> IROM split: [llength $words] words -> irom_even.coe / irom_odd.coe"
+}
+
+proc write_irom_bank_coe {dst words parity} {
+    set fp [open $dst w]
+    puts $fp "memory_initialization_radix=16;"
+    puts $fp "memory_initialization_vector="
+    for {set i 0} {$i < 2048} {incr i} {
+        set src_idx [expr {$i * 2 + $parity}]
+        if {$src_idx < [llength $words]} {
+            set word [string toupper [lindex $words $src_idx]]
+        } else {
+            set word "00000000"
+        }
+        set word [string range "00000000${word}" end-7 end]
+        if {$i == 2047} {
+            puts $fp "${word};"
+        } else {
+            puts $fp "${word},"
+        }
+    }
+    close $fp
 }
 
 proc step_regen_ip {} {
     upvar coe_dst dst
-    puts ">>> Regenerating IROM/DRAM IP..."
-    set_property CONFIG.Coe_File [file normalize "${dst}/irom.coe"] [get_ips IROM4MyOwn]
+    puts ">>> Regenerating IROM banks/DRAM IP..."
+    ensure_irom_bank_ip IROMEven32 "${dst}/irom_even.coe"
+    ensure_irom_bank_ip IROMOdd32  "${dst}/irom_odd.coe"
     set_property CONFIG.Coe_File [file normalize "${dst}/dram.coe"] [get_ips DRAM4MyOwn]
-    foreach ip {IROM4MyOwn DRAM4MyOwn} {
+    foreach ip {IROMEven32 IROMOdd32 DRAM4MyOwn} {
         set ip_run "${ip}_synth_1"
         if {[llength [get_runs -quiet $ip_run]] > 0} {
             reset_run $ip_run
         }
         generate_target all [get_ips $ip]
     }
+}
+
+proc ensure_irom_bank_ip {ip coe_file} {
+    if {[llength [get_ips -quiet $ip]] == 0} {
+        puts ">>> Creating IP ${ip}..."
+        create_ip -name blk_mem_gen -vendor xilinx.com -library ip -version 8.4 -module_name $ip
+    }
+
+    set_property -dict [list \
+        CONFIG.Memory_Type {Single_Port_ROM} \
+        CONFIG.Write_Width_A {32} \
+        CONFIG.Write_Depth_A {2048} \
+        CONFIG.Enable_A {Always_Enabled} \
+        CONFIG.Load_Init_File {true} \
+        CONFIG.Coe_File [file normalize $coe_file] \
+        CONFIG.Register_PortA_Output_of_Memory_Primitives {false} \
+        CONFIG.Register_PortA_Output_of_Memory_Core {false} \
+    ] [get_ips $ip]
 }
 
 proc step_synth {jobs} {
