@@ -169,7 +169,7 @@ set_property MAX_FANOUT 12 [get_cells student_top_inst/u_dcache/dram_rd_addr_reg
 # ============================================================
 create_pblock pblock_cpu_irom
 add_cells_to_pblock [get_pblocks pblock_cpu_irom] [get_cells student_top_inst/u_cpu]
-add_cells_to_pblock [get_pblocks pblock_cpu_irom] [get_cells student_top_inst/u_irom_even]
-add_cells_to_pblock [get_pblocks pblock_cpu_irom] [get_cells student_top_inst/u_irom_odd]
+add_cells_to_pblock [get_pblocks pblock_cpu_irom] [get_cells student_top_inst/u_irom_slot0]
+add_cells_to_pblock [get_pblocks pblock_cpu_irom] [get_cells student_top_inst/u_irom_slot1]
 add_cells_to_pblock [get_pblocks pblock_cpu_irom] [get_cells student_top_inst/u_dcache]
 resize_pblock pblock_cpu_irom -add {CLOCKREGION_X1Y3:CLOCKREGION_X1Y4}

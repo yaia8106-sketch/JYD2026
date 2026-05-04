@@ -61,11 +61,11 @@ proc step_copy_coe {} {
     puts ">>> Copying COE files (${name})..."
     file copy -force "${src}/irom.coe" "${dst}/irom.coe"
     file copy -force "${src}/dram.coe" "${dst}/dram.coe"
-    split_irom_coe "${dst}/irom.coe" "${dst}/irom_even.coe" "${dst}/irom_odd.coe"
+    write_irom_slot_coes "${dst}/irom.coe" "${dst}/irom_slot0.coe" "${dst}/irom_slot1.coe"
     puts ">>> COE copied: [file size ${dst}/irom.coe]B irom, [file size ${dst}/dram.coe]B dram"
 }
 
-proc split_irom_coe {src even_dst odd_dst} {
+proc read_irom_words {src} {
     set fp [open $src r]
     set text [read $fp]
     close $fp
@@ -90,28 +90,34 @@ proc split_irom_coe {src even_dst odd_dst} {
         }
     }
 
-    if {[llength $words] > 4096} {
-        error "irom.coe has [llength $words] words, but banked IROM supports 4096 words"
-    }
-
-    write_irom_bank_coe $even_dst $words 0
-    write_irom_bank_coe $odd_dst  $words 1
-    puts ">>> IROM split: [llength $words] words -> irom_even.coe / irom_odd.coe"
+    return $words
 }
 
-proc write_irom_bank_coe {dst words parity} {
+proc write_irom_slot_coes {src slot0_dst slot1_dst} {
+    set words [read_irom_words $src]
+
+    if {[llength $words] > 4096} {
+        error "irom.coe has [llength $words] words, but slot IROM supports 4096 base words"
+    }
+
+    write_irom_slot_coe $slot0_dst $words 0
+    write_irom_slot_coe $slot1_dst $words 1
+    puts ">>> IROM slots: [llength $words] words -> irom_slot0.coe / irom_slot1.coe"
+}
+
+proc write_irom_slot_coe {dst words offset} {
     set fp [open $dst w]
     puts $fp "memory_initialization_radix=16;"
     puts $fp "memory_initialization_vector="
-    for {set i 0} {$i < 2048} {incr i} {
-        set src_idx [expr {$i * 2 + $parity}]
+    for {set i 0} {$i < 4096} {incr i} {
+        set src_idx [expr {$i + $offset}]
         if {$src_idx < [llength $words]} {
             set word [string toupper [lindex $words $src_idx]]
         } else {
             set word "00000000"
         }
         set word [string range "00000000${word}" end-7 end]
-        if {$i == 2047} {
+        if {$i == 4095} {
             puts $fp "${word};"
         } else {
             puts $fp "${word},"
@@ -122,9 +128,11 @@ proc write_irom_bank_coe {dst words parity} {
 
 proc step_regen_ip {} {
     upvar coe_dst dst
-    puts ">>> Regenerating IROM banks/DRAM IP..."
-    ensure_irom_bank_ip IROMEven32 "${dst}/irom_even.coe"
-    ensure_irom_bank_ip IROMOdd32  "${dst}/irom_odd.coe"
+    puts ">>> Regenerating IROM slot banks/DRAM IP..."
+    # Keep legacy IP module names to avoid wider Vivado project churn:
+    # IROMEven32 is slot0, IROMOdd32 is slot1.
+    ensure_irom_slot_ip IROMEven32 "${dst}/irom_slot0.coe"
+    ensure_irom_slot_ip IROMOdd32  "${dst}/irom_slot1.coe"
     set_property CONFIG.Coe_File [file normalize "${dst}/dram.coe"] [get_ips DRAM4MyOwn]
     foreach ip {IROMEven32 IROMOdd32 DRAM4MyOwn} {
         set ip_run "${ip}_synth_1"
@@ -135,7 +143,7 @@ proc step_regen_ip {} {
     }
 }
 
-proc ensure_irom_bank_ip {ip coe_file} {
+proc ensure_irom_slot_ip {ip coe_file} {
     if {[llength [get_ips -quiet $ip]] == 0} {
         puts ">>> Creating IP ${ip}..."
         create_ip -name blk_mem_gen -vendor xilinx.com -library ip -version 8.4 -module_name $ip
@@ -144,7 +152,7 @@ proc ensure_irom_bank_ip {ip coe_file} {
     set_property -dict [list \
         CONFIG.Memory_Type {Single_Port_ROM} \
         CONFIG.Write_Width_A {32} \
-        CONFIG.Write_Depth_A {2048} \
+        CONFIG.Write_Depth_A {4096} \
         CONFIG.Enable_A {Always_Enabled} \
         CONFIG.Load_Init_File {true} \
         CONFIG.Coe_File [file normalize $coe_file] \
