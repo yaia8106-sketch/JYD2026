@@ -515,9 +515,19 @@ module cpu_top (
     wire        if_s1_valid  = can_dual_issue;
     wire        if_sequential_fetch = ~mem_branch_flush & ~id_bp_redirect_raw & ~bp_taken;
 
-    // ==================== Dual-issue decision ====================
-    // Slot 1 is ALU-only. Control flow in Slot 0 is kept single-issue so
-    // a taken branch/jump never has to annul a same-cycle Slot 1 instruction.
+    // ==================== Dual-issue decision (fast path) ====================
+    // TIMING OPTIMIZATION: Decode directly from raw BRAM output (irom_inst0/1)
+    // instead of if_inst0_out/if_inst1_out, bypassing 2 serial MUX levels
+    // (inst_buf MUX + held MUX) on the IROM→IROM critical path.
+    //
+    // Two paths for can_dual_issue:
+    //   raw path  (irom_held_valid=0): decode from raw BRAM output (fast, timing-critical)
+    //   held path (irom_held_valid=1): use registered snapshot captured at stall entry
+    // The held path is needed so dual-issue survives pipeline stalls:
+    //   at stall resolution, irom_held_valid=1 but id_allowin=1, so IF/ID latches.
+    //   Without the held path, can_dual would be 0 and the pair would single-issue.
+    // Note: inst_buf_valid does NOT need gating — when inst_buf is active,
+    //   BRAM slot0 == inst_buf (same address fetched), so raw decode matches
     localparam [6:0] OP_R_TYPE_LOCAL = 7'b0110011;
     localparam [6:0] OP_I_ALU_LOCAL  = 7'b0010011;
     localparam [6:0] OP_BRANCH_LOCAL = 7'b1100011;
@@ -526,38 +536,49 @@ module cpu_top (
     localparam [6:0] OP_JAL_LOCAL    = 7'b1101111;
     localparam [6:0] OP_JALR_LOCAL   = 7'b1100111;
 
-    wire [6:0] if_inst0_opcode = if_inst0_out[6:0];
-    wire [6:0] if_inst1_opcode = if_inst1_out[6:0];
-    wire [4:0] if_inst0_rd     = if_inst0_out[11:7];
-    wire [4:0] if_inst1_rs1    = if_inst1_out[19:15];
-    wire [4:0] if_inst1_rs2    = if_inst1_out[24:20];
+    // Parallel decode from raw BRAM output (bypasses inst_buf/held MUX chain)
+    wire [6:0] raw_inst0_opcode = irom_inst0[6:0];
+    wire [6:0] raw_inst1_opcode = irom_inst1[6:0];
+    wire [4:0] raw_inst0_rd     = irom_inst0[11:7];
+    wire [4:0] raw_inst1_rs1    = irom_inst1[19:15];
+    wire [4:0] raw_inst1_rs2    = irom_inst1[24:20];
 
-    wire if_inst1_is_alu_type = (if_inst1_opcode == OP_R_TYPE_LOCAL)
-                              | (if_inst1_opcode == OP_I_ALU_LOCAL)
-                              | (if_inst1_opcode == OP_LUI_LOCAL)
-                              | (if_inst1_opcode == OP_AUIPC_LOCAL);
+    wire raw_inst1_is_alu_type = (raw_inst1_opcode == OP_R_TYPE_LOCAL)
+                                | (raw_inst1_opcode == OP_I_ALU_LOCAL)
+                                | (raw_inst1_opcode == OP_LUI_LOCAL)
+                                | (raw_inst1_opcode == OP_AUIPC_LOCAL);
 
-    wire if_inst0_is_control = (if_inst0_opcode == OP_BRANCH_LOCAL)
-                             | (if_inst0_opcode == OP_JAL_LOCAL)
-                             | (if_inst0_opcode == OP_JALR_LOCAL);
+    wire raw_inst0_is_control = (raw_inst0_opcode == OP_BRANCH_LOCAL)
+                               | (raw_inst0_opcode == OP_JAL_LOCAL)
+                               | (raw_inst0_opcode == OP_JALR_LOCAL);
 
-    wire if_inst1_uses_rs1 = (if_inst1_opcode == OP_R_TYPE_LOCAL)
-                           | (if_inst1_opcode == OP_I_ALU_LOCAL);
-    wire if_inst1_uses_rs2 = (if_inst1_opcode == OP_R_TYPE_LOCAL);
+    wire raw_inst1_uses_rs1 = (raw_inst1_opcode == OP_R_TYPE_LOCAL)
+                             | (raw_inst1_opcode == OP_I_ALU_LOCAL);
+    wire raw_inst1_uses_rs2 = (raw_inst1_opcode == OP_R_TYPE_LOCAL);
 
-    // Conservative for timing: treat Slot 0's rd field as a possible writer.
-    // This may single-issue harmless rd=x0/store pairs, but never lets a true
-    // same-pair RAW dependency issue.
-    wire if_pair_raw = (if_inst1_uses_rs1 & (if_inst1_rs1 == if_inst0_rd))
-                     | (if_inst1_uses_rs2 & (if_inst1_rs2 == if_inst0_rd));
+    wire raw_pair_raw = (raw_inst1_uses_rs1 & (raw_inst1_rs1 == raw_inst0_rd))
+                       | (raw_inst1_uses_rs2 & (raw_inst1_rs2 == raw_inst0_rd));
 
-    assign can_dual_issue = if_valid
-                          & (pc != 32'h7FFF_FFFC)
-                          & if_sequential_fetch
-                          & ~pc[2]
-                          & if_inst1_is_alu_type
-                          & ~if_pair_raw
-                          & ~if_inst0_is_control;
+    wire raw_can_dual = if_valid
+                      & (pc != 32'h7FFF_FFFC)
+                      & if_sequential_fetch
+                      & ~pc[2]
+                      & raw_inst1_is_alu_type
+                      & ~raw_pair_raw
+                      & ~raw_inst0_is_control;
+
+    // Registered snapshot: captured at stall entry (same cycle as irom_inst0/1_held)
+    logic held_can_dual_r;
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n)
+            held_can_dual_r <= 1'b0;
+        else if (id_flush | id_allowin)
+            held_can_dual_r <= 1'b0;
+        else if (!irom_held_valid)
+            held_can_dual_r <= raw_can_dual;
+    end
+
+    assign can_dual_issue = irom_held_valid ? held_can_dual_r : raw_can_dual;
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
