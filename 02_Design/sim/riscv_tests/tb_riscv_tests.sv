@@ -247,12 +247,25 @@ module tb_riscv_tests;
             $display("[TIMEOUT] %0s  (>%0d cycles)", test_name_r, max_cycles);
         end
 
+        // ---- Performance report (when +perf is specified) ----
+        if ($test$plusargs("perf"))
+            u_perf.print_report();
+
         $finish;
     end
 
     always @(posedge clk) begin
         if (rst_n) cycle_cnt <= cycle_cnt + 1;
     end
+
+    // ================================================================
+    //  Performance Monitor (non-invasive, via hierarchical refs)
+    // ================================================================
+    perf_monitor u_perf (
+        .clk      (clk),
+        .rst_n    (rst_n),
+        .sim_done (tohost_detected)
+    );
 
     // ================================================================
     //  Optional: waveform dump (for VCD-based tools)

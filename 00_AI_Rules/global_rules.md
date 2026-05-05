@@ -92,7 +92,6 @@ end
 
 ## 6. 文档维护
 
-- 只维护 2 个文档：本文件 + `architecture.md`
-- `architecture.md` 从 RTL 反向生成，RTL 改动通过回归后同步更新
-- 信号名必须与 RTL 一致
-- 不写规划、不写历史、只写当前状态
+- 只维护 global_rules.md 和 architecture.md 两个文档，不新建文档文件
+- 优化待办和 profiling 基线记录在项目根目录 `TODO.md`
+- 信号名必须与 RTL 一致，不写规划、不写历史、只写当前状态

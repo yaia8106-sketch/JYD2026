@@ -47,6 +47,7 @@ RTL_FILES="
     $RTL_DIR/dcache.sv
     $RTL_DIR/cpu_top.sv
     $SCRIPT_DIR/work/dcache_data_ram.v
+    $SCRIPT_DIR/perf_monitor.sv
     $SCRIPT_DIR/tb_riscv_tests.sv
 "
 
