@@ -28,6 +28,27 @@ Profiling 工具：`02_Design/sim/riscv_tests/run_perf.sh`
   - 要点：IROM 改为 even/odd bank（inst[0,2,4..] / inst[1,3,5..]），`PC[2]=1` 时读取 `odd[k] + even[k+1]`
   - ⚠️ `addr+PC[2]` 进位链进入 IROM 地址路径，需综合后评估时序
   - 结果：回归 63/63 PASS；bp_stress CPI 1.27→1.20，sb_stress CPI 1.05→1.00
+  - ⚠️ **时序违例**：200MHz 下 IROM→IROM 自环 -0.96ns（5.352ns / 10 级），需配合 1b 修复
+
+- [ ] **1b. 修复 IROM→IROM 时序环路**（紧急，阻塞后续所有优化）
+  - 目标：打断 `IROM输出 → can_dual_issue → seq_next_pc(+4/+8) → irom_addr → IROM` 组合环路
+  - 方案：**寄存 dual 判定（predict-last）**
+    - 用上一周期的 `can_dual_issue` 结果（寄存为 `predict_dual`）选择 `seq_next_pc`
+    - `assign seq_next_pc = predict_dual ? pc_plus8 : pc_plus4;`
+    - `predict_dual` 是寄存器，不依赖本周期 IROM 输出 → 环路打断
+  - 正确性论证（两种预错均无气泡）：
+    - **dual→single 预错**（预测 +8 实际单发）：inst1 已由 `inst_buf` 保存，下周期直接用
+    - **single→dual 预错**（预测 +4 实际可双发）：bank 交错保证 +4 地址也输出 2 条指令，可正常双发
+  - 关键改动点：
+    - `cpu_top.sv`：新增 `predict_dual` 寄存器（reset=0，if_accept 时锁存 can_dual_issue）
+    - `cpu_top.sv`：`seq_next_pc` 改用 `predict_dual` 而非 `can_dual_issue`
+    - `inst_buf` 逻辑可能需微调以配合预测错误的恢复
+  - 验证：
+    1. 回归 `run_all.sh` 全部 PASS
+    2. `run_perf.sh` 确认 CPI 无明显回退（与当前基线对比）
+    3. Vivado 综合确认 IROM→IROM 路径消失或 slack > 0
+  - 复杂度：低
+  - 风险：`inst_buf` 在 predict 错误场景下的边界情况，需仔细推演
 
 - [x] **2. 裁剪 S1_WB 前递路径**
   - 预期：时序改善 ~0.3ns（7→6 选 1 MUX）
