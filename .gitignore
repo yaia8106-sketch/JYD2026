@@ -28,6 +28,7 @@ NutShell/
 *.jou
 
 # --- Editor / Tool Caches ---
+.Xil/
 .vscode/
 __pycache__/
 

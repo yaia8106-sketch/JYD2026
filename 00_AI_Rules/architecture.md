@@ -1,4 +1,4 @@
-# 双发射 CPU 架构文档（从 RTL 反向生成，2026-05-05）
+# 双发射 CPU 架构文档（从 RTL 反向生成，2026-05-05 更新）
 
 > **本文档描述当前 RTL 的实际实现**，而非设计规划。所有内容均从代码中提取。
 >
@@ -29,10 +29,11 @@ IF → ID → EX → MEM → WB
 
 - even bank：`word[0], word[2], word[4], ...`
 - odd bank：`word[1], word[3], word[5], ...`
-- `irom_pair_addr = {1'b0, irom_addr[13:3]}`
-- `irom_even_addr = irom_pair_addr + {11'd0, irom_addr[2]}`
-- `irom_odd_addr = irom_pair_addr`
-- `irom_fetch_odd_q` 延迟 `irom_addr[2]` 1 拍，用于对齐 BRAM dout 的高低半字选择
+- bank 地址由 `cpu_top` **预算**后直接传入 `student_top`，BRAM 地址端口无加法器
+- `irom_fetch_odd_q` 延迟 `irom_fetch_odd` 1 拍，用于对齐 BRAM dout 的高低半字选择
+- 地址计算公式（在 `cpu_top` 中作为 function，用于各源头预算）：
+  - `irom_even_bank_addr(addr) = {1'b0, addr[13:3]} + {11'd0, addr[2]}`
+  - `irom_odd_bank_addr(addr)  = {1'b0, addr[13:3]}`
 
 ```
 irom_inst0 = irom_data[31:0]   // inst at PC
@@ -46,14 +47,25 @@ irom_inst1 = irom_data[63:32]  // inst at PC + 4
 ```
 irom_addr = mem_branch_flush   ? mem_branch_target :   // 1. MEM flush（registered）
             id_bp_redirect_raw ? id_redirect_target :  // 2. NLP ID redirect（raw）
-            bp_taken           ? bp_target :           // 3. L0 预测 taken
+            bp_taken_for_if    ? bp_target_for_if :    // 3. L0 预测 taken
                                   seq_next_pc;         // 4. 顺序（+4/+8）
 ```
 
-### 2.3 PC 步进
+`irom_even_addr` / `irom_odd_addr` / `irom_fetch_odd` 各有独立的 4 路 MUX，每个源头的 bank 地址均预算好（寄存器或组合），MUX 后无加法器：
+
+- **flush**：`mem_branch_even_addr_r` / `mem_branch_odd_addr_r`（寄存器）
+- **NLP redirect**：`id_redirect_even_addr` 等（组合计算，路径短）
+- **BP taken**：`bp_even_addr` 等（含 skip_inst0 寄存快照 / held / live 三层 MUX）
+- **sequential**：`seq_even_addr` 等（从 `pc_plus4/8_even_addr` 寄存器中选）
+
+### 2.3 PC 步进与 predict_dual
 
 - `pc_plus4/8/12`：寄存器预计算，避免 32-bit 进位链出现在 irom_addr 路径
-- 双发时 `seq_next_pc = pc+8`，单发时 `seq_next_pc = pc+4`
+- 每个 `pc_plus*` 同时维护对应的 `*_even_addr` / `*_odd_addr` / `*_fetch_odd` 寄存器
+- `predict_dual`：**寄存的上一周期 `can_dual_fetch`**，用于选择 `seq_next_pc`
+  - `seq_next_pc = predict_dual ? pc_plus8 : pc_plus4`
+  - 打断了 `can_dual_issue → seq_next_pc → irom_addr → IROM → can_dual_issue` 组合环路
+  - 预测错误由 `skip_inst0` 和 `inst_buf` 机制修正，无气泡
 
 ### 2.4 指令保持寄存器（Instruction Hold Register）
 
@@ -62,8 +74,20 @@ BRAM 无 output register，流水线 stall 时 `irom_addr` 可能已变。stall 
 ### 2.5 指令缓冲（Instruction Buffer）
 
 - 1×32-bit + valid，单发时暂存未发射的 slot1
-- 下拍 `if_inst0_live = inst_buf_valid ? inst_buf : irom_inst0`
+- 下拍 `if_inst0_live = if_skip_inst0 ? irom_inst1 : inst_buf_valid ? inst_buf : irom_inst0`
+- `inst_buf_before_window`：标记 inst_buf 内容在当前 IROM 窗口之前（predict_dual 导致的偏移）
 - Flush / bp_taken / NLP redirect 时清空
+
+### 2.6 skip_inst0 机制
+
+`predict_dual` 预测错误（预测单发但实际可双发）时的修正机制：
+
+- 条件：`can_dual_issue & ~predict_dual & (if_pc_out == pc)`（PC 没前进，IROM 窗口重复）
+- 效果：下拍 `skip_inst0_valid=1`，跳过已发射的 inst0，从 inst1 开始
+- `if_pc_live = skip_inst0 ? pc_plus4 : ...`（修正流水线 PC）
+- BP 查询使用 `bp_pc_live`（不经过 skip_inst0 MUX，避免时序环路）
+- 预查 BP：`la_pc = pc_plus8` 提前查询 skip 后的 BP 预测，锁存到 `skip_bp_*_r` 寄存器
+- `bp_live_*` MUX：`skip_inst0 ? skip_bp_*_r : bp_*`（skip 时用寄存快照，零延迟）
 
 ---
 
@@ -71,20 +95,27 @@ BRAM 无 output register，流水线 stall 时 `irom_addr` 可能已变。stall 
 
 ### 3.1 can_dual_issue
 
-两条路径：raw path（从 BRAM 直接解码）和 held path（寄存器快照）。
+三条路径：raw（直接 BRAM 解码）、shifted（inst_buf 在窗口前）、held（寄存快照）。
 
 ```systemverilog
 // raw path：跳过 inst_buf MUX + held MUX，节省 2 级 LUT
 // ⚠️ 不要改为从 if_inst0_out/if_inst1_out 解码，多 2 级 LUT 在关键路径上
 wire raw_can_dual = if_valid
+                  & ~if_skip_inst0              // 正在跳过 inst0 时不双发
                   & (pc != 32'h7FFF_FFFC)
-                  & if_sequential_fetch        // 非 flush/redirect/bp_taken
-                  & raw_inst1_is_alu_type       // slot1 是 ALU 类型
-                  & ~raw_pair_raw               // 无同对 RAW
-                  & ~raw_inst0_is_jump;         // slot0 非 JAL/JALR
+                  & if_sequential_fetch         // 非 flush/redirect/bp_taken
+                  & raw_inst1_is_alu_type        // slot1 是 ALU 类型
+                  & ~raw_pair_raw                // 无同对 RAW
+                  & ~raw_inst0_is_jump;          // slot0 非 JAL/JALR
+
+// shifted path：inst_buf 在窗口前，配对 inst_buf + irom_inst0
+wire shifted_can_dual = if_valid & ... & shifted_inst1_is_alu_type & ...;
 
 // held path：stall 入口时快照
-assign can_dual_issue = irom_held_valid ? held_can_dual_r : raw_can_dual;
+assign can_dual_fetch = if_skip_out ? 1'b0 :
+                        irom_held_valid ? held_can_dual_r :
+                        if_buf_before_window ? shifted_can_dual : raw_can_dual;
+assign can_dual_issue = can_dual_fetch;
 ```
 
 ### 3.2 RAW 检测（raw_pair_raw）
@@ -144,6 +175,12 @@ wire id_s1_squash_raw = id_bp_redirect_raw & id_tournament_taken;
 
 所有预测器状态（GHR / PHT / BTB / BHT / Selector）在 EX 级更新。
 `ex_valid` 门控 `~mem_branch_flush`，防止错误路径指令污染预测器。
+
+**更新信号寄存一拍**（时序优化）：BTB / PHT / Selector 的 write enable 在 `branch_predictor` 内部经过 pipeline register 延迟 1 拍写入，避免 EX 比较器→写使能的长路径。
+
+### 4.5 Lookahead 预测（skip_inst0 专用）
+
+BP 额外暴露 `la_*` 端口，用 `la_pc = pc_plus8`（寄存器）提前查询。当 `will_skip_inst0` 成立时，将 lookahead 预测结果锁存到 `skip_bp_*_r` 寄存器组，下拍 skip 时直接使用，无组合延迟。
 
 ---
 
