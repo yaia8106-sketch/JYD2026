@@ -7,14 +7,14 @@
 > 如果在实现过程中发现更优方案，可以偏离计划——只要目标达成、回归通过即可。
 > 但这是硬件工程，偏离需有度：不随意改模块接口，不破坏时序收敛，改动面要可控。
 
-## Profiling 基线（2026-05-05，完成第 2 项后）
+## Profiling 基线（2026-05-05，完成第 1b 项后）
 
 | 测试 | CPI | 双发率 | Load-use | S1-WB wait | DCache | 误预测率 |
 |------|-----|--------|----------|------------|--------|---------|
-| bp_stress | 1.223 | 22.8% | 54 | 41 | 54 | 31.7% |
-| dcache_stress | 1.665 | 25.5% | 466 | 96 | 308 | 4.2% |
-| counter_stress | 0.944 | 56.4% | 94 | 4 | 9 | 26.8% |
-| sb_stress | 1.000 | 60.0% | 12 | 1 | 25 | 12.5% |
+| bp_stress | 1.231 | 20.6% | 54 | 28 | 54 | 31.4% |
+| dcache_stress | 1.666 | 25.3% | 466 | 96 | 308 | 4.2% |
+| counter_stress | 1.007 | 42.3% | 94 | 4 | 9 | 26.8% |
+| sb_stress | 1.009 | 57.7% | 12 | 1 | 25 | 12.5% |
 
 Profiling 工具：`02_Design/sim/riscv_tests/run_perf.sh`
 
@@ -30,7 +30,7 @@ Profiling 工具：`02_Design/sim/riscv_tests/run_perf.sh`
   - 结果：回归 63/63 PASS；bp_stress CPI 1.27→1.20，sb_stress CPI 1.05→1.00
   - ⚠️ **时序违例**：200MHz 下 IROM→IROM 自环 -0.96ns（5.352ns / 10 级），需配合 1b 修复
 
-- [ ] **1b. 修复 IROM→IROM 时序环路**（紧急，阻塞后续所有优化）
+- [x] **1b. 修复 IROM→IROM 时序环路**（紧急，阻塞后续所有优化）
   - 目标：打断 `IROM输出 → can_dual_issue → seq_next_pc(+4/+8) → irom_addr → IROM` 组合环路
   - 方案：**寄存 dual 判定（predict-last）**
     - 用上一周期的 `can_dual_issue` 结果（寄存为 `predict_dual`）选择 `seq_next_pc`
@@ -47,8 +47,32 @@ Profiling 工具：`02_Design/sim/riscv_tests/run_perf.sh`
     1. 回归 `run_all.sh` 全部 PASS
     2. `run_perf.sh` 确认 CPI 无明显回退（与当前基线对比）
     3. Vivado 综合确认 IROM→IROM 路径消失或 slack > 0
+  - 结果：回归 63/63 PASS；`run_perf.sh` 见上方基线。CPI 相比 1b 前：bp_stress 1.223→1.231，dcache_stress 1.665→1.666，counter_stress 0.944→1.007，sb_stress 1.000→1.009。
+  - 时序：Vivado synth 级 stage timing 中 `IROM(BRAM) → IROM(BRAM)` 自环消失（N/P）；仍有其它负 slack：Pre_IF→IROM -0.941ns、IROM→IF/ID -0.177ns、BP→IROM -0.033ns，需后续继续收敛。
   - 复杂度：低
   - 风险：`inst_buf` 在 predict 错误场景下的边界情况，需仔细推演
+
+- [ ] **1c. 预算 IROM bank 地址，消除关键路径上的加法器**（紧急）
+  - 背景：bank 交错取指在 `student_top.sv` 中用 `irom_even_addr = pair_addr + irom_addr[2]` 生成 even bank 地址，这个 12 位加法器在 irom_addr 4 选 1 MUX **之后**，导致所有到达 IROM 的路径串联 MUX + 加法器，时序超标
+  - 当前违例（200MHz，周期 5ns）：
+    - Pre_IF(PC) → IROM: **-0.941ns**（5.240ns / 11 级）← 最差
+    - IROM → IF/ID: **-0.177ns**（5.008ns / 8 级，dual 解码路径）
+    - BP(pred) → IROM: **-0.033ns**（4.332ns / 9 级）
+  - 方案：**预算 bank 地址，MUX 后无加法器**
+    - 对 irom_addr 的每个源头（flush / redirect / BP / sequential），分别预算好 even_addr 和 odd_addr
+    - BRAM 地址端口直接接 4 选 1 MUX 的输出，不再经过加法器
+    - sequential 和 flush 源的 bank 地址可以作为寄存器预算（零组合延迟）
+    - redirect 和 BP 源需要组合计算，但路径本身较短，可接受
+  - 关键改动点：
+    - `cpu_top.sv`：在 `pc_plus4/8/12` 的 `always_ff` 中额外维护 `seq_even_addr` / `seq_odd_addr` 等寄存器
+    - `cpu_top.sv` / `student_top.sv`：接口从 `irom_addr[13:0]` 改为输出 `irom_even_addr[11:0]` + `irom_odd_addr[11:0]` + `irom_addr[2]`（给 `irom_fetch_odd_q`）
+    - `student_top.sv`：去掉 `irom_even_addr = pair_addr + addr[2]` 加法器，直接用 cpu_top 传来的预算地址
+  - IROM → IF/ID 路径（-0.177ns）是 dual 解码链（IROM 输出 → opcode 比较 → can_dual → id_s1_valid → IF/ID），与本项无关，可后续单独优化
+  - 验证：
+    1. 回归 `run_all.sh` 全部 PASS
+    2. `run_perf.sh` 确认 CPI 不变（纯时序优化，不改功能）
+    3. Vivado 综合确认 Pre_IF→IROM slack > 0，BP→IROM slack > 0
+  - 复杂度：中（需改 cpu_top ↔ student_top 接口，但逻辑简单）
 
 - [x] **2. 裁剪 S1_WB 前递路径**
   - 预期：时序改善 ~0.3ns（7→6 选 1 MUX）
