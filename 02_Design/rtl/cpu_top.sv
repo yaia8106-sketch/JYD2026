@@ -276,6 +276,10 @@ module cpu_top (
     wire [4:0] id_s1_rs2_addr = id_inst1[24:20];
     wire [4:0] id_s1_rd_addr  = id_inst1[11:7];
     wire [31:0] id_s1_pc = id_pc + 32'd4;
+    wire id_rs1_used = (dec_alu_src1_sel == 2'b00) | dec_is_branch;
+    wire id_rs2_used = (dec_alu_src2_sel == 1'b0) | dec_is_branch | dec_mem_write_en;
+    wire id_s1_rs1_used = (dec1_alu_src1_sel == 2'b00) | dec1_is_branch;
+    wire id_s1_rs2_used = (dec1_alu_src2_sel == 1'b0) | dec1_is_branch | dec1_mem_write_en;
 
     // ---- Cacheable判定 (EX stage, 1 LUT) ----
     // DRAM区域: 0x8010_0000 ~ 0x8013_FFFF → addr[20]=1, addr[21]=0, addr[19:18]=00
@@ -725,11 +729,15 @@ module cpu_top (
     forwarding u_forwarding (
         .id_rs1_addr    (id_rs1_addr),
         .id_rs2_addr    (id_rs2_addr),
+        .id_rs1_used    (id_rs1_used),
+        .id_rs2_used    (id_rs2_used),
         .rf_rs1_data    (rf_rs1_data),
         .rf_rs2_data    (rf_rs2_data),
         .id_s1_valid    (id_s1_valid & ~id_s1_squash_raw),
         .id_s1_rs1_addr (id_s1_rs1_addr),
         .id_s1_rs2_addr (id_s1_rs2_addr),
+        .id_s1_rs1_used (id_s1_rs1_used),
+        .id_s1_rs2_used (id_s1_rs2_used),
         .rf_s1_rs1_data (rf_s1_rs1_data),
         .rf_s1_rs2_data (rf_s1_rs2_data),
         .ex_valid       (ex_valid),
@@ -767,7 +775,6 @@ module cpu_top (
         .wb_s1_valid       (wb_s1_valid),
         .wb_s1_reg_write   (wb_s1_reg_write_en),
         .wb_s1_rd          (wb_s1_rd),
-        .wb_s1_write_data  (wb_s1_write_data),
         .id_rs1_data    (fwd_rs1_data),
         .id_rs2_data    (fwd_rs2_data),
         .id_s1_rs1_data (fwd_s1_rs1_data),

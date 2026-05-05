@@ -173,14 +173,15 @@ wire id_s1_squash_raw = id_bp_redirect_raw & id_tournament_taken;
 
 ## 7. 前递网络
 
-`forwarding.sv`：4 个操作数各一套 7 选 1 优先级 MUX。
+`forwarding.sv`：4 个操作数各一套 6 选 1 优先级 MUX。
 
 ```
-优先级：S1_EX > S0_EX > S1_MEM > S0_MEM > S1_WB > S0_WB > regfile
+优先级：S1_EX > S0_EX > S1_MEM > S0_MEM > S0_WB > regfile
 ```
 
 - EX/MEM 级：`wb_sel==10`（JAL/JALR）时前递 `PC+4` 而非 `alu_result`
 - S1_MEM 排除 Load 匹配（`mem_s1_is_load` 接 `1'b0`，因为 S1 不做 L/S）
+- S1_WB 不进入前递数据 MUX；当实际使用的源操作数只命中 `wb_s1_rd` 且没有更新的 EX/MEM 命中时，`s1_wb_wait_hazard` 让 ID 等 1 拍，再从 regfile 读取
 - 同周期 inst0→inst1 不前递（RAW 约束已在发射判定中拦截）
 
 ---
@@ -192,6 +193,11 @@ wire id_s1_squash_raw = id_bp_redirect_raw & id_tournament_taken;
 匹配任一 → `id_ready_go = 0` → 全流水线 stall。
 
 S1 在 EX/MEM 永远不触发 load-use（S1 不做 Load，`ex_s1_mem_read` / `mem_s1_is_load` 恒 0）。
+
+Load-use 和 S1_WB 等待都只对指令实际使用的源操作数生效：
+- S0 rs1：`id_rs1_used = (dec_alu_src1_sel == 2'b00) | dec_is_branch`
+- S0 rs2：`id_rs2_used = (dec_alu_src2_sel == 1'b0) | dec_is_branch | dec_mem_write_en`
+- S1 使用同样规则，并额外受 `id_s1_valid` 门控
 
 ---
 
@@ -218,7 +224,7 @@ S1 在 EX/MEM 永远不触发 load-use（S1 不做 Load，`ex_s1_mem_read` / `me
 ### 9.3 Stall
 
 - `if_ready_go = 1`（BRAM 无延迟）
-- `id_ready_go = ~load_use_hazard`
+- `id_ready_go = ~(load_use_hazard | s1_wb_wait_hazard)`
 - `ex_ready_go = ~mmio_st_ld_hazard`（保守：EX load + MEM MMIO store → 1 cycle stall）
 - `mem_ready_go = cache_ready`（DCache miss 时 stall）
 - `cache_pipeline_stall = ~mem_allowin`（同步 DCache 与 CPU 流水线）
@@ -270,7 +276,7 @@ always_ff @(posedge clk or negedge rst_n)
 | `decoder` ×2 | 指令译码（S0 / S1） | 完整 RV32I 译码 |
 | `imm_gen` ×2 | 立即数生成（S0 / S1） | R/I/S/B/U/J 六种格式 |
 | `regfile` | 寄存器堆 | FF 4R2W，S1 > S0 WAW |
-| `forwarding` | 前递 + load-use 检测 | 7 选 1 MUX，4 源操作数 |
+| `forwarding` | 前递 + ID 冒险检测 | 6 选 1 MUX，S1_WB 命中等待 1 拍 |
 | `alu_src_mux` ×2 | ALU 操作数选择（ID 级） | rs / PC / imm / 0 |
 | `id_ex_reg` / `_s1` | ID/EX 级间寄存器 | S1 版本接 squash 门控 |
 | `alu` ×2 | ALU（S0 / S1） | 含独立地址加法器 `alu_addr` |
@@ -291,5 +297,5 @@ always_ff @(posedge clk or negedge rst_n)
 | 方向 | 预期收益 | 复杂度 |
 |------|---------|-------|
 | inst0→inst1 同周期前递（放开 RAW） | 双发率 +5~10% | 高 |
-| 裁剪低优先级前递路径（S1_WB/S0_WB） | 时序改善 | 低 |
+| 裁剪低优先级前递路径（S0_WB） | 时序改善 | 低 |
 | Slot1 扩展 Load/Store | 双发率 +10~15% | 很高 |

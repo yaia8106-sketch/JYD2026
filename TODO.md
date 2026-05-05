@@ -7,14 +7,14 @@
 > 如果在实现过程中发现更优方案，可以偏离计划——只要目标达成、回归通过即可。
 > 但这是硬件工程，偏离需有度：不随意改模块接口，不破坏时序收敛，改动面要可控。
 
-## Profiling 基线（2026-05-05）
+## Profiling 基线（2026-05-05，完成第 2 项后）
 
-| 测试 | CPI | 双发率 | Load-use | DCache | 误预测率 |
-|------|-----|--------|----------|--------|---------|
-| bp_stress | 1.20 | 22.8% | 54 | 54 | 31.8% |
-| dcache_stress | 1.54 | 25.5% | 466 | 308 | 4.2% |
-| counter_stress | 0.94 | 56.4% | 95 | 9 | 26.8% |
-| sb_stress | 1.00 | 60.0% | 12 | 26 | 12.5% |
+| 测试 | CPI | 双发率 | Load-use | S1-WB wait | DCache | 误预测率 |
+|------|-----|--------|----------|------------|--------|---------|
+| bp_stress | 1.223 | 22.8% | 54 | 41 | 54 | 31.7% |
+| dcache_stress | 1.665 | 25.5% | 466 | 96 | 308 | 4.2% |
+| counter_stress | 0.944 | 56.4% | 94 | 4 | 9 | 26.8% |
+| sb_stress | 1.000 | 60.0% | 12 | 1 | 25 | 12.5% |
 
 Profiling 工具：`02_Design/sim/riscv_tests/run_perf.sh`
 
@@ -29,12 +29,13 @@ Profiling 工具：`02_Design/sim/riscv_tests/run_perf.sh`
   - ⚠️ `addr+PC[2]` 进位链进入 IROM 地址路径，需综合后评估时序
   - 结果：回归 63/63 PASS；bp_stress CPI 1.27→1.20，sb_stress CPI 1.05→1.00
 
-- [ ] **2. 裁剪 S1_WB 前递路径**
+- [x] **2. 裁剪 S1_WB 前递路径**
   - 预期：时序改善 ~0.3ns（7→6 选 1 MUX）
   - 复杂度：低
   - 数据：3/4 测试命中率 <1%（dcache_stress 14.3% 是特例）
   - 要点：删除 `forwarding.sv` 中 S1_WB 匹配，S1 写回的值需要多等 1 拍从 regfile 读取
   - 验证：跑回归确认无失败，跑 profiling 确认 CPI 影响可忽略
+  - 结果：回归 63/63 PASS；S1_WB 从数据 MUX 裁剪为 `s1_wb_wait_hazard`；bp_stress CPI 1.20→1.223，counter_stress 0.94→0.944，sb_stress 1.00→1.000；dcache_stress 1.54→1.665，影响主要来自 96 个 S1-WB wait，非完全可忽略
 
 - [ ] **3. 裁剪 S0_WB 前递路径**
   - 预期：时序再改善 ~0.2ns（6→5 选 1 MUX）

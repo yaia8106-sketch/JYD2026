@@ -1,6 +1,6 @@
 // ============================================================
 // Module: forwarding
-// Description: Forwarding MUX (slot0/slot1 rs1/rs2) + Load-Use hazard detection
+// Description: Forwarding MUX (slot0/slot1 rs1/rs2) + ID hazard detection
 // Spec: 02_Design/spec/forwarding_spec.md
 // Style: parallel match + priority encode + AND-OR MUX
 //
@@ -15,6 +15,8 @@ module forwarding (
     // Slot 0 ID stage
     input  logic [ 4:0] id_rs1_addr,
     input  logic [ 4:0] id_rs2_addr,
+    input  logic        id_rs1_used,
+    input  logic        id_rs2_used,
     input  logic [31:0] rf_rs1_data,
     input  logic [31:0] rf_rs2_data,
 
@@ -22,6 +24,8 @@ module forwarding (
     input  logic        id_s1_valid,
     input  logic [ 4:0] id_s1_rs1_addr,
     input  logic [ 4:0] id_s1_rs2_addr,
+    input  logic        id_s1_rs1_used,
+    input  logic        id_s1_rs2_used,
     input  logic [31:0] rf_s1_rs1_data,
     input  logic [31:0] rf_s1_rs2_data,
 
@@ -71,7 +75,6 @@ module forwarding (
     input  logic        wb_s1_valid,
     input  logic        wb_s1_reg_write,
     input  logic [ 4:0] wb_s1_rd,
-    input  logic [31:0] wb_s1_write_data,
 
     // Outputs
     output logic [31:0] id_rs1_data,
@@ -98,11 +101,11 @@ module forwarding (
     wire TAG``_s0_mem_hit = mem_valid    && mem_reg_write    && !mem_is_load    && (mem_rd    != 5'd0) && (mem_rd    == SRC_ADDR); \
     wire TAG``_s1_wb_hit  = wb_s1_valid  && wb_s1_reg_write  && (wb_s1_rd != 5'd0) && (wb_s1_rd == SRC_ADDR); \
     wire TAG``_s0_wb_hit  = wb_valid     && wb_reg_write     && (wb_rd    != 5'd0) && (wb_rd    == SRC_ADDR); \
+    wire TAG``_s1_wb_wait = TAG``_s1_wb_hit && !TAG``_s1_ex_hit && !TAG``_s0_ex_hit && !TAG``_s1_mem_hit && !TAG``_s0_mem_hit; \
     assign OUT_DATA = TAG``_s1_ex_hit  ? ex_s1_fwd_val    : \
                       TAG``_s0_ex_hit  ? ex_fwd_val       : \
                       TAG``_s1_mem_hit ? mem_s1_fwd_val   : \
                       TAG``_s0_mem_hit ? mem_fwd_val      : \
-                      TAG``_s1_wb_hit  ? wb_s1_write_data : \
                       TAG``_s0_wb_hit  ? wb_write_data    : \
                                           RF_DATA
 
@@ -118,28 +121,50 @@ module forwarding (
     // ================================================================
 
     // Load in EX: data available at WB, still 2 stages away
-    wire id_s0_uses_ex_load  = (ex_rd == id_rs1_addr) | (ex_rd == id_rs2_addr);
-    wire id_s1_uses_ex_load  = id_s1_valid & ((ex_rd == id_s1_rs1_addr) | (ex_rd == id_s1_rs2_addr));
+    wire id_s0_uses_ex_load  = (id_rs1_used & (ex_rd == id_rs1_addr))
+                              | (id_rs2_used & (ex_rd == id_rs2_addr));
+    wire id_s1_uses_ex_load  = id_s1_valid
+                              & ((id_s1_rs1_used & (ex_rd == id_s1_rs1_addr))
+                               | (id_s1_rs2_used & (ex_rd == id_s1_rs2_addr)));
     wire load_in_ex  = ex_valid  & ex_mem_read & (ex_rd != 5'd0)
                      & (id_s0_uses_ex_load | id_s1_uses_ex_load);
 
-    wire id_s0_uses_s1_ex_load = (ex_s1_rd == id_rs1_addr) | (ex_s1_rd == id_rs2_addr);
-    wire id_s1_uses_s1_ex_load = id_s1_valid & ((ex_s1_rd == id_s1_rs1_addr) | (ex_s1_rd == id_s1_rs2_addr));
+    wire id_s0_uses_s1_ex_load = (id_rs1_used & (ex_s1_rd == id_rs1_addr))
+                                | (id_rs2_used & (ex_s1_rd == id_rs2_addr));
+    wire id_s1_uses_s1_ex_load = id_s1_valid
+                                & ((id_s1_rs1_used & (ex_s1_rd == id_s1_rs1_addr))
+                                 | (id_s1_rs2_used & (ex_s1_rd == id_s1_rs2_addr)));
     wire load_in_s1_ex = ex_s1_valid & ex_s1_mem_read & (ex_s1_rd != 5'd0)
                        & (id_s0_uses_s1_ex_load | id_s1_uses_s1_ex_load);
 
     // Load in MEM: dram_dout not yet updated, still 1 stage away
-    wire id_s0_uses_mem_load = (mem_rd == id_rs1_addr) | (mem_rd == id_rs2_addr);
-    wire id_s1_uses_mem_load = id_s1_valid & ((mem_rd == id_s1_rs1_addr) | (mem_rd == id_s1_rs2_addr));
+    wire id_s0_uses_mem_load = (id_rs1_used & (mem_rd == id_rs1_addr))
+                              | (id_rs2_used & (mem_rd == id_rs2_addr));
+    wire id_s1_uses_mem_load = id_s1_valid
+                              & ((id_s1_rs1_used & (mem_rd == id_s1_rs1_addr))
+                               | (id_s1_rs2_used & (mem_rd == id_s1_rs2_addr)));
     wire load_in_mem = mem_valid & mem_is_load & (mem_rd != 5'd0)
                      & (id_s0_uses_mem_load | id_s1_uses_mem_load);
 
-    wire id_s0_uses_s1_mem_load = (mem_s1_rd == id_rs1_addr) | (mem_s1_rd == id_rs2_addr);
-    wire id_s1_uses_s1_mem_load = id_s1_valid & ((mem_s1_rd == id_s1_rs1_addr) | (mem_s1_rd == id_s1_rs2_addr));
+    wire id_s0_uses_s1_mem_load = (id_rs1_used & (mem_s1_rd == id_rs1_addr))
+                                 | (id_rs2_used & (mem_s1_rd == id_rs2_addr));
+    wire id_s1_uses_s1_mem_load = id_s1_valid
+                                 & ((id_s1_rs1_used & (mem_s1_rd == id_s1_rs1_addr))
+                                  | (id_s1_rs2_used & (mem_s1_rd == id_s1_rs2_addr)));
     wire load_in_s1_mem = mem_s1_valid & mem_s1_is_load & (mem_s1_rd != 5'd0)
                         & (id_s0_uses_s1_mem_load | id_s1_uses_s1_mem_load);
 
     wire load_use_hazard = load_in_ex | load_in_s1_ex | load_in_mem | load_in_s1_mem;
-    assign id_ready_go = ~load_use_hazard;
+
+    // S1_WB data forwarding is intentionally pruned from the operand MUX.
+    // If no newer EX/MEM value covers the same source, wait one cycle and
+    // let the regfile read the value after Slot1 writes back.
+    wire s1_wb_wait_hazard = (id_rs1_used & s0_rs1_s1_wb_wait)
+                           | (id_rs2_used & s0_rs2_s1_wb_wait)
+                           | (id_s1_valid & id_s1_rs1_used & s1_rs1_s1_wb_wait)
+                           | (id_s1_valid & id_s1_rs2_used & s1_rs2_s1_wb_wait);
+
+    wire id_hazard = load_use_hazard | s1_wb_wait_hazard;
+    assign id_ready_go = ~id_hazard;
 
 endmodule

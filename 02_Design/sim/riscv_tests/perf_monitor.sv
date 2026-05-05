@@ -26,7 +26,8 @@ module perf_monitor (
     integer cnt_s1_commit;       // slot1 instructions committed (wb_s1_valid)
 
     // -- Stall breakdown --
-    integer cnt_load_use_stall;  // ~id_ready_go & id_valid
+    integer cnt_load_use_stall;  // load_use_hazard & id_valid
+    integer cnt_s1_wb_wait;      // pruned S1_WB forwarding path wait
     integer cnt_dcache_stall;    // ~mem_ready_go & mem_valid
     integer cnt_mmio_stall;      // ~ex_ready_go & ex_valid
 
@@ -66,6 +67,8 @@ module perf_monitor (
     wire        if_valid        = tb_riscv_tests.u_cpu.if_valid;
 
     wire        id_ready_go_w   = tb_riscv_tests.u_cpu.u_forwarding.id_ready_go;
+    wire        load_use_hazard_w = tb_riscv_tests.u_cpu.u_forwarding.load_use_hazard;
+    wire        s1_wb_wait_hazard_w = tb_riscv_tests.u_cpu.u_forwarding.s1_wb_wait_hazard;
     wire        ex_ready_go_w   = tb_riscv_tests.u_cpu.ex_ready_go_w;
     wire        mem_ready_go_w  = tb_riscv_tests.u_cpu.mem_ready_go_w;
 
@@ -101,6 +104,7 @@ module perf_monitor (
             cnt_s0_commit      <= 0;
             cnt_s1_commit      <= 0;
             cnt_load_use_stall <= 0;
+            cnt_s1_wb_wait     <= 0;
             cnt_dcache_stall   <= 0;
             cnt_mmio_stall     <= 0;
             cnt_branch_flush   <= 0;
@@ -128,7 +132,8 @@ module perf_monitor (
             if (wb_s1_valid) cnt_s1_commit <= cnt_s1_commit + 1;
 
             // Stall
-            if (id_valid & !id_ready_go_w)  cnt_load_use_stall <= cnt_load_use_stall + 1;
+            if (id_valid & load_use_hazard_w)       cnt_load_use_stall <= cnt_load_use_stall + 1;
+            if (id_valid & s1_wb_wait_hazard_w)     cnt_s1_wb_wait     <= cnt_s1_wb_wait + 1;
             if (mem_valid & !mem_ready_go_w) cnt_dcache_stall   <= cnt_dcache_stall + 1;
             if (ex_valid & !ex_ready_go_w)   cnt_mmio_stall     <= cnt_mmio_stall + 1;
 
@@ -199,6 +204,7 @@ module perf_monitor (
             $display("[PERF]");
             $display("[PERF]  --- Stall Breakdown (cycles) ---");
             $display("[PERF]  Load-use:      %0d", cnt_load_use_stall);
+            $display("[PERF]  S1-WB wait:    %0d", cnt_s1_wb_wait);
             $display("[PERF]  DCache miss:   %0d", cnt_dcache_stall);
             $display("[PERF]  MMIO hazard:   %0d", cnt_mmio_stall);
             $display("[PERF]");
