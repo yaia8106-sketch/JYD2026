@@ -39,13 +39,12 @@ module student_top #(
     // ================================================================
 
     // CPU ↔ IROM
-    logic [31:0] irom_addr;
     logic [63:0] irom_data;
     logic [31:0] irom_even_data;
     logic [31:0] irom_odd_data;
-    logic [11:0] irom_pair_addr;
     logic [11:0] irom_even_addr;
     logic [11:0] irom_odd_addr;
+    logic        irom_fetch_odd;
     logic        irom_fetch_odd_q;
 
     // CPU ↔ DCache
@@ -85,7 +84,9 @@ module student_top #(
         .rst_n       (~w_clk_rst),
 
         // IROM 接口 (IF stage)
-        .irom_addr   (irom_addr),
+        .irom_even_addr (irom_even_addr),
+        .irom_odd_addr  (irom_odd_addr),
+        .irom_fetch_odd (irom_fetch_odd),
         .irom_data   (irom_data),
 
         // DCache 接口
@@ -119,9 +120,6 @@ module student_top #(
     //  BRAM dout corresponds to the address sampled on the clock edge, so
     //  PC[2] is delayed one cycle before selecting the low/high half.
     // ================================================================
-    assign irom_pair_addr = {1'b0, irom_addr[13:3]};
-    assign irom_even_addr = irom_pair_addr + {11'd0, irom_addr[2]};
-    assign irom_odd_addr  = irom_pair_addr;
     assign irom_data      = irom_fetch_odd_q ? {irom_even_data, irom_odd_data}
                                              : {irom_odd_data,  irom_even_data};
 
@@ -129,7 +127,7 @@ module student_top #(
         if (w_clk_rst)
             irom_fetch_odd_q <= 1'b0;
         else
-            irom_fetch_odd_q <= irom_addr[2];
+            irom_fetch_odd_q <= irom_fetch_odd;
     end
 
     IROMEven32 u_irom_slot0 (

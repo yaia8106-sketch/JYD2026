@@ -31,6 +31,20 @@ module branch_predictor (
     output logic [ 1:0] bp_pht_cnt,     // GShare PHT counter
     output logic [ 1:0] bp_sel_cnt,     // Selector counter
 
+    // ==== Lookahead L0 prediction ====
+    // Used by cpu_top to pre-budget the next-cycle skip_inst0 fetch.  The
+    // outputs include same-edge EX update bypassing so a value registered on
+    // this edge matches the normal IF prediction visible after the edge.
+    input  logic [31:0] la_pc,
+    output logic        la_bp_taken,
+    output logic [31:0] la_bp_target,
+    output logic [ 7:0] la_bp_ghr_snap,
+    output logic        la_bp_btb_hit,
+    output logic [ 1:0] la_bp_btb_type,
+    output logic [ 1:0] la_bp_btb_bht,
+    output logic [ 1:0] la_bp_pht_cnt,
+    output logic [ 1:0] la_bp_sel_cnt,
+
     // ==== EX stage: update (sequential write) ====
     input  logic        ex_valid,
     input  logic [31:0] ex_pc,
@@ -239,6 +253,67 @@ module branch_predictor (
     // ---- RAS push/pop ----
     wire ex_ras_push = ex_valid & ex_is_call;
     wire ex_ras_pop  = ex_valid & ex_is_ret;
+
+    // ================================================================
+    //  Lookahead L0 prediction with same-edge update bypass
+    // ================================================================
+
+    // Model the predictor state as it will appear immediately after this
+    // clock edge. cpu_top registers these outputs on the same edge when it
+    // knows the following cycle will fetch via skip_inst0.
+    wire [GHR_W-1:0] la_ghr_next = ex_ghr_write ? {ghr[GHR_W-2:0], ex_actual_taken}
+                                                : ghr;
+
+    wire [31:0] la_ras_top_next = ex_ras_push ? (ex_pc + 32'd4) :
+                                  ex_ras_pop  ? ras[1] :
+                                                ras[0];
+    wire [2:0] la_ras_count_next = ex_ras_push ? ((ras_count < 3'd4) ? (ras_count + 3'd1) : ras_count) :
+                                   ex_ras_pop  ? ((ras_count > 3'd0) ? (ras_count - 3'd1) : ras_count) :
+                                                 ras_count;
+    wire la_ras_valid_next = (la_ras_count_next != 3'd0);
+
+    wire [BTB_IDX_W-1:0] la_idx = la_pc[8:2];
+    wire [BTB_TAG_W-1:0] la_tag = la_pc[13:9];
+    wire                 la_btb_bypass = ex_btb_write & (ex_idx == la_idx);
+
+    wire                 la_r_valid = la_btb_bypass ? 1'b1      : btb_valid[la_idx];
+    wire [BTB_TAG_W-1:0] la_r_tag   = la_btb_bypass ? ex_tag    : btb_tag  [la_idx];
+    wire [BTB_TGT_W-1:0] la_r_tgt   = la_btb_bypass ? ex_wr_tgt : btb_tgt  [la_idx];
+    wire [1:0]           la_r_type  = la_btb_bypass ? ex_wr_type : btb_type [la_idx];
+    wire [1:0]           la_r_bht   = la_btb_bypass ? ex_wr_bht : btb_bht  [la_idx];
+
+    wire la_tag_match = (la_r_tag == la_tag);
+    wire la_btb_hit_w = la_r_valid & la_tag_match;
+
+    wire [GHR_W-1:0] la_pht_idx = la_ghr_next ^ la_pc[9:2];
+    wire [1:0]       la_pht_raw = pht[la_pht_idx];
+    wire             la_pht_bypass = ex_pht_write & (ex_pht_idx == la_pht_idx);
+    wire [1:0]       la_pht_val = la_pht_bypass ? ex_new_pht : la_pht_raw;
+
+    wire [GHR_W-1:0] la_sel_idx = la_ghr_next;
+    wire [1:0]       la_sel_raw = sel_table[la_sel_idx];
+    wire             la_sel_bypass = ex_sel_write & (ex_sel_idx == la_sel_idx);
+    wire [1:0]       la_sel_val = la_sel_bypass ? ex_new_sel : la_sel_raw;
+
+    wire la_bp_taken_raw = la_r_valid & (
+          ~la_r_type[1]
+        | (~la_r_type[0] & la_r_bht[1])
+        | ( la_r_type[0] & la_ras_valid_next)
+    );
+    assign la_bp_taken = la_bp_taken_raw & la_tag_match;
+
+    wire la_sel_btb = la_r_valid & ~(la_r_type[1] & la_r_type[0]);
+    wire la_sel_ras = la_r_valid &  la_r_type[1] & la_r_type[0] & la_ras_valid_next;
+
+    assign la_bp_target = ({32{la_sel_btb}} & {la_r_tgt, 2'b00})
+                        | ({32{la_sel_ras}} & la_ras_top_next);
+
+    assign la_bp_ghr_snap = la_ghr_next;
+    assign la_bp_btb_hit  = la_btb_hit_w;
+    assign la_bp_btb_type = la_btb_hit_w ? la_r_type : 2'b00;
+    assign la_bp_btb_bht  = la_r_bht;
+    assign la_bp_pht_cnt  = la_pht_val;
+    assign la_bp_sel_cnt  = la_sel_val;
 
     // ================================================================
     //  Sequential update (all at posedge clk)

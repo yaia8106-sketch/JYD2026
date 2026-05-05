@@ -103,6 +103,28 @@ proc find_seq_cells {hier_prefix} {
     return $cells
 }
 
+proc find_misc_cells {hier_prefix known_groups} {
+    # 查找 hier_prefix 下不属于任何 known sub-module 的时序单元
+    # known_groups: list of sub-module hier patterns to exclude
+    set all_cells [get_cells -quiet -hierarchical \
+        -filter "IS_SEQUENTIAL == 1 && NAME =~ ${hier_prefix}/*"]
+    set misc_cells {}
+    foreach c $all_cells {
+        set cname [get_property NAME $c]
+        set in_known 0
+        foreach kg $known_groups {
+            if {[string match "${kg}/*" $cname]} {
+                set in_known 1
+                break
+            }
+        }
+        if {!$in_known} {
+            lappend misc_cells $c
+        }
+    }
+    return $misc_cells
+}
+
 proc find_bram_cells {hier_prefix} {
     # 查找指定层级下的 BRAM 原语
     set pattern "${hier_prefix}/*"
@@ -264,13 +286,8 @@ foreach from_grp $all_groups {
         set to_name   [lindex $to_grp 0]
         set to_filter [lindex $to_grp 1]
 
-        # 跳过自身（仅 FF 组；BRAM 组保留自反馈路径，如 IROM→IROM）
-        set from_type [lindex $from_grp 2]
-        if {$from_name eq $to_name && $from_type eq "seq"} {
-            set delay_matrix($from_name,$to_name) "  ---  "
-            set slack_matrix($from_name,$to_name) "  ---  "
-            continue
-        }
+        # 跳过自身（对角线标记为 --- 但仍分析，以免遗漏组内关键路径）
+        set is_self [expr {$from_name eq $to_name}]
 
         # 每次重新查询 Vivado cell 集合（避免字符串化问题）
         set from_cells [get_cells -quiet -hierarchical -filter $from_filter]
@@ -286,8 +303,13 @@ foreach from_grp $all_groups {
         set path_count [llength $paths]
 
         if {$path_count == 0} {
-            set delay_matrix($from_name,$to_name) "  N/P  "
-            set slack_matrix($from_name,$to_name) "  N/P  "
+            if {$is_self} {
+                set delay_matrix($from_name,$to_name) "  ---  "
+                set slack_matrix($from_name,$to_name) "  ---  "
+            } else {
+                set delay_matrix($from_name,$to_name) "  N/P  "
+                set slack_matrix($from_name,$to_name) "  N/P  "
+            }
             continue
         }
 
@@ -447,6 +469,41 @@ foreach entry $sorted_paths {
 log_msg ""
 log_msg [format "  汇总：%d 条违例 (FAIL) / %d 条偏紧 (tight) / %d 条总路径" \
     $fail_count $tight_count [llength $sorted_paths]]
+
+# ---- Step 5: 全局最差路径兜底 ----
+log_msg ""
+log_msg [string repeat "=" 80]
+log_msg "\n\[Step 5\] 全局最差路径 Top-10（不受分组限制）\n"
+log_msg "  用于发现未被寄存器组分类覆盖的关键路径\n"
+
+set global_paths [get_timing_paths -quiet -max_paths 10 -nworst 10 -sort_by slack]
+if {[llength $global_paths] > 0} {
+    log_msg [format "  %-4s  %10s  %10s  %6s  %-40s  %s" \
+        "#" "Slack(ns)" "DataPath" "Levels" "Startpoint" "Endpoint"]
+    log_msg [string repeat "-" 120]
+    set gidx 0
+    foreach gp $global_paths {
+        incr gidx
+        set g_slack  [get_property SLACK $gp]
+        set g_data   [get_property DATAPATH_DELAY $gp]
+        set g_lvl    [get_property LOGIC_LEVELS $gp]
+        set g_start  [get_property STARTPOINT_PIN $gp]
+        set g_end    [get_property ENDPOINT_PIN $gp]
+        # 截断显示
+        if {[string length $g_start] > 38} {
+            set g_start "...[string range $g_start end-35 end]"
+        }
+        if {[string length $g_end] > 38} {
+            set g_end "...[string range $g_end end-35 end]"
+        }
+        set g_status ""
+        if {$g_slack < 0} { set g_status "← FAIL" }
+        log_msg [format "  %-4d  %10.3f  %10.3f  %6d  %-40s  %s %s" \
+            $gidx $g_slack $g_data $g_lvl $g_start $g_end $g_status]
+    }
+} else {
+    log_msg "  （未找到时序路径）"
+}
 
 # ---- 完成 ----
 log_msg ""

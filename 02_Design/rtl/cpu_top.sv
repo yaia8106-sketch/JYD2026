@@ -12,7 +12,9 @@ module cpu_top (
     input  logic        rst_n,
 
     // IROM 接口 (IF stage)
-    output logic [31:0] irom_addr,       // = next_pc（预取，IF 阶段）
+    output logic [11:0] irom_even_addr,  // even bank address, pre-budgeted before source MUX
+    output logic [11:0] irom_odd_addr,   // odd bank address, pre-budgeted before source MUX
+    output logic        irom_fetch_odd,  // selected fetch PC[2], delayed in student_top for data rotate
     input  logic [63:0] irom_data,       // 64-bit fetch window (Phase 0 uses low 32-bit inst0)
 
     // DCache 接口 (EX → MEM stage)
@@ -34,12 +36,25 @@ module cpu_top (
     input  logic [31:0] mmio_rdata       // MEM stage: 读数据
 );
 
+    function automatic [11:0] irom_even_bank_addr(input logic [31:0] addr);
+        irom_even_bank_addr = {1'b0, addr[13:3]} + {11'd0, addr[2]};
+    endfunction
+
+    function automatic [11:0] irom_odd_bank_addr(input logic [31:0] addr);
+        irom_odd_bank_addr = {1'b0, addr[13:3]};
+    endfunction
+
+    function automatic logic irom_bank_fetch_odd(input logic [31:0] addr);
+        irom_bank_fetch_odd = addr[2];
+    endfunction
+
     // ================================================================
     //  Internal wires
     // ================================================================
 
     // ---- PC & IF ----
     wire [31:0] pc;
+    wire [31:0] irom_addr;        // full next PC, internal only; BRAMs use budgeted bank addresses
     // next_pc eliminated: inlined into irom_addr for 1 fewer LUT level on PC→IROM path
     wire        if_valid;
 
@@ -48,6 +63,18 @@ module cpu_top (
     logic [31:0] pc_plus4;
     logic [31:0] pc_plus8;
     logic [31:0] pc_plus12;
+    logic [11:0] pc_plus4_even_addr;
+    logic [11:0] pc_plus4_odd_addr;
+    logic        pc_plus4_fetch_odd;
+    logic [11:0] pc_plus8_even_addr;
+    logic [11:0] pc_plus8_odd_addr;
+    logic        pc_plus8_fetch_odd;
+    logic [11:0] pc_plus12_even_addr;
+    logic [11:0] pc_plus12_odd_addr;
+    logic        pc_plus12_fetch_odd;
+    logic [11:0] mem_branch_even_addr_r;
+    logic [11:0] mem_branch_odd_addr_r;
+    logic        mem_branch_fetch_odd_r;
 
     // ---- IF/ID ----
     wire        id_valid;
@@ -61,6 +88,44 @@ module cpu_top (
     // ---- IROM ----
     wire [31:0] irom_inst0;        // Phase 0: low 32-bit instruction from 64-bit IROM data
     wire [31:0] irom_inst1;        // Phase 1: high 32-bit instruction from 64-bit IROM data
+
+    // ---- Instruction buffer ----
+    logic [31:0] inst_buf;
+    logic [31:0] inst_buf_pc;
+    logic        inst_buf_valid;
+    logic        inst_buf_before_window;
+    logic        skip_inst0_valid;
+    wire         if_skip_inst0 = skip_inst0_valid;
+    wire         if_buf_before_window = inst_buf_valid & inst_buf_before_window;
+    wire [31:0] if_pc_live = if_skip_inst0 ? pc_plus4 :
+                              inst_buf_valid ? inst_buf_pc : pc;
+    wire [31:0] bp_pc_live = inst_buf_valid ? inst_buf_pc : pc;
+    logic       skip_bp_taken_r;
+    logic [31:0] skip_bp_target_r;
+    logic [ 7:0] skip_bp_ghr_snap_r;
+    logic        skip_bp_btb_hit_r;
+    logic [ 1:0] skip_bp_btb_type_r;
+    logic [ 1:0] skip_bp_btb_bht_r;
+    logic [ 1:0] skip_bp_pht_cnt_r;
+    logic [ 1:0] skip_bp_sel_cnt_r;
+    logic [11:0] skip_bp_even_addr_r;
+    logic [11:0] skip_bp_odd_addr_r;
+    logic        skip_bp_fetch_odd_r;
+
+    // ---- Instruction hold register ----
+    logic [31:0] irom_inst0_held;
+    logic [31:0] irom_inst1_held;
+    logic [31:0] irom_pc_held;
+    logic        irom_bp_taken_held;
+    logic [31:0] irom_bp_target_held;
+    logic [ 7:0] irom_bp_ghr_snap_held;
+    logic        irom_bp_btb_hit_held;
+    logic [ 1:0] irom_bp_btb_type_held;
+    logic [ 1:0] irom_bp_btb_bht_held;
+    logic [ 1:0] irom_bp_pht_cnt_held;
+    logic [ 1:0] irom_bp_sel_cnt_held;
+    logic        irom_skip_held;
+    logic        irom_held_valid;
 
     // ---- Decoder outputs ----
     wire [ 3:0] dec_alu_op;
@@ -325,6 +390,16 @@ module cpu_top (
     wire [ 1:0] bp_pht_cnt;
     wire [ 1:0] bp_sel_cnt;
 
+    // Skip-inst0 lookahead prediction (for next-cycle buffered slot1 fetch)
+    wire        la_bp_taken;
+    wire [31:0] la_bp_target;
+    wire [ 7:0] la_bp_ghr_snap;
+    wire        la_bp_btb_hit;
+    wire [ 1:0] la_bp_btb_type;
+    wire [ 1:0] la_bp_btb_bht;
+    wire [ 1:0] la_bp_pht_cnt;
+    wire [ 1:0] la_bp_sel_cnt;
+
     // ID stage prediction (from IF/ID reg)
     wire        id_bp_taken;
     wire [31:0] id_bp_target;
@@ -355,7 +430,7 @@ module cpu_top (
         .rst_n           (rst_n),
 
         // IF prediction (L0: fast path)
-        .if_pc           (pc),
+        .if_pc           (bp_pc_live),
         .bp_taken        (bp_taken),
         .bp_target       (bp_target),
         .bp_ghr_snap     (bp_ghr_snap),
@@ -364,6 +439,19 @@ module cpu_top (
         .bp_btb_bht      (bp_btb_bht),
         .bp_pht_cnt      (bp_pht_cnt),
         .bp_sel_cnt      (bp_sel_cnt),
+
+        // Lookahead prediction for possible next-cycle skip_inst0 fetch.
+        // When current PC P was predicted single but actually dual-issues,
+        // next cycle issues P+8 from irom_inst1, so query P+8 now.
+        .la_pc           (pc_plus8),
+        .la_bp_taken     (la_bp_taken),
+        .la_bp_target    (la_bp_target),
+        .la_bp_ghr_snap  (la_bp_ghr_snap),
+        .la_bp_btb_hit   (la_bp_btb_hit),
+        .la_bp_btb_type  (la_bp_btb_type),
+        .la_bp_btb_bht   (la_bp_btb_bht),
+        .la_bp_pht_cnt   (la_bp_pht_cnt),
+        .la_bp_sel_cnt   (la_bp_sel_cnt),
 
         // EX update
         // 250MHz: gate ex_valid with ~mem_branch_flush to prevent wrong-path
@@ -389,12 +477,17 @@ module cpu_top (
 
     wire        if_allowin_w = id_allowin;   // for irom_addr mux
     wire        can_dual_issue;
-    wire [31:0] seq_next_pc        = can_dual_issue ? pc_plus8  : pc_plus4;
-    wire [31:0] seq_next_pc_plus4  = can_dual_issue ? pc_plus12 : pc_plus8;
+    wire        can_dual_fetch;
+    logic       predict_dual;
+    wire [31:0] seq_next_pc        = predict_dual ? pc_plus8  : pc_plus4;
+    wire [31:0] seq_next_pc_plus4  = predict_dual ? pc_plus12 : pc_plus8;
     wire [31:0] seq_pc_plus16      = pc_plus12 + 32'd4;
     wire [31:0] seq_pc_plus20      = pc_plus12 + 32'd8;
-    wire [31:0] seq_next_pc_plus8  = can_dual_issue ? seq_pc_plus16 : pc_plus12;
-    wire [31:0] seq_next_pc_plus12 = can_dual_issue ? seq_pc_plus20 : seq_pc_plus16;
+    wire [31:0] seq_next_pc_plus8  = predict_dual ? seq_pc_plus16 : pc_plus12;
+    wire [31:0] seq_next_pc_plus12 = predict_dual ? seq_pc_plus20 : seq_pc_plus16;
+    wire [11:0] seq_even_addr      = predict_dual ? pc_plus8_even_addr  : pc_plus4_even_addr;
+    wire [11:0] seq_odd_addr       = predict_dual ? pc_plus8_odd_addr   : pc_plus4_odd_addr;
+    wire        seq_fetch_odd      = predict_dual ? pc_plus8_fetch_odd  : pc_plus4_fetch_odd;
 
     // NLP: ID-stage Tournament verification (L1)
     // Compares L0 (Bimodal bht[1], used in IF) with L1 (Tournament, computed here)
@@ -427,6 +520,9 @@ module cpu_top (
     //                  if Tournament says not-taken → use PC+4
     wire [31:0] id_redirect_target = id_tournament_taken ? id_bp_target
                                                          : (id_pc + 32'd4);
+    wire [11:0] id_redirect_even_addr = irom_even_bank_addr(id_redirect_target);
+    wire [11:0] id_redirect_odd_addr  = irom_odd_bank_addr(id_redirect_target);
+    wire        id_redirect_fetch_odd = id_redirect_target[2];
 
     // 250MHz: irom_addr = flat 4-way priority MUX (stall branch removed)
     // Priority: flush > NLP redirect > L0 prediction > sequential
@@ -434,10 +530,41 @@ module cpu_top (
     //   - removes allowin chain (cache_ready→mem→ex→id) from IROM critical path
     //   - redirect uses raw version (no id_ready_go/ex_allowin gating)
     //   - bp_taken/bp_target inlined (no next_pc intermediate)
+    wire        bp_live_taken    = if_skip_inst0 ? skip_bp_taken_r    : bp_taken;
+    wire [31:0] bp_live_target   = if_skip_inst0 ? skip_bp_target_r   : bp_target;
+    wire [ 7:0] bp_live_ghr_snap = if_skip_inst0 ? skip_bp_ghr_snap_r : bp_ghr_snap;
+    wire        bp_live_btb_hit  = if_skip_inst0 ? skip_bp_btb_hit_r  : bp_btb_hit;
+    wire [ 1:0] bp_live_btb_type = if_skip_inst0 ? skip_bp_btb_type_r : bp_btb_type;
+    wire [ 1:0] bp_live_btb_bht  = if_skip_inst0 ? skip_bp_btb_bht_r  : bp_btb_bht;
+    wire [ 1:0] bp_live_pht_cnt  = if_skip_inst0 ? skip_bp_pht_cnt_r  : bp_pht_cnt;
+    wire [ 1:0] bp_live_sel_cnt  = if_skip_inst0 ? skip_bp_sel_cnt_r  : bp_sel_cnt;
+    wire [11:0] bp_live_even_addr = if_skip_inst0 ? skip_bp_even_addr_r : irom_even_bank_addr(bp_target);
+    wire [11:0] bp_live_odd_addr  = if_skip_inst0 ? skip_bp_odd_addr_r  : irom_odd_bank_addr(bp_target);
+    wire        bp_live_fetch_odd = if_skip_inst0 ? skip_bp_fetch_odd_r : bp_target[2];
+
+    wire        bp_taken_for_if  = irom_held_valid ? irom_bp_taken_held  : bp_live_taken;
+    wire [31:0] bp_target_for_if = irom_held_valid ? irom_bp_target_held : bp_live_target;
+    wire [11:0] bp_even_addr     = irom_held_valid ? irom_even_bank_addr(irom_bp_target_held) : bp_live_even_addr;
+    wire [11:0] bp_odd_addr      = irom_held_valid ? irom_odd_bank_addr(irom_bp_target_held)  : bp_live_odd_addr;
+    wire        bp_fetch_odd     = irom_held_valid ? irom_bp_target_held[2]                   : bp_live_fetch_odd;
+
     assign irom_addr = mem_branch_flush    ? mem_branch_target :  // MEM flush (highest, registered)
                        id_bp_redirect_raw  ? id_redirect_target : // NLP: ID redirect (raw, fast)
-                       bp_taken            ? bp_target :          // L0 预测 taken
+                       bp_taken_for_if     ? bp_target_for_if :   // L0 预测 taken
                                              seq_next_pc;        // 顺序取指（+4/+8）
+
+    assign irom_even_addr = mem_branch_flush    ? mem_branch_even_addr_r :
+                            id_bp_redirect_raw  ? id_redirect_even_addr :
+                            bp_taken_for_if     ? bp_even_addr :
+                                                  seq_even_addr;
+    assign irom_odd_addr  = mem_branch_flush    ? mem_branch_odd_addr_r :
+                            id_bp_redirect_raw  ? id_redirect_odd_addr :
+                            bp_taken_for_if     ? bp_odd_addr :
+                                                  seq_odd_addr;
+    assign irom_fetch_odd = mem_branch_flush    ? mem_branch_fetch_odd_r :
+                            id_bp_redirect_raw  ? id_redirect_fetch_odd :
+                            bp_taken_for_if     ? bp_fetch_odd :
+                                                  seq_fetch_odd;
 
     // pc_plus*: mirror irom_addr MUX priority with precomputed sequential
     // addresses.  Sequential updates select among precomputed values so the
@@ -448,24 +575,81 @@ module cpu_top (
             pc_plus4 <= 32'h8000_0000;              // reset PC (0x7FFFFFFC) + 4
             pc_plus8 <= 32'h8000_0004;
             pc_plus12 <= 32'h8000_0008;
+            pc_plus4_even_addr <= 12'd0;
+            pc_plus4_odd_addr <= 12'd0;
+            pc_plus4_fetch_odd <= 1'b0;
+            pc_plus8_even_addr <= 12'd1;
+            pc_plus8_odd_addr <= 12'd0;
+            pc_plus8_fetch_odd <= 1'b1;
+            pc_plus12_even_addr <= 12'd1;
+            pc_plus12_odd_addr <= 12'd1;
+            pc_plus12_fetch_odd <= 1'b0;
         end else if (mem_branch_flush) begin
             pc_plus4 <= mem_branch_target + 32'd4;  // flush: registered source
             pc_plus8 <= mem_branch_target + 32'd8;
             pc_plus12 <= mem_branch_target + 32'd12;
+            pc_plus4_even_addr <= irom_even_bank_addr(mem_branch_target + 32'd4);
+            pc_plus4_odd_addr <= irom_odd_bank_addr(mem_branch_target + 32'd4);
+            pc_plus4_fetch_odd <= irom_bank_fetch_odd(mem_branch_target + 32'd4);
+            pc_plus8_even_addr <= irom_even_bank_addr(mem_branch_target + 32'd8);
+            pc_plus8_odd_addr <= irom_odd_bank_addr(mem_branch_target + 32'd8);
+            pc_plus8_fetch_odd <= irom_bank_fetch_odd(mem_branch_target + 32'd8);
+            pc_plus12_even_addr <= irom_even_bank_addr(mem_branch_target + 32'd12);
+            pc_plus12_odd_addr <= irom_odd_bank_addr(mem_branch_target + 32'd12);
+            pc_plus12_fetch_odd <= irom_bank_fetch_odd(mem_branch_target + 32'd12);
         end else if (!if_allowin_w) begin
             ;                                       // stall: hold
         end else if (id_bp_redirect_raw) begin
             pc_plus4 <= id_redirect_target + 32'd4; // NLP redirect: IF/ID regs
             pc_plus8 <= id_redirect_target + 32'd8;
             pc_plus12 <= id_redirect_target + 32'd12;
-        end else if (bp_taken) begin
-            pc_plus4 <= bp_target + 32'd4;          // L0 prediction: LUTRAM
-            pc_plus8 <= bp_target + 32'd8;
-            pc_plus12 <= bp_target + 32'd12;
+            pc_plus4_even_addr <= irom_even_bank_addr(id_redirect_target + 32'd4);
+            pc_plus4_odd_addr <= irom_odd_bank_addr(id_redirect_target + 32'd4);
+            pc_plus4_fetch_odd <= irom_bank_fetch_odd(id_redirect_target + 32'd4);
+            pc_plus8_even_addr <= irom_even_bank_addr(id_redirect_target + 32'd8);
+            pc_plus8_odd_addr <= irom_odd_bank_addr(id_redirect_target + 32'd8);
+            pc_plus8_fetch_odd <= irom_bank_fetch_odd(id_redirect_target + 32'd8);
+            pc_plus12_even_addr <= irom_even_bank_addr(id_redirect_target + 32'd12);
+            pc_plus12_odd_addr <= irom_odd_bank_addr(id_redirect_target + 32'd12);
+            pc_plus12_fetch_odd <= irom_bank_fetch_odd(id_redirect_target + 32'd12);
+        end else if (bp_taken_for_if) begin
+            pc_plus4 <= bp_target_for_if + 32'd4;   // L0 prediction: LUTRAM
+            pc_plus8 <= bp_target_for_if + 32'd8;
+            pc_plus12 <= bp_target_for_if + 32'd12;
+            pc_plus4_even_addr <= irom_even_bank_addr(bp_target_for_if + 32'd4);
+            pc_plus4_odd_addr <= irom_odd_bank_addr(bp_target_for_if + 32'd4);
+            pc_plus4_fetch_odd <= irom_bank_fetch_odd(bp_target_for_if + 32'd4);
+            pc_plus8_even_addr <= irom_even_bank_addr(bp_target_for_if + 32'd8);
+            pc_plus8_odd_addr <= irom_odd_bank_addr(bp_target_for_if + 32'd8);
+            pc_plus8_fetch_odd <= irom_bank_fetch_odd(bp_target_for_if + 32'd8);
+            pc_plus12_even_addr <= irom_even_bank_addr(bp_target_for_if + 32'd12);
+            pc_plus12_odd_addr <= irom_odd_bank_addr(bp_target_for_if + 32'd12);
+            pc_plus12_fetch_odd <= irom_bank_fetch_odd(bp_target_for_if + 32'd12);
         end else begin
             pc_plus4 <= seq_next_pc_plus4;
             pc_plus8 <= seq_next_pc_plus8;
             pc_plus12 <= seq_next_pc_plus12;
+            pc_plus4_even_addr <= irom_even_bank_addr(seq_next_pc_plus4);
+            pc_plus4_odd_addr <= irom_odd_bank_addr(seq_next_pc_plus4);
+            pc_plus4_fetch_odd <= seq_next_pc_plus4[2];
+            pc_plus8_even_addr <= irom_even_bank_addr(seq_next_pc_plus8);
+            pc_plus8_odd_addr <= irom_odd_bank_addr(seq_next_pc_plus8);
+            pc_plus8_fetch_odd <= seq_next_pc_plus8[2];
+            pc_plus12_even_addr <= irom_even_bank_addr(seq_next_pc_plus12);
+            pc_plus12_odd_addr <= irom_odd_bank_addr(seq_next_pc_plus12);
+            pc_plus12_fetch_odd <= seq_next_pc_plus12[2];
+        end
+    end
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            mem_branch_even_addr_r <= 12'd0;
+            mem_branch_odd_addr_r <= 12'd0;
+            mem_branch_fetch_odd_r <= 1'b0;
+        end else begin
+            mem_branch_even_addr_r <= irom_even_bank_addr(branch_target);
+            mem_branch_odd_addr_r <= irom_odd_bank_addr(branch_target);
+            mem_branch_fetch_odd_r <= branch_target[2];
         end
     end
 
@@ -487,20 +671,15 @@ module cpu_top (
 
     // ==================== Instruction buffer ====================
     // Single issue leaves the fetched slot1 instruction for the next cycle.
-    logic [31:0] inst_buf;
-    logic        inst_buf_valid;
     wire         if_accept = if_valid & if_ready_go_w & id_allowin;
 
     // ==================== Instruction hold register ====================
     // When pipeline stalls (id_allowin=0), BRAM output may change (irom_addr
     // no longer holds pc). Capture the correct instruction on stall entry
     // so IF/ID can use it when the stall ends.
-    logic [31:0] irom_inst0_held;
-    logic [31:0] irom_inst1_held;
-    logic        irom_held_valid;
-
-    wire [31:0] if_inst0_live = inst_buf_valid ? inst_buf : irom_inst0;
-    wire [31:0] if_inst1_live = irom_inst1;
+    wire [31:0] if_inst0_live = if_skip_inst0 ? irom_inst1 :
+                                 inst_buf_valid ? inst_buf : irom_inst0;
+    wire [31:0] if_inst1_live = if_buf_before_window ? irom_inst0 : irom_inst1;
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n)
@@ -515,27 +694,48 @@ module cpu_top (
         if (!irom_held_valid && !id_allowin && !id_flush) begin
             irom_inst0_held <= if_inst0_live;
             irom_inst1_held <= if_inst1_live;
+            irom_pc_held <= if_pc_live;
+            irom_bp_taken_held <= bp_live_taken;
+            irom_bp_target_held <= bp_live_target;
+            irom_bp_ghr_snap_held <= bp_live_ghr_snap;
+            irom_bp_btb_hit_held <= bp_live_btb_hit;
+            irom_bp_btb_type_held <= bp_live_btb_type;
+            irom_bp_btb_bht_held <= bp_live_btb_bht;
+            irom_bp_pht_cnt_held <= bp_live_pht_cnt;
+            irom_bp_sel_cnt_held <= bp_live_sel_cnt;
+            irom_skip_held <= if_skip_inst0;
         end
     end
 
     wire [31:0] if_inst0_out = irom_held_valid ? irom_inst0_held : if_inst0_live;
     wire [31:0] if_inst1_out = irom_held_valid ? irom_inst1_held : if_inst1_live;
+    wire [31:0] if_pc_out    = irom_held_valid ? irom_pc_held    : if_pc_live;
+    wire        if_bp_taken_out    = irom_held_valid ? irom_bp_taken_held    : bp_live_taken;
+    wire [31:0] if_bp_target_out   = irom_held_valid ? irom_bp_target_held   : bp_live_target;
+    wire [ 7:0] if_bp_ghr_snap_out = irom_held_valid ? irom_bp_ghr_snap_held : bp_live_ghr_snap;
+    wire        if_bp_btb_hit_out  = irom_held_valid ? irom_bp_btb_hit_held  : bp_live_btb_hit;
+    wire [ 1:0] if_bp_btb_type_out = irom_held_valid ? irom_bp_btb_type_held : bp_live_btb_type;
+    wire [ 1:0] if_bp_btb_bht_out  = irom_held_valid ? irom_bp_btb_bht_held  : bp_live_btb_bht;
+    wire [ 1:0] if_bp_pht_cnt_out  = irom_held_valid ? irom_bp_pht_cnt_held  : bp_live_pht_cnt;
+    wire [ 1:0] if_bp_sel_cnt_out  = irom_held_valid ? irom_bp_sel_cnt_held  : bp_live_sel_cnt;
+    wire        if_skip_out        = irom_held_valid ? irom_skip_held        : if_skip_inst0;
     wire        if_s1_valid  = can_dual_issue;
-    wire        if_sequential_fetch = ~mem_branch_flush & ~id_bp_redirect_raw & ~bp_taken;
+    wire        if_sequential_fetch = ~mem_branch_flush & ~id_bp_redirect_raw & ~if_bp_taken_out;
 
     // ==================== Dual-issue decision (fast path) ====================
     // TIMING OPTIMIZATION: Decode directly from raw BRAM output (irom_inst0/1)
     // instead of if_inst0_out/if_inst1_out, bypassing 2 serial MUX levels
     // (inst_buf MUX + held MUX) on the IROM→IROM critical path.
     //
-    // Two paths for can_dual_issue:
-    //   raw path  (irom_held_valid=0): decode from raw BRAM output (fast, timing-critical)
-    //   held path (irom_held_valid=1): use registered snapshot captured at stall entry
+    // Three paths for can_dual_fetch:
+    //   raw path     : decode from raw BRAM output (fast, timing-critical)
+    //   shifted path : inst_buf sits before the current IROM window
+    //   held path    : use registered snapshot captured at stall entry
     // The held path is needed so dual-issue survives pipeline stalls:
     //   at stall resolution, irom_held_valid=1 but id_allowin=1, so IF/ID latches.
     //   Without the held path, can_dual would be 0 and the pair would single-issue.
-    // Note: inst_buf_valid does NOT need gating — when inst_buf is active,
-    //   irom_inst0 == inst_buf (same PC refetched), so raw decode matches.
+    // Note: seq_next_pc uses predict_dual, not this-cycle can_dual_fetch,
+    //   so the IROM output no longer feeds the IROM address in one cycle.
     localparam [6:0] OP_R_TYPE_LOCAL = 7'b0110011;
     localparam [6:0] OP_I_ALU_LOCAL  = 7'b0010011;
     localparam [6:0] OP_LOAD_LOCAL   = 7'b0000011;
@@ -580,11 +780,52 @@ module cpu_top (
                        | (raw_inst1_uses_rs2 & (raw_inst1_rs2 == raw_inst0_rd)));
 
     wire raw_can_dual = if_valid
+                      & ~if_skip_inst0
                       & (pc != 32'h7FFF_FFFC)
                       & if_sequential_fetch
                       & raw_inst1_is_alu_type
                       & ~raw_pair_raw
                       & ~raw_inst0_is_jump;
+
+    // If the previous fetch predicted +8 but actually issued only slot0,
+    // inst_buf is one instruction before the current IROM window. Pair it
+    // with irom_inst0; bp_pc_live points at inst_buf_pc, so metadata still
+    // belongs to the buffered slot0 instruction.
+    wire [6:0] shifted_inst0_opcode = inst_buf[6:0];
+    wire [6:0] shifted_inst1_opcode = irom_inst0[6:0];
+    wire [4:0] shifted_inst0_rd     = inst_buf[11:7];
+    wire [4:0] shifted_inst1_rs1    = irom_inst0[19:15];
+    wire [4:0] shifted_inst1_rs2    = irom_inst0[24:20];
+
+    wire shifted_inst1_is_alu_type = (shifted_inst1_opcode == OP_R_TYPE_LOCAL)
+                                    | (shifted_inst1_opcode == OP_I_ALU_LOCAL)
+                                    | (shifted_inst1_opcode == OP_LUI_LOCAL)
+                                    | (shifted_inst1_opcode == OP_AUIPC_LOCAL);
+
+    wire shifted_inst0_is_jump = (shifted_inst0_opcode == OP_JAL_LOCAL)
+                                | (shifted_inst0_opcode == OP_JALR_LOCAL);
+
+    wire shifted_inst0_writes_rd = (shifted_inst0_opcode == OP_R_TYPE_LOCAL)
+                                  | (shifted_inst0_opcode == OP_I_ALU_LOCAL)
+                                  | (shifted_inst0_opcode == OP_LOAD_LOCAL)
+                                  | (shifted_inst0_opcode == OP_LUI_LOCAL)
+                                  | (shifted_inst0_opcode == OP_AUIPC_LOCAL)
+                                  | shifted_inst0_is_jump;
+
+    wire shifted_inst1_uses_rs1 = (shifted_inst1_opcode == OP_R_TYPE_LOCAL)
+                                 | (shifted_inst1_opcode == OP_I_ALU_LOCAL);
+    wire shifted_inst1_uses_rs2 = (shifted_inst1_opcode == OP_R_TYPE_LOCAL);
+
+    wire shifted_pair_raw = shifted_inst0_writes_rd & (shifted_inst0_rd != 5'd0)
+                          & ((shifted_inst1_uses_rs1 & (shifted_inst1_rs1 == shifted_inst0_rd))
+                           | (shifted_inst1_uses_rs2 & (shifted_inst1_rs2 == shifted_inst0_rd)));
+
+    wire shifted_can_dual = if_valid
+                          & (inst_buf_pc != 32'h7FFF_FFFC)
+                          & if_sequential_fetch
+                          & shifted_inst1_is_alu_type
+                          & ~shifted_pair_raw
+                          & ~shifted_inst0_is_jump;
 
     // Registered snapshot: captured at stall entry (same cycle as irom_inst0/1_held)
     logic held_can_dual_r;
@@ -594,20 +835,77 @@ module cpu_top (
         else if (id_flush | id_allowin)
             held_can_dual_r <= 1'b0;
         else if (!irom_held_valid)
-            held_can_dual_r <= raw_can_dual;
+            held_can_dual_r <= if_buf_before_window ? shifted_can_dual : raw_can_dual;
     end
 
-    assign can_dual_issue = irom_held_valid ? held_can_dual_r : raw_can_dual;
+    assign can_dual_fetch = if_skip_out ? 1'b0 :
+                            irom_held_valid ? held_can_dual_r :
+                            if_buf_before_window ? shifted_can_dual : raw_can_dual;
+
+    assign can_dual_issue = can_dual_fetch;
+    wire will_skip_inst0 = if_accept & can_dual_issue & ~predict_dual & (if_pc_out == pc);
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n)
+            predict_dual <= 1'b0;
+        else if (if_accept & !if_skip_out)
+            predict_dual <= can_dual_fetch;
+    end
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n)
+            skip_inst0_valid <= 1'b0;
+        else if (id_flush | if_bp_taken_out | id_bp_redirect_raw)
+            skip_inst0_valid <= 1'b0;
+        else if (if_accept)
+            skip_inst0_valid <= will_skip_inst0;
+    end
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
+            skip_bp_taken_r <= 1'b0;
+            skip_bp_target_r <= 32'd0;
+            skip_bp_ghr_snap_r <= 8'd0;
+            skip_bp_btb_hit_r <= 1'b0;
+            skip_bp_btb_type_r <= 2'd0;
+            skip_bp_btb_bht_r <= 2'd0;
+            skip_bp_pht_cnt_r <= 2'd0;
+            skip_bp_sel_cnt_r <= 2'd0;
+            skip_bp_even_addr_r <= 12'd0;
+            skip_bp_odd_addr_r <= 12'd0;
+            skip_bp_fetch_odd_r <= 1'b0;
+        end else if (id_flush | if_bp_taken_out | id_bp_redirect_raw) begin
+            skip_bp_taken_r <= 1'b0;
+        end else if (will_skip_inst0) begin
+            skip_bp_taken_r <= la_bp_taken;
+            skip_bp_target_r <= la_bp_target;
+            skip_bp_ghr_snap_r <= la_bp_ghr_snap;
+            skip_bp_btb_hit_r <= la_bp_btb_hit;
+            skip_bp_btb_type_r <= la_bp_btb_type;
+            skip_bp_btb_bht_r <= la_bp_btb_bht;
+            skip_bp_pht_cnt_r <= la_bp_pht_cnt;
+            skip_bp_sel_cnt_r <= la_bp_sel_cnt;
+            skip_bp_even_addr_r <= irom_even_bank_addr(la_bp_target);
+            skip_bp_odd_addr_r <= irom_odd_bank_addr(la_bp_target);
+            skip_bp_fetch_odd_r <= la_bp_target[2];
+        end
+    end
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            inst_buf_valid         <= 1'b0;
+            inst_buf               <= 32'd0;
+            inst_buf_pc            <= 32'd0;
+            inst_buf_before_window <= 1'b0;
+        end else if (id_flush | if_bp_taken_out | id_bp_redirect_raw) begin
             inst_buf_valid <= 1'b0;
-            inst_buf       <= 32'd0;
-        end else if (id_flush | bp_taken | id_bp_redirect_raw) begin
-            inst_buf_valid <= 1'b0;
+            inst_buf_before_window <= 1'b0;
         end else if (if_accept) begin
-            inst_buf_valid <= (pc != 32'h7FFF_FFFC) & ~can_dual_issue & if_sequential_fetch;
-            inst_buf       <= if_inst1_out;
+            inst_buf_valid         <= (if_pc_out != 32'h7FFF_FFFC) & ~can_dual_issue
+                                    & ~if_skip_out & if_sequential_fetch;
+            inst_buf               <= if_inst1_out;
+            inst_buf_pc            <= if_pc_out + 32'd4;
+            inst_buf_before_window <= predict_dual | if_buf_before_window;
         end
     end
 
@@ -630,7 +928,7 @@ module cpu_top (
         .id_ready_go  (id_ready_go),
         .ex_allowin   (ex_allowin),
         .id_flush     (id_flush),
-        .if_pc        (pc),
+        .if_pc        (if_pc_out),
         .if_inst      (if_inst0_out),    // held, buffered, or live BRAM output
         .if_inst1     (if_inst1_out),
         .if_s1_valid  (if_s1_valid),
@@ -639,14 +937,14 @@ module cpu_top (
         .id_inst1     (id_inst1),
         .id_s1_valid  (id_s1_valid),
         // Branch prediction passthrough
-        .if_bp_taken    (bp_taken),
-        .if_bp_target   (bp_target),
-        .if_bp_ghr_snap (bp_ghr_snap),
-        .if_bp_btb_hit  (bp_btb_hit),
-        .if_bp_btb_type (bp_btb_type),     // NLP: type for ID verification
-        .if_bp_btb_bht  (bp_btb_bht),
-        .if_bp_pht_cnt  (bp_pht_cnt),
-        .if_bp_sel_cnt  (bp_sel_cnt),
+        .if_bp_taken    (if_bp_taken_out),
+        .if_bp_target   (if_bp_target_out),
+        .if_bp_ghr_snap (if_bp_ghr_snap_out),
+        .if_bp_btb_hit  (if_bp_btb_hit_out),
+        .if_bp_btb_type (if_bp_btb_type_out),     // NLP: type for ID verification
+        .if_bp_btb_bht  (if_bp_btb_bht_out),
+        .if_bp_pht_cnt  (if_bp_pht_cnt_out),
+        .if_bp_sel_cnt  (if_bp_sel_cnt_out),
         .id_bp_taken    (id_bp_taken),
         .id_bp_target   (id_bp_target),
         .id_bp_ghr_snap (id_bp_ghr_snap),

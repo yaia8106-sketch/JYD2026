@@ -1,21 +1,20 @@
 
 [Step 0] 检查/创建时钟约束...
 
-  ⚠ 未检测到时钟约束
-  ✘ 端口 w_cpu_clk 不存在！请检查 CLK_PORT 配置。
-    当前设计端口列表：
-�引擎已更新
-  ✔ 验证通过：找到时序路径（worst slack = -0.960ns）
+  ✔ 检测到已有时钟约束: i_sys_clk_p clkfbout_pll clk_out1_pll clk_out2_pll
+  → 执行 update_timing...
+  ✔ 时序引擎已更新
+  ✔ 验证通过：找到时序路径（worst slack = -0.026ns）
 
 [Step 1] 收集寄存器组...
 
   Pre_IF(PC)     :   32 cells  (pattern: student_top_inst/u_cpu/u_pc_reg/*)
-  IF/ID          :  156 cells  (pattern: student_top_inst/u_cpu/u_if_id_reg/*)
-  ID/EX          :  237 cells  (pattern: student_top_inst/u_cpu/u_id_ex_reg/*)
+  IF/ID          :  183 cells  (pattern: student_top_inst/u_cpu/u_if_id_reg/*)
+  ID/EX          :  247 cells  (pattern: student_top_inst/u_cpu/u_id_ex_reg/*)
   EX/MEM         :  147 cells  (pattern: student_top_inst/u_cpu/u_ex_mem_reg/*)
   MEM/WB         :  110 cells  (pattern: student_top_inst/u_cpu/u_mem_wb_reg/*)
   RegFile        :  992 cells  (pattern: student_top_inst/u_cpu/u_regfile/*)
-  BP(pred)       :  287 cells  (pattern: student_top_inst/u_cpu/u_bp/*)
+  BP(pred)       :  435 cells  (pattern: student_top_inst/u_cpu/u_bp/*)
   DCache(FSM)    : 1536 cells  (pattern: student_top_inst/u_dcache/*)
   IROM(BRAM)     :    8 cells  (pattern: student_top_inst/u_irom_*/*)
   DRAM(BRAM)     :   64 cells  (pattern: student_top_inst/u_dram/*)
@@ -28,301 +27,333 @@
 
 ================================================================================
 
+  Pre_IF(PC) → Pre_IF(PC)  (找到 3 条路径)
+----------------------------------------------------------------------------
+    #      Slack(ns)   DataPath    Levels    Endpoint
+----------------------------------------------------------------------------
+    1           0.509       4.314       7    ...ent_top_inst/u_cpu/u_pc_reg/pc_reg[30]/D
+    2           0.509       4.314       7    ...ent_top_inst/u_cpu/u_pc_reg/pc_reg[30]/D
+    3           0.509       4.314       7    ...ent_top_inst/u_cpu/u_pc_reg/pc_reg[30]/D
+
   Pre_IF(PC) → IF/ID  (找到 3 条路径)
 ----------------------------------------------------------------------------
     #      Slack(ns)   DataPath    Levels    Endpoint
 ----------------------------------------------------------------------------
-    1           1.336       3.586       4    ...u_cpu/u_if_id_reg/id_bp_pht_cnt_reg[0]/D
-    2           1.336       3.586       4    ...u_cpu/u_if_id_reg/id_bp_pht_cnt_reg[0]/D
-    3           1.336       3.586       4    ...u_cpu/u_if_id_reg/id_bp_pht_cnt_reg[0]/D
+    1           0.884       3.838       4    ...u_cpu/u_if_id_reg/id_bp_pht_cnt_reg[1]/D
+    2           0.884       3.838       4    ...u_cpu/u_if_id_reg/id_bp_pht_cnt_reg[1]/D
+    3           0.884       3.838       4    ...u_cpu/u_if_id_reg/id_bp_pht_cnt_reg[1]/D
 
   Pre_IF(PC) → IROM(BRAM)  (找到 3 条路径)
 ----------------------------------------------------------------------------
     #      Slack(ns)   DataPath    Levels    Endpoint
 ----------------------------------------------------------------------------
-    1          -0.537       5.008      11    ...NFO.SP.SIMPLE_PRIM36.ram/ADDRARDADDR[13]
-    2          -0.537       5.008      11    ...NFO.SP.SIMPLE_PRIM36.ram/ADDRARDADDR[13]
-    3          -0.537       5.008      11    ...NFO.SP.SIMPLE_PRIM36.ram/ADDRARDADDR[13]
+    1           0.135       4.367      11    ...NFO.SP.SIMPLE_PRIM36.ram/ADDRARDADDR[11]
+    2           0.135       4.367      11    ...NFO.SP.SIMPLE_PRIM36.ram/ADDRARDADDR[11]
+    3           0.135       4.367      11    ...NFO.SP.SIMPLE_PRIM36.ram/ADDRARDADDR[11]
 
   IF/ID → Pre_IF(PC)  (找到 3 条路径)
 ----------------------------------------------------------------------------
     #      Slack(ns)   DataPath    Levels    Endpoint
 ----------------------------------------------------------------------------
-    1           0.393       4.375       8    ...ent_top_inst/u_cpu/u_pc_reg/pc_reg[8]/CE
-    2           0.393       4.375       8    ...ent_top_inst/u_cpu/u_pc_reg/pc_reg[8]/CE
-    3           0.393       4.375       8    ...ent_top_inst/u_cpu/u_pc_reg/pc_reg[8]/CE
+    1           0.185       4.439       8    ...nt_top_inst/u_cpu/u_pc_reg/pc_reg[11]/CE
+    2           0.185       4.439       8    ...nt_top_inst/u_cpu/u_pc_reg/pc_reg[11]/CE
+    3           0.185       4.439       8    ...nt_top_inst/u_cpu/u_pc_reg/pc_reg[11]/CE
+
+  IF/ID → IF/ID  (找到 3 条路径)
+----------------------------------------------------------------------------
+    #      Slack(ns)   DataPath    Levels    Endpoint
+----------------------------------------------------------------------------
+    1           0.232       4.392       8    ...nst/u_cpu/u_if_id_reg/id_s1_valid_reg/CE
+    2           0.232       4.392       8    ...nst/u_cpu/u_if_id_reg/id_s1_valid_reg/CE
+    3           0.232       4.392       8    ...nst/u_cpu/u_if_id_reg/id_s1_valid_reg/CE
 
   IF/ID → ID/EX  (找到 3 条路径)
 ----------------------------------------------------------------------------
     #      Slack(ns)   DataPath    Levels    Endpoint
 ----------------------------------------------------------------------------
-    1           0.121       4.800       7    .../u_cpu/u_id_ex_reg/ex_alu_src1_reg[31]/D
-    2           0.121       4.800       7    .../u_cpu/u_id_ex_reg/ex_alu_src1_reg[31]/D
-    3           0.121       4.800       7    .../u_cpu/u_id_ex_reg/ex_alu_src1_reg[31]/D
+    1           0.348       4.570       5    .../u_cpu/u_id_ex_reg/ex_rs1_data_reg[16]/D
+    2           0.348       4.570       5    .../u_cpu/u_id_ex_reg/ex_rs1_data_reg[16]/D
+    3           0.348       4.570       5    .../u_cpu/u_id_ex_reg/ex_rs1_data_reg[16]/D
 
   IF/ID → IROM(BRAM)  (找到 3 条路径)
 ----------------------------------------------------------------------------
     #      Slack(ns)   DataPath    Levels    Endpoint
 ----------------------------------------------------------------------------
-    1           0.142       4.334       9    ...NFO.SP.SIMPLE_PRIM36.ram/ADDRARDADDR[13]
-    2           0.142       4.334       9    ...NFO.SP.SIMPLE_PRIM36.ram/ADDRARDADDR[13]
-    3           0.142       4.334       9    ...NFO.SP.SIMPLE_PRIM36.ram/ADDRARDADDR[13]
+    1           0.448       3.984       6    ...NFO.SP.SIMPLE_PRIM36.ram/ADDRARDADDR[11]
+    2           0.448       3.984       6    ...NFO.SP.SIMPLE_PRIM36.ram/ADDRARDADDR[11]
+    3           0.448       3.984       6    ...NFO.SP.SIMPLE_PRIM36.ram/ADDRARDADDR[11]
 
   ID/EX → Pre_IF(PC)  (找到 3 条路径)
 ----------------------------------------------------------------------------
     #      Slack(ns)   DataPath    Levels    Endpoint
 ----------------------------------------------------------------------------
-    1           0.633       4.130       8    ...ent_top_inst/u_cpu/u_pc_reg/pc_reg[8]/CE
-    2           0.633       4.130       8    ...ent_top_inst/u_cpu/u_pc_reg/pc_reg[8]/CE
-    3           0.633       4.130       8    ...ent_top_inst/u_cpu/u_pc_reg/pc_reg[8]/CE
+    1           0.201       4.424       8    ...nt_top_inst/u_cpu/u_pc_reg/pc_reg[11]/CE
+    2           0.201       4.424       8    ...nt_top_inst/u_cpu/u_pc_reg/pc_reg[11]/CE
+    3           0.201       4.424       8    ...nt_top_inst/u_cpu/u_pc_reg/pc_reg[11]/CE
 
   ID/EX → IF/ID  (找到 3 条路径)
 ----------------------------------------------------------------------------
     #      Slack(ns)   DataPath    Levels    Endpoint
 ----------------------------------------------------------------------------
-    1           0.572       4.167       8    ...nst/u_cpu/u_if_id_reg/id_s1_valid_reg/CE
-    2           0.572       4.167       8    ...nst/u_cpu/u_if_id_reg/id_s1_valid_reg/CE
-    3           0.572       4.167       8    ...nst/u_cpu/u_if_id_reg/id_s1_valid_reg/CE
+    1           0.248       4.376       8    ...nst/u_cpu/u_if_id_reg/id_s1_valid_reg/CE
+    2           0.248       4.376       8    ...nst/u_cpu/u_if_id_reg/id_s1_valid_reg/CE
+    3           0.248       4.376       8    ...nst/u_cpu/u_if_id_reg/id_s1_valid_reg/CE
+
+  ID/EX → ID/EX  (找到 3 条路径)
+----------------------------------------------------------------------------
+    #      Slack(ns)   DataPath    Levels    Endpoint
+----------------------------------------------------------------------------
+    1           0.252       4.638       7    .../u_cpu/u_id_ex_reg/ex_rs1_data_reg[12]/D
+    2           0.252       4.638       7    .../u_cpu/u_id_ex_reg/ex_rs1_data_reg[12]/D
+    3           0.357       4.576       8    .../u_cpu/u_id_ex_reg/ex_alu_src1_reg[18]/D
 
   ID/EX → EX/MEM  (找到 3 条路径)
 ----------------------------------------------------------------------------
     #      Slack(ns)   DataPath    Levels    Endpoint
 ----------------------------------------------------------------------------
-    1           1.046       3.839      11    ..._cpu/u_ex_mem_reg/mem_branch_flush_reg/D
-    2           1.046       3.839      11    ..._cpu/u_ex_mem_reg/mem_branch_flush_reg/D
-    3           1.046       3.839      11    ..._cpu/u_ex_mem_reg/mem_branch_flush_reg/D
+    1           0.971       3.841      11    .../u_ex_mem_reg/mem_branch_target_reg[3]/D
+    2           0.971       3.841      11    .../u_ex_mem_reg/mem_branch_target_reg[3]/D
+    3           0.971       3.841      11    .../u_ex_mem_reg/mem_branch_target_reg[3]/D
 
   ID/EX → BP(pred)  (找到 3 条路径)
 ----------------------------------------------------------------------------
     #      Slack(ns)   DataPath    Levels    Endpoint
 ----------------------------------------------------------------------------
-    1           0.393       4.260      12    ..._cpu/u_bp/btb_tgt_reg_64_127_3_5/RAMA/WE
-    2           0.393       4.260      12    ..._cpu/u_bp/btb_tgt_reg_64_127_3_5/RAMA/WE
-    3           0.393       4.260      12    ..._cpu/u_bp/btb_tgt_reg_64_127_3_5/RAMA/WE
+    1           0.362       4.068      12    ...u/u_bp/btb_tgt_reg_r1_64_127_6_8/RAMA/WE
+    2           0.362       4.068      12    ...u/u_bp/btb_tgt_reg_r1_64_127_6_8/RAMA/WE
+    3           0.362       4.068      12    ...u/u_bp/btb_tgt_reg_r1_64_127_6_8/RAMA/WE
 
   ID/EX → DCache(FSM)  (找到 3 条路径)
 ----------------------------------------------------------------------------
     #      Slack(ns)   DataPath    Levels    Endpoint
 ----------------------------------------------------------------------------
-    1           0.005       4.975       7    ...top_inst/u_dcache/mem_tag_rd_reg[1][4]/D
-    2           0.005       4.975       7    ...top_inst/u_dcache/mem_tag_rd_reg[1][4]/D
-    3           0.005       4.975       7    ...top_inst/u_dcache/mem_tag_rd_reg[1][4]/D
+    1           0.793       4.135       7    ...top_inst/u_dcache/mem_tag_rd_reg[1][6]/D
+    2           0.793       4.135       7    ...top_inst/u_dcache/mem_tag_rd_reg[1][6]/D
+    3           0.793       4.135       7    ...top_inst/u_dcache/mem_tag_rd_reg[1][6]/D
 
   ID/EX → DC_Data(BRAM)  (找到 3 条路径)
 ----------------------------------------------------------------------------
     #      Slack(ns)   DataPath    Levels    Endpoint
 ----------------------------------------------------------------------------
-    1           1.415       3.106       4    ...INFO.SDP.WIDE_PRIM18.ram/ADDRARDADDR[10]
-    2           1.415       3.106       4    ...INFO.SDP.WIDE_PRIM18.ram/ADDRARDADDR[10]
-    3           1.415       3.106       4    ...INFO.SDP.WIDE_PRIM18.ram/ADDRARDADDR[10]
+    1           1.783       2.723       4    ...INFO.SDP.WIDE_PRIM18.ram/ADDRARDADDR[10]
+    2           1.783       2.723       4    ...INFO.SDP.WIDE_PRIM18.ram/ADDRARDADDR[10]
+    3           1.783       2.723       4    ...INFO.SDP.WIDE_PRIM18.ram/ADDRARDADDR[10]
 
   EX/MEM → Pre_IF(PC)  (找到 3 条路径)
 ----------------------------------------------------------------------------
     #      Slack(ns)   DataPath    Levels    Endpoint
 ----------------------------------------------------------------------------
-    1           0.466       4.299       8    ...ent_top_inst/u_cpu/u_pc_reg/pc_reg[8]/CE
-    2           0.466       4.299       8    ...ent_top_inst/u_cpu/u_pc_reg/pc_reg[8]/CE
-    3           0.466       4.299       8    ...ent_top_inst/u_cpu/u_pc_reg/pc_reg[8]/CE
+    1           0.277       4.394       8    ...nt_top_inst/u_cpu/u_pc_reg/pc_reg[11]/CE
+    2           0.277       4.394       8    ...nt_top_inst/u_cpu/u_pc_reg/pc_reg[11]/CE
+    3           0.277       4.394       8    ...nt_top_inst/u_cpu/u_pc_reg/pc_reg[11]/CE
 
   EX/MEM → IF/ID  (找到 3 条路径)
 ----------------------------------------------------------------------------
     #      Slack(ns)   DataPath    Levels    Endpoint
 ----------------------------------------------------------------------------
-    1           0.404       4.335       8    ...nst/u_cpu/u_if_id_reg/id_s1_valid_reg/CE
-    2           0.404       4.335       8    ...nst/u_cpu/u_if_id_reg/id_s1_valid_reg/CE
-    3           0.404       4.335       8    ...nst/u_cpu/u_if_id_reg/id_s1_valid_reg/CE
+    1           0.324       4.347       8    ...nst/u_cpu/u_if_id_reg/id_s1_valid_reg/CE
+    2           0.324       4.347       8    ...nst/u_cpu/u_if_id_reg/id_s1_valid_reg/CE
+    3           0.324       4.347       8    ...nst/u_cpu/u_if_id_reg/id_s1_valid_reg/CE
 
   EX/MEM → ID/EX  (找到 3 条路径)
 ----------------------------------------------------------------------------
     #      Slack(ns)   DataPath    Levels    Endpoint
 ----------------------------------------------------------------------------
-    1           0.194       4.724       7    .../u_cpu/u_id_ex_reg/ex_alu_src1_reg[31]/D
-    2           0.194       4.724       7    .../u_cpu/u_id_ex_reg/ex_alu_src1_reg[31]/D
-    3           0.194       4.724       7    .../u_cpu/u_id_ex_reg/ex_alu_src1_reg[31]/D
+    1           0.536       4.293       6    ...t/u_cpu/u_id_ex_reg/ex_rs2_data_reg[1]/D
+    2           0.536       4.293       6    ...t/u_cpu/u_id_ex_reg/ex_rs2_data_reg[1]/D
+    3           0.536       4.293       6    ...t/u_cpu/u_id_ex_reg/ex_rs2_data_reg[1]/D
+
+  EX/MEM → EX/MEM  (找到 3 条路径)
+----------------------------------------------------------------------------
+    #      Slack(ns)   DataPath    Levels    Endpoint
+----------------------------------------------------------------------------
+    1           2.082       2.552       1    .../u_cpu/u_ex_mem_reg/mem_wb_sel_reg[1]/CE
+    2           2.082       2.552       1    .../u_cpu/u_ex_mem_reg/mem_wb_sel_reg[1]/CE
+    3           2.127       2.503       1    ...u/u_ex_mem_reg/mem_alu_result_reg[24]/CE
 
   EX/MEM → MEM/WB  (找到 3 条路径)
 ----------------------------------------------------------------------------
     #      Slack(ns)   DataPath    Levels    Endpoint
 ----------------------------------------------------------------------------
-    1           0.982       3.949       5    ..._cpu/u_mem_wb_reg/wb_load_rdata_reg[7]/D
-    2           0.982       3.949       5    ..._cpu/u_mem_wb_reg/wb_load_rdata_reg[7]/D
-    3           0.982       3.949       5    ..._cpu/u_mem_wb_reg/wb_load_rdata_reg[7]/D
+    1           1.217       3.709       6    ..._cpu/u_mem_wb_reg/wb_load_rdata_reg[2]/D
+    2           1.217       3.709       6    ..._cpu/u_mem_wb_reg/wb_load_rdata_reg[2]/D
+    3           1.278       3.646       6    ..._cpu/u_mem_wb_reg/wb_load_rdata_reg[7]/D
 
   EX/MEM → BP(pred)  (找到 3 条路径)
 ----------------------------------------------------------------------------
     #      Slack(ns)   DataPath    Levels    Endpoint
 ----------------------------------------------------------------------------
-    1           1.367       3.283       4    ..._cpu/u_bp/btb_tgt_reg_64_127_3_5/RAMA/WE
-    2           1.367       3.283       4    ..._cpu/u_bp/btb_tgt_reg_64_127_3_5/RAMA/WE
-    3           1.367       3.283       4    ..._cpu/u_bp/btb_tgt_reg_64_127_3_5/RAMB/WE
+    1           0.731       3.643       3    ...u/u_bp/btb_tgt_reg_r1_64_127_6_8/RAMA/WE
+    2           0.731       3.643       3    ...u/u_bp/btb_tgt_reg_r1_64_127_6_8/RAMA/WE
+    3           0.731       3.643       3    ...u/u_bp/btb_tgt_reg_r1_64_127_6_8/RAMB/WE
 
   EX/MEM → DCache(FSM)  (找到 3 条路径)
 ----------------------------------------------------------------------------
     #      Slack(ns)   DataPath    Levels    Endpoint
 ----------------------------------------------------------------------------
-    1           2.018       2.498       2    ...INFO.SDP.WIDE_PRIM18.ram/ADDRARDADDR[11]
-    2           2.018       2.498       2    ...INFO.SDP.WIDE_PRIM18.ram/ADDRARDADDR[11]
-    3           2.018       2.498       2    ...INFO.SDP.WIDE_PRIM18.ram/ADDRARDADDR[11]
+    1           1.859       2.597       2    ..._INFO.SDP.WIDE_PRIM18.ram/ADDRARDADDR[8]
+    2           1.859       2.597       2    ..._INFO.SDP.WIDE_PRIM18.ram/ADDRARDADDR[8]
+    3           1.859       2.597       2    ..._INFO.SDP.WIDE_PRIM18.ram/ADDRARDADDR[8]
 
   EX/MEM → IROM(BRAM)  (找到 3 条路径)
 ----------------------------------------------------------------------------
     #      Slack(ns)   DataPath    Levels    Endpoint
 ----------------------------------------------------------------------------
-    1           0.157       4.319       9    ...NFO.SP.SIMPLE_PRIM36.ram/ADDRARDADDR[13]
-    2           0.157       4.319       9    ...NFO.SP.SIMPLE_PRIM36.ram/ADDRARDADDR[13]
-    3           0.157       4.319       9    ...NFO.SP.SIMPLE_PRIM36.ram/ADDRARDADDR[13]
+    1           0.762       3.674       5    ...INFO.SP.SIMPLE_PRIM36.ram/ADDRARDADDR[7]
+    2           0.762       3.674       5    ...INFO.SP.SIMPLE_PRIM36.ram/ADDRARDADDR[7]
+    3           0.768       3.612       5    ...INFO.SP.SIMPLE_PRIM36.ram/ADDRARDADDR[6]
 
   EX/MEM → DC_Data(BRAM)  (找到 3 条路径)
 ----------------------------------------------------------------------------
     #      Slack(ns)   DataPath    Levels    Endpoint
 ----------------------------------------------------------------------------
-    1           2.018       2.498       2    ...INFO.SDP.WIDE_PRIM18.ram/ADDRARDADDR[11]
-    2           2.018       2.498       2    ...INFO.SDP.WIDE_PRIM18.ram/ADDRARDADDR[11]
-    3           2.018       2.498       2    ...INFO.SDP.WIDE_PRIM18.ram/ADDRARDADDR[11]
+    1           1.859       2.597       2    ..._INFO.SDP.WIDE_PRIM18.ram/ADDRARDADDR[8]
+    2           1.859       2.597       2    ..._INFO.SDP.WIDE_PRIM18.ram/ADDRARDADDR[8]
+    3           1.859       2.597       2    ..._INFO.SDP.WIDE_PRIM18.ram/ADDRARDADDR[8]
 
   MEM/WB → ID/EX  (找到 3 条路径)
 ----------------------------------------------------------------------------
     #      Slack(ns)   DataPath    Levels    Endpoint
 ----------------------------------------------------------------------------
-    1           0.091       4.820       6    ...t/u_cpu/u_id_ex_reg/ex_rs1_data_reg[3]/D
-    2           0.091       4.820       6    ...t/u_cpu/u_id_ex_reg/ex_rs1_data_reg[3]/D
-    3           0.104       4.824       8    .../u_cpu/u_id_ex_reg/ex_alu_src1_reg[17]/D
+    1           0.354       4.476       6    .../u_cpu/u_id_ex_reg/ex_rs1_data_reg[31]/D
+    2           0.354       4.476       6    .../u_cpu/u_id_ex_reg/ex_rs1_data_reg[31]/D
+    3           0.354       4.476       6    .../u_cpu/u_id_ex_reg/ex_rs1_data_reg[31]/D
 
   MEM/WB → RegFile  (找到 3 条路径)
 ----------------------------------------------------------------------------
     #      Slack(ns)   DataPath    Levels    Endpoint
 ----------------------------------------------------------------------------
-    1           0.522       4.194       2    ...inst/u_cpu/u_regfile/regs_reg[31][20]/CE
-    2           0.522       4.194       2    ...inst/u_cpu/u_regfile/regs_reg[31][20]/CE
-    3           0.596       4.098       2    ...inst/u_cpu/u_regfile/regs_reg[31][14]/CE
+    1           1.222       3.780       5    ..._inst/u_cpu/u_regfile/regs_reg[11][26]/D
+    2           1.222       3.780       5    ..._inst/u_cpu/u_regfile/regs_reg[11][26]/D
+    3           1.222       3.780       5    ..._inst/u_cpu/u_regfile/regs_reg[11][26]/D
 
   RegFile → ID/EX  (找到 3 条路径)
 ----------------------------------------------------------------------------
     #      Slack(ns)   DataPath    Levels    Endpoint
 ----------------------------------------------------------------------------
-    1           0.828       3.951       7    ...t/u_cpu/u_id_ex_reg/ex_alu_src2_reg[4]/D
-    2           0.828       3.951       7    ...t/u_cpu/u_id_ex_reg/ex_alu_src2_reg[4]/D
-    3           0.862       3.966       7    ...t/u_cpu/u_id_ex_reg/ex_alu_src2_reg[4]/D
+    1           0.846       3.784       6    .../u_cpu/u_id_ex_reg/ex_rs1_data_reg[31]/D
+    2           0.846       3.784       6    .../u_cpu/u_id_ex_reg/ex_rs1_data_reg[31]/D
+    3           0.850       4.026       6    ...t/u_cpu/u_id_ex_reg/ex_rs1_data_reg[1]/D
 
   BP(pred) → Pre_IF(PC)  (找到 3 条路径)
 ----------------------------------------------------------------------------
     #      Slack(ns)   DataPath    Levels    Endpoint
 ----------------------------------------------------------------------------
-    1           0.616       4.304       5    ...dent_top_inst/u_cpu/u_pc_reg/pc_reg[8]/D
-    2           0.616       4.304       5    ...dent_top_inst/u_cpu/u_pc_reg/pc_reg[8]/D
-    3           0.656       4.312       6    ...dent_top_inst/u_cpu/u_pc_reg/pc_reg[8]/D
+    1           0.997       3.827       6    ...ent_top_inst/u_cpu/u_pc_reg/pc_reg[17]/D
+    2           0.997       3.827       6    ...ent_top_inst/u_cpu/u_pc_reg/pc_reg[17]/D
+    3           1.005       3.819       6    ...ent_top_inst/u_cpu/u_pc_reg/pc_reg[17]/D
 
   BP(pred) → IF/ID  (找到 3 条路径)
 ----------------------------------------------------------------------------
     #      Slack(ns)   DataPath    Levels    Endpoint
 ----------------------------------------------------------------------------
-    1           1.756       3.167       6    ...inst/u_cpu/u_if_id_reg/id_s1_valid_reg/D
-    2           1.756       3.167       6    ...inst/u_cpu/u_if_id_reg/id_s1_valid_reg/D
-    3           1.797       3.175       7    ...inst/u_cpu/u_if_id_reg/id_s1_valid_reg/D
+    1           1.182       3.489       5    ...u_cpu/u_if_id_reg/id_bp_pht_cnt_reg[1]/D
+    2           1.182       3.489       5    ...u_cpu/u_if_id_reg/id_bp_pht_cnt_reg[1]/D
+    3           1.182       3.489       5    ...u_cpu/u_if_id_reg/id_bp_pht_cnt_reg[1]/D
+
+  BP(pred) → BP(pred)  (找到 3 条路径)
+----------------------------------------------------------------------------
+    #      Slack(ns)   DataPath    Levels    Endpoint
+----------------------------------------------------------------------------
+    1           3.550       1.367       1    student_top_inst/u_cpu/u_bp/ghr_reg[0]/D
+    2           3.550       1.367       1    student_top_inst/u_cpu/u_bp/ghr_reg[0]/D
+    3           3.687       1.127       1    student_top_inst/u_cpu/u_bp/ghr_reg[4]/D
 
   BP(pred) → IROM(BRAM)  (找到 3 条路径)
 ----------------------------------------------------------------------------
     #      Slack(ns)   DataPath    Levels    Endpoint
 ----------------------------------------------------------------------------
-    1          -0.180       4.604       9    ...NFO.SP.SIMPLE_PRIM36.ram/ADDRARDADDR[13]
-    2          -0.180       4.604       9    ...NFO.SP.SIMPLE_PRIM36.ram/ADDRARDADDR[13]
-    3          -0.180       4.604       9    ...NFO.SP.SIMPLE_PRIM36.ram/ADDRARDADDR[13]
+    1           0.557       3.945       9    ...NFO.SP.SIMPLE_PRIM36.ram/ADDRARDADDR[11]
+    2           0.557       3.945       9    ...NFO.SP.SIMPLE_PRIM36.ram/ADDRARDADDR[11]
+    3           0.557       3.945       9    ...NFO.SP.SIMPLE_PRIM36.ram/ADDRARDADDR[11]
 
   DCache(FSM) → Pre_IF(PC)  (找到 3 条路径)
 ----------------------------------------------------------------------------
     #      Slack(ns)   DataPath    Levels    Endpoint
 ----------------------------------------------------------------------------
-    1           0.148       4.605       8    ...ent_top_inst/u_cpu/u_pc_reg/pc_reg[8]/CE
-    2           0.148       4.605       8    ...ent_top_inst/u_cpu/u_pc_reg/pc_reg[8]/CE
-    3           0.173       4.530       8    ...nt_top_inst/u_cpu/u_pc_reg/pc_reg[10]/CE
+    1           0.347       4.330       7    ...nt_top_inst/u_cpu/u_pc_reg/pc_reg[11]/CE
+    2           0.347       4.330       7    ...nt_top_inst/u_cpu/u_pc_reg/pc_reg[11]/CE
+    3           0.374       4.256       7    ...ent_top_inst/u_cpu/u_pc_reg/pc_reg[2]/CE
 
   DCache(FSM) → IF/ID  (找到 3 条路径)
 ----------------------------------------------------------------------------
     #      Slack(ns)   DataPath    Levels    Endpoint
 ----------------------------------------------------------------------------
-    1           0.087       4.642       8    ...nst/u_cpu/u_if_id_reg/id_s1_valid_reg/CE
-    2           0.087       4.642       8    ...nst/u_cpu/u_if_id_reg/id_s1_valid_reg/CE
-    3           0.114       4.615       8    ...nst/u_cpu/u_if_id_reg/id_s1_valid_reg/CE
+    1           0.394       4.283       7    ...nst/u_cpu/u_if_id_reg/id_s1_valid_reg/CE
+    2           0.394       4.283       7    ...nst/u_cpu/u_if_id_reg/id_s1_valid_reg/CE
+    3           0.453       4.225       7    ...nst/u_cpu/u_if_id_reg/id_s1_valid_reg/CE
 
   DCache(FSM) → ID/EX  (找到 3 条路径)
 ----------------------------------------------------------------------------
     #      Slack(ns)   DataPath    Levels    Endpoint
 ----------------------------------------------------------------------------
-    1           0.065       4.612       8    ...u_cpu/u_id_ex_reg/ex_rs1_data_reg[29]/CE
-    2           0.065       4.612       8    ...u_cpu/u_id_ex_reg/ex_rs1_data_reg[29]/CE
-    3           0.065       4.612       8    ...u_cpu/u_id_ex_reg/ex_rs2_data_reg[29]/CE
+    1           0.680       4.030       6    ...u_cpu/u_id_ex_reg/ex_rs1_data_reg[25]/CE
+    2           0.680       4.030       6    ...u_cpu/u_id_ex_reg/ex_rs1_data_reg[25]/CE
+    3           0.740       3.973       6    ...u_cpu/u_id_ex_reg/ex_rs1_data_reg[25]/CE
 
   DCache(FSM) → EX/MEM  (找到 3 条路径)
 ----------------------------------------------------------------------------
     #      Slack(ns)   DataPath    Levels    Endpoint
 ----------------------------------------------------------------------------
-    1           0.964       3.899       7    ..._cpu/u_ex_mem_reg/mem_branch_flush_reg/D
-    2           0.964       3.899       7    ..._cpu/u_ex_mem_reg/mem_branch_flush_reg/D
-    3           0.991       3.872       7    ..._cpu/u_ex_mem_reg/mem_branch_flush_reg/D
+    1           1.049       3.637       5    .../u_cpu/u_ex_mem_reg/mem_wb_sel_reg[1]/CE
+    2           1.049       3.637       5    .../u_cpu/u_ex_mem_reg/mem_wb_sel_reg[1]/CE
+    3           1.094       3.588       5    ...u/u_ex_mem_reg/mem_alu_result_reg[24]/CE
 
   DCache(FSM) → MEM/WB  (找到 3 条路径)
 ----------------------------------------------------------------------------
     #      Slack(ns)   DataPath    Levels    Endpoint
 ----------------------------------------------------------------------------
-    1           0.636       4.246       3    ...cpu/u_mem_wb_reg/wb_load_rdata_reg[11]/D
-    2           0.636       4.246       3    ...cpu/u_mem_wb_reg/wb_load_rdata_reg[11]/D
-    3           0.739       4.143       3    ...cpu/u_mem_wb_reg/wb_load_rdata_reg[11]/D
+    1           1.068       3.845       5    ...cpu/u_mem_wb_reg/wb_load_rdata_reg[14]/D
+    2           1.068       3.845       5    ...cpu/u_mem_wb_reg/wb_load_rdata_reg[14]/D
+    3           1.068       3.845       5    ...cpu/u_mem_wb_reg/wb_load_rdata_reg[14]/D
+
+  DCache(FSM) → DCache(FSM)  (找到 3 条路径)
+----------------------------------------------------------------------------
+    #      Slack(ns)   DataPath    Levels    Endpoint
+----------------------------------------------------------------------------
+    1           0.790       4.024       0    ...op_inst/u_dcache/tag_mem_reg[0][20][3]/D
+    2           0.790       4.024       0    ...op_inst/u_dcache/tag_mem_reg[0][20][3]/D
+    3           0.826       3.682       6    ..._INFO.SDP.WIDE_PRIM18.ram/ADDRARDADDR[8]
 
   DCache(FSM) → DRAM(BRAM)  (找到 3 条路径)
 ----------------------------------------------------------------------------
     #      Slack(ns)   DataPath    Levels    Endpoint
 ----------------------------------------------------------------------------
-    1          -0.009       4.518       1    ...NFO.SDP.SIMPLE_PRIM36.ram/ADDRARDADDR[4]
-    2          -0.009       4.518       1    ...NFO.SDP.SIMPLE_PRIM36.ram/ADDRARDADDR[4]
-    3           0.006       4.647       1    ...NFO.SDP.SIMPLE_PRIM36.ram/ADDRARDADDR[3]
+    1           0.082       4.411       0    ...NFO.SDP.SIMPLE_PRIM36.ram/ADDRBWRADDR[5]
+    2           0.082       4.411       0    ...NFO.SDP.SIMPLE_PRIM36.ram/ADDRBWRADDR[5]
+    3           0.086       4.582       0    ...NFO.SDP.SIMPLE_PRIM36.ram/ADDRBWRADDR[4]
 
   DCache(FSM) → DC_Data(BRAM)  (找到 3 条路径)
 ----------------------------------------------------------------------------
     #      Slack(ns)   DataPath    Levels    Endpoint
 ----------------------------------------------------------------------------
-    1           0.200       4.385       8    ....NO_BMM_INFO.SDP.WIDE_PRIM18.ram/ENBWREN
-    2           0.200       4.385       8    ....NO_BMM_INFO.SDP.WIDE_PRIM18.ram/ENBWREN
-    3           0.228       4.359       8    ....NO_BMM_INFO.SDP.WIDE_PRIM18.ram/ENBWREN
-
-  IROM(BRAM) → Pre_IF(PC)  (找到 3 条路径)
-----------------------------------------------------------------------------
-    #      Slack(ns)   DataPath    Levels    Endpoint
-----------------------------------------------------------------------------
-    1          -0.093       4.982       8    ...dent_top_inst/u_cpu/u_pc_reg/pc_reg[8]/D
-    2          -0.093       4.982       8    ...dent_top_inst/u_cpu/u_pc_reg/pc_reg[8]/D
-    3          -0.093       4.982       8    ...dent_top_inst/u_cpu/u_pc_reg/pc_reg[8]/D
+    1           0.826       3.682       6    ..._INFO.SDP.WIDE_PRIM18.ram/ADDRARDADDR[8]
+    2           0.826       3.682       6    ..._INFO.SDP.WIDE_PRIM18.ram/ADDRARDADDR[8]
+    3           0.826       3.682       6    ..._INFO.SDP.WIDE_PRIM18.ram/ADDRARDADDR[8]
 
   IROM(BRAM) → IF/ID  (找到 3 条路径)
 ----------------------------------------------------------------------------
     #      Slack(ns)   DataPath    Levels    Endpoint
 ----------------------------------------------------------------------------
-    1           0.399       4.495       7    ...inst/u_cpu/u_if_id_reg/id_s1_valid_reg/D
-    2           0.399       4.495       7    ...inst/u_cpu/u_if_id_reg/id_s1_valid_reg/D
-    3           0.399       4.495       7    ...inst/u_cpu/u_if_id_reg/id_s1_valid_reg/D
-
-  IROM(BRAM) → IROM(BRAM)  (找到 3 条路径)
-----------------------------------------------------------------------------
-    #      Slack(ns)   DataPath    Levels    Endpoint
-----------------------------------------------------------------------------
-    1          -0.960       5.352      10    ...NFO.SP.SIMPLE_PRIM36.ram/ADDRARDADDR[13]
-    2          -0.960       5.352      10    ...NFO.SP.SIMPLE_PRIM36.ram/ADDRARDADDR[13]
-    3          -0.960       5.352      10    ...NFO.SP.SIMPLE_PRIM36.ram/ADDRARDADDR[13]
+    1           0.321       4.327       2    .../u_if_id_reg/id_inst_reg[22]_replica_1/D
+    2           0.321       4.327       2    .../u_if_id_reg/id_inst_reg[22]_replica_1/D
+    3           0.404       4.238       2    .../u_if_id_reg/id_inst_reg[22]_replica_2/D
 
   DRAM(BRAM) → DCache(FSM)  (找到 3 条路径)
 ----------------------------------------------------------------------------
     #      Slack(ns)   DataPath    Levels    Endpoint
 ----------------------------------------------------------------------------
-    1           1.903       2.786       3    ...top_inst/u_dcache/dram_rdata_r_reg[29]/D
-    2           1.903       2.786       3    ...top_inst/u_dcache/dram_rdata_r_reg[29]/D
-    3           1.945       2.744       3    ...top_inst/u_dcache/dram_rdata_r_reg[27]/D
+    1           1.667       3.032       3    ...top_inst/u_dcache/dram_rdata_r_reg[30]/D
+    2           1.667       3.032       3    ...top_inst/u_dcache/dram_rdata_r_reg[30]/D
+    3           1.775       2.924       3    ...top_inst/u_dcache/dram_rdata_r_reg[28]/D
 
   DC_Data(BRAM) → MEM/WB  (找到 3 条路径)
 ----------------------------------------------------------------------------
     #      Slack(ns)   DataPath    Levels    Endpoint
 ----------------------------------------------------------------------------
-    1           0.636       4.246       3    ...cpu/u_mem_wb_reg/wb_load_rdata_reg[11]/D
-    2           0.636       4.246       3    ...cpu/u_mem_wb_reg/wb_load_rdata_reg[11]/D
-    3           0.739       4.143       3    ...cpu/u_mem_wb_reg/wb_load_rdata_reg[11]/D
+    1           1.126       3.789       3    ..._cpu/u_mem_wb_reg/wb_load_rdata_reg[4]/D
+    2           1.126       3.789       3    ..._cpu/u_mem_wb_reg/wb_load_rdata_reg[4]/D
+    3           1.215       3.669       3    ..._cpu/u_mem_wb_reg/wb_load_rdata_reg[7]/D
 
 
 ================================================================================
@@ -334,34 +365,34 @@
 
 From \ To      Pre_IF(PC)    IF/ID       ID/EX       EX/MEM      MEM/WB     RegFile     BP(pred)  DCache(FSM)  IROM(BRAM)  DRAM(BRAM) DC_Data(BRAM)
 --------------------------------------------------------------------------------------------------------------------------------------------------
-Pre_IF(PC)        ---         3.586       N/P         N/P         N/P         N/P         N/P         N/P         5.008       N/P         N/P     
-IF/ID             4.375       ---         4.800       N/P         N/P         N/P         N/P         N/P         4.334       N/P         N/P     
-ID/EX             4.130       4.167       ---         3.839       N/P         N/P         4.260       4.975       N/P         N/P         3.106   
-EX/MEM            4.299       4.335       4.724       ---         3.949       N/P         3.283       2.498       4.319       N/P         2.498   
-MEM/WB            N/P         N/P         4.820       N/P         ---         4.194       N/P         N/P         N/P         N/P         N/P     
-RegFile           N/P         N/P         3.951       N/P         N/P         ---         N/P         N/P         N/P         N/P         N/P     
-BP(pred)          4.304       3.167       N/P         N/P         N/P         N/P         ---         N/P         4.604       N/P         N/P     
-DCache(FSM)       4.605       4.642       4.612       3.899       4.246       N/P         N/P         ---         N/P         4.518       4.385   
-IROM(BRAM)        4.982       4.495       N/P         N/P         N/P         N/P         N/P         N/P         5.352       N/P         N/P     
-DRAM(BRAM)        N/P         N/P         N/P         N/P         N/P         N/P         N/P         2.786       N/P         N/P         N/P     
-DC_Data(BRAM)     N/P         N/P         N/P         N/P         4.246       N/P         N/P         N/P         N/P         N/P         N/P     
+Pre_IF(PC)        4.314       3.838       N/P         N/P         N/P         N/P         N/P         N/P         4.367       N/P         N/P     
+IF/ID             4.439       4.392       4.570       N/P         N/P         N/P         N/P         N/P         3.984       N/P         N/P     
+ID/EX             4.424       4.376       4.638       3.841       N/P         N/P         4.068       4.135       N/P         N/P         2.723   
+EX/MEM            4.394       4.347       4.293       2.552       3.709       N/P         3.643       2.597       3.674       N/P         2.597   
+MEM/WB            N/P         N/P         4.476       N/P         ---         3.780       N/P         N/P         N/P         N/P         N/P     
+RegFile           N/P         N/P         3.784       N/P         N/P         ---         N/P         N/P         N/P         N/P         N/P     
+BP(pred)          3.827       3.489       N/P         N/P         N/P         N/P         1.367       N/P         3.945       N/P         N/P     
+DCache(FSM)       4.330       4.283       4.030       3.637       3.845       N/P         N/P         4.024       N/P         4.411       3.682   
+IROM(BRAM)        N/P         4.327       N/P         N/P         N/P         N/P         N/P         N/P         ---         N/P         N/P     
+DRAM(BRAM)        N/P         N/P         N/P         N/P         N/P         N/P         N/P         3.032       N/P         ---         N/P     
+DC_Data(BRAM)     N/P         N/P         N/P         N/P         3.789       N/P         N/P         N/P         N/P         N/P         ---     
 
 
   汇总矩阵：最差 Slack (ns)  （正 = 满足约束，负 = 违例）
 
 From \ To      Pre_IF(PC)    IF/ID       ID/EX       EX/MEM      MEM/WB     RegFile     BP(pred)  DCache(FSM)  IROM(BRAM)  DRAM(BRAM) DC_Data(BRAM)
 --------------------------------------------------------------------------------------------------------------------------------------------------
-Pre_IF(PC)        ---         1.336       N/P         N/P         N/P         N/P         N/P         N/P        -0.537       N/P         N/P     
-IF/ID             0.393       ---         0.121       N/P         N/P         N/P         N/P         N/P         0.142       N/P         N/P     
-ID/EX             0.633       0.572       ---         1.046       N/P         N/P         0.393       0.005       N/P         N/P         1.415   
-EX/MEM            0.466       0.404       0.194       ---         0.982       N/P         1.367       2.018       0.157       N/P         2.018   
-MEM/WB            N/P         N/P         0.091       N/P         ---         0.522       N/P         N/P         N/P         N/P         N/P     
-RegFile           N/P         N/P         0.828       N/P         N/P         ---         N/P         N/P         N/P         N/P         N/P     
-BP(pred)          0.616       1.756       N/P         N/P         N/P         N/P         ---         N/P        -0.180       N/P         N/P     
-DCache(FSM)       0.148       0.087       0.065       0.964       0.636       N/P         N/P         ---         N/P        -0.009       0.200   
-IROM(BRAM)       -0.093       0.399       N/P         N/P         N/P         N/P         N/P         N/P        -0.960       N/P         N/P     
-DRAM(BRAM)        N/P         N/P         N/P         N/P         N/P         N/P         N/P         1.903       N/P         N/P         N/P     
-DC_Data(BRAM)     N/P         N/P         N/P         N/P         0.636       N/P         N/P         N/P         N/P         N/P         N/P     
+Pre_IF(PC)        0.509       0.884       N/P         N/P         N/P         N/P         N/P         N/P         0.135       N/P         N/P     
+IF/ID             0.185       0.232       0.348       N/P         N/P         N/P         N/P         N/P         0.448       N/P         N/P     
+ID/EX             0.201       0.248       0.252       0.971       N/P         N/P         0.362       0.793       N/P         N/P         1.783   
+EX/MEM            0.277       0.324       0.536       2.082       1.217       N/P         0.731       1.859       0.762       N/P         1.859   
+MEM/WB            N/P         N/P         0.354       N/P         ---         1.222       N/P         N/P         N/P         N/P         N/P     
+RegFile           N/P         N/P         0.846       N/P         N/P         ---         N/P         N/P         N/P         N/P         N/P     
+BP(pred)          0.997       1.182       N/P         N/P         N/P         N/P         3.550       N/P         0.557       N/P         N/P     
+DCache(FSM)       0.347       0.394       0.680       1.049       1.068       N/P         N/P         0.790       N/P         0.082       0.826   
+IROM(BRAM)        N/P         0.321       N/P         N/P         N/P         N/P         N/P         N/P         ---         N/P         N/P     
+DRAM(BRAM)        N/P         N/P         N/P         N/P         N/P         N/P         N/P         1.667       N/P         ---         N/P     
+DC_Data(BRAM)     N/P         N/P         N/P         N/P         1.126       N/P         N/P         N/P         N/P         N/P         ---     
 
 ================================================================================
 
@@ -372,45 +403,68 @@ DC_Data(BRAM)     N/P         N/P         N/P         N/P         0.636       N/
 
   #      Slack(ns)    DataPath  Levels  逻辑路径                                状态
 ------------------------------------------------------------------------------------------------
-  1         -0.960       5.352      10  IROM(BRAM) → IROM(BRAM)             ← FAIL
-  2         -0.537       5.008      11  Pre_IF(PC) → IROM(BRAM)             ← FAIL
-  3         -0.180       4.604       9  BP(pred) → IROM(BRAM)               ← FAIL
-  4         -0.093       4.982       8  IROM(BRAM) → Pre_IF(PC)             ← FAIL
-  5         -0.009       4.518       1  DCache(FSM) → DRAM(BRAM)            ← FAIL
-  6          0.005       4.975       7  ID/EX → DCache(FSM)                 ← tight
-  7          0.065       4.612       8  DCache(FSM) → ID/EX                 ← tight
-  8          0.087       4.642       8  DCache(FSM) → IF/ID                 ← tight
-  9          0.091       4.820       6  MEM/WB → ID/EX                      ← tight
-  10         0.121       4.800       7  IF/ID → ID/EX                       ← tight
-  11         0.142       4.334       9  IF/ID → IROM(BRAM)                  ← tight
-  12         0.148       4.605       8  DCache(FSM) → Pre_IF(PC)            ← tight
-  13         0.157       4.319       9  EX/MEM → IROM(BRAM)                 ← tight
-  14         0.194       4.724       7  EX/MEM → ID/EX                      ← tight
-  15         0.200       4.385       8  DCache(FSM) → DC_Data(BRAM)         ← tight
-  16         0.393       4.375       8  IF/ID → Pre_IF(PC)                  ← tight
-  17         0.393       4.260      12  ID/EX → BP(pred)                    ← tight
-  18         0.399       4.495       7  IROM(BRAM) → IF/ID                  ← tight
-  19         0.404       4.335       8  EX/MEM → IF/ID                      ← tight
-  20         0.466       4.299       8  EX/MEM → Pre_IF(PC)                 ← tight
-  21         0.522       4.194       2  MEM/WB → RegFile                    
-  22         0.572       4.167       8  ID/EX → IF/ID                       
-  23         0.616       4.304       5  BP(pred) → Pre_IF(PC)               
-  24         0.633       4.130       8  ID/EX → Pre_IF(PC)                  
-  25         0.636       4.246       3  DCache(FSM) → MEM/WB                
-  26         0.636       4.246       3  DC_Data(BRAM) → MEM/WB              
-  27         0.828       3.951       7  RegFile → ID/EX                     
-  28         0.964       3.899       7  DCache(FSM) → EX/MEM                
-  29         0.982       3.949       5  EX/MEM → MEM/WB                     
-  30         1.046       3.839      11  ID/EX → EX/MEM                      
-  31         1.336       3.586       4  Pre_IF(PC) → IF/ID                  
-  32         1.367       3.283       4  EX/MEM → BP(pred)                   
-  33         1.415       3.106       4  ID/EX → DC_Data(BRAM)               
-  34         1.756       3.167       6  BP(pred) → IF/ID                    
-  35         1.903       2.786       3  DRAM(BRAM) → DCache(FSM)            
-  36         2.018       2.498       2  EX/MEM → DCache(FSM)                
-  37         2.018       2.498       2  EX/MEM → DC_Data(BRAM)              
+  1          0.082       4.411       0  DCache(FSM) → DRAM(BRAM)            ← tight
+  2          0.135       4.367      11  Pre_IF(PC) → IROM(BRAM)             ← tight
+  3          0.185       4.439       8  IF/ID → Pre_IF(PC)                  ← tight
+  4          0.201       4.424       8  ID/EX → Pre_IF(PC)                  ← tight
+  5          0.232       4.392       8  IF/ID → IF/ID                       ← tight
+  6          0.248       4.376       8  ID/EX → IF/ID                       ← tight
+  7          0.252       4.638       7  ID/EX → ID/EX                       ← tight
+  8          0.277       4.394       8  EX/MEM → Pre_IF(PC)                 ← tight
+  9          0.321       4.327       2  IROM(BRAM) → IF/ID                  ← tight
+  10         0.324       4.347       8  EX/MEM → IF/ID                      ← tight
+  11         0.347       4.330       7  DCache(FSM) → Pre_IF(PC)            ← tight
+  12         0.348       4.570       5  IF/ID → ID/EX                       ← tight
+  13         0.354       4.476       6  MEM/WB → ID/EX                      ← tight
+  14         0.362       4.068      12  ID/EX → BP(pred)                    ← tight
+  15         0.394       4.283       7  DCache(FSM) → IF/ID                 ← tight
+  16         0.448       3.984       6  IF/ID → IROM(BRAM)                  ← tight
+  17         0.509       4.314       7  Pre_IF(PC) → Pre_IF(PC)             
+  18         0.536       4.293       6  EX/MEM → ID/EX                      
+  19         0.557       3.945       9  BP(pred) → IROM(BRAM)               
+  20         0.680       4.030       6  DCache(FSM) → ID/EX                 
+  21         0.731       3.643       3  EX/MEM → BP(pred)                   
+  22         0.762       3.674       5  EX/MEM → IROM(BRAM)                 
+  23         0.790       4.024       0  DCache(FSM) → DCache(FSM)           
+  24         0.793       4.135       7  ID/EX → DCache(FSM)                 
+  25         0.826       3.682       6  DCache(FSM) → DC_Data(BRAM)         
+  26         0.846       3.784       6  RegFile → ID/EX                     
+  27         0.884       3.838       4  Pre_IF(PC) → IF/ID                  
+  28         0.971       3.841      11  ID/EX → EX/MEM                      
+  29         0.997       3.827       6  BP(pred) → Pre_IF(PC)               
+  30         1.049       3.637       5  DCache(FSM) → EX/MEM                
+  31         1.068       3.845       5  DCache(FSM) → MEM/WB                
+  32         1.126       3.789       3  DC_Data(BRAM) → MEM/WB              
+  33         1.182       3.489       5  BP(pred) → IF/ID                    
+  34         1.217       3.709       6  EX/MEM → MEM/WB                     
+  35         1.222       3.780       5  MEM/WB → RegFile                    
+  36         1.667       3.032       3  DRAM(BRAM) → DCache(FSM)            
+  37         1.783       2.723       4  ID/EX → DC_Data(BRAM)               
+  38         1.859       2.597       2  EX/MEM → DCache(FSM)                
+  39         1.859       2.597       2  EX/MEM → DC_Data(BRAM)              
+  40         2.082       2.552       1  EX/MEM → EX/MEM                     
+  41         3.550       1.367       1  BP(pred) → BP(pred)                 
 
-  汇总：5 条违例 (FAIL) / 15 条偏紧 (tight) / 37 条总路径
+  汇总：0 条违例 (FAIL) / 16 条偏紧 (tight) / 41 条总路径
+
+================================================================================
+
+[Step 5] 全局最差路径 Top-10（不受分组限制）
+
+  用于发现未被寄存器组分类覆盖的关键路径
+
+  #      Slack(ns)    DataPath  Levels  Startpoint                                Endpoint
+------------------------------------------------------------------------------------------------------------------------
+  1         -0.026       4.894       7  ..._INFO.SP.SIMPLE_PRIM36.ram/CLKARDCLK   ..._top_inst/u_cpu/inst_buf_valid_reg/D ← FAIL
+  2         -0.026       4.894       7  ..._INFO.SP.SIMPLE_PRIM36.ram/CLKARDCLK   ..._top_inst/u_cpu/inst_buf_valid_reg/D ← FAIL
+  3         -0.026       4.894       7  ..._INFO.SP.SIMPLE_PRIM36.ram/CLKARDCLK   ..._top_inst/u_cpu/inst_buf_valid_reg/D ← FAIL
+  4         -0.026       4.894       7  ..._INFO.SP.SIMPLE_PRIM36.ram/CLKARDCLK   ..._top_inst/u_cpu/inst_buf_valid_reg/D ← FAIL
+  5         -0.025       4.893       7  ..._INFO.SP.SIMPLE_PRIM36.ram/CLKARDCLK   ..._top_inst/u_cpu/inst_buf_valid_reg/D ← FAIL
+  6         -0.025       4.893       7  ..._INFO.SP.SIMPLE_PRIM36.ram/CLKARDCLK   ..._top_inst/u_cpu/inst_buf_valid_reg/D ← FAIL
+  7         -0.025       4.893       7  ..._INFO.SP.SIMPLE_PRIM36.ram/CLKARDCLK   ..._top_inst/u_cpu/inst_buf_valid_reg/D ← FAIL
+  8         -0.025       4.893       7  ..._INFO.SP.SIMPLE_PRIM36.ram/CLKARDCLK   ..._top_inst/u_cpu/inst_buf_valid_reg/D ← FAIL
+  9         -0.013       4.881       7  ..._INFO.SP.SIMPLE_PRIM36.ram/CLKARDCLK   ..._top_inst/u_cpu/inst_buf_valid_reg/D ← FAIL
+  10        -0.013       4.881       7  ..._INFO.SP.SIMPLE_PRIM36.ram/CLKARDCLK   ..._top_inst/u_cpu/inst_buf_valid_reg/D ← FAIL
 
 ================================================================================
  报告已保存至: /home/anokyai/桌面/CPU_Workspace/03_Timing_Analysis/stage_timing_report.txt

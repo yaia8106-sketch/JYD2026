@@ -25,8 +25,10 @@ module tb_riscv_tests;
     // ================================================================
     //  CPU ↔ DCache interface
     // ================================================================
-    wire [31:0] irom_addr;
-    reg  [63:0] irom_data;
+    wire [11:0] irom_even_addr;
+    wire [11:0] irom_odd_addr;
+    wire        irom_fetch_odd;
+    wire [63:0] irom_data;
 
     // DCache interface (cpu_top ↔ dcache)
     wire        cache_req;
@@ -61,7 +63,9 @@ module tb_riscv_tests;
     cpu_top u_cpu (
         .clk            (clk),
         .rst_n          (rst_n),
-        .irom_addr      (irom_addr),
+        .irom_even_addr (irom_even_addr),
+        .irom_odd_addr  (irom_odd_addr),
+        .irom_fetch_odd (irom_fetch_odd),
         .irom_data      (irom_data),
         .cache_req      (cache_req),
         .cache_wr       (cache_wr),
@@ -102,18 +106,27 @@ module tb_riscv_tests;
     );
 
     // ================================================================
-    //  IROM Model (1-cycle latency, same as real BRAM)
-    //  Phase 0 exposes a 64-bit fetch window. cpu_top still consumes only
-    //  irom_data[31:0], so the low half is kept behavior-identical to the
-    //  old 32-bit IROM and the high half carries the following instruction.
+    //  IROM Model (1-cycle latency, same as real banked BRAM)
+    //  even bank stores word[0], word[2], word[4], ...
+    //  odd  bank stores word[1], word[3], word[5], ...
     //  Address: 0x80000000 ~ 0x80003FFF, 4096 x 32-bit words
-    //  Word address = irom_addr[13:2]
     // ================================================================
     reg [31:0] irom [0:4095];
+    reg [31:0] irom_even_data;
+    reg [31:0] irom_odd_data;
+    reg        irom_fetch_odd_q;
+
+    wire [12:0] irom_even_word_addr = {irom_even_addr, 1'b0};
+    wire [12:0] irom_odd_word_addr  = {irom_odd_addr,  1'b1};
 
     always @(posedge clk) begin
-        irom_data <= {irom[irom_addr[13:2] + 12'd1], irom[irom_addr[13:2]]};
+        irom_fetch_odd_q <= irom_fetch_odd;
+        irom_even_data <= (irom_even_word_addr < 13'd4096) ? irom[irom_even_word_addr[11:0]] : 32'h00000013;
+        irom_odd_data <= (irom_odd_word_addr < 13'd4096) ? irom[irom_odd_word_addr[11:0]] : 32'h00000013;
     end
+
+    assign irom_data = irom_fetch_odd_q ? {irom_even_data, irom_odd_data}
+                                        : {irom_odd_data,  irom_even_data};
 
     // ================================================================
     //  DRAM Model — Simple Dual Port, WITH Output Register (DOB_REG=1)

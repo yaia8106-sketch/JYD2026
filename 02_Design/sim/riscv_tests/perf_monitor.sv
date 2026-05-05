@@ -54,6 +54,11 @@ module perf_monitor (
     integer cnt_fwd_s0_wb;
     integer cnt_fwd_rf;
 
+    // -- skip_inst0 timing fix analysis --
+    integer cnt_skip_inst0;          // cycles where skip_inst0_valid=1
+    integer cnt_skip_and_bp_taken;   // skip_inst0=1 AND bp_taken=1 (would mispredict)
+    integer cnt_predict_dual_err;    // predict_dual != can_dual (misprediction events)
+
     // ================================================================
     //  Signal taps (hierarchical references into cpu_top)
     // ================================================================
@@ -86,6 +91,11 @@ module perf_monitor (
     wire        raw_inst1_alu   = tb_riscv_tests.u_cpu.raw_inst1_is_alu_type;
     wire        raw_inst0_jump  = tb_riscv_tests.u_cpu.raw_inst0_is_jump;
     wire        irom_held_valid = tb_riscv_tests.u_cpu.irom_held_valid;
+
+    // skip_inst0 analysis
+    wire skip_inst0_w   = tb_riscv_tests.u_cpu.skip_inst0_valid;
+    wire bp_taken_w     = tb_riscv_tests.u_cpu.if_bp_taken_out;
+    wire predict_dual_w = tb_riscv_tests.u_cpu.predict_dual;
 
     // Forwarding hit signals (slot0 rs1)
     wire fwd_s1_ex  = tb_riscv_tests.u_cpu.u_forwarding.s0_rs1_s1_ex_hit;
@@ -124,6 +134,9 @@ module perf_monitor (
             cnt_fwd_s1_wb      <= 0;
             cnt_fwd_s0_wb      <= 0;
             cnt_fwd_rf         <= 0;
+            cnt_skip_inst0     <= 0;
+            cnt_skip_and_bp_taken <= 0;
+            cnt_predict_dual_err <= 0;
         end else begin
             cnt_cycles <= cnt_cycles + 1;
 
@@ -153,6 +166,12 @@ module perf_monitor (
                 else if (raw_inst0_jump) cnt_inst0_jump     <= cnt_inst0_jump + 1;
             end
             if (can_dual_w & if_valid) cnt_dual_issued <= cnt_dual_issued + 1;
+
+            // skip_inst0 analysis
+            if (skip_inst0_w)                     cnt_skip_inst0     <= cnt_skip_inst0 + 1;
+            if (skip_inst0_w & bp_taken_w)        cnt_skip_and_bp_taken <= cnt_skip_and_bp_taken + 1;
+            if (if_valid & !irom_held_valid & (predict_dual_w != can_dual_w))
+                cnt_predict_dual_err <= cnt_predict_dual_err + 1;
 
             // Forwarding (sample when ID valid)
             if (id_valid & id_ready_go_w) begin
@@ -232,6 +251,11 @@ module perf_monitor (
                 $display("[PERF]  S0_WB:  %0d (%0.1f%%)", cnt_fwd_s0_wb,  100.0*cnt_fwd_s0_wb/total_fwd);
                 $display("[PERF]  RF:     %0d (%0.1f%%)", cnt_fwd_rf,     100.0*cnt_fwd_rf/total_fwd);
             end
+            $display("[PERF]");
+            $display("[PERF]  --- skip_inst0 Timing Fix Analysis ---");
+            $display("[PERF]  skip_inst0=1:        %0d  (%0.2f%% of cycles)", cnt_skip_inst0, 100.0*cnt_skip_inst0/cnt_cycles);
+            $display("[PERF]  skip+bp_taken:       %0d  (%0.2f%% of cycles)", cnt_skip_and_bp_taken, 100.0*cnt_skip_and_bp_taken/cnt_cycles);
+            $display("[PERF]  predict_dual errors: %0d  (%0.2f%% of fetches)", cnt_predict_dual_err, cnt_fetch_valid > 0 ? 100.0*cnt_predict_dual_err/cnt_fetch_valid : 0.0);
             $display("[PERF] ================================================");
         end
     endtask
