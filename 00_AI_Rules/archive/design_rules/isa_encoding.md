@@ -285,41 +285,4 @@
 | SRLI | 0010011 | 101 | 0000000 | `ALU_SRL` |
 | SRAI | 0010011 | 101 | 0100000 | `ALU_SRA` |
 
----
-
-## 6. EX 级分支判断单元
-
-EX 级的分支/跳转判断逻辑如下：
-
-```verilog
-// 分支条件判断（独立于 ALU，使用原始 rs1/rs2 数据）
-always_comb begin
-    case (branch_cond)
-        3'b000: branch_taken = (rs1_data == rs2_data);           // BEQ
-        3'b001: branch_taken = (rs1_data != rs2_data);           // BNE
-        3'b100: branch_taken = ($signed(rs1_data) < $signed(rs2_data));  // BLT
-        3'b101: branch_taken = ($signed(rs1_data) >= $signed(rs2_data)); // BGE
-        3'b110: branch_taken = (rs1_data < rs2_data);            // BLTU
-        3'b111: branch_taken = (rs1_data >= rs2_data);           // BGEU
-        default: branch_taken = 1'b0;
-    endcase
-end
-
-// 跳转/分支 flush 判断
-// 默认预测：顺序执行（not taken）
-assign actual_taken = is_jal | is_jalr | (is_branch & branch_taken);
-assign branch_target = is_jalr ? (alu_result & ~32'b1)  // JALR: 目标地址最低位清零
-                               : alu_result;              // JAL/Branch: PC + imm
-
-// 预测失败 → flush
-assign branch_flush = ex_valid & actual_taken;
-// 注：因为默认预测 not taken，所以 actual_taken = 1 时一定是预测失败
-
-assign correct_target = branch_target;
-```
-
-> **注意**：
-> - 分支比较使用**原始 rs1/rs2 数据**（经过前递后的值），不经过 alu_src MUX
-> - ALU 计算跳转目标地址（PC+imm 或 rs1+imm），比较器独立并行工作
-> - JALR 的目标地址最低位需要清零（RV32I 规范：`target = (rs1 + imm) & ~1`）
-> - PC+4（link 地址）需要在流水线中传递，由 ID 级计算 `id_pc + 4` 并存入 ID/EX_reg
+> 分支判断单元和 flush 逻辑的具体实现见架构文档（如 `dual_issue/architecture.md`）。
