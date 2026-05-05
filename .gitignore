@@ -34,3 +34,4 @@ __pycache__/
 # --- Local Scripts ---
 build.sh
 copy_bitstream.sh
+.windsurfrules
