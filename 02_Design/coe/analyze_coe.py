@@ -110,7 +110,10 @@ base = os.path.dirname(os.path.abspath(__file__))
 dirs = ['current', 'src0', 'src1', 'src2']
 
 for d in dirs:
-    coe_path = os.path.join(base, d, 'irom.coe')
+    # 优先查找 single_issue/ 下的 irom.coe
+    coe_path = os.path.join(base, 'single_issue', d, 'irom.coe')
+    if not os.path.exists(coe_path):
+        coe_path = os.path.join(base, d, 'irom.coe')  # fallback
     if os.path.exists(coe_path):
         counts, total = analyze_coe(coe_path)
         print_report(d, counts, total)

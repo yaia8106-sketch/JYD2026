@@ -23,7 +23,7 @@
 # ────────────────────────────────────────────────────────────────
 
 # 输出目录（绝对路径，每次覆盖旧文件）
-set OUTPUT_DIR "/home/anokyai/桌面/CPU_Workspace/03_Timing_Analysis/reports"
+set OUTPUT_DIR "/home/anokyai/桌面/CPU_Workspace/03_Timing_Analysis"
 
 # 每组最多报告的路径条数
 set MAX_PATHS 3

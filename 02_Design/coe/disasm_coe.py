@@ -204,7 +204,10 @@ def main():
         target_dirs = all_dirs
 
     for d in target_dirs:
-        full_path = os.path.join(script_dir, d)
+        # 优先查找 single_issue/ 下的目录
+        full_path = os.path.join(script_dir, 'single_issue', d)
+        if not os.path.isdir(full_path):
+            full_path = os.path.join(script_dir, d)  # fallback
         if not os.path.isdir(full_path):
             print(f"⚠ 目录 {d} 不存在，跳过\n")
             continue

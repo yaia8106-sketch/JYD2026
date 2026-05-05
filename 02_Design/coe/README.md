@@ -8,53 +8,41 @@
 
 ```
 coe/
-├── current/          ← 当前使用的 COE（数字孪生平台调试用）
-│   ├── irom.coe      1271 条指令，hex 格式
-│   └── dram.coe      12 个 word 初始数据
+├── single_issue/         ← 单发射（32-bit 顺序 IROM）
+│   ├── current/          ← 当前使用的 COE
+│   │   ├── irom.coe          1272 条指令
+│   │   └── dram.coe
+│   ├── src0/             ← 赛方测试程序
+│   ├── src1/
+│   └── src2/
 │
-├── src0/             ← 赛方测试程序（37 项测试）
-│   ├── irom.coe      2035 条指令
-│   └── dram.coe      12 个 word 初始数据
+├── dual_issue/           ← 双发射（slot0/slot1 两个 BRAM bank）
+│   ├── current/
+│   │   ├── irom_slot0.coe    636 条（偶数地址指令）
+│   │   ├── irom_slot1.coe    636 条（奇数地址指令）
+│   │   └── dram.coe
+│   ├── src0/
+│   ├── src1/
+│   └── src2/
 │
-├── src1/             ← 赛方测试程序变体
-│   ├── irom.coe      1909 条指令
-│   └── dram.coe      12 个 word 初始数据
-│
-└── src2/             ← 赛方测试程序变体
-    ├── irom.coe      1996 条指令
-    └── dram.coe      12 个 word 初始数据
+├── split_coe.py          ← 单发射 → 双发射转换工具
+├── analyze_coe.py        ← 指令分布统计
+└── disasm_coe.py         ← COE 反汇编
 ```
 
 ## 使用说明
 
-- **调试和仿真时默认使用 `current/` 下的文件**
-- `src0/`、`src1/`、`src2/` 为赛方提供的不同测试程序
-- 所有 COE 文件格式均为 `memory_initialization_radix=16`（十六进制）
+- **双发射架构**使用 `dual_issue/` 下的 `irom_slot0.coe` + `irom_slot1.coe`
+- **单发射架构**使用 `single_issue/` 下的 `irom.coe`
+- DRAM coe 两种架构通用
 
 ## COE 工具
 
 | 脚本 | 功能 | 用法 |
 |------|------|------|
+| `split_coe.py` | 单发射 coe → 双发射 slot0/slot1 | `python3 split_coe.py single_issue/current/irom.coe dual_issue/current/` |
 | `analyze_coe.py` | 静态指令分布统计 | `python3 analyze_coe.py` |
 | `disasm_coe.py` | COE 反汇编为 RISC-V 汇编 | `python3 disasm_coe.py [dir...]` |
-
-> 参数评估脚本（BP/DCache 扫描等）已移至 `02_Design/param_evaluation/`。
-
-## COE 格式参考
-
-```
-memory_initialization_radix=16;
-memory_initialization_vector=
-00108117,
-03010113,
-...
-00008067;     ← 最后一行以分号结尾
-```
-
-在 Vivado Block Memory Generator 中使用：
-
-- IROM IP → Other Options → Load Init File → 选择 `irom.coe`
-- DRAM IP → Other Options → Load Init File → 选择 `dram.coe`
 
 ---
 
