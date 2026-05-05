@@ -41,9 +41,12 @@ module student_top #(
     // CPU ↔ IROM
     logic [31:0] irom_addr;
     logic [63:0] irom_data;
-    logic [31:0] irom_slot0_data;
-    logic [31:0] irom_slot1_data;
-    logic [11:0] irom_word_addr;
+    logic [31:0] irom_even_data;
+    logic [31:0] irom_odd_data;
+    logic [11:0] irom_pair_addr;
+    logic [11:0] irom_even_addr;
+    logic [11:0] irom_odd_addr;
+    logic        irom_fetch_odd_q;
 
     // CPU ↔ DCache
     logic        cache_req;
@@ -106,27 +109,39 @@ module student_top #(
 
     // ================================================================
     //  IROM fetch window
-    //  Two independent 32-bit ROM slot banks:
-    //    slot0 bank stores word[i]
-    //    slot1 bank stores word[i+1]
-    //  Both banks share the same word address; this avoids a +1 carry chain
-    //  on the PC->IROM address path.
+    //  Two independent 32-bit ROM banks:
+    //    even bank stores word[0], word[2], word[4], ...
+    //    odd  bank stores word[1], word[3], word[5], ...
+    //  The output window is always:
     //    irom_data[31:0]  = inst at PC
     //    irom_data[63:32] = inst at PC + 4
+    //
+    //  BRAM dout corresponds to the address sampled on the clock edge, so
+    //  PC[2] is delayed one cycle before selecting the low/high half.
     // ================================================================
-    assign irom_word_addr = irom_addr[13:2];
-    assign irom_data      = {irom_slot1_data, irom_slot0_data};
+    assign irom_pair_addr = {1'b0, irom_addr[13:3]};
+    assign irom_even_addr = irom_pair_addr + {11'd0, irom_addr[2]};
+    assign irom_odd_addr  = irom_pair_addr;
+    assign irom_data      = irom_fetch_odd_q ? {irom_even_data, irom_odd_data}
+                                             : {irom_odd_data,  irom_even_data};
+
+    always_ff @(posedge w_cpu_clk or posedge w_clk_rst) begin
+        if (w_clk_rst)
+            irom_fetch_odd_q <= 1'b0;
+        else
+            irom_fetch_odd_q <= irom_addr[2];
+    end
 
     IROMEven32 u_irom_slot0 (
         .clka  (w_cpu_clk),
-        .addra (irom_word_addr),
-        .douta (irom_slot0_data)
+        .addra (irom_even_addr),
+        .douta (irom_even_data)
     );
 
     IROMOdd32 u_irom_slot1 (
         .clka  (w_cpu_clk),
-        .addra (irom_word_addr),
-        .douta (irom_slot1_data)
+        .addra (irom_odd_addr),
+        .douta (irom_odd_data)
     );
 
     // ================================================================

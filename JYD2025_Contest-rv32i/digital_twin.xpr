@@ -404,13 +404,13 @@
           <Attr Name="UsedIn" Val="simulation"/>
         </FileInfo>
       </File>
-      <File Path="$PSRCDIR/sources_1/imports/JYD2025/resource/coe/irom_slot0.coe">
+      <File Path="$PSRCDIR/sources_1/imports/JYD2025/resource/coe/irom_even.coe">
         <FileInfo>
           <Attr Name="UsedIn" Val="synthesis"/>
           <Attr Name="UsedIn" Val="simulation"/>
         </FileInfo>
       </File>
-      <File Path="$PSRCDIR/sources_1/imports/JYD2025/resource/coe/irom_slot1.coe">
+      <File Path="$PSRCDIR/sources_1/imports/JYD2025/resource/coe/irom_odd.coe">
         <FileInfo>
           <Attr Name="UsedIn" Val="synthesis"/>
           <Attr Name="UsedIn" Val="simulation"/>

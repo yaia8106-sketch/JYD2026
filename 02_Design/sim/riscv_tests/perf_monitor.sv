@@ -37,7 +37,7 @@ module perf_monitor (
 
     // -- Dual-issue opportunity loss --
     integer cnt_fetch_valid;     // if_valid cycles (fetch active)
-    integer cnt_pc2_block;       // PC[2]=1 preventing dual
+    integer cnt_pc2_fetch;       // PC[2]=1 fetch cycles (no longer blocks dual)
     integer cnt_raw_block;       // same-pair RAW dependency
     integer cnt_inst1_not_alu;   // slot1 not ALU type
     integer cnt_inst0_jump;      // slot0 is JAL/JALR
@@ -107,7 +107,7 @@ module perf_monitor (
             cnt_nlp_redirect   <= 0;
             cnt_total_branch   <= 0;
             cnt_fetch_valid    <= 0;
-            cnt_pc2_block      <= 0;
+            cnt_pc2_fetch      <= 0;
             cnt_raw_block      <= 0;
             cnt_inst1_not_alu  <= 0;
             cnt_inst0_jump     <= 0;
@@ -141,8 +141,8 @@ module perf_monitor (
             // Dual-issue analysis (only on raw path, when not held)
             if (if_valid & !irom_held_valid) begin
                 cnt_fetch_valid <= cnt_fetch_valid + 1;
+                if (pc[2])             cnt_pc2_fetch      <= cnt_pc2_fetch + 1;
                 if (!if_seq_fetch)       cnt_not_sequential <= cnt_not_sequential + 1;
-                else if (pc[2])          cnt_pc2_block      <= cnt_pc2_block + 1;
                 else if (!raw_inst1_alu) cnt_inst1_not_alu  <= cnt_inst1_not_alu + 1;
                 else if (raw_pair_raw_w) cnt_raw_block      <= cnt_raw_block + 1;
                 else if (raw_inst0_jump) cnt_inst0_jump     <= cnt_inst0_jump + 1;
@@ -207,9 +207,9 @@ module perf_monitor (
             $display("[PERF]  Mispredicts:   %0d  (%0.1f%%)", cnt_branch_flush, mispredict_rate);
             $display("[PERF]  NLP redirects: %0d", cnt_nlp_redirect);
             $display("[PERF]");
-            $display("[PERF]  --- Dual-issue Loss (fetch cycles, excl. held) ---");
+            $display("[PERF]  --- Fetch Mix / Dual-issue Loss (excl. held) ---");
             $display("[PERF]  Fetch valid:   %0d", cnt_fetch_valid);
-            $display("[PERF]  PC[2]=1:       %0d", cnt_pc2_block);
+            $display("[PERF]  PC[2]=1 fetch: %0d", cnt_pc2_fetch);
             $display("[PERF]  RAW dep:       %0d", cnt_raw_block);
             $display("[PERF]  inst1 not ALU: %0d", cnt_inst1_not_alu);
             $display("[PERF]  inst0 JAL/JR:  %0d", cnt_inst0_jump);

@@ -95,7 +95,7 @@
 
 | 测试 | 验证重点 |
 |------|----------|
-| `pc_align` | **PC\[2\]=1 强制单发**：分支跳转到非 8 字节对齐地址时仅能取 1 条指令。同时测试 S1 位置为 load/store/branch 时阻止双发，以及 S1 位置为 branch 时正确进入 inst\_buf 并在下一拍作为 S0 执行 |
+| `pc_align` | **PC\[2\]=1 取指窗口**：分支跳转到非 8 字节对齐地址时仍需取到 `{PC+4, PC}` 并按序执行。同时测试 S1 位置为 load/store/branch 时阻止双发，以及 S1 位置为 branch 时正确进入 inst\_buf 并在下一拍作为 S0 执行 |
 | `lui_auipc_s1` | **LUI/AUIPC 在 Slot1**：LUI/AUIPC 属于 ALU-type 但使用特殊操作数选择（alu\_src1=0/PC），验证 S1 解码器和 ALU 源 MUX 正确处理。含 AUIPC 精确 PC 值校验、LUI 结果前递给后续 sw、以及 8 对连续双发的持续吞吐压力测试 |
 
 #### DCache 与分支预测交互（2 个）
@@ -133,7 +133,7 @@
 | S1 跨槽前递 (EX/MEM/WB) | 高 | ✅ `fwd_s1` 覆盖 |
 | WAW 前递优先级 | 高 | ✅ `waw_fwd` 覆盖 |
 | Flush 清空指令缓冲 | 高 | ✅ `flush_instbuf` 覆盖 |
-| PC[2]=1 单发 / S1 类型约束 | 高 | ✅ `pc_align` 覆盖 |
+| PC[2]=1 取指窗口 / S1 类型约束 | 高 | ✅ `pc_align` 覆盖 |
 | 跨对 load-use 与 S1 | 中 | ✅ `loaduse_cross` 覆盖 |
 | LUI/AUIPC 在 S1 | 低 | ✅ `lui_auipc_s1` 覆盖 |
 | DCache miss + 双发射 stall | 高 | ✅ `dcache_dual` 覆盖 |

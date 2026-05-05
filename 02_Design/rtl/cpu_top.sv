@@ -531,7 +531,7 @@ module cpu_top (
     //   at stall resolution, irom_held_valid=1 but id_allowin=1, so IF/ID latches.
     //   Without the held path, can_dual would be 0 and the pair would single-issue.
     // Note: inst_buf_valid does NOT need gating — when inst_buf is active,
-    //   BRAM slot0 == inst_buf (same address fetched), so raw decode matches
+    //   irom_inst0 == inst_buf (same PC refetched), so raw decode matches.
     localparam [6:0] OP_R_TYPE_LOCAL = 7'b0110011;
     localparam [6:0] OP_I_ALU_LOCAL  = 7'b0010011;
     localparam [6:0] OP_LOAD_LOCAL   = 7'b0000011;
@@ -578,7 +578,6 @@ module cpu_top (
     wire raw_can_dual = if_valid
                       & (pc != 32'h7FFF_FFFC)
                       & if_sequential_fetch
-                      & ~pc[2]
                       & raw_inst1_is_alu_type
                       & ~raw_pair_raw
                       & ~raw_inst0_is_jump;

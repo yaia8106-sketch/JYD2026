@@ -25,13 +25,18 @@ IF → ID → EX → MEM → WB
 
 ### 2.1 IROM
 
-两个 32-bit BRAM bank（slot0 / slot1），共享 `irom_addr[13:2]`，每拍输出 64-bit（两条指令）。
+两个 32-bit BRAM bank（even / odd），每拍输出 64-bit（两条指令）。
 
-> ⚠️ 不要改为 even/odd bank——odd bank 需要 `addr+1` 进位链，吃掉 ~0.5ns 时序。
+- even bank：`word[0], word[2], word[4], ...`
+- odd bank：`word[1], word[3], word[5], ...`
+- `irom_pair_addr = {1'b0, irom_addr[13:3]}`
+- `irom_even_addr = irom_pair_addr + {11'd0, irom_addr[2]}`
+- `irom_odd_addr = irom_pair_addr`
+- `irom_fetch_odd_q` 延迟 `irom_addr[2]` 1 拍，用于对齐 BRAM dout 的高低半字选择
 
 ```
-irom_inst0 = irom_data[31:0]   // slot0（低 word）
-irom_inst1 = irom_data[63:32]  // slot1（高 word）
+irom_inst0 = irom_data[31:0]   // inst at PC
+irom_inst1 = irom_data[63:32]  // inst at PC + 4
 ```
 
 ### 2.2 irom_addr 优先级
@@ -74,7 +79,6 @@ BRAM 无 output register，流水线 stall 时 `irom_addr` 可能已变。stall 
 wire raw_can_dual = if_valid
                   & (pc != 32'h7FFF_FFFC)
                   & if_sequential_fetch        // 非 flush/redirect/bp_taken
-                  & ~pc[2]                      // 8B 对齐
                   & raw_inst1_is_alu_type       // slot1 是 ALU 类型
                   & ~raw_pair_raw               // 无同对 RAW
                   & ~raw_inst0_is_jump;         // slot0 非 JAL/JALR
@@ -286,7 +290,6 @@ always_ff @(posedge clk or negedge rst_n)
 
 | 方向 | 预期收益 | 复杂度 |
 |------|---------|-------|
-| bank 交错取指（消除 PC[2]=1 单发） | CPI -0.02~0.03 | 中 |
 | inst0→inst1 同周期前递（放开 RAW） | 双发率 +5~10% | 高 |
 | 裁剪低优先级前递路径（S1_WB/S0_WB） | 时序改善 | 低 |
 | Slot1 扩展 Load/Store | 双发率 +10~15% | 很高 |

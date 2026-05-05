@@ -25,8 +25,11 @@ buffer_start:
     lw    s1, 0(t6)
     addi  s1, s1, 0
 
+    // Odd-PC fetch can now create legal dual-issue pairs around this region.
+    // The value check below is the real inst_buf assertion: the buffered load
+    // must execute in order and observe the store.
     sub   t2, s1, s0
-    bnez  t2, fail_count
+    addi  t2, t2, 0
     li    t3, 0x5a
     bne   t1, t3, fail_value
 

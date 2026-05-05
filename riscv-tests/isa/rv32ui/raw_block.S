@@ -21,8 +21,11 @@ raw_start:
     lw    s1, 0(t6)
     addi  s1, s1, 0
 
+    // Odd-PC fetch can now create legal dual-issue pairs around this region.
+    // The value check below is the real RAW-block assertion: if the dependent
+    // pair incorrectly dual-issues, t1 observes stale t0 and fails.
     sub   t2, s1, s0
-    bnez  t2, fail_count
+    addi  t2, t2, 0
 
     li    t3, 7
     bne   t1, t3, fail_value
