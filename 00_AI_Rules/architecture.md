@@ -327,12 +327,3 @@ always_ff @(posedge clk or negedge rst_n)
 | `mmio_bridge` | MMIO 外设桥 | LED / SEG / SW / KEY / CNT |
 | `student_top` | 顶层集成 | cpu + IROM + DCache + DRAM + MMIO |
 
----
-
-## 13. 后续优化方向
-
-| 方向 | 预期收益 | 复杂度 |
-|------|---------|-------|
-| inst0→inst1 同周期前递（放开 RAW） | 双发率 +5~10% | 高 |
-| 裁剪低优先级前递路径（S0_WB） | 时序改善 | 低 |
-| Slot1 扩展 Load/Store | 双发率 +10~15% | 很高 |
