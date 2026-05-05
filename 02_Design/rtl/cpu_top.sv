@@ -415,6 +415,10 @@ module cpu_top (
 
     assign id_bp_redirect = id_bp_redirect_raw & id_ready_go & ex_allowin;
 
+    // If NLP corrects slot0 branch to taken, slot1 is wrong-path. Use the raw
+    // condition for ID hazard gating so the doomed slot1 cannot stall redirect.
+    wire id_s1_squash_raw = id_bp_redirect_raw & id_tournament_taken;
+
     // Redirect target: if Tournament says taken → use BTB target;
     //                  if Tournament says not-taken → use PC+4
     wire [31:0] id_redirect_target = id_tournament_taken ? id_bp_target
@@ -530,6 +534,7 @@ module cpu_top (
     //   BRAM slot0 == inst_buf (same address fetched), so raw decode matches
     localparam [6:0] OP_R_TYPE_LOCAL = 7'b0110011;
     localparam [6:0] OP_I_ALU_LOCAL  = 7'b0010011;
+    localparam [6:0] OP_LOAD_LOCAL   = 7'b0000011;
     localparam [6:0] OP_BRANCH_LOCAL = 7'b1100011;
     localparam [6:0] OP_LUI_LOCAL    = 7'b0110111;
     localparam [6:0] OP_AUIPC_LOCAL  = 7'b0010111;
@@ -552,12 +557,23 @@ module cpu_top (
                                | (raw_inst0_opcode == OP_JAL_LOCAL)
                                | (raw_inst0_opcode == OP_JALR_LOCAL);
 
+    wire raw_inst0_is_jump = (raw_inst0_opcode == OP_JAL_LOCAL)
+                            | (raw_inst0_opcode == OP_JALR_LOCAL);
+
+    wire raw_inst0_writes_rd = (raw_inst0_opcode == OP_R_TYPE_LOCAL)
+                              | (raw_inst0_opcode == OP_I_ALU_LOCAL)
+                              | (raw_inst0_opcode == OP_LOAD_LOCAL)
+                              | (raw_inst0_opcode == OP_LUI_LOCAL)
+                              | (raw_inst0_opcode == OP_AUIPC_LOCAL)
+                              | raw_inst0_is_jump;
+
     wire raw_inst1_uses_rs1 = (raw_inst1_opcode == OP_R_TYPE_LOCAL)
                              | (raw_inst1_opcode == OP_I_ALU_LOCAL);
     wire raw_inst1_uses_rs2 = (raw_inst1_opcode == OP_R_TYPE_LOCAL);
 
-    wire raw_pair_raw = (raw_inst1_uses_rs1 & (raw_inst1_rs1 == raw_inst0_rd))
-                       | (raw_inst1_uses_rs2 & (raw_inst1_rs2 == raw_inst0_rd));
+    wire raw_pair_raw = raw_inst0_writes_rd & (raw_inst0_rd != 5'd0)
+                      & ((raw_inst1_uses_rs1 & (raw_inst1_rs1 == raw_inst0_rd))
+                       | (raw_inst1_uses_rs2 & (raw_inst1_rs2 == raw_inst0_rd)));
 
     wire raw_can_dual = if_valid
                       & (pc != 32'h7FFF_FFFC)
@@ -565,7 +581,7 @@ module cpu_top (
                       & ~pc[2]
                       & raw_inst1_is_alu_type
                       & ~raw_pair_raw
-                      & ~raw_inst0_is_control;
+                      & ~raw_inst0_is_jump;
 
     // Registered snapshot: captured at stall entry (same cycle as irom_inst0/1_held)
     logic held_can_dual_r;
@@ -712,7 +728,7 @@ module cpu_top (
         .id_rs2_addr    (id_rs2_addr),
         .rf_rs1_data    (rf_rs1_data),
         .rf_rs2_data    (rf_rs2_data),
-        .id_s1_valid    (id_s1_valid),
+        .id_s1_valid    (id_s1_valid & ~id_s1_squash_raw),
         .id_s1_rs1_addr (id_s1_rs1_addr),
         .id_s1_rs2_addr (id_s1_rs2_addr),
         .rf_s1_rs1_data (rf_s1_rs1_data),
@@ -856,7 +872,7 @@ module cpu_top (
     id_ex_reg_s1 u_id_ex_reg_s1 (
         .clk                 (clk),
         .rst_n               (rst_n),
-        .id_s1_valid         (id_s1_valid),
+        .id_s1_valid         (id_s1_valid & ~id_s1_squash_raw),
         .id_ready_go         (id_ready_go),
         .ex_allowin          (ex_allowin),
         .ex_flush            (ex_flush),
@@ -1012,6 +1028,7 @@ module cpu_top (
         .ex_s1_valid         (ex_s1_valid),
         .ex_ready_go         (ex_ready_go_w),
         .mem_allowin         (mem_allowin),
+        .ex_branch_flush     (branch_flush),
         .mem_branch_flush    (mem_branch_flush),
         .ex_s1_pc            (ex_s1_pc),
         .ex_s1_inst          (ex_s1_inst),

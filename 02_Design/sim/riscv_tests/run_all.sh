@@ -65,7 +65,7 @@ TESTS="simple \
        dcache_stress \
        counter_stress \
        bp_stress \
-       dual_alu raw_block branch_single waw loaduse_dual inst_buffer \
+       dual_alu raw_block branch_single branch_dual branch_dual_flush branch_dual_edge waw loaduse_dual inst_buffer \
        fwd_s1 waw_fwd flush_instbuf pc_align loaduse_cross lui_auipc_s1 \
        dcache_dual instbuf_stall bp_dual \
        sb_stress ras_overflow"
