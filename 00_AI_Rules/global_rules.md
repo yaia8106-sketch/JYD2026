@@ -90,7 +90,86 @@ end
 
 ---
 
-## 6. 文档维护
+## 6. 验证流程
+
+### 回归测试（RTL 改动后必须跑）
+
+```bash
+cd 02_Design/sim/riscv_tests
+bash run_all.sh
+```
+
+- 预期结果：**63/63 PASS**（全部 riscv-tests + 自定义双发射/BP/DCache 测试）
+- 依赖：iverilog、`work/hex/*.hex`（已预编译，无需重新 build）
+- 编译产物自动生成在 `work/`，已 gitignore
+
+### 性能 Profiling
+
+```bash
+cd 02_Design/sim/riscv_tests
+bash run_perf.sh [test_name...]
+```
+
+- 默认跑 `bp_stress dcache_stress counter_stress sb_stress`
+- 输出 `[PERF]` 开头的性能报告（CPI、stall 分解、双发射率、BP 误预测率）
+
+### 重新编译测试（仅在修改/新增测试用例时）
+
+```bash
+cd 02_Design/sim/riscv_tests
+bash build_tests.sh
+```
+
+- 依赖：`riscv64-unknown-elf-gcc`、项目根目录 `riscv-tests/` 源码
+- 中间产物放 `/tmp/riscv_build/`，只有 .hex 输出到 `work/hex/`
+
+### Vivado 仿真（跑竞赛程序看波形）
+
+```bash
+cd 02_Design/sim/debug
+bash run_vivado_sim.sh
+```
+
+- 例化 `student_top`，COE 由 BRAM IP 自动加载
+- 或在 Vivado GUI 中设 `tb_student_top` 为仿真顶层
+
+---
+
+## 7. 工程卫生
+
+### 目录职责（不得混放）
+
+| 目录 | 允许内容 | 禁止 |
+|------|---------|------|
+| `02_Design/rtl/` | 可综合 RTL 源码 | TB、脚本、文档 |
+| `02_Design/sim/riscv_tests/` | 回归 TB + 脚本 | 临时调试 TB |
+| `02_Design/sim/debug/` | Vivado 调试 TB | 编译产物 |
+| `02_Design/coe/` | COE 文件 + 工具脚本 | 仿真产物 |
+| `00_AI_Rules/` | global_rules.md, architecture.md | 其他文档 |
+
+### 临时/实验性文件
+
+- **一律放 `/tmp/`**（如 `/tmp/dcache_opt/`、`/tmp/riscv_build/`）
+- 验证有价值后再决定是否纳入工程目录
+- **禁止**在工程目录下随手建 `test_xxx.sv`、`debug_xxx.py` 等临时文件
+
+### 编译/仿真产物
+
+- 必须被 `.gitignore` 覆盖
+- 允许存放位置：`work/`（已 gitignore）或 `/tmp/`
+- 禁止与源码同目录
+
+### 新增文件检查清单
+
+在创建任何新文件前确认：
+1. 是否属于已有目录的职责范围？
+2. 是否有 `.gitignore` 覆盖产物？
+3. 临时文件是否放在 `/tmp/`？
+4. 是否会在迭代后变成死文件？→ 放 `/tmp/`
+
+---
+
+## 8. 文档维护
 
 - 只维护 global_rules.md 和 architecture.md 两个文档，不新建文档文件
 - 优化待办和 profiling 基线记录在项目根目录 `TODO.md`

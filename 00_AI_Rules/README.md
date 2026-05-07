@@ -24,8 +24,12 @@ CPU_Workspace/
 ├── 00_AI_Rules/           ← 你正在看的目录
 ├── 02_Design/
 │   ├── rtl/               ← 自研 CPU RTL 源码
+│   ├── coe/               ← 竞赛程序 COE 文件 + 工具脚本
 │   ├── contest_readonly/  ← 赛方原版（禁止修改）
-│   └── sim/riscv_tests/   ← 回归测试（63/63 PASS）
+│   └── sim/
+│       ├── riscv_tests/   ← iverilog 回归测试（63/63 PASS）
+│       └── debug/         ← Vivado 调试 TB
+├── 03_Timing_Analysis/    ← 时序分析 TCL + 报告
 ├── JYD2025_Contest-rv32i/ ← Vivado 工程
-└── riscv-tests/           ← 测试源码
+└── riscv-tests/           ← 测试源码（build_tests.sh 依赖）
 ```

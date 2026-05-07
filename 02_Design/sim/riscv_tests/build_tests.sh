@@ -11,6 +11,7 @@ WORKSPACE="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 TESTS_DIR="$WORKSPACE/riscv-tests"
 CUSTOM_ENV="$TESTS_DIR/env/custom"
 HEX_DIR="$SCRIPT_DIR/work/hex"
+BUILD_DIR="/tmp/riscv_build"
 
 CC=riscv64-unknown-elf-gcc
 OBJDUMP="riscv64-unknown-elf-objdump"
@@ -39,6 +40,7 @@ TESTS="simple \
        sb_stress ras_overflow"
 
 mkdir -p "$HEX_DIR"
+mkdir -p "$BUILD_DIR"
 
 echo "========================================================"
 echo " Building riscv-tests for RV32I (custom env, no CSR)"
@@ -52,7 +54,7 @@ SKIP=0
 
 for test in $TESTS; do
     src="$TESTS_DIR/isa/rv32ui/$test.S"
-    elf="$HEX_DIR/rv32ui-p-$test"
+    elf="$BUILD_DIR/rv32ui-p-$test"
 
     if [ ! -f "$src" ]; then
         echo "[SKIP] rv32ui-p-$test (source not found)"
@@ -63,12 +65,10 @@ for test in $TESTS; do
     printf "[BUILD] rv32ui-p-%-12s " "$test"
 
     if $CC $CFLAGS $INCLUDES $LDFLAGS "$src" -o "$elf" 2>/tmp/rv_build_err.txt; then
-        # 生成反汇编
-        $OBJDUMP --disassemble-all --section=.text --section=.text.init \
-                 --section=.data "$elf" > "${elf}.dump" 2>/dev/null
-
-        # 转换为 hex
-        python3 "$SCRIPT_DIR/elf2hex.py" "$elf" "${elf}.irom.hex" "${elf}.dram.hex"
+        # 转换为 hex (直接输出到 HEX_DIR)
+        python3 "$SCRIPT_DIR/elf2hex.py" "$elf" \
+            "$HEX_DIR/rv32ui-p-${test}.irom.hex" \
+            "$HEX_DIR/rv32ui-p-${test}.dram.hex"
 
         PASS=$((PASS + 1))
     else

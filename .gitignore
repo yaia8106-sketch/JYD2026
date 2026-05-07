@@ -16,6 +16,9 @@ NutShell/
 # --- Simulation Artifacts ---
 02_Design/sim/riscv_tests/work/*
 !02_Design/sim/riscv_tests/work/.gitkeep
+!02_Design/sim/riscv_tests/work/.gitignore
+!02_Design/sim/riscv_tests/work/dcache_data_ram.v
+!02_Design/sim/riscv_tests/work/hex/
 02_Design/sim/debug/debug_state.md
 *.vcd
 *.wcfg
