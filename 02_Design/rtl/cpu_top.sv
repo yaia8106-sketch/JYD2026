@@ -187,6 +187,8 @@ module cpu_top (
     wire [31:0] ex_pc;
     wire [31:0] ex_alu_src1, ex_alu_src2;   // pre-selected in ID
     wire [31:0] ex_rs1_data, ex_rs2_data;   // raw, for branch/store
+    wire [31:0] ex_branch_target_pre;        // ID-precomputed taken target
+    wire [31:0] ex_fallthrough_pc;           // ID-precomputed PC+4
     wire [ 4:0] ex_rd, ex_rs1_addr, ex_rs2_addr;
     wire [ 3:0] ex_alu_op;
     wire        ex_reg_write_en;
@@ -232,10 +234,15 @@ module cpu_top (
     wire [31:0] branch_target;         // EX stage combinational
     wire        actual_taken;          // for predictor update
     wire [31:0] actual_target;         // for predictor update
+    wire        ex_branch_redirect;    // EX-stage fast frontend redirect
 
     // ---- Registered branch flush (MEM stage, for 250MHz timing) ----
     wire        mem_branch_flush;      // branch_flush delayed 1 cycle (from EX/MEM reg)
     wire [31:0] mem_branch_target;     // branch_target delayed 1 cycle (from EX/MEM reg)
+    logic       fast_branch_redirect_r;
+    wire        mem_branch_replay;
+    wire        frontend_branch_flush;
+    wire [31:0] frontend_branch_target;
 
     // ---- Store interface (EX stage) ----
     wire [31:0] store_data_shifted;
@@ -328,10 +335,22 @@ module cpu_top (
     assign cache_flush = mem_branch_flush; // Abort wrong-path refill on branch misprediction
     assign cache_pipeline_stall = ~mem_allowin; // sync DCache EX→MEM with cpu pipeline
 
-    // ---- Flush (250MHz: uses registered mem_branch_flush instead of combinational branch_flush) ----
+    // ---- Flush / redirect ----
     wire id_bp_redirect;            // NLP: ID-stage Tournament redirect
-    wire id_flush = mem_branch_flush | id_bp_redirect;
-    wire ex_flush = mem_branch_flush;   // 250MHz: flush EX on MEM mispredict only
+    assign ex_branch_redirect = branch_flush & ~mem_branch_flush & ex_ready_go_w & mem_allowin;
+    assign mem_branch_replay = mem_branch_flush & ~fast_branch_redirect_r;
+    assign frontend_branch_flush  = mem_branch_replay | ex_branch_redirect;
+    assign frontend_branch_target = mem_branch_replay ? mem_branch_target : branch_target;
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n)
+            fast_branch_redirect_r <= 1'b0;
+        else
+            fast_branch_redirect_r <= ex_branch_redirect;
+    end
+
+    wire id_flush = frontend_branch_flush | id_bp_redirect;
+    wire ex_flush = frontend_branch_flush;
 
     // ---- Register addresses from instruction (ID stage, from IF/ID reg) ----
     wire [4:0] id_rs1_addr = id_inst[19:15];
@@ -340,7 +359,11 @@ module cpu_top (
     wire [4:0] id_s1_rs1_addr = id_inst1[19:15];
     wire [4:0] id_s1_rs2_addr = id_inst1[24:20];
     wire [4:0] id_s1_rd_addr  = id_inst1[11:7];
-    wire [31:0] id_s1_pc = id_pc + 32'd4;
+    wire [31:0] id_pc_plus_4 = id_pc + 32'd4;
+    wire [31:0] id_s1_pc = id_pc_plus_4;
+    wire [31:0] id_branch_target_sum = id_alu_src1 + id_alu_src2;
+    wire [31:0] id_branch_target_pre = dec_is_jalr ? (id_branch_target_sum & ~32'd1)
+                                                    : id_branch_target_sum;
     wire id_rs1_used = (dec_alu_src1_sel == 2'b00) | dec_is_branch;
     wire id_rs2_used = (dec_alu_src2_sel == 1'b0) | dec_is_branch | dec_mem_write_en;
     wire id_s1_rs1_used = (dec1_alu_src1_sel == 2'b00) | dec1_is_branch;
@@ -524,8 +547,8 @@ module cpu_top (
     wire [11:0] id_redirect_odd_addr  = irom_odd_bank_addr(id_redirect_target);
     wire        id_redirect_fetch_odd = id_redirect_target[2];
 
-    // 250MHz: irom_addr = flat 4-way priority MUX (stall branch removed)
-    // Priority: flush > NLP redirect > L0 prediction > sequential
+    // irom_addr = flat priority MUX (stall branch removed)
+    // Priority: EX/MEM redirect > NLP redirect > L0 prediction > sequential
     //   - stall handling moved to irom_data_held register (see below)
     //   - removes allowin chain (cache_ready→mem→ex→id) from IROM critical path
     //   - redirect uses raw version (no id_ready_go/ex_allowin gating)
@@ -548,20 +571,24 @@ module cpu_top (
     wire [11:0] bp_odd_addr      = irom_held_valid ? irom_odd_bank_addr(irom_bp_target_held)  : bp_live_odd_addr;
     wire        bp_fetch_odd     = irom_held_valid ? irom_bp_target_held[2]                   : bp_live_fetch_odd;
 
-    assign irom_addr = mem_branch_flush    ? mem_branch_target :  // MEM flush (highest, registered)
+    assign irom_addr = mem_branch_replay   ? mem_branch_target :
+                       ex_branch_redirect  ? branch_target :
                        id_bp_redirect_raw  ? id_redirect_target : // NLP: ID redirect (raw, fast)
                        bp_taken_for_if     ? bp_target_for_if :   // L0 预测 taken
                                              seq_next_pc;        // 顺序取指（+4/+8）
 
-    assign irom_even_addr = mem_branch_flush    ? mem_branch_even_addr_r :
+    assign irom_even_addr = mem_branch_replay   ? mem_branch_even_addr_r :
+                            ex_branch_redirect  ? irom_even_bank_addr(branch_target) :
                             id_bp_redirect_raw  ? id_redirect_even_addr :
                             bp_taken_for_if     ? bp_even_addr :
                                                   seq_even_addr;
-    assign irom_odd_addr  = mem_branch_flush    ? mem_branch_odd_addr_r :
+    assign irom_odd_addr  = mem_branch_replay   ? mem_branch_odd_addr_r :
+                            ex_branch_redirect  ? irom_odd_bank_addr(branch_target) :
                             id_bp_redirect_raw  ? id_redirect_odd_addr :
                             bp_taken_for_if     ? bp_odd_addr :
                                                   seq_odd_addr;
-    assign irom_fetch_odd = mem_branch_flush    ? mem_branch_fetch_odd_r :
+    assign irom_fetch_odd = mem_branch_replay   ? mem_branch_fetch_odd_r :
+                            ex_branch_redirect  ? branch_target[2] :
                             id_bp_redirect_raw  ? id_redirect_fetch_odd :
                             bp_taken_for_if     ? bp_fetch_odd :
                                                   seq_fetch_odd;
@@ -584,7 +611,7 @@ module cpu_top (
             pc_plus12_even_addr <= 12'd1;
             pc_plus12_odd_addr <= 12'd1;
             pc_plus12_fetch_odd <= 1'b0;
-        end else if (mem_branch_flush) begin
+        end else if (mem_branch_replay) begin
             pc_plus4 <= mem_branch_target + 32'd4;  // flush: registered source
             pc_plus8 <= mem_branch_target + 32'd8;
             pc_plus12 <= mem_branch_target + 32'd12;
@@ -597,6 +624,19 @@ module cpu_top (
             pc_plus12_even_addr <= irom_even_bank_addr(mem_branch_target + 32'd12);
             pc_plus12_odd_addr <= irom_odd_bank_addr(mem_branch_target + 32'd12);
             pc_plus12_fetch_odd <= irom_bank_fetch_odd(mem_branch_target + 32'd12);
+        end else if (ex_branch_redirect) begin
+            pc_plus4 <= branch_target + 32'd4;       // EX redirect: target already precomputed
+            pc_plus8 <= branch_target + 32'd8;
+            pc_plus12 <= branch_target + 32'd12;
+            pc_plus4_even_addr <= irom_even_bank_addr(branch_target + 32'd4);
+            pc_plus4_odd_addr <= irom_odd_bank_addr(branch_target + 32'd4);
+            pc_plus4_fetch_odd <= irom_bank_fetch_odd(branch_target + 32'd4);
+            pc_plus8_even_addr <= irom_even_bank_addr(branch_target + 32'd8);
+            pc_plus8_odd_addr <= irom_odd_bank_addr(branch_target + 32'd8);
+            pc_plus8_fetch_odd <= irom_bank_fetch_odd(branch_target + 32'd8);
+            pc_plus12_even_addr <= irom_even_bank_addr(branch_target + 32'd12);
+            pc_plus12_odd_addr <= irom_odd_bank_addr(branch_target + 32'd12);
+            pc_plus12_fetch_odd <= irom_bank_fetch_odd(branch_target + 32'd12);
         end else if (!if_allowin_w) begin
             ;                                       // stall: hold
         end else if (id_bp_redirect_raw) begin
@@ -658,8 +698,8 @@ module cpu_top (
         .rst_n         (rst_n),
         .if_allowin    (id_allowin),    // simplified: if_valid=1, if_ready_go=1
         .if_valid      (if_valid),
-        .branch_flush  (mem_branch_flush),   // 250MHz: registered flush from MEM
-        .branch_target (mem_branch_target),  // 250MHz: registered target from MEM
+        .branch_flush  (frontend_branch_flush),
+        .branch_target (frontend_branch_target),
         .next_pc       (irom_addr),
         .pc            (pc)
     );
@@ -720,7 +760,7 @@ module cpu_top (
     wire [ 1:0] if_bp_sel_cnt_out  = irom_held_valid ? irom_bp_sel_cnt_held  : bp_live_sel_cnt;
     wire        if_skip_out        = irom_held_valid ? irom_skip_held        : if_skip_inst0;
     wire        if_s1_valid  = can_dual_issue;
-    wire        if_sequential_fetch = ~mem_branch_flush & ~id_bp_redirect_raw & ~if_bp_taken_out;
+    wire        if_sequential_fetch = ~frontend_branch_flush & ~id_bp_redirect_raw & ~if_bp_taken_out;
 
     // ==================== Dual-issue decision (fast path) ====================
     // TIMING OPTIMIZATION: Decode directly from raw BRAM output (irom_inst0/1)
@@ -1120,6 +1160,8 @@ module cpu_top (
         .id_alu_src2      (id_alu_src2),
         .id_rs1_data      (fwd_rs1_data),
         .id_rs2_data      (fwd_rs2_data),
+        .id_branch_target (id_branch_target_pre),
+        .id_fallthrough_pc(id_pc_plus_4),
         .id_rd            (id_rd_addr),
         .id_rs1_addr      (id_rs1_addr),
         .id_rs2_addr      (id_rs2_addr),
@@ -1149,6 +1191,8 @@ module cpu_top (
         .ex_alu_src2      (ex_alu_src2),
         .ex_rs1_data      (ex_rs1_data),
         .ex_rs2_data      (ex_rs2_data),
+        .ex_branch_target (ex_branch_target_pre),
+        .ex_fallthrough_pc(ex_fallthrough_pc),
         .ex_rd            (ex_rd),
         .ex_rs1_addr      (ex_rs1_addr),
         .ex_rs2_addr      (ex_rs2_addr),
@@ -1247,8 +1291,8 @@ module cpu_top (
     branch_unit u_branch_unit (
         .rs1_data         (ex_rs1_data),
         .rs2_data         (ex_rs2_data),
-        .alu_addr         (alu_addr),       // pure adder output (bypasses negate+MUX, saves ~0.9ns)
-        .ex_pc            (ex_pc),
+        .target_pc        (ex_branch_target_pre),
+        .fallthrough_pc   (ex_fallthrough_pc),
         .is_branch        (ex_is_branch),
         .branch_cond      (ex_branch_cond),
         .is_jal           (ex_is_jal),
@@ -1291,11 +1335,12 @@ module cpu_top (
         .mem_valid        (mem_valid),
         .mem_ready_go     (mem_ready_go_w),
         .wb_allowin       (wb_allowin),
-        // 250MHz: register branch_flush into MEM stage
-        // Gate with mem_allowin: don't propagate flush while pipeline is stalled
+        // Register the fast redirect pulse for DCache/backend cleanup only.
+        // Frontend PC/IF/ID/ID/EX have already consumed ex_branch_redirect.
+        // Gate with EX readiness: don't propagate while the EX instruction stalls.
         // (DCache refill). This ensures the flush-generating instruction advances
         // to MEM first, rather than being killed by its own registered flush.
-        .ex_branch_flush  (branch_flush & ~mem_branch_flush & mem_allowin),
+        .ex_branch_flush  (ex_branch_redirect),
         .ex_branch_target (branch_target),
         .mem_branch_flush (mem_branch_flush),
         .mem_branch_target(mem_branch_target),

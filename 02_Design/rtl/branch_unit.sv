@@ -3,14 +3,16 @@
 // Description: Branch/jump decision + misprediction detection (EX stage)
 //   With branch prediction: compares predicted vs actual outcome.
 //   Flush only on misprediction (not on every taken branch).
+//   Redirect target is precomputed in ID and carried through ID/EX so the
+//   EX redirect path does not depend on a 32-bit target adder.
 // Spec: 02_Design/spec/branch_unit_spec.md
 // ============================================================
 
 module branch_unit (
     input  logic [31:0] rs1_data,
     input  logic [31:0] rs2_data,
-    input  logic [31:0] alu_addr,        // branch/jump target (pure adder, bypasses negate+MUX)
-    input  logic [31:0] ex_pc,           // PC of the instruction in EX
+    input  logic [31:0] target_pc,       // precomputed taken target
+    input  logic [31:0] fallthrough_pc,  // precomputed PC + 4
     input  logic        is_branch,
     input  logic [ 2:0] branch_cond,
     input  logic        is_jal,
@@ -58,7 +60,7 @@ module branch_unit (
 
     // ---- Actual outcome ----
     assign actual_taken  = is_jal | is_jalr | (is_branch & branch_taken);
-    assign actual_target = is_jalr ? (alu_addr & ~32'd1) : alu_addr;
+    assign actual_target = target_pc;
 
     // ---- Misprediction detection ----
     // Case 1: direction wrong (predicted taken ≠ actual taken)
@@ -72,6 +74,6 @@ module branch_unit (
     // ---- Flush target (correct next PC) ----
     // Actual taken → redirect to actual target
     // Actual not-taken (but predicted taken) → redirect to ex_pc + 4
-    assign branch_target = actual_taken ? actual_target : (ex_pc + 32'd4);
+    assign branch_target = actual_taken ? actual_target : fallthrough_pc;
 
 endmodule

@@ -4,6 +4,8 @@
 // Note: ALU operands (alu_src1/alu_src2) are pre-selected in ID stage
 //       to reduce EX critical path. Raw rs1/rs2 still carried for
 //       branch comparison and store data.
+//       Branch redirect target/fallthrough are precomputed in ID to keep
+//       the EX mispredict redirect path off the 32-bit target adder.
 //       Branch prediction signals passed through for EX update.
 // NLP: removed bp_btb_way (no longer needed with direct-mapped BTB)
 // ============================================================
@@ -29,6 +31,8 @@ module id_ex_reg (
     input  logic [31:0] id_alu_src2,       // pre-selected ALU operand 2
     input  logic [31:0] id_rs1_data,       // raw rs1 (for branch comparison)
     input  logic [31:0] id_rs2_data,       // raw rs2 (for branch comparison + store)
+    input  logic [31:0] id_branch_target,  // precomputed taken target
+    input  logic [31:0] id_fallthrough_pc, // precomputed PC + 4
     input  logic [ 4:0] id_rd,
     input  logic [ 4:0] id_rs1_addr,
     input  logic [ 4:0] id_rs2_addr,
@@ -59,6 +63,8 @@ module id_ex_reg (
     output logic [31:0] ex_alu_src2,
     output logic [31:0] ex_rs1_data,
     output logic [31:0] ex_rs2_data,
+    output logic [31:0] ex_branch_target,
+    output logic [31:0] ex_fallthrough_pc,
     output logic [ 4:0] ex_rd,
     output logic [ 4:0] ex_rs1_addr,
     output logic [ 4:0] ex_rs2_addr,
@@ -96,6 +102,8 @@ module id_ex_reg (
             ex_alu_src2      <= 32'd0;
             ex_rs1_data      <= 32'd0;
             ex_rs2_data      <= 32'd0;
+            ex_branch_target <= 32'd0;
+            ex_fallthrough_pc <= 32'd0;
             ex_rd            <= 5'd0;
             ex_rs1_addr      <= 5'd0;
             ex_rs2_addr      <= 5'd0;
@@ -126,6 +134,8 @@ module id_ex_reg (
             ex_alu_src2      <= id_alu_src2;
             ex_rs1_data      <= id_rs1_data;
             ex_rs2_data      <= id_rs2_data;
+            ex_branch_target <= id_branch_target;
+            ex_fallthrough_pc <= id_fallthrough_pc;
             ex_rd            <= id_rd;
             ex_rs1_addr      <= id_rs1_addr;
             ex_rs2_addr      <= id_rs2_addr;
