@@ -1,0 +1,5 @@
+# Only keep .hex files, ignore everything else
+*
+!.gitignore
+!*.irom.hex
+!*.dram.hex

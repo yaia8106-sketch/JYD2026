@@ -1,0 +1,13 @@
+# iverilog compiled binaries
+*_sim
+*_probe
+*_trace
+
+# Waveforms
+*.vcd
+
+# Logs
+*.log
+
+# Stale COE copies
+*.coe
