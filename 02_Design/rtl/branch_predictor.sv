@@ -8,8 +8,8 @@
 //   Architecture change (NLP optimization):
 //   - BTB: 128-entry direct-mapped (was 2-way 32-set)
 //   - IF: uses bht[1] for BRANCH direction (was full Tournament)
-//   - Critical path: PC → LUTRAM read → tag compare → bht MUX → IROM
-//     current 250MHz implementation closes timing (PC→IROM WNS +0.120ns)
+//   - BTB target even-bank address is stored beside full bp_target
+//     so cpu_top does not run target → bank-address adders on the IROM path.
 //
 // Spec: 02_Design/spec/branch_predictor_spec.md
 // ============================================================
@@ -22,6 +22,9 @@ module branch_predictor (
     input  logic [31:0] if_pc,
     output logic        bp_taken,
     output logic [31:0] bp_target,
+    output logic [11:0] bp_even_addr,
+    output logic [11:0] bp_odd_addr,
+    output logic        bp_fetch_odd,
 
     // Snapshot outputs (pass through pipeline IF→ID→EX for update)
     output logic [ 7:0] bp_ghr_snap,    // GHR at prediction time
@@ -38,6 +41,9 @@ module branch_predictor (
     input  logic [31:0] la_pc,
     output logic        la_bp_taken,
     output logic [31:0] la_bp_target,
+    output logic [11:0] la_bp_even_addr,
+    output logic [11:0] la_bp_odd_addr,
+    output logic        la_bp_fetch_odd,
     output logic [ 7:0] la_bp_ghr_snap,
     output logic        la_bp_btb_hit,
     output logic [ 1:0] la_bp_btb_type,
@@ -84,6 +90,22 @@ module branch_predictor (
     localparam [1:0] TYPE_BRANCH = 2'b10;
     localparam [1:0] TYPE_RET    = 2'b11;
 
+    function automatic [11:0] btb_even_bank_addr(input logic [BTB_TGT_W-1:0] tgt);
+        btb_even_bank_addr = {1'b0, tgt[11:1]} + {11'd0, tgt[0]};
+    endfunction
+
+    function automatic [11:0] btb_odd_bank_addr(input logic [BTB_TGT_W-1:0] tgt);
+        btb_odd_bank_addr = {1'b0, tgt[11:1]};
+    endfunction
+
+    function automatic [11:0] full_even_bank_addr(input logic [31:0] addr);
+        full_even_bank_addr = {1'b0, addr[13:3]} + {11'd0, addr[2]};
+    endfunction
+
+    function automatic [11:0] full_odd_bank_addr(input logic [31:0] addr);
+        full_odd_bank_addr = {1'b0, addr[13:3]};
+    endfunction
+
     // ================================================================
     //  Storage declarations
     // ================================================================
@@ -94,6 +116,7 @@ module branch_predictor (
     (* ram_style = "distributed" *) logic                  btb_valid [0:BTB_ENTRIES-1];
     (* ram_style = "distributed" *) logic [BTB_TAG_W-1:0]  btb_tag   [0:BTB_ENTRIES-1];
     (* ram_style = "distributed" *) logic [BTB_TGT_W-1:0]  btb_tgt   [0:BTB_ENTRIES-1];
+    (* ram_style = "distributed" *) logic [11:0]           btb_even  [0:BTB_ENTRIES-1];
     (* ram_style = "distributed" *) logic [1:0]            btb_type  [0:BTB_ENTRIES-1];
     (* ram_style = "distributed" *) logic [1:0]            btb_bht   [0:BTB_ENTRIES-1];
 
@@ -121,6 +144,7 @@ module branch_predictor (
     wire                  r_valid = btb_valid[if_idx];
     wire [BTB_TAG_W-1:0]  r_tag   = btb_tag  [if_idx];
     wire [BTB_TGT_W-1:0]  r_tgt   = btb_tgt  [if_idx];
+    wire [11:0]           r_even  = btb_even [if_idx];
     wire [1:0]            r_type  = btb_type [if_idx];
     wire [1:0]            r_bht   = btb_bht  [if_idx];
 
@@ -173,6 +197,17 @@ module branch_predictor (
     assign bp_target = ({32{sel_btb}} & {r_tgt, 2'b00})
                      | ({32{sel_ras}} & ras_top);
 
+    wire [11:0] r_tgt_odd_addr  = btb_odd_bank_addr(r_tgt);
+    wire [11:0] ras_even_addr   = full_even_bank_addr(ras_top);
+    wire [11:0] ras_odd_addr    = full_odd_bank_addr(ras_top);
+
+    assign bp_even_addr = ({12{sel_btb}} & r_even)
+                        | ({12{sel_ras}} & ras_even_addr);
+    assign bp_odd_addr = ({12{sel_btb}} & r_tgt_odd_addr)
+                       | ({12{sel_ras}} & ras_odd_addr);
+    assign bp_fetch_odd = (sel_btb & r_tgt[0])
+                        | (sel_ras & ras_top[2]);
+
     // ---- Snapshot outputs ----
     assign bp_ghr_snap = ghr;
     assign bp_btb_hit  = btb_hit_w;
@@ -221,6 +256,7 @@ module branch_predictor (
 
     // Target for BTB entry
     wire [BTB_TGT_W-1:0] ex_wr_tgt = ex_actual_target[31:2];
+    wire [11:0] ex_wr_even = btb_even_bank_addr(ex_wr_tgt);
 
     // ---- GShare PHT update (BRANCH only) ----
     wire [GHR_W-1:0] ex_pht_idx = ex_ghr_snap ^ ex_pc[9:2];
@@ -279,6 +315,7 @@ module branch_predictor (
     wire                 la_r_valid = la_btb_bypass ? 1'b1      : btb_valid[la_idx];
     wire [BTB_TAG_W-1:0] la_r_tag   = la_btb_bypass ? ex_tag    : btb_tag  [la_idx];
     wire [BTB_TGT_W-1:0] la_r_tgt   = la_btb_bypass ? ex_wr_tgt : btb_tgt  [la_idx];
+    wire [11:0]          la_r_even  = la_btb_bypass ? ex_wr_even : btb_even[la_idx];
     wire [1:0]           la_r_type  = la_btb_bypass ? ex_wr_type : btb_type [la_idx];
     wire [1:0]           la_r_bht   = la_btb_bypass ? ex_wr_bht : btb_bht  [la_idx];
 
@@ -308,6 +345,17 @@ module branch_predictor (
     assign la_bp_target = ({32{la_sel_btb}} & {la_r_tgt, 2'b00})
                         | ({32{la_sel_ras}} & la_ras_top_next);
 
+    wire [11:0] la_r_tgt_odd_addr  = btb_odd_bank_addr(la_r_tgt);
+    wire [11:0] la_ras_even_addr   = full_even_bank_addr(la_ras_top_next);
+    wire [11:0] la_ras_odd_addr    = full_odd_bank_addr(la_ras_top_next);
+
+    assign la_bp_even_addr = ({12{la_sel_btb}} & la_r_even)
+                           | ({12{la_sel_ras}} & la_ras_even_addr);
+    assign la_bp_odd_addr = ({12{la_sel_btb}} & la_r_tgt_odd_addr)
+                          | ({12{la_sel_ras}} & la_ras_odd_addr);
+    assign la_bp_fetch_odd = (la_sel_btb & la_r_tgt[0])
+                           | (la_sel_ras & la_ras_top_next[2]);
+
     assign la_bp_ghr_snap = la_ghr_next;
     assign la_bp_btb_hit  = la_btb_hit_w;
     assign la_bp_btb_type = la_btb_hit_w ? la_r_type : 2'b00;
@@ -331,6 +379,7 @@ module branch_predictor (
             btb_valid[ex_idx] <= 1'b1;
             btb_tag  [ex_idx] <= ex_tag;
             btb_tgt  [ex_idx] <= ex_wr_tgt;
+            btb_even [ex_idx] <= ex_wr_even;
             btb_type [ex_idx] <= ex_wr_type;
             btb_bht  [ex_idx] <= ex_wr_bht;
         end

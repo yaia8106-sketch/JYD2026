@@ -55,15 +55,17 @@ irom_addr = mem_branch_replay  ? mem_branch_target :   // 1. 未被 EX fast redi
 `irom_even_addr` / `irom_odd_addr` / `irom_fetch_odd` 各有独立的同优先级 MUX，源头的 bank 地址来自寄存器或短组合计算：
 
 - **MEM replay**：`mem_branch_even_addr_r` / `mem_branch_odd_addr_r`（寄存器）
-- **EX fast redirect**：`branch_target` 已在 ID 阶段预计算，EX 仅做目标/顺序下一条选择和 bank 地址短组合计算
+- **EX fast redirect**：`branch_target` / `fallthrough_pc` 已在 ID 阶段预计算；EX 从这两个寄存值并行计算 bank 地址，再按 `actual_taken` 选择
 - **NLP redirect**：`id_redirect_even_addr` 等（组合计算，路径短）
 - **BP taken**：`bp_even_addr` 等（含 skip_inst0 寄存快照 / held / live 三层 MUX）
 - **sequential**：`seq_even_addr` 等（从 `pc_plus4/8_even_addr` 寄存器中选）
+- `branch_predictor` 并行输出 `bp_even_addr` / `bp_odd_addr` / `bp_fetch_odd` 和 lookahead 对应 bank 地址，其中 BTB even-bank 地址随 entry 存储，`cpu_top` 不再在 L0 taken 的 IROM 路径上从 32-bit `bp_target` 现场计算 bank 地址。
 
 ### 2.3 PC 步进与 predict_dual
 
 - `pc_plus4/8/12`：寄存器预计算，避免 32-bit 进位链出现在 irom_addr 路径
 - 每个 `pc_plus*` 同时维护对应的 `*_even_addr` / `*_odd_addr` / `*_fetch_odd` 寄存器
+- L0 BP taken 后更新 `pc_plus*_addr` 时，从 `bp_even_addr` / `bp_odd_addr` / `bp_fetch_odd` 推导 `target+4/+8/+12` 的 bank 地址，不再从 32-bit `bp_target + offset` 现场计算
 - `predict_dual`：**寄存的上一周期 `can_dual_fetch`**，用于选择 `seq_next_pc`
   - `seq_next_pc = predict_dual ? pc_plus8 : pc_plus4`
   - 打断了 `can_dual_issue → seq_next_pc → irom_addr → IROM → can_dual_issue` 组合环路
@@ -78,6 +80,8 @@ BRAM 无 output register，流水线 stall 时 `irom_addr` 可能已变。stall 
 - 1×32-bit + valid，单发时暂存未发射的 slot1
 - 下拍 `if_inst0_live = if_skip_inst0 ? irom_inst1 : inst_buf_valid ? inst_buf : irom_inst0`
 - `inst_buf_before_window`：标记 inst_buf 内容在当前 IROM 窗口之前（predict_dual 导致的偏移）
+- `inst_buf_before_window` 只在 `inst_buf_valid_next=1` 时保持；BP 查询 PC 仅在 before-window 情况选择 `inst_buf_pc`，普通 inst_buf 情况查 `pc`，避免 `inst_buf_valid` 进入 BP→IROM 路径
+- `inst_buf_valid_next` 不复用完整 `can_dual_issue` MUX 链，而是用 raw/shifted 的 `*_pair_can_dual` 与公共前端 gating 并行组合，缩短 IROM→`inst_buf_valid` 路径
 - Flush / bp_taken / NLP redirect 时清空
 
 ### 2.6 skip_inst0 机制
@@ -90,6 +94,7 @@ BRAM 无 output register，流水线 stall 时 `irom_addr` 可能已变。stall 
 - BP 查询使用 `bp_pc_live`（不经过 skip_inst0 MUX，避免时序环路）
 - 预查 BP：`la_pc = pc_plus8` 提前查询 skip 后的 BP 预测，锁存到 `skip_bp_*_r` 寄存器
 - `bp_live_*` MUX：`skip_inst0 ? skip_bp_*_r : bp_*`（skip 时用寄存快照，零延迟）
+- `skip_bp_*_r` 每拍采样 lookahead 预测，只有 `skip_inst0_valid` 选择时才消费，避免 `will_skip_inst0` 进入这些寄存器的 CE 关键路径。
 
 ---
 
@@ -106,9 +111,7 @@ wire raw_can_dual = if_valid
                   & ~if_skip_inst0              // 正在跳过 inst0 时不双发
                   & (pc != 32'h7FFF_FFFC)
                   & if_sequential_fetch         // 非 flush/redirect/bp_taken
-                  & raw_inst1_is_alu_type        // slot1 是 ALU 类型
-                  & ~raw_pair_raw                // 无同对 RAW
-                  & ~raw_inst0_is_jump;          // slot0 非 JAL/JALR
+                  & raw_pair_can_dual;           // slot1 是 ALU、无同对 RAW、slot0 非 JAL/JALR
 
 // shifted path：inst_buf 在窗口前，配对 inst_buf + irom_inst0
 wire shifted_can_dual = if_valid & ... & shifted_inst1_is_alu_type & ...;
@@ -175,16 +178,18 @@ wire id_s1_squash_raw = id_bp_redirect_raw & id_tournament_taken;
 
 ### 4.4 分支目标预计算与 EX Fast Redirect
 
-ID 阶段用已经选择好的 `id_alu_src1/id_alu_src2` 预计算 taken target，并同时计算 fallthrough：
+ID 阶段用专用分支 target 加法器预计算 taken target，并同时计算 fallthrough。`PC+imm` 与 `rs1+imm(JALR)` 并行计算，避免分支 target D 端复用通用 `id_alu_src1/id_alu_src2` MUX 链：
 
 ```systemverilog
 id_pc_plus_4 = id_pc + 32'd4;
-id_branch_target_sum = id_alu_src1 + id_alu_src2;
-id_branch_target_pre = dec_is_jalr ? (id_branch_target_sum & ~32'd1)
-                                   : id_branch_target_sum;
+id_pc_branch_target_sum = id_pc + id_imm;
+id_jalr_target_sum = fwd_rs1_data + id_imm;
+id_branch_target_pre = dec_is_jalr ? {id_jalr_target_sum[31:1], 1'b0}
+                                   : id_pc_branch_target_sum;
 ```
 
 `id_ex_reg` 额外传递 `ex_branch_target` 和 `ex_fallthrough_pc`。EX 级 `branch_unit` 只做条件比较、预测对比和 `actual_taken ? target_pc : fallthrough_pc` 选择，redirect 路径不再依赖 32-bit 目标加法器。
+EX redirect 的 IROM bank 地址从已打拍的 `ex_branch_target_pre` / `ex_fallthrough_pc` 并行计算，再按 `actual_taken` 选择；bank 地址不进入 ID/EX 寄存器 D 端。
 
 ```systemverilog
 ex_branch_redirect = branch_flush & ~mem_branch_flush & ex_ready_go_w & mem_allowin;
@@ -269,7 +274,7 @@ Load-use 和 S1_WB 等待都只对指令实际使用的源操作数生效：
 
 ### 9.1 Flush
 
-- **EX 级**：`branch_unit` 组合产生 `branch_flush`（方向错 / 目标错）
+- **EX 级**：`branch_unit` 组合产生 `branch_flush`（方向错 / 目标错），时序形态为 `actual_taken ? (~predicted_taken | target_mismatch) : predicted_taken`，让 EX 比较结果作为 late MUX select
 - **EX fast redirect**：`ex_branch_redirect = branch_flush & ~mem_branch_flush & ex_ready_go_w & mem_allowin`
 - **MEM 级**：`mem_branch_flush` = `ex_branch_redirect` 打拍，用于 DCache/backend cleanup
 - **前端 replay 抑制**：`mem_branch_replay = mem_branch_flush & ~fast_branch_redirect_r`

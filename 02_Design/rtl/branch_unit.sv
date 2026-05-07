@@ -63,13 +63,15 @@ module branch_unit (
     assign actual_target = target_pc;
 
     // ---- Misprediction detection ----
-    // Case 1: direction wrong (predicted taken ≠ actual taken)
-    // Case 2: target wrong (both taken but different targets)
-    wire direction_wrong = (actual_taken != predicted_taken);
-    wire target_wrong    = actual_taken & predicted_taken &
-                           (actual_target != predicted_target);
+    // Case 1: direction wrong
+    // Case 2: both taken, but target wrong
+    // Timing: keep the EX compare result as a late MUX select instead of
+    // feeding both XOR and target-wrong OR trees on the redirect path.
+    wire target_mismatch = (target_pc != predicted_target);
+    wire flush_if_taken = ~predicted_taken | target_mismatch;
+    wire flush_if_not_taken = predicted_taken;
 
-    assign branch_flush = ex_valid & (direction_wrong | target_wrong);
+    assign branch_flush = ex_valid & (actual_taken ? flush_if_taken : flush_if_not_taken);
 
     // ---- Flush target (correct next PC) ----
     // Actual taken → redirect to actual target
