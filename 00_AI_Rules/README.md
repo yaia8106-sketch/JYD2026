@@ -7,6 +7,11 @@
 1. **`global_rules.md`** — 地址映射、赛方约束、BRAM 时序、握手协议、编码规则
 2. **`architecture.md`** — 当前 RTL 的双发射架构描述（从代码反向生成）
 
+按需阅读：
+
+- **`tradeoffs_brief.md`** — 已否决/已验证 tradeoff 的简短结论
+- **`tradeoffs.md`** — tradeoff 的详细实验数据和原因
+
 ## 目录结构
 
 ```
@@ -14,6 +19,8 @@
 ├── README.md          ← 本文件
 ├── global_rules.md    ← 全局规则（不随架构变化的约束）
 ├── architecture.md    ← 当前架构（RTL 改动后同步更新）
+├── tradeoffs_brief.md ← tradeoff 简版（防止重复走弯路）
+├── tradeoffs.md       ← tradeoff 详版（含实验数据）
 └── archive/           ← 旧文档存档（不主动读）
 ```
 
