@@ -200,11 +200,25 @@ module tb_riscv_tests;
     // ================================================================
     integer cycle_cnt = 0;
     integer max_cycles = 50000;
+    integer max_commits = 0;
+    integer commit_cnt = 0;
+    integer watchdog_cycles = 0;
+    integer idle_cycles = 0;
+    integer trace_fd = 0;
+    integer trace_enable = 0;
+    integer pc_guard_enable = 0;
+    integer watchdog_fired = 0;
+    integer pc_guard_fired = 0;
+    integer commit_limit_hit = 0;
+    reg [31:0] pc_guard_min = 32'h8000_0000;
+    reg [31:0] pc_guard_max = 32'h8000_4000;
+    reg [31:0] pc_guard_bad_pc = 32'd0;
 
     // Plusarg strings
     reg [256*8-1:0] irom_file_r;
     reg [256*8-1:0] dram_file_r;
     reg [256*8-1:0] test_name_r;
+    reg [256*8-1:0] trace_file_r;
 
     initial begin
         // ---- Parse plusargs ----
@@ -220,6 +234,27 @@ module tb_riscv_tests;
             test_name_r = "unknown";
         if ($value$plusargs("cycles=%d", max_cycles))
             ; // optional override
+        if ($value$plusargs("commits=%d", max_commits))
+            ; // optional commit-count stop for differential trace
+        if ($value$plusargs("watchdog=%d", watchdog_cycles))
+            ; // optional idle-cycle watchdog
+        trace_enable = $test$plusargs("trace");
+        if (!$value$plusargs("trace_file=%s", trace_file_r))
+            trace_file_r = "riscv_trace.log";
+        pc_guard_enable = $test$plusargs("pc_guard");
+        if ($value$plusargs("pc_min=%h", pc_guard_min))
+            ;
+        if ($value$plusargs("pc_max=%h", pc_guard_max))
+            ;
+
+        if (trace_enable) begin
+            trace_fd = $fopen(trace_file_r, "w");
+            if (trace_fd == 0) begin
+                $display("ERROR: cannot open trace file: %0s", trace_file_r);
+                $finish;
+            end
+            $fdisplay(trace_fd, "# cycle event pc inst rd data extra");
+        end
 
         // ---- Initialize memories ----
         for (integer i = 0; i < 4096; i = i + 1)
@@ -243,6 +278,15 @@ module tb_riscv_tests;
             begin : wait_timeout
                 wait (cycle_cnt >= max_cycles);
             end
+            begin : wait_commit_limit
+                wait (commit_limit_hit);
+            end
+            begin : wait_watchdog
+                wait (watchdog_fired);
+            end
+            begin : wait_pc_guard
+                wait (pc_guard_fired);
+            end
         join_any
         disable fork;
 
@@ -256,6 +300,15 @@ module tb_riscv_tests;
                 $display("[FAIL] %0s  test #%0d failed  (%0d cycles)",
                          test_name_r, tohost_value >> 1, cycle_cnt);
             end
+        end else if (pc_guard_fired) begin
+            $display("[FAIL] %0s  PC_OUT_OF_RANGE pc=0x%08x allowed=[0x%08x,0x%08x)  (%0d cycles)",
+                     test_name_r, pc_guard_bad_pc, pc_guard_min, pc_guard_max, cycle_cnt);
+        end else if (watchdog_fired) begin
+            $display("[TIMEOUT] %0s  no pipeline progress for %0d cycles  (%0d cycles)",
+                     test_name_r, watchdog_cycles, cycle_cnt);
+        end else if (commit_limit_hit) begin
+            $display("[DONE] %0s  reached %0d commits  (%0d cycles)",
+                     test_name_r, commit_cnt, cycle_cnt);
         end else begin
             $display("[TIMEOUT] %0s  (>%0d cycles)", test_name_r, max_cycles);
         end
@@ -264,11 +317,79 @@ module tb_riscv_tests;
         if ($test$plusargs("perf"))
             u_perf.print_report();
 
+        if (trace_fd != 0)
+            $fclose(trace_fd);
+
         $finish;
     end
 
     always @(posedge clk) begin
         if (rst_n) cycle_cnt <= cycle_cnt + 1;
+    end
+
+    // ================================================================
+    //  Optional diagnostic guards
+    // ================================================================
+    wire sim_progress = u_cpu.wb_valid | u_cpu.wb_s1_valid |
+                        u_cpu.id_bp_redirect | u_cpu.branch_flush |
+                        u_cpu.mem_branch_flush | (|mmio_wea);
+
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            idle_cycles     <= 0;
+            watchdog_fired  <= 0;
+            pc_guard_fired  <= 0;
+            commit_cnt      <= 0;
+            commit_limit_hit <= 0;
+            pc_guard_bad_pc <= 32'd0;
+        end else begin
+            commit_cnt <= commit_cnt + (u_cpu.wb_valid ? 1 : 0)
+                                     + (u_cpu.wb_s1_valid ? 1 : 0);
+            if (max_commits != 0 && commit_cnt >= max_commits)
+                commit_limit_hit <= 1;
+
+            if (sim_progress)
+                idle_cycles <= 0;
+            else if (watchdog_cycles != 0 && !watchdog_fired)
+                idle_cycles <= idle_cycles + 1;
+
+            if (watchdog_cycles != 0 && idle_cycles >= watchdog_cycles)
+                watchdog_fired <= 1;
+
+            if (pc_guard_enable && cycle_cnt > 8 && !pc_guard_fired &&
+                (u_cpu.pc < pc_guard_min || u_cpu.pc >= pc_guard_max)) begin
+                pc_guard_fired  <= 1;
+                pc_guard_bad_pc <= u_cpu.pc;
+            end
+        end
+    end
+
+    // ================================================================
+    //  Optional compact trace
+    // ================================================================
+    always @(posedge clk) begin
+        if (rst_n && trace_enable && trace_fd != 0) begin
+            if (u_cpu.id_bp_redirect)
+                $fdisplay(trace_fd, "%0d ID_REDIRECT pc=%08x target=%08x taken=%0d",
+                          cycle_cnt, u_cpu.id_pc, u_cpu.id_redirect_target,
+                          u_cpu.id_tournament_taken);
+            if (u_cpu.branch_flush)
+                $fdisplay(trace_fd, "%0d EX_FLUSH pc=%08x target=%08x actual=%0d pred=%0d",
+                          cycle_cnt, u_cpu.ex_pc, u_cpu.branch_target,
+                          u_cpu.actual_taken, u_cpu.ex_bp_taken);
+            if (u_cpu.mem_branch_flush)
+                $fdisplay(trace_fd, "%0d MEM_FLUSH target=%08x",
+                          cycle_cnt, u_cpu.mem_branch_target);
+            if (u_cpu.wb_valid)
+                $fdisplay(trace_fd, "%0d WB0 pc=%08x rd=%0d wen=%0d data=%08x",
+                          cycle_cnt, u_cpu.wb_pc_plus_4 - 32'd4, u_cpu.wb_rd,
+                          u_cpu.wb_reg_write_en, u_cpu.wb_write_data);
+            if (u_cpu.wb_s1_valid)
+                $fdisplay(trace_fd, "%0d WB1 pc=%08x rd=%0d wen=%0d data=%08x inst=%08x",
+                          cycle_cnt, u_cpu.wb_s1_pc, u_cpu.wb_s1_rd,
+                          u_cpu.wb_s1_reg_write_en, u_cpu.wb_s1_write_data,
+                          u_cpu.wb_s1_inst);
+        end
     end
 
     // ================================================================

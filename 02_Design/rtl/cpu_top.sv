@@ -60,6 +60,38 @@ module cpu_top (
         end
     endfunction
 
+    function automatic logic branch_cond_taken(
+        input logic [31:0] rs1_data,
+        input logic [31:0] rs2_data,
+        input logic [ 2:0] branch_cond
+    );
+        logic [31:0] diff;
+        logic        neq;
+        logic        is_unsigned;
+        logic        cmp;
+        logic        sel_eq;
+        logic        sel_ne;
+        logic        sel_lt;
+        logic        sel_ge;
+        begin
+            diff = rs1_data - rs2_data;
+            neq = |diff;
+            is_unsigned = branch_cond[1];
+            cmp = (rs1_data[31] == rs2_data[31]) ? diff[31] :
+                  is_unsigned ? rs2_data[31] : rs1_data[31];
+
+            sel_eq = (branch_cond == 3'b000);
+            sel_ne = (branch_cond == 3'b001);
+            sel_lt = (branch_cond == 3'b100) | (branch_cond == 3'b110);
+            sel_ge = (branch_cond == 3'b101) | (branch_cond == 3'b111);
+
+            branch_cond_taken = (sel_eq & ~neq)
+                              | (sel_ne &  neq)
+                              | (sel_lt &  cmp)
+                              | (sel_ge & ~cmp);
+        end
+    endfunction
+
     // ================================================================
     //  Internal wires
     // ================================================================
@@ -278,6 +310,7 @@ module cpu_top (
     wire [31:0] branch_target;         // EX stage combinational
     wire        actual_taken;          // for predictor update
     wire [31:0] actual_target;         // for predictor update
+    wire        ex_branch_taken_pre;   // ID-precomputed branch compare result
     wire        ex_branch_redirect;    // EX-stage fast frontend redirect
     wire        ex_redirect_to_target;
     wire        ex_redirect_to_fallthrough;
@@ -424,6 +457,8 @@ module cpu_top (
     wire id_s0_alu_only = dec_reg_write_en & (dec_wb_sel == 2'b00)
                         & ~dec_mem_read_en & ~dec_mem_write_en
                         & ~dec_is_branch & ~dec_is_jal & ~dec_is_jalr;
+    wire id_branch_taken_pre = branch_cond_taken(fwd_rs1_data, fwd_rs2_data,
+                                                 dec_branch_cond);
 
     // ---- Cacheable判定 (EX stage, 1 LUT) ----
     // DRAM区域: 0x8010_0000 ~ 0x8013_FFFF → addr[20]=1, addr[21]=0, addr[19:18]=00
@@ -1423,6 +1458,7 @@ module cpu_top (
         .id_mem_unsigned  (dec_mem_unsigned),
         .id_is_branch     (dec_is_branch),
         .id_branch_cond   (dec_branch_cond),
+        .id_branch_taken  (id_branch_taken_pre),
         .id_is_jal        (dec_is_jal),
         .id_is_jalr       (dec_is_jalr),
         // Branch prediction passthrough (NLP: corrected by Tournament in ID)
@@ -1456,6 +1492,7 @@ module cpu_top (
         .ex_mem_unsigned  (ex_mem_unsigned),
         .ex_is_branch     (ex_is_branch),
         .ex_branch_cond   (ex_branch_cond),
+        .ex_branch_taken  (ex_branch_taken_pre),
         .ex_is_jal        (ex_is_jal),
         .ex_is_jalr       (ex_is_jalr),
         // Branch prediction out (NLP: removed btb_way)
@@ -1553,12 +1590,10 @@ module cpu_top (
     );
 
     branch_unit u_branch_unit (
-        .rs1_data         (ex_rs1_data),
-        .rs2_data         (ex_rs2_data),
         .target_pc        (ex_branch_target_pre),
         .fallthrough_pc   (ex_fallthrough_pc),
         .is_branch        (ex_is_branch),
-        .branch_cond      (ex_branch_cond),
+        .branch_taken_pre (ex_branch_taken_pre),
         .is_jal           (ex_is_jal),
         .is_jalr          (ex_is_jalr),
         .ex_valid         (ex_valid),

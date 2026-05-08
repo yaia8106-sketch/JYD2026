@@ -3,7 +3,8 @@
 // Description: ID/EX pipeline register
 // Note: ALU operands (alu_src1/alu_src2) are pre-selected in ID stage
 //       to reduce EX critical path. Raw rs1/rs2 still carried for
-//       branch comparison and store data.
+//       store data. Branch compare is precomputed in ID and carried as
+//       a 1-bit result to keep the EX redirect path short.
 //       Branch redirect target/fallthrough are precomputed in ID to keep
 //       the EX mispredict redirect path off the 32-bit target adder.
 //       Branch prediction signals passed through for EX update.
@@ -47,6 +48,7 @@ module id_ex_reg (
     input  logic        id_mem_unsigned,
     input  logic        id_is_branch,
     input  logic [ 2:0] id_branch_cond,
+    input  logic        id_branch_taken,
     input  logic        id_is_jal,
     input  logic        id_is_jalr,
 
@@ -81,6 +83,7 @@ module id_ex_reg (
     output logic        ex_mem_unsigned,
     output logic        ex_is_branch,
     output logic [ 2:0] ex_branch_cond,
+    output logic        ex_branch_taken,
     output logic        ex_is_jal,
     output logic        ex_is_jalr,
 
@@ -122,6 +125,7 @@ module id_ex_reg (
             ex_mem_unsigned  <= 1'b0;
             ex_is_branch     <= 1'b0;
             ex_branch_cond   <= 3'd0;
+            ex_branch_taken  <= 1'b0;
             ex_is_jal        <= 1'b0;
             ex_is_jalr       <= 1'b0;
             ex_bp_taken      <= 1'b0;
@@ -156,6 +160,7 @@ module id_ex_reg (
             ex_mem_unsigned  <= id_mem_unsigned;
             ex_is_branch     <= id_is_branch;
             ex_branch_cond   <= id_branch_cond;
+            ex_branch_taken  <= id_branch_taken;
             ex_is_jal        <= id_is_jal;
             ex_is_jalr       <= id_is_jalr;
             ex_bp_taken      <= id_bp_taken;

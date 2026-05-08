@@ -62,10 +62,29 @@ puts "========================================================"
 proc step_copy_coe {} {
     upvar coe_src src coe_dst dst coe_name name
     puts ">>> Copying COE files (${name})..."
+    if {![file exists "${src}/irom.coe"]} {
+        error "IROM COE not found: ${src}/irom.coe"
+    }
+    if {![file exists "${src}/dram.coe"]} {
+        error "DRAM COE not found: ${src}/dram.coe"
+    }
+    file mkdir $dst
     file copy -force "${src}/irom.coe" "${dst}/irom.coe"
     file copy -force "${src}/dram.coe" "${dst}/dram.coe"
     write_irom_slot_coes "${dst}/irom.coe" "${dst}/irom_slot0.coe" "${dst}/irom_slot1.coe"
+    verify_copied_coe "${src}/irom.coe" "${dst}/irom.coe" "IROM"
+    verify_copied_coe "${src}/dram.coe" "${dst}/dram.coe" "DRAM"
+    verify_irom_slot_coes "${dst}/irom.coe" "${dst}/irom_slot0.coe" "${dst}/irom_slot1.coe"
     puts ">>> COE copied: [file size ${dst}/irom.coe]B irom, [file size ${dst}/dram.coe]B dram"
+}
+
+proc normalize_coe_word {word} {
+    set word [string trim $word]
+    regsub -nocase {^0x} $word "" word
+    if {![regexp {^[0-9A-Fa-f]+$} $word]} {
+        error "Invalid COE word: ${word}"
+    }
+    return [string toupper [string range "00000000${word}" end-7 end]]
 }
 
 proc read_irom_words {src} {
@@ -88,7 +107,7 @@ proc read_irom_words {src} {
         foreach item [split $line ","] {
             set word [string trim $item]
             if {$word ne ""} {
-                lappend words $word
+                lappend words [normalize_coe_word $word]
             }
         }
     }
@@ -113,11 +132,11 @@ proc write_irom_slot_coe {dst words offset} {
     puts $fp "memory_initialization_radix=16;"
     puts $fp "memory_initialization_vector="
     for {set i 0} {$i < 4096} {incr i} {
-        set src_idx [expr {$i + $offset}]
+        set src_idx [expr {$i * 2 + $offset}]
         if {$src_idx < [llength $words]} {
             set word [string toupper [lindex $words $src_idx]]
         } else {
-            set word "00000000"
+            set word "00000013"
         }
         set word [string range "00000000${word}" end-7 end]
         if {$i == 4095} {
@@ -129,6 +148,54 @@ proc write_irom_slot_coe {dst words offset} {
     close $fp
 }
 
+proc verify_copied_coe {src dst label} {
+    set src_words [read_irom_words $src]
+    set dst_words [read_irom_words $dst]
+    if {[llength $src_words] != [llength $dst_words]} {
+        error "${label} COE length mismatch: source=[llength $src_words], import=[llength $dst_words]"
+    }
+    for {set i 0} {$i < [llength $src_words]} {incr i} {
+        if {[lindex $src_words $i] ne [lindex $dst_words $i]} {
+            error "${label} COE mismatch at word ${i}: source=[lindex $src_words $i], import=[lindex $dst_words $i]"
+        }
+    }
+    puts ">>> COE check OK: ${label} copied ([llength $src_words] words)"
+}
+
+proc verify_irom_slot_coes {irom slot0 slot1} {
+    set words [read_irom_words $irom]
+    set slot_words [list [read_irom_words $slot0] [read_irom_words $slot1]]
+    foreach offset {0 1} {
+        set bank [lindex $slot_words $offset]
+        if {[llength $bank] != 4096} {
+            error "irom_slot${offset}.coe has [llength $bank] words, expected 4096"
+        }
+        for {set i 0} {$i < 4096} {incr i} {
+            set src_idx [expr {$i * 2 + $offset}]
+            if {$src_idx < [llength $words]} {
+                set expected [lindex $words $src_idx]
+            } else {
+                set expected "00000013"
+            }
+            set actual [lindex $bank $i]
+            if {$actual ne $expected} {
+                error "irom_slot${offset}.coe mismatch at bank word ${i} (source word ${src_idx}): expected ${expected}, got ${actual}"
+            }
+        }
+    }
+    puts ">>> COE check OK: IROM slot0=even words, slot1=odd words, NOP padded"
+}
+
+proc verify_ip_coe_binding {ip coe_file} {
+    set actual [get_property CONFIG.Coe_File [get_ips $ip]]
+    set expected_norm [file normalize $coe_file]
+    set actual_norm [file normalize $actual]
+    if {$actual_norm ne $expected_norm} {
+        error "${ip} CONFIG.Coe_File mismatch: expected ${expected_norm}, got ${actual_norm}"
+    }
+    puts ">>> IP check OK: ${ip} -> ${expected_norm}"
+}
+
 proc step_regen_ip {} {
     upvar coe_dst dst
     puts ">>> Regenerating IROM slot banks/DRAM IP..."
@@ -137,6 +204,9 @@ proc step_regen_ip {} {
     ensure_irom_slot_ip IROMEven32 "${dst}/irom_slot0.coe"
     ensure_irom_slot_ip IROMOdd32  "${dst}/irom_slot1.coe"
     set_property CONFIG.Coe_File [file normalize "${dst}/dram.coe"] [get_ips DRAM4MyOwn]
+    verify_ip_coe_binding IROMEven32 "${dst}/irom_slot0.coe"
+    verify_ip_coe_binding IROMOdd32  "${dst}/irom_slot1.coe"
+    verify_ip_coe_binding DRAM4MyOwn "${dst}/dram.coe"
     foreach ip {IROMEven32 IROMOdd32 DRAM4MyOwn} {
         set ip_run "${ip}_synth_1"
         if {[llength [get_runs -quiet $ip_run]] > 0} {
