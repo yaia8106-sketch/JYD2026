@@ -12,6 +12,8 @@ module board_top (
 
     localparam logic [31:0] PASS_LED_PATTERN = 32'h2004_1808;
     localparam logic [31:0] FAIL_LED_PATTERN = 32'h2000_4824;
+    localparam logic [23:0] SELFTEST_DISPLAY = 24'h123456;
+    localparam logic [7:0]  SELFTEST_LED     = 8'b1010_0101;
 
     logic [31:0] virtual_led;
     logic [39:0] virtual_seg;
@@ -32,7 +34,7 @@ module board_top (
     seg6_hex_scan u_display (
         .clk   (clk_50mhz),
         .rst   (rst_sw),
-        .value (rst_sw ? 24'h123456 : virtual_seg[23:0]),
+        .value (rst_sw ? SELFTEST_DISPLAY : virtual_seg[23:0]),
         .seg   (seg),
         .dp    (dp),
         .an    (an)
@@ -47,6 +49,6 @@ module board_top (
                           + {3'b000, pass_tens, 1'b0}
                           + {4'b0000, pass_ones};
 
-    assign led = {pass, fail, pass_count[5:0]};
+    assign led = rst_sw ? SELFTEST_LED : {pass, fail, pass_count[5:0]};
 
 endmodule

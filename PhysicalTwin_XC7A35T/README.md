@@ -18,6 +18,8 @@ The CPU implementation itself is referenced directly from `../02_Design/rtl`, so
 - Seven-segment display: common-anode assumption, segment and digit-select outputs are active low.
 - LEDs: active high.
 
+With reset asserted, the board enters a simple I/O self-test: the six seven-segment digits show `123456`, and the LEDs show `10100101` from left to right.
+
 The six seven-segment digits show the low 24 bits of the runtime counter value written by the program to `SEG_ADDR` (`0x8020_0020`), as six hex digits.
 
 LEDs are mapped left to right as:
@@ -41,6 +43,13 @@ The default COE set is `02_Design/coe/dual_issue/current`. To use another set:
 ```
 
 Generated Vivado files go under `PhysicalTwin_XC7A35T/vivado/`. Generated memory files go under `PhysicalTwin_XC7A35T/generated/`.
+
+After a successful build, `run_build.sh` also exports the bitstream to an English-only path for tools that cannot open the Chinese workspace path:
+
+```text
+/home/anokyai/CPU_Workspace_Artifacts/PhysicalTwin_XC7A35T/board_top.bit
+/home/anokyai/CPU_Workspace_Artifacts/PhysicalTwin_XC7A35T/board_top_dual_issue_current.bit
+```
 
 ## Notes
 
