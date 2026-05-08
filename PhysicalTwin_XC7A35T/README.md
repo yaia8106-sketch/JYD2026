@@ -18,15 +18,17 @@ The CPU implementation itself is referenced directly from `../02_Design/rtl`, so
 - Seven-segment display: common-anode assumption, segment and digit-select outputs are active low.
 - LEDs: active high.
 
-With reset asserted, the board enters a simple I/O self-test: the six seven-segment digits show `123456`, and the LEDs show `10100101` from left to right.
+With reset asserted, the board enters a simple I/O self-test: the six seven-segment digits show `123456`, and the LEDs show `01011010` from left to right.
 
 The six seven-segment digits show the low 24 bits of the runtime counter value written by the program to `SEG_ADDR` (`0x8020_0020`), as six hex digits.
 
-LEDs are mapped left to right as:
+LEDs are mapped left to right as status flags:
 
-- `LED7`: pass pattern observed on the original digital twin LED register.
-- `LED6`: fail pattern observed on the original digital twin LED register.
-- `LED5..LED0`: pass-count value converted from the high BCD byte of the SEG register. All 37 tests passing displays `100101` on these six LEDs.
+- Reset asserted: `01011010`.
+- Boot / pre-counter: `00000001`.
+- Runtime counter enabled: `00000011`.
+- PASS pattern observed on the original digital twin LED register: `10000000`.
+- FAIL pattern observed on the original digital twin LED register: `01000000`.
 
 ## Build
 

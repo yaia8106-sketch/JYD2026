@@ -13,7 +13,11 @@ module board_top (
     localparam logic [31:0] PASS_LED_PATTERN = 32'h2004_1808;
     localparam logic [31:0] FAIL_LED_PATTERN = 32'h2000_4824;
     localparam logic [23:0] SELFTEST_DISPLAY = 24'h123456;
-    localparam logic [7:0]  SELFTEST_LED     = 8'b1010_0101;
+    localparam logic [7:0]  SELFTEST_LED     = 8'b0101_1010;
+    localparam logic [7:0]  BOOT_LED         = 8'b0000_0001;
+    localparam logic [7:0]  RUNNING_LED      = 8'b0000_0011;
+    localparam logic [7:0]  PASS_LED         = 8'b1000_0000;
+    localparam logic [7:0]  FAIL_LED         = 8'b0100_0000;
 
     logic [31:0] virtual_led;
     logic [39:0] virtual_seg;
@@ -42,13 +46,19 @@ module board_top (
 
     wire pass = (virtual_led == PASS_LED_PATTERN);
     wire fail = (virtual_led == FAIL_LED_PATTERN);
+    wire counter_running = virtual_seg[32];
 
-    wire [3:0] pass_tens = virtual_seg[31:28];
-    wire [3:0] pass_ones = virtual_seg[27:24];
-    wire [7:0] pass_count = {1'b0, pass_tens, 3'b000}
-                          + {3'b000, pass_tens, 1'b0}
-                          + {4'b0000, pass_ones};
-
-    assign led = rst_sw ? SELFTEST_LED : {pass, fail, pass_count[5:0]};
+    always_comb begin
+        if (rst_sw)
+            led = SELFTEST_LED;
+        else if (pass)
+            led = PASS_LED;
+        else if (fail)
+            led = FAIL_LED;
+        else if (counter_running)
+            led = RUNNING_LED;
+        else
+            led = BOOT_LED;
+    end
 
 endmodule

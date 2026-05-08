@@ -151,10 +151,45 @@ proc verify_irom_slot_coes {irom slot0 slot1} {
     puts ">>> COE check OK: IROM slot0=even words, slot1=odd words, NOP padded"
 }
 
+proc get_ip_file_dir {ip} {
+    set ip_obj [get_ips $ip]
+    set ip_file ""
+
+    if {[catch {set ip_file [get_property IP_FILE $ip_obj]}]} {
+        set ip_file ""
+    }
+
+    if {$ip_file eq ""} {
+        set matches [get_files -quiet "*${ip}.xci"]
+        if {[llength $matches] > 0} {
+            set ip_file [lindex $matches 0]
+        }
+    }
+
+    if {$ip_file eq ""} {
+        return ""
+    }
+
+    return [file dirname [file normalize $ip_file]]
+}
+
+proc normalize_ip_relative_path {ip path} {
+    if {[file pathtype $path] eq "absolute"} {
+        return [file normalize $path]
+    }
+
+    set ip_dir [get_ip_file_dir $ip]
+    if {$ip_dir eq ""} {
+        return [file normalize $path]
+    }
+
+    return [file normalize [file join $ip_dir $path]]
+}
+
 proc verify_ip_coe_binding {ip coe_file} {
     set actual [get_property CONFIG.Coe_File [get_ips $ip]]
     set expected_norm [file normalize $coe_file]
-    set actual_norm [file normalize $actual]
+    set actual_norm [normalize_ip_relative_path $ip $actual]
     if {$actual_norm ne $expected_norm} {
         die "${ip} CONFIG.Coe_File mismatch: expected ${expected_norm}, got ${actual_norm}"
     }
