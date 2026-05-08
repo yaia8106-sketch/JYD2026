@@ -27,6 +27,12 @@ module perf_monitor (
 
     // -- Stall breakdown --
     integer cnt_load_use_stall;  // load_use_hazard & id_valid
+    integer cnt_load_use_ex;     // load-use caused by load in EX
+    integer cnt_load_use_mem;    // load-use caused only by load in MEM
+    integer cnt_load_use_mem_ready;   // MEM-only load-use while MEM can advance
+    integer cnt_load_use_mem_blocked; // MEM-only load-use hidden by DCache/MEM stall
+    integer cnt_load_use_s0;     // slot0 consumer participates in load-use
+    integer cnt_load_use_s1;     // slot1 consumer participates in load-use
     integer cnt_s1_wb_wait;      // pruned S1_WB forwarding path wait
     integer cnt_dcache_stall;    // ~mem_ready_go & mem_valid
     integer cnt_mmio_stall;      // ~ex_ready_go & ex_valid
@@ -73,6 +79,18 @@ module perf_monitor (
 
     wire        id_ready_go_w   = tb_riscv_tests.u_cpu.u_forwarding.id_ready_go;
     wire        load_use_hazard_w = tb_riscv_tests.u_cpu.u_forwarding.load_use_hazard;
+    wire        load_in_ex_w    = tb_riscv_tests.u_cpu.u_forwarding.load_in_ex;
+    wire        load_in_s1_ex_w = tb_riscv_tests.u_cpu.u_forwarding.load_in_s1_ex;
+    wire        load_in_mem_w   = tb_riscv_tests.u_cpu.u_forwarding.load_in_mem;
+    wire        load_in_s1_mem_w = tb_riscv_tests.u_cpu.u_forwarding.load_in_s1_mem;
+    wire        id_s0_uses_ex_load_w = tb_riscv_tests.u_cpu.u_forwarding.id_s0_uses_ex_load;
+    wire        id_s0_uses_s1_ex_load_w = tb_riscv_tests.u_cpu.u_forwarding.id_s0_uses_s1_ex_load;
+    wire        id_s0_uses_mem_load_w = tb_riscv_tests.u_cpu.u_forwarding.id_s0_uses_mem_load;
+    wire        id_s0_uses_s1_mem_load_w = tb_riscv_tests.u_cpu.u_forwarding.id_s0_uses_s1_mem_load;
+    wire        id_s1_uses_ex_load_w = tb_riscv_tests.u_cpu.u_forwarding.id_s1_uses_ex_load;
+    wire        id_s1_uses_s1_ex_load_w = tb_riscv_tests.u_cpu.u_forwarding.id_s1_uses_s1_ex_load;
+    wire        id_s1_uses_mem_load_w = tb_riscv_tests.u_cpu.u_forwarding.id_s1_uses_mem_load;
+    wire        id_s1_uses_s1_mem_load_w = tb_riscv_tests.u_cpu.u_forwarding.id_s1_uses_s1_mem_load;
     wire        s1_wb_wait_hazard_w = tb_riscv_tests.u_cpu.u_forwarding.s1_wb_wait_hazard;
     wire        ex_ready_go_w   = tb_riscv_tests.u_cpu.ex_ready_go_w;
     wire        mem_ready_go_w  = tb_riscv_tests.u_cpu.mem_ready_go_w;
@@ -114,6 +132,12 @@ module perf_monitor (
             cnt_s0_commit      <= 0;
             cnt_s1_commit      <= 0;
             cnt_load_use_stall <= 0;
+            cnt_load_use_ex    <= 0;
+            cnt_load_use_mem   <= 0;
+            cnt_load_use_mem_ready <= 0;
+            cnt_load_use_mem_blocked <= 0;
+            cnt_load_use_s0    <= 0;
+            cnt_load_use_s1    <= 0;
             cnt_s1_wb_wait     <= 0;
             cnt_dcache_stall   <= 0;
             cnt_mmio_stall     <= 0;
@@ -146,6 +170,24 @@ module perf_monitor (
 
             // Stall
             if (id_valid & load_use_hazard_w)       cnt_load_use_stall <= cnt_load_use_stall + 1;
+            if (id_valid & (load_in_ex_w | load_in_s1_ex_w))
+                cnt_load_use_ex <= cnt_load_use_ex + 1;
+            if (id_valid & ~(load_in_ex_w | load_in_s1_ex_w) & (load_in_mem_w | load_in_s1_mem_w))
+                cnt_load_use_mem <= cnt_load_use_mem + 1;
+            if (id_valid & ~(load_in_ex_w | load_in_s1_ex_w) & (load_in_mem_w | load_in_s1_mem_w) & mem_ready_go_w)
+                cnt_load_use_mem_ready <= cnt_load_use_mem_ready + 1;
+            if (id_valid & ~(load_in_ex_w | load_in_s1_ex_w) & (load_in_mem_w | load_in_s1_mem_w) & ~mem_ready_go_w)
+                cnt_load_use_mem_blocked <= cnt_load_use_mem_blocked + 1;
+            if (id_valid & ((load_in_ex_w & id_s0_uses_ex_load_w)
+                          | (load_in_s1_ex_w & id_s0_uses_s1_ex_load_w)
+                          | (load_in_mem_w & id_s0_uses_mem_load_w)
+                          | (load_in_s1_mem_w & id_s0_uses_s1_mem_load_w)))
+                cnt_load_use_s0 <= cnt_load_use_s0 + 1;
+            if (id_valid & ((load_in_ex_w & id_s1_uses_ex_load_w)
+                          | (load_in_s1_ex_w & id_s1_uses_s1_ex_load_w)
+                          | (load_in_mem_w & id_s1_uses_mem_load_w)
+                          | (load_in_s1_mem_w & id_s1_uses_s1_mem_load_w)))
+                cnt_load_use_s1 <= cnt_load_use_s1 + 1;
             if (id_valid & s1_wb_wait_hazard_w)     cnt_s1_wb_wait     <= cnt_s1_wb_wait + 1;
             if (mem_valid & !mem_ready_go_w) cnt_dcache_stall   <= cnt_dcache_stall + 1;
             if (ex_valid & !ex_ready_go_w)   cnt_mmio_stall     <= cnt_mmio_stall + 1;
@@ -223,6 +265,12 @@ module perf_monitor (
             $display("[PERF]");
             $display("[PERF]  --- Stall Breakdown (cycles) ---");
             $display("[PERF]  Load-use:      %0d", cnt_load_use_stall);
+            $display("[PERF]    EX load:     %0d", cnt_load_use_ex);
+            $display("[PERF]    MEM only:    %0d", cnt_load_use_mem);
+            $display("[PERF]      MEM ready: %0d", cnt_load_use_mem_ready);
+            $display("[PERF]      MEM block: %0d", cnt_load_use_mem_blocked);
+            $display("[PERF]    S0 consumer: %0d", cnt_load_use_s0);
+            $display("[PERF]    S1 consumer: %0d", cnt_load_use_s1);
             $display("[PERF]  S1-WB wait:    %0d", cnt_s1_wb_wait);
             $display("[PERF]  DCache miss:   %0d", cnt_dcache_stall);
             $display("[PERF]  MMIO hazard:   %0d", cnt_mmio_stall);
