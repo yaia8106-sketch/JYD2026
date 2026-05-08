@@ -25,6 +25,8 @@ module branch_unit (
 
     // Flush outputs
     output logic        branch_flush,
+    output logic        redirect_to_target,
+    output logic        redirect_to_fallthrough,
     output logic [31:0] branch_target,    // redirect target (correct PC)
 
     // Actual outcome (for predictor update)
@@ -71,7 +73,9 @@ module branch_unit (
     wire flush_if_taken = ~predicted_taken | target_mismatch;
     wire flush_if_not_taken = predicted_taken;
 
-    assign branch_flush = ex_valid & (actual_taken ? flush_if_taken : flush_if_not_taken);
+    assign redirect_to_target      = ex_valid &  actual_taken & flush_if_taken;
+    assign redirect_to_fallthrough = ex_valid & ~actual_taken & flush_if_not_taken;
+    assign branch_flush = redirect_to_target | redirect_to_fallthrough;
 
     // ---- Flush target (correct next PC) ----
     // Actual taken → redirect to actual target

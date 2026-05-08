@@ -17,7 +17,7 @@
 
 set workspace      "/home/anokyai/桌面/CPU_Workspace"
 set project_path   "${workspace}/JYD2025_Contest-rv32i/digital_twin.xpr"
-set timing_script  "${workspace}/03_Timing_Analysis/scripts/report_stage_timing.tcl"
+set timing_script  "${workspace}/03_Timing_Analysis/report_stage_timing.tcl"
 set coe_dst        "${workspace}/JYD2025_Contest-rv32i/digital_twin.srcs/sources_1/imports/JYD2025/resource/coe"
 
 # ---- Parse arguments ----
@@ -45,6 +45,9 @@ if {![info exists build_jobs]} {
 }
 
 set coe_src "${workspace}/02_Design/coe/${coe_name}"
+if {![file isdirectory $coe_src]} {
+    set coe_src "${workspace}/02_Design/coe/single_issue/${coe_name}"
+}
 set valid_modes {all check synth impl timing coe}
 if {$build_mode ni $valid_modes} {
     puts "ERROR: Unknown mode '$build_mode'. Valid: $valid_modes"

@@ -46,7 +46,8 @@ irom_inst1 = irom_data[63:32]  // inst at PC + 4
 
 ```
 irom_addr = mem_branch_replay  ? mem_branch_target :   // 1. 未被 EX fast redirect 覆盖的 MEM replay
-            ex_branch_redirect ? branch_target :       // 2. EX fast redirect
+            ex_redirect_to_target      ? ex_branch_target_pre :
+            ex_redirect_to_fallthrough ? ex_fallthrough_pc :
             id_bp_redirect_raw ? id_redirect_target :  // 3. NLP ID redirect（raw）
             bp_taken_for_if    ? bp_target_for_if :    // 4. L0 预测 taken
                                   seq_next_pc;         // 5. 顺序（+4/+8）
@@ -55,7 +56,7 @@ irom_addr = mem_branch_replay  ? mem_branch_target :   // 1. 未被 EX fast redi
 `irom_even_addr` / `irom_odd_addr` / `irom_fetch_odd` 各有独立的同优先级 MUX，源头的 bank 地址来自寄存器或短组合计算：
 
 - **MEM replay**：`mem_branch_even_addr_r` / `mem_branch_odd_addr_r`（寄存器）
-- **EX fast redirect**：`branch_target` / `fallthrough_pc` 已在 ID 阶段预计算；EX 从这两个寄存值并行计算 bank 地址，再按 `actual_taken` 选择
+- **EX fast redirect**：`branch_target` / `fallthrough_pc` 已在 ID 阶段预计算；EX 从这两个寄存值并行计算 bank 地址，并用 `redirect_to_target` / `redirect_to_fallthrough` 两个 one-hot 信号直接选择，避免先经过 `actual_taken ? target : fallthrough` 数据 MUX
 - **NLP redirect**：`id_redirect_even_addr` 等（组合计算，路径短）
 - **BP taken**：`bp_even_addr` 等（含 skip_inst0 寄存快照 / held / live 三层 MUX）
 - **sequential**：`seq_even_addr` 等（从 `pc_plus4/8_even_addr` 寄存器中选）
@@ -65,7 +66,7 @@ irom_addr = mem_branch_replay  ? mem_branch_target :   // 1. 未被 EX fast redi
 
 - `pc_plus4/8/12`：寄存器预计算，避免 32-bit 进位链出现在 irom_addr 路径
 - 每个 `pc_plus*` 同时维护对应的 `*_even_addr` / `*_odd_addr` / `*_fetch_odd` 寄存器
-- L0 BP taken 后更新 `pc_plus*_addr` 时，从 `bp_even_addr` / `bp_odd_addr` / `bp_fetch_odd` 推导 `target+4/+8/+12` 的 bank 地址，不再从 32-bit `bp_target + offset` 现场计算
+- L0 BP taken 后更新 `pc_plus*` 时，从 `bp_even_addr` / `bp_odd_addr` / `bp_fetch_odd` 推导 `target+4/+8/+12` 的 bank 地址，并用这些 bank 地址重构 IROM PC，避免 `bp_target + offset` 32-bit 进位链进入 `pc_plus*` 寄存器 D 端
 - `predict_dual`：**寄存的上一周期 `can_dual_fetch`**，用于选择 `seq_next_pc`
   - `seq_next_pc = predict_dual ? pc_plus8 : pc_plus4`
   - 打断了 `can_dual_issue → seq_next_pc → irom_addr → IROM → can_dual_issue` 组合环路
@@ -80,7 +81,7 @@ BRAM 无 output register，流水线 stall 时 `irom_addr` 可能已变。stall 
 - 1×32-bit + valid，单发时暂存未发射的 slot1
 - 下拍 `if_inst0_live = if_skip_inst0 ? irom_inst1 : inst_buf_valid ? inst_buf : irom_inst0`
 - `inst_buf_before_window`：标记 inst_buf 内容在当前 IROM 窗口之前（predict_dual 导致的偏移）
-- `inst_buf_before_window` 只在 `inst_buf_valid_next=1` 时保持；BP 查询 PC 仅在 before-window 情况选择 `inst_buf_pc`，普通 inst_buf 情况查 `pc`，避免 `inst_buf_valid` 进入 BP→IROM 路径
+- 写入 `inst_buf` 时同步保存 `inst_buf_bp_*` 预测快照；before-window 情况直接使用寄存快照，不再用 `inst_buf_before_window` 当拍选择 BP 查询 PC，缩短前端 BP→IROM 路径
 - `inst_buf_valid_next` 不复用完整 `can_dual_issue` MUX 链，而是用 raw/shifted 的 `*_pair_can_dual` 与公共前端 gating 并行组合，缩短 IROM→`inst_buf_valid` 路径
 - Flush / bp_taken / NLP redirect 时清空
 
@@ -88,13 +89,14 @@ BRAM 无 output register，流水线 stall 时 `irom_addr` 可能已变。stall 
 
 `predict_dual` 预测错误（预测单发但实际可双发）时的修正机制：
 
-- 条件：`can_dual_issue & ~predict_dual & (if_pc_out == pc)`（PC 没前进，IROM 窗口重复）
+- 条件：`~predict_dual & (if_pc_out == pc)` 且当前选中的 raw/shifted/held 来源可双发（PC 没前进，IROM 窗口重复）
 - 效果：下拍 `skip_inst0_valid=1`，跳过已发射的 inst0，从 inst1 开始
 - `if_pc_live = skip_inst0 ? pc_plus4 : ...`（修正流水线 PC）
-- BP 查询使用 `bp_pc_live`（不经过 skip_inst0 MUX，避免时序环路）
+- 主 BP 查询固定使用当前 `pc`；skip 和 inst_buf-before-window 分别使用已寄存的预测快照，避免时序环路和 before-window→BP→IROM 串行链
 - 预查 BP：`la_pc = pc_plus8` 提前查询 skip 后的 BP 预测，锁存到 `skip_bp_*_r` 寄存器
-- `bp_live_*` MUX：`skip_inst0 ? skip_bp_*_r : bp_*`（skip 时用寄存快照，零延迟）
+- `bp_live_*` MUX：`skip_inst0 ? skip_bp_*_r : if_buf_before_window ? inst_buf_bp_* : bp_*`
 - `skip_bp_*_r` 每拍采样 lookahead 预测，只有 `skip_inst0_valid` 选择时才消费，避免 `will_skip_inst0` 进入这些寄存器的 CE 关键路径。
+- `will_skip_inst0` 不复用完整 `can_dual_issue` MUX，而是按 raw/shifted/held 三路分别判断后 OR；`if_accept` 只作为 `skip_inst0_valid` 的 CE，不重复进入 D 端，缩短 IROM→`skip_inst0_valid` 路径。
 
 ---
 
@@ -149,8 +151,11 @@ wire raw_pair_raw = raw_inst0_writes_rd & (raw_inst0_rd != 5'd0)
 ### 4.1 L0：IF 级快速预测
 
 - **BTB**：128-entry direct-mapped LUTRAM（tag + target + type + bht[1:0]）
+- **JALR sidecar**：8-entry direct-mapped 小表，专门记录涉及 `x5(t0)` 的 CALL-like / RET-like JALR；它与主 BTB 并行查询，命中时优先使用 sidecar 结果。
 - 方向判断：`bht[1]`（Bimodal 最高位）
 - 关键路径：`PC → LUTRAM → tag compare → bht MUX → irom_addr`
+- `type` 编码：`JAL/CALL/BRANCH` 使用表内 target，`RET` 使用 RAS top。主 BTB 继续服务 branch / JAL / x1 RET；x5 JALR 走 sidecar，避免热 libgcc helper 返回覆盖主 BTB 中的热 JAL/branch。
+- **RAS link-register hints**：`x1(ra)` 和 `x5(t0)` 都作为 link register。`JAL/JALR rd=x1/x5` 视为 CALL 并 push `PC+4`，`JALR rd=x0, rs1=x1/x5` 视为 RET 并 pop。普通非 link JALR 暂不预测。
 
 ### 4.2 L1：ID 级 Tournament 验证（NLP）
 
@@ -188,11 +193,14 @@ id_branch_target_pre = dec_is_jalr ? {id_jalr_target_sum[31:1], 1'b0}
                                    : id_pc_branch_target_sum;
 ```
 
-`id_ex_reg` 额外传递 `ex_branch_target` 和 `ex_fallthrough_pc`。EX 级 `branch_unit` 只做条件比较、预测对比和 `actual_taken ? target_pc : fallthrough_pc` 选择，redirect 路径不再依赖 32-bit 目标加法器。
-EX redirect 的 IROM bank 地址从已打拍的 `ex_branch_target_pre` / `ex_fallthrough_pc` 并行计算，再按 `actual_taken` 选择；bank 地址不进入 ID/EX 寄存器 D 端。
+`id_ex_reg` 额外传递 `ex_branch_target` 和 `ex_fallthrough_pc`。EX 级 `branch_unit` 只做条件比较和预测对比，并输出 `redirect_to_target` / `redirect_to_fallthrough` 两个 one-hot redirect 类型；redirect 路径不再依赖 32-bit 目标加法器。
+EX redirect 的 IROM bank 地址从已打拍的 `ex_branch_target_pre` / `ex_fallthrough_pc` 并行计算，IROM 地址 MUX 直接用 one-hot redirect 类型选择 target 或 fallthrough；bank 地址不进入 ID/EX 寄存器 D 端。
 
 ```systemverilog
-ex_branch_redirect = branch_flush & ~mem_branch_flush & ex_ready_go_w & mem_allowin;
+ex_redirect_fire = ~mem_branch_flush & ex_ready_go_w & mem_allowin;
+ex_redirect_to_target = redirect_to_target & ex_redirect_fire;
+ex_redirect_to_fallthrough = redirect_to_fallthrough & ex_redirect_fire;
+ex_branch_redirect = ex_redirect_to_target | ex_redirect_to_fallthrough;
 mem_branch_replay  = mem_branch_flush & ~fast_branch_redirect_r;
 frontend_branch_flush = mem_branch_replay | ex_branch_redirect;
 ```
@@ -207,11 +215,26 @@ frontend_branch_flush = mem_branch_replay | ex_branch_redirect;
 所有预测器状态（GHR / PHT / BTB / BHT / Selector）在 EX 级更新。
 `ex_valid` 门控 `~mem_branch_flush`，防止错误路径指令污染预测器。
 
-**更新信号寄存一拍**（时序优化）：BTB / PHT / Selector 的 write enable 在 `branch_predictor` 内部经过 pipeline register 延迟 1 拍写入，避免 EX 比较器→写使能的长路径。
+JAL/JALR 分类在 EX 级使用 `x1/x5` link-register 规则：
+
+```systemverilog
+ex_rd_is_link  = (ex_rd == 5'd1) | (ex_rd == 5'd5);
+ex_rs1_is_link = (ex_rs1_addr == 5'd1) | (ex_rs1_addr == 5'd5);
+
+ex_is_jalr_call = ex_is_jalr & ex_rd_is_link;
+ex_is_call      = (ex_is_jal & ex_rd_is_link) | ex_is_jalr_call;
+ex_is_ret       = ex_is_jalr & (ex_rd == 5'd0) & ex_rs1_is_link;
+ex_sidecar_jalr = (ex_is_jalr_call | ex_is_ret)
+                & ((ex_rd == 5'd5) | (ex_rs1_addr == 5'd5));
+```
+
+这覆盖 `src0/src1/src2` 中 libgcc 辅助函数常见的 `jr t0` 返回路径，使其经过一次冷启动后可由 RAS 预测，而不是每次等 EX redirect。软件前缀模型显示，x5 JALR 如果直接写主 BTB 会在 `src1` 覆盖热 JAL；因此当前实现把这类 JALR 放入 sidecar，主 BTB 不被污染。
+
+预测器更新在 EX 同拍写入；普通 IF 读口在时钟沿后自然看到更新后的表项。skip lookahead 与 inst_buf buffered-slot 读口只对轻量 history / PHT / selector 状态做同拍旁路，BTB/JALR target 表使用当前拍读出的快照，不旁路 EX target/update 结果，避免把 EX branch compare 重新接回 `skip_bp_target_r` / `inst_buf_bp_target` 前端寄存器；少数同拍 BTB/JALR 更新会多保留一次旧 skip/buffered 预测，由正常 EX redirect 修正。
 
 ### 4.6 Lookahead 预测（skip_inst0 专用）
 
-BP 额外暴露 `la_*` 端口，用 `la_pc = pc_plus8`（寄存器）提前查询。当 `will_skip_inst0` 成立时，将 lookahead 预测结果锁存到 `skip_bp_*_r` 寄存器组，下拍 skip 时直接使用，无组合延迟。
+BP 额外暴露 `la_*` 端口，用 `la_pc = pc_plus8`（寄存器）提前查询。当 `will_skip_inst0` 成立时，将 lookahead 预测结果锁存到 `skip_bp_*_r` 寄存器组，下拍 skip 时直接使用，无组合延迟。为收敛 200MHz，`la_bp_target/even/odd/fetch_odd` 不再使用 EX 同拍 BTB/JALR target 旁路，避免 `actual_taken`/branch compare 进入 `skip_bp_target_r` D 端；如果刚好错过一个同拍表项更新，最多造成一次旧预测，功能由 EX redirect 保证。
 
 ---
 
@@ -274,8 +297,8 @@ Load-use 和 S1_WB 等待都只对指令实际使用的源操作数生效：
 
 ### 9.1 Flush
 
-- **EX 级**：`branch_unit` 组合产生 `branch_flush`（方向错 / 目标错），时序形态为 `actual_taken ? (~predicted_taken | target_mismatch) : predicted_taken`，让 EX 比较结果作为 late MUX select
-- **EX fast redirect**：`ex_branch_redirect = branch_flush & ~mem_branch_flush & ex_ready_go_w & mem_allowin`
+- **EX 级**：`branch_unit` 组合产生 `redirect_to_target` / `redirect_to_fallthrough`，再 OR 成 `branch_flush`（方向错 / 目标错）
+- **EX fast redirect**：`ex_redirect_fire = ~mem_branch_flush & ex_ready_go_w & mem_allowin`，再分别门控 two one-hot redirect 类型
 - **MEM 级**：`mem_branch_flush` = `ex_branch_redirect` 打拍，用于 DCache/backend cleanup
 - **前端 replay 抑制**：`mem_branch_replay = mem_branch_flush & ~fast_branch_redirect_r`
 - **Flush 范围**：
