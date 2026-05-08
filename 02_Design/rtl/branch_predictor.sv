@@ -29,6 +29,15 @@ module branch_predictor (
     output logic [11:0] bp_even_addr,
     output logic [11:0] bp_odd_addr,
     output logic        bp_fetch_odd,
+    output logic [11:0] bp_plus4_even_addr,
+    output logic [11:0] bp_plus4_odd_addr,
+    output logic        bp_plus4_fetch_odd,
+    output logic [11:0] bp_plus8_even_addr,
+    output logic [11:0] bp_plus8_odd_addr,
+    output logic        bp_plus8_fetch_odd,
+    output logic [11:0] bp_plus12_even_addr,
+    output logic [11:0] bp_plus12_odd_addr,
+    output logic        bp_plus12_fetch_odd,
 
     // Snapshot outputs (pass through pipeline IF→ID→EX for update)
     output logic [ 7:0] bp_ghr_snap,    // GHR at prediction time
@@ -141,6 +150,9 @@ module branch_predictor (
     (* ram_style = "distributed" *) logic [BTB_TAG_W-1:0]  btb_tag   [0:BTB_ENTRIES-1];
     (* ram_style = "distributed" *) logic [BTB_TGT_W-1:0]  btb_tgt   [0:BTB_ENTRIES-1];
     (* ram_style = "distributed" *) logic [11:0]           btb_even  [0:BTB_ENTRIES-1];
+    (* ram_style = "distributed" *) logic [11:0]           btb_p4_even  [0:BTB_ENTRIES-1];
+    (* ram_style = "distributed" *) logic [11:0]           btb_p8_even  [0:BTB_ENTRIES-1];
+    (* ram_style = "distributed" *) logic [11:0]           btb_p12_even [0:BTB_ENTRIES-1];
     (* ram_style = "distributed" *) logic [1:0]            btb_type  [0:BTB_ENTRIES-1];
     (* ram_style = "distributed" *) logic [1:0]            btb_bht   [0:BTB_ENTRIES-1];
 
@@ -151,6 +163,10 @@ module branch_predictor (
     (* ram_style = "distributed" *) logic                  jalr_valid [0:JALR_ENTRIES-1];
     (* ram_style = "distributed" *) logic [JALR_TAG_W-1:0] jalr_tag   [0:JALR_ENTRIES-1];
     (* ram_style = "distributed" *) logic [BTB_TGT_W-1:0]  jalr_tgt   [0:JALR_ENTRIES-1];
+    (* ram_style = "distributed" *) logic [11:0]           jalr_even  [0:JALR_ENTRIES-1];
+    (* ram_style = "distributed" *) logic [11:0]           jalr_p4_even  [0:JALR_ENTRIES-1];
+    (* ram_style = "distributed" *) logic [11:0]           jalr_p8_even  [0:JALR_ENTRIES-1];
+    (* ram_style = "distributed" *) logic [11:0]           jalr_p12_even [0:JALR_ENTRIES-1];
     (* ram_style = "distributed" *) logic [1:0]            jalr_type  [0:JALR_ENTRIES-1];
 
     // ---- GShare ----
@@ -178,6 +194,9 @@ module branch_predictor (
     wire [BTB_TAG_W-1:0]  r_tag   = btb_tag  [if_idx];
     wire [BTB_TGT_W-1:0]  r_tgt   = btb_tgt  [if_idx];
     wire [11:0]           r_even  = btb_even [if_idx];
+    wire [11:0]           r_p4_even  = btb_p4_even  [if_idx];
+    wire [11:0]           r_p8_even  = btb_p8_even  [if_idx];
+    wire [11:0]           r_p12_even = btb_p12_even [if_idx];
     wire [1:0]            r_type  = btb_type [if_idx];
     wire [1:0]            r_bht   = btb_bht  [if_idx];
 
@@ -204,6 +223,10 @@ module branch_predictor (
     wire                  jr_valid = jalr_valid[if_jalr_idx];
     wire [JALR_TAG_W-1:0] jr_tag   = jalr_tag  [if_jalr_idx];
     wire [BTB_TGT_W-1:0]  jr_tgt   = jalr_tgt  [if_jalr_idx];
+    wire [11:0]           jr_even  = jalr_even [if_jalr_idx];
+    wire [11:0]           jr_p4_even  = jalr_p4_even  [if_jalr_idx];
+    wire [11:0]           jr_p8_even  = jalr_p8_even  [if_jalr_idx];
+    wire [11:0]           jr_p12_even = jalr_p12_even [if_jalr_idx];
     wire [1:0]            jr_type  = jalr_type [if_jalr_idx];
 
     wire jr_hit       = jr_valid & (jr_tag == if_jalr_tag);
@@ -247,13 +270,15 @@ module branch_predictor (
                      | ({32{sel_btb}} & {r_tgt, 2'b00})
                      | ({32{sel_ras}} & ras_top);
 
-    wire [11:0] jr_tgt_even_addr = btb_even_bank_addr(jr_tgt);
     wire [11:0] jr_tgt_odd_addr  = btb_odd_bank_addr(jr_tgt);
     wire [11:0] r_tgt_odd_addr  = btb_odd_bank_addr(r_tgt);
     wire [11:0] ras_even_addr   = full_even_bank_addr(ras_top);
     wire [11:0] ras_odd_addr    = full_odd_bank_addr(ras_top);
+    wire [11:0] ras_p4_even_addr  = ras_odd_addr + 12'd1;
+    wire [11:0] ras_p8_even_addr  = ras_even_addr + 12'd1;
+    wire [11:0] ras_p12_even_addr = ras_odd_addr + 12'd2;
 
-    assign bp_even_addr = ({12{sel_jr_btb}} & jr_tgt_even_addr)
+    assign bp_even_addr = ({12{sel_jr_btb}} & jr_even)
                         | ({12{sel_jr_ras}} & ras_even_addr)
                         | ({12{sel_btb}} & r_even)
                         | ({12{sel_ras}} & ras_even_addr);
@@ -265,6 +290,36 @@ module branch_predictor (
                         | (sel_jr_ras & ras_top[2])
                         | (sel_btb & r_tgt[0])
                         | (sel_ras & ras_top[2]);
+
+    assign bp_plus4_even_addr = ({12{sel_jr_btb}} & jr_p4_even)
+                              | ({12{sel_jr_ras}} & ras_p4_even_addr)
+                              | ({12{sel_btb}} & r_p4_even)
+                              | ({12{sel_ras}} & ras_p4_even_addr);
+    assign bp_plus4_odd_addr = ({12{sel_jr_btb}} & jr_even)
+                             | ({12{sel_jr_ras}} & ras_even_addr)
+                             | ({12{sel_btb}} & r_even)
+                             | ({12{sel_ras}} & ras_even_addr);
+    assign bp_plus4_fetch_odd = ~bp_fetch_odd;
+
+    assign bp_plus8_even_addr = ({12{sel_jr_btb}} & jr_p8_even)
+                              | ({12{sel_jr_ras}} & ras_p8_even_addr)
+                              | ({12{sel_btb}} & r_p8_even)
+                              | ({12{sel_ras}} & ras_p8_even_addr);
+    assign bp_plus8_odd_addr = ({12{sel_jr_btb}} & jr_p4_even)
+                             | ({12{sel_jr_ras}} & ras_p4_even_addr)
+                             | ({12{sel_btb}} & r_p4_even)
+                             | ({12{sel_ras}} & ras_p4_even_addr);
+    assign bp_plus8_fetch_odd = bp_fetch_odd;
+
+    assign bp_plus12_even_addr = ({12{sel_jr_btb}} & jr_p12_even)
+                               | ({12{sel_jr_ras}} & ras_p12_even_addr)
+                               | ({12{sel_btb}} & r_p12_even)
+                               | ({12{sel_ras}} & ras_p12_even_addr);
+    assign bp_plus12_odd_addr = ({12{sel_jr_btb}} & jr_p8_even)
+                              | ({12{sel_jr_ras}} & ras_p8_even_addr)
+                              | ({12{sel_btb}} & r_p8_even)
+                              | ({12{sel_ras}} & ras_p8_even_addr);
+    assign bp_plus12_fetch_odd = ~bp_fetch_odd;
 
     // ---- Snapshot outputs ----
     assign bp_ghr_snap = ghr;
@@ -333,6 +388,10 @@ module branch_predictor (
     // Target for BTB entry
     wire [BTB_TGT_W-1:0] ex_wr_tgt = ex_actual_target[31:2];
     wire [11:0] ex_wr_even = btb_even_bank_addr(ex_wr_tgt);
+    wire [11:0] ex_wr_odd = btb_odd_bank_addr(ex_wr_tgt);
+    wire [11:0] ex_wr_p4_even  = ex_wr_odd + 12'd1;
+    wire [11:0] ex_wr_p8_even  = ex_wr_even + 12'd1;
+    wire [11:0] ex_wr_p12_even = ex_wr_odd + 12'd2;
 
     // ---- GShare PHT update (BRANCH only) ----
     wire [GHR_W-1:0] ex_pht_idx = ex_ghr_snap ^ ex_pc[9:2];
@@ -568,6 +627,9 @@ module branch_predictor (
             btb_tag  [ex_idx] <= ex_tag;
             btb_tgt  [ex_idx] <= ex_wr_tgt;
             btb_even [ex_idx] <= ex_wr_even;
+            btb_p4_even [ex_idx] <= ex_wr_p4_even;
+            btb_p8_even [ex_idx] <= ex_wr_p8_even;
+            btb_p12_even[ex_idx] <= ex_wr_p12_even;
             btb_type [ex_idx] <= ex_wr_type;
             btb_bht  [ex_idx] <= ex_wr_bht;
         end
@@ -582,6 +644,10 @@ module branch_predictor (
             jalr_valid[ex_jalr_idx] <= 1'b1;
             jalr_tag  [ex_jalr_idx] <= ex_jalr_tag;
             jalr_tgt  [ex_jalr_idx] <= ex_wr_tgt;
+            jalr_even [ex_jalr_idx] <= ex_wr_even;
+            jalr_p4_even [ex_jalr_idx] <= ex_wr_p4_even;
+            jalr_p8_even [ex_jalr_idx] <= ex_wr_p8_even;
+            jalr_p12_even[ex_jalr_idx] <= ex_wr_p12_even;
             jalr_type [ex_jalr_idx] <= ex_is_jalr_call ? TYPE_CALL : TYPE_RET;
         end
     end

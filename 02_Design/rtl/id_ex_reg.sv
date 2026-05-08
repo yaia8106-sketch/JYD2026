@@ -31,6 +31,8 @@ module id_ex_reg (
     input  logic [31:0] id_alu_src2,       // pre-selected ALU operand 2
     input  logic [31:0] id_rs1_data,       // raw rs1 (for branch comparison)
     input  logic [31:0] id_rs2_data,       // raw rs2 (for branch comparison + store)
+    input  logic        id_rs1_wb_repair,
+    input  logic        id_rs2_wb_repair,
     input  logic [31:0] id_branch_target,  // precomputed taken target
     input  logic [31:0] id_fallthrough_pc, // precomputed PC + 4
     input  logic [ 4:0] id_rd,
@@ -63,6 +65,8 @@ module id_ex_reg (
     output logic [31:0] ex_alu_src2,
     output logic [31:0] ex_rs1_data,
     output logic [31:0] ex_rs2_data,
+    output logic        ex_rs1_wb_repair,
+    output logic        ex_rs2_wb_repair,
     output logic [31:0] ex_branch_target,
     output logic [31:0] ex_fallthrough_pc,
     output logic [ 4:0] ex_rd,
@@ -102,6 +106,8 @@ module id_ex_reg (
             ex_alu_src2      <= 32'd0;
             ex_rs1_data      <= 32'd0;
             ex_rs2_data      <= 32'd0;
+            ex_rs1_wb_repair <= 1'b0;
+            ex_rs2_wb_repair <= 1'b0;
             ex_branch_target <= 32'd0;
             ex_fallthrough_pc <= 32'd0;
             ex_rd            <= 5'd0;
@@ -134,6 +140,8 @@ module id_ex_reg (
             ex_alu_src2      <= id_alu_src2;
             ex_rs1_data      <= id_rs1_data;
             ex_rs2_data      <= id_rs2_data;
+            ex_rs1_wb_repair <= id_rs1_wb_repair;
+            ex_rs2_wb_repair <= id_rs2_wb_repair;
             ex_branch_target <= id_branch_target;
             ex_fallthrough_pc <= id_fallthrough_pc;
             ex_rd            <= id_rd;

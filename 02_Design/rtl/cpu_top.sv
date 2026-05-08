@@ -200,8 +200,11 @@ module cpu_top (
     // ---- Forwarding ----
     wire [31:0] fwd_rs1_data;
     wire [31:0] fwd_rs2_data;
+    wire [31:0] fwd_rs1_jalr_data;
     wire [31:0] fwd_s1_rs1_data;
     wire [31:0] fwd_s1_rs2_data;
+    wire        fwd_rs1_wb_repair;
+    wire        fwd_rs2_wb_repair;
 
     // ---- ALU src MUX (in ID stage) ----
     wire [31:0] id_alu_src1;
@@ -215,6 +218,8 @@ module cpu_top (
     wire [31:0] ex_pc;
     wire [31:0] ex_alu_src1, ex_alu_src2;   // pre-selected in ID
     wire [31:0] ex_rs1_data, ex_rs2_data;   // raw, for branch/store
+    wire        ex_rs1_wb_repair;
+    wire        ex_rs2_wb_repair;
     wire [31:0] ex_branch_target_pre;        // ID-precomputed taken target
     wire [31:0] ex_fallthrough_pc;           // ID-precomputed PC+4
     wire [11:0] ex_branch_target_even_addr;
@@ -259,6 +264,9 @@ module cpu_top (
     wire [31:0] alu_result;
     wire [31:0] alu_sum;               // ALU 加法器直出（跳过 output MUX）
     wire [31:0] alu_addr;              // FIX-A: 独立地址加法器（不依赖 alu_op）
+    wire [31:0] alu_forward_result;     // unrepaired copy for ID forwarding only
+    wire [31:0] alu_forward_sum;
+    wire [31:0] alu_forward_addr;
     wire [31:0] alu_s1_result;
     wire [31:0] alu_s1_sum;
     wire [31:0] alu_s1_addr;
@@ -288,6 +296,7 @@ module cpu_top (
     // ---- Memory interface ----
     wire [ 3:0] dram_wea;
     wire [31:0] mem_load_data;         // MEM stage: from cache (cacheable) or mmio (uncacheable)
+    wire        mem_load_ready;        // ready S0_MEM load can repair S0 ALU in EX
     wire        is_cacheable;          // EX stage: addr in DRAM range
 
     // ---- EX pre-computed ----
@@ -405,13 +414,16 @@ module cpu_top (
     wire [31:0] id_pc_plus_4 = id_pc + 32'd4;
     wire [31:0] id_s1_pc = id_pc_plus_4;
     wire [31:0] id_pc_branch_target_sum = id_pc + id_imm;
-    wire [31:0] id_jalr_target_sum = fwd_rs1_data + id_imm;
+    wire [31:0] id_jalr_target_sum = fwd_rs1_jalr_data + id_imm;
     wire [31:0] id_branch_target_pre = dec_is_jalr ? {id_jalr_target_sum[31:1], 1'b0}
                                                     : id_pc_branch_target_sum;
     wire id_rs1_used = (dec_alu_src1_sel == 2'b00) | dec_is_branch;
     wire id_rs2_used = (dec_alu_src2_sel == 1'b0) | dec_is_branch | dec_mem_write_en;
     wire id_s1_rs1_used = (dec1_alu_src1_sel == 2'b00) | dec1_is_branch;
     wire id_s1_rs2_used = (dec1_alu_src2_sel == 1'b0) | dec1_is_branch | dec1_mem_write_en;
+    wire id_s0_alu_only = dec_reg_write_en & (dec_wb_sel == 2'b00)
+                        & ~dec_mem_read_en & ~dec_mem_write_en
+                        & ~dec_is_branch & ~dec_is_jal & ~dec_is_jalr;
 
     // ---- Cacheable判定 (EX stage, 1 LUT) ----
     // DRAM区域: 0x8010_0000 ~ 0x8013_FFFF → addr[20]=1, addr[21]=0, addr[19:18]=00
@@ -442,6 +454,7 @@ module cpu_top (
     assign dual_issue_cnt_read = (mem_alu_result == DUAL_ISSUE_CNT_ADDR);
     assign mmio_load_data = dual_issue_cnt_read ? dual_issue_count : mmio_rdata;
     assign mem_load_data = is_cacheable_mem ? cache_rdata : mmio_load_data;
+    assign mem_load_ready = mem_ready_go_w & mem_mem_read_en;
 
     // ================================================================
     //  Branch prediction wires
@@ -453,6 +466,15 @@ module cpu_top (
     wire [11:0] bp_target_even_addr;
     wire [11:0] bp_target_odd_addr;
     wire        bp_target_fetch_odd;
+    wire [11:0] bp_target_plus4_even_addr;
+    wire [11:0] bp_target_plus4_odd_addr;
+    wire        bp_target_plus4_fetch_odd;
+    wire [11:0] bp_target_plus8_even_addr;
+    wire [11:0] bp_target_plus8_odd_addr;
+    wire        bp_target_plus8_fetch_odd;
+    wire [11:0] bp_target_plus12_even_addr;
+    wire [11:0] bp_target_plus12_odd_addr;
+    wire        bp_target_plus12_fetch_odd;
     wire [ 7:0] bp_ghr_snap;
     wire        bp_btb_hit;
     wire [ 1:0] bp_btb_type;    // NLP: entry type for ID verification
@@ -523,6 +545,15 @@ module cpu_top (
         .bp_even_addr    (bp_target_even_addr),
         .bp_odd_addr     (bp_target_odd_addr),
         .bp_fetch_odd    (bp_target_fetch_odd),
+        .bp_plus4_even_addr (bp_target_plus4_even_addr),
+        .bp_plus4_odd_addr  (bp_target_plus4_odd_addr),
+        .bp_plus4_fetch_odd (bp_target_plus4_fetch_odd),
+        .bp_plus8_even_addr (bp_target_plus8_even_addr),
+        .bp_plus8_odd_addr  (bp_target_plus8_odd_addr),
+        .bp_plus8_fetch_odd (bp_target_plus8_fetch_odd),
+        .bp_plus12_even_addr(bp_target_plus12_even_addr),
+        .bp_plus12_odd_addr (bp_target_plus12_odd_addr),
+        .bp_plus12_fetch_odd(bp_target_plus12_fetch_odd),
         .bp_ghr_snap     (bp_ghr_snap),
         .bp_btb_hit      (bp_btb_hit),
         .bp_btb_type     (bp_btb_type),     // NLP
@@ -706,15 +737,43 @@ module cpu_top (
                             bp_taken_for_if           ? bp_fetch_odd :
                                                         seq_fetch_odd;
 
-    wire [11:0] bp_plus4_even_addr  = bp_odd_addr + 12'd1;
-    wire [11:0] bp_plus4_odd_addr   = bp_even_addr;
-    wire        bp_plus4_fetch_odd  = ~bp_fetch_odd;
-    wire [11:0] bp_plus8_even_addr  = bp_even_addr + 12'd1;
-    wire [11:0] bp_plus8_odd_addr   = bp_odd_addr + 12'd1;
-    wire        bp_plus8_fetch_odd  = bp_fetch_odd;
-    wire [11:0] bp_plus12_even_addr = bp_odd_addr + 12'd2;
-    wire [11:0] bp_plus12_odd_addr  = bp_even_addr + 12'd1;
-    wire        bp_plus12_fetch_odd = ~bp_fetch_odd;
+    wire [11:0] bp_live_plus4_even_addr = if_skip_inst0 ? (skip_bp_odd_addr_r + 12'd1) :
+                                           if_buf_before_window ? (inst_buf_bp_odd_addr + 12'd1) :
+                                                                  bp_target_plus4_even_addr;
+    wire [11:0] bp_live_plus4_odd_addr  = if_skip_inst0 ? skip_bp_even_addr_r :
+                                           if_buf_before_window ? inst_buf_bp_even_addr :
+                                                                  bp_target_plus4_odd_addr;
+    wire        bp_live_plus4_fetch_odd = if_skip_inst0 ? ~skip_bp_fetch_odd_r :
+                                           if_buf_before_window ? ~inst_buf_bp_fetch_odd :
+                                                                  bp_target_plus4_fetch_odd;
+    wire [11:0] bp_live_plus8_even_addr = if_skip_inst0 ? (skip_bp_even_addr_r + 12'd1) :
+                                           if_buf_before_window ? (inst_buf_bp_even_addr + 12'd1) :
+                                                                  bp_target_plus8_even_addr;
+    wire [11:0] bp_live_plus8_odd_addr  = if_skip_inst0 ? (skip_bp_odd_addr_r + 12'd1) :
+                                           if_buf_before_window ? (inst_buf_bp_odd_addr + 12'd1) :
+                                                                  bp_target_plus8_odd_addr;
+    wire        bp_live_plus8_fetch_odd = if_skip_inst0 ? skip_bp_fetch_odd_r :
+                                           if_buf_before_window ? inst_buf_bp_fetch_odd :
+                                                                  bp_target_plus8_fetch_odd;
+    wire [11:0] bp_live_plus12_even_addr = if_skip_inst0 ? (skip_bp_odd_addr_r + 12'd2) :
+                                            if_buf_before_window ? (inst_buf_bp_odd_addr + 12'd2) :
+                                                                   bp_target_plus12_even_addr;
+    wire [11:0] bp_live_plus12_odd_addr  = if_skip_inst0 ? (skip_bp_even_addr_r + 12'd1) :
+                                            if_buf_before_window ? (inst_buf_bp_even_addr + 12'd1) :
+                                                                   bp_target_plus12_odd_addr;
+    wire        bp_live_plus12_fetch_odd = if_skip_inst0 ? ~skip_bp_fetch_odd_r :
+                                            if_buf_before_window ? ~inst_buf_bp_fetch_odd :
+                                                                   bp_target_plus12_fetch_odd;
+
+    wire [11:0] bp_plus4_even_addr  = irom_held_valid ? (irom_bp_odd_addr_held + 12'd1) : bp_live_plus4_even_addr;
+    wire [11:0] bp_plus4_odd_addr   = irom_held_valid ? irom_bp_even_addr_held : bp_live_plus4_odd_addr;
+    wire        bp_plus4_fetch_odd  = irom_held_valid ? ~irom_bp_fetch_odd_held : bp_live_plus4_fetch_odd;
+    wire [11:0] bp_plus8_even_addr  = irom_held_valid ? (irom_bp_even_addr_held + 12'd1) : bp_live_plus8_even_addr;
+    wire [11:0] bp_plus8_odd_addr   = irom_held_valid ? (irom_bp_odd_addr_held + 12'd1) : bp_live_plus8_odd_addr;
+    wire        bp_plus8_fetch_odd  = irom_held_valid ? irom_bp_fetch_odd_held : bp_live_plus8_fetch_odd;
+    wire [11:0] bp_plus12_even_addr = irom_held_valid ? (irom_bp_odd_addr_held + 12'd2) : bp_live_plus12_even_addr;
+    wire [11:0] bp_plus12_odd_addr  = irom_held_valid ? (irom_bp_even_addr_held + 12'd1) : bp_live_plus12_odd_addr;
+    wire        bp_plus12_fetch_odd = irom_held_valid ? ~irom_bp_fetch_odd_held : bp_live_plus12_fetch_odd;
 
     // pc_plus*: mirror irom_addr MUX priority with precomputed sequential
     // addresses.  Sequential updates select among precomputed values so the
@@ -1249,6 +1308,8 @@ module cpu_top (
         .id_rs2_addr    (id_rs2_addr),
         .id_rs1_used    (id_rs1_used),
         .id_rs2_used    (id_rs2_used),
+        .id_s0_alu_only (id_s0_alu_only),
+        .id_s0_jalr     (dec_is_jalr),
         .rf_rs1_data    (rf_rs1_data),
         .rf_rs2_data    (rf_rs2_data),
         .id_s1_valid    (id_s1_valid & ~id_s1_squash_raw),
@@ -1262,9 +1323,10 @@ module cpu_top (
         .ex_reg_write   (ex_reg_write_en),
         .ex_mem_read    (ex_mem_read_en),
         .ex_rd          (ex_rd),
-        .ex_alu_result  (alu_result),
+        .ex_alu_result  (alu_forward_result),
         .ex_pc_plus_4   (ex_pc_plus_4),
         .ex_wb_sel      (ex_wb_sel),
+        .ex_wb_repair   (ex_rs1_wb_repair | ex_rs2_wb_repair),
         .ex_s1_valid       (ex_s1_valid),
         .ex_s1_reg_write   (ex_s1_reg_write_en),
         .ex_s1_mem_read    (ex_s1_mem_read_en),
@@ -1278,6 +1340,7 @@ module cpu_top (
         .mem_rd         (mem_rd),
         .mem_alu_result (mem_alu_result),
         .mem_pc_plus_4  (mem_pc_plus_4),
+        .mem_load_ready (mem_load_ready),
         .mem_wb_sel     (mem_wb_sel),
         .mem_s1_valid       (mem_s1_valid),
         .mem_s1_reg_write   (mem_s1_reg_write_en),
@@ -1296,8 +1359,11 @@ module cpu_top (
         .wb_s1_write_data  (wb_s1_write_data),
         .id_rs1_data    (fwd_rs1_data),
         .id_rs2_data    (fwd_rs2_data),
+        .id_rs1_jalr_data(fwd_rs1_jalr_data),
         .id_s1_rs1_data (fwd_s1_rs1_data),
         .id_s1_rs2_data (fwd_s1_rs2_data),
+        .id_rs1_wb_repair(fwd_rs1_wb_repair),
+        .id_rs2_wb_repair(fwd_rs2_wb_repair),
         .id_ready_go    (id_ready_go)
     );
 
@@ -1341,6 +1407,8 @@ module cpu_top (
         .id_alu_src2      (id_alu_src2),
         .id_rs1_data      (fwd_rs1_data),
         .id_rs2_data      (fwd_rs2_data),
+        .id_rs1_wb_repair (fwd_rs1_wb_repair),
+        .id_rs2_wb_repair (fwd_rs2_wb_repair),
         .id_branch_target (id_branch_target_pre),
         .id_fallthrough_pc(id_pc_plus_4),
         .id_rd            (id_rd_addr),
@@ -1372,6 +1440,8 @@ module cpu_top (
         .ex_alu_src2      (ex_alu_src2),
         .ex_rs1_data      (ex_rs1_data),
         .ex_rs2_data      (ex_rs2_data),
+        .ex_rs1_wb_repair (ex_rs1_wb_repair),
+        .ex_rs2_wb_repair (ex_rs2_wb_repair),
         .ex_branch_target (ex_branch_target_pre),
         .ex_fallthrough_pc(ex_fallthrough_pc),
         .ex_rd            (ex_rd),
@@ -1449,12 +1519,25 @@ module cpu_top (
     );
 
     // ==================== EX stage ====================
-    // ALU operands come directly from ID/EX_reg (pre-selected in ID)
+    // MEM-ready load consumers repair their S0 ALU operands from WB here.
+    // A separate unrepaired ALU feeds ID forwarding so this late path cannot
+    // become WB->ALU->ID/IF in static timing.
+    wire [31:0] ex_alu_src1_repair = ex_rs1_wb_repair ? wb_write_data : ex_alu_src1;
+    wire [31:0] ex_alu_src2_repair = ex_rs2_wb_repair ? wb_write_data : ex_alu_src2;
 
-    alu u_alu (
+    alu u_alu_forward (
         .alu_op     (ex_alu_op),
         .alu_src1   (ex_alu_src1),
         .alu_src2   (ex_alu_src2),
+        .alu_result (alu_forward_result),
+        .alu_sum    (alu_forward_sum),
+        .alu_addr   (alu_forward_addr)
+    );
+
+    alu u_alu (
+        .alu_op     (ex_alu_op),
+        .alu_src1   (ex_alu_src1_repair),
+        .alu_src2   (ex_alu_src2_repair),
         .alu_result (alu_result),
         .alu_sum    (alu_sum),
         .alu_addr   (alu_addr)

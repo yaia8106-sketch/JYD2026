@@ -33,6 +33,22 @@ module perf_monitor (
     integer cnt_load_use_mem_blocked; // MEM-only load-use hidden by DCache/MEM stall
     integer cnt_load_use_s0;     // slot0 consumer participates in load-use
     integer cnt_load_use_s1;     // slot1 consumer participates in load-use
+    integer cnt_lu_s0_alu;       // S0 load-use where consumer is ordinary ALU
+    integer cnt_lu_s0_branch;    // S0 load-use where consumer is branch compare
+    integer cnt_lu_s0_jalr;      // S0 load-use where consumer is JALR target
+    integer cnt_lu_s0_load_addr; // S0 load-use on load address rs1
+    integer cnt_lu_s0_store_addr;// S0 load-use on store address rs1
+    integer cnt_lu_s0_store_data;// S0 load-use on store data rs2
+    integer cnt_lu_s0_other;     // S0 load-use that did not fit the above
+    integer cnt_lu_mem_ready_s0_alu;
+    integer cnt_lu_mem_ready_s0_branch;
+    integer cnt_lu_mem_ready_s0_jalr;
+    integer cnt_lu_mem_ready_s0_load_addr;
+    integer cnt_lu_mem_ready_s0_store_addr;
+    integer cnt_lu_mem_ready_s0_store_data;
+    integer cnt_lu_mem_ready_s0_other;
+    integer cnt_repair_wait;     // younger consumer waiting for repaired EX ALU result
+    integer cnt_jalr_ex_wait;    // JALR waits for EX/S1_EX producer to reach MEM
     integer cnt_s1_wb_wait;      // pruned S1_WB forwarding path wait
     integer cnt_dcache_stall;    // ~mem_ready_go & mem_valid
     integer cnt_mmio_stall;      // ~ex_ready_go & ex_valid
@@ -91,6 +107,8 @@ module perf_monitor (
     wire        id_s1_uses_s1_ex_load_w = tb_riscv_tests.u_cpu.u_forwarding.id_s1_uses_s1_ex_load;
     wire        id_s1_uses_mem_load_w = tb_riscv_tests.u_cpu.u_forwarding.id_s1_uses_mem_load;
     wire        id_s1_uses_s1_mem_load_w = tb_riscv_tests.u_cpu.u_forwarding.id_s1_uses_s1_mem_load;
+    wire        repair_use_hazard_w = tb_riscv_tests.u_cpu.u_forwarding.repair_use_hazard;
+    wire        jalr_ex_wait_hazard_w = tb_riscv_tests.u_cpu.u_forwarding.jalr_ex_wait_hazard;
     wire        s1_wb_wait_hazard_w = tb_riscv_tests.u_cpu.u_forwarding.s1_wb_wait_hazard;
     wire        ex_ready_go_w   = tb_riscv_tests.u_cpu.ex_ready_go_w;
     wire        mem_ready_go_w  = tb_riscv_tests.u_cpu.mem_ready_go_w;
@@ -123,6 +141,73 @@ module perf_monitor (
     wire fwd_s1_wb  = tb_riscv_tests.u_cpu.u_forwarding.s0_rs1_s1_wb_hit;
     wire fwd_s0_wb  = tb_riscv_tests.u_cpu.u_forwarding.s0_rs1_s0_wb_hit;
 
+    // S0 load-use role classification. These mirrors are simulation-only and
+    // intentionally separate rs1/rs2 so store address/data can be distinguished.
+    wire [4:0] id_rs1_addr_w = tb_riscv_tests.u_cpu.id_rs1_addr;
+    wire [4:0] id_rs2_addr_w = tb_riscv_tests.u_cpu.id_rs2_addr;
+    wire       id_rs1_used_w = tb_riscv_tests.u_cpu.id_rs1_used;
+    wire       id_rs2_used_w = tb_riscv_tests.u_cpu.id_rs2_used;
+    wire [4:0] ex_rd_w       = tb_riscv_tests.u_cpu.ex_rd;
+    wire [4:0] ex_s1_rd_w    = tb_riscv_tests.u_cpu.ex_s1_rd;
+    wire [4:0] mem_rd_w      = tb_riscv_tests.u_cpu.mem_rd;
+    wire       ex_mem_read_w    = tb_riscv_tests.u_cpu.ex_mem_read_en;
+    wire       ex_s1_mem_read_w = tb_riscv_tests.u_cpu.ex_s1_mem_read_en;
+    wire       mem_mem_read_w   = tb_riscv_tests.u_cpu.mem_mem_read_en;
+
+    wire       dec_reg_write_w = tb_riscv_tests.u_cpu.dec_reg_write_en;
+    wire [1:0] dec_wb_sel_w    = tb_riscv_tests.u_cpu.dec_wb_sel;
+    wire       dec_mem_read_w  = tb_riscv_tests.u_cpu.dec_mem_read_en;
+    wire       dec_mem_write_w = tb_riscv_tests.u_cpu.dec_mem_write_en;
+    wire       dec_is_branch_w = tb_riscv_tests.u_cpu.dec_is_branch;
+    wire       dec_is_jal_w    = tb_riscv_tests.u_cpu.dec_is_jal;
+    wire       dec_is_jalr_w   = tb_riscv_tests.u_cpu.dec_is_jalr;
+
+    wire s0_rs1_ex_load_dep = id_rs1_used_w & ex_valid & ex_mem_read_w
+                            & (ex_rd_w != 5'd0) & (ex_rd_w == id_rs1_addr_w);
+    wire s0_rs2_ex_load_dep = id_rs2_used_w & ex_valid & ex_mem_read_w
+                            & (ex_rd_w != 5'd0) & (ex_rd_w == id_rs2_addr_w);
+    wire s0_rs1_s1_ex_load_dep = id_rs1_used_w & tb_riscv_tests.u_cpu.ex_s1_valid & ex_s1_mem_read_w
+                               & (ex_s1_rd_w != 5'd0) & (ex_s1_rd_w == id_rs1_addr_w);
+    wire s0_rs2_s1_ex_load_dep = id_rs2_used_w & tb_riscv_tests.u_cpu.ex_s1_valid & ex_s1_mem_read_w
+                               & (ex_s1_rd_w != 5'd0) & (ex_s1_rd_w == id_rs2_addr_w);
+    wire s0_rs1_mem_load_dep = id_rs1_used_w & mem_valid & mem_mem_read_w
+                             & (mem_rd_w != 5'd0) & (mem_rd_w == id_rs1_addr_w);
+    wire s0_rs2_mem_load_dep = id_rs2_used_w & mem_valid & mem_mem_read_w
+                             & (mem_rd_w != 5'd0) & (mem_rd_w == id_rs2_addr_w);
+
+    wire s0_rs1_load_dep = s0_rs1_ex_load_dep | s0_rs1_s1_ex_load_dep | s0_rs1_mem_load_dep;
+    wire s0_rs2_load_dep = s0_rs2_ex_load_dep | s0_rs2_s1_ex_load_dep | s0_rs2_mem_load_dep;
+    wire s0_load_dep = s0_rs1_load_dep | s0_rs2_load_dep;
+    wire s0_mem_load_dep = s0_rs1_mem_load_dep | s0_rs2_mem_load_dep;
+    wire s0_load_use_event = id_valid & load_use_hazard_w & s0_load_dep;
+    wire s0_mem_ready_event = id_valid & ~(load_in_ex_w | load_in_s1_ex_w)
+                            & s0_mem_load_dep & mem_ready_go_w;
+
+    wire dec_is_ordinary_alu = dec_reg_write_w & (dec_wb_sel_w == 2'b00)
+                             & ~dec_mem_read_w & ~dec_mem_write_w
+                             & ~dec_is_branch_w & ~dec_is_jal_w & ~dec_is_jalr_w;
+
+    wire s0_lu_alu        = s0_load_use_event & dec_is_ordinary_alu;
+    wire s0_lu_branch     = s0_load_use_event & dec_is_branch_w;
+    wire s0_lu_jalr       = s0_load_use_event & dec_is_jalr_w;
+    wire s0_lu_load_addr  = s0_load_use_event & dec_mem_read_w  & s0_rs1_load_dep;
+    wire s0_lu_store_addr = s0_load_use_event & dec_mem_write_w & s0_rs1_load_dep;
+    wire s0_lu_store_data = s0_load_use_event & dec_mem_write_w & s0_rs2_load_dep;
+    wire s0_lu_known      = s0_lu_alu | s0_lu_branch | s0_lu_jalr
+                          | s0_lu_load_addr | s0_lu_store_addr | s0_lu_store_data;
+    wire s0_lu_other      = s0_load_use_event & ~s0_lu_known;
+
+    wire s0_mem_ready_alu        = s0_mem_ready_event & dec_is_ordinary_alu;
+    wire s0_mem_ready_branch     = s0_mem_ready_event & dec_is_branch_w;
+    wire s0_mem_ready_jalr       = s0_mem_ready_event & dec_is_jalr_w;
+    wire s0_mem_ready_load_addr  = s0_mem_ready_event & dec_mem_read_w  & s0_rs1_mem_load_dep;
+    wire s0_mem_ready_store_addr = s0_mem_ready_event & dec_mem_write_w & s0_rs1_mem_load_dep;
+    wire s0_mem_ready_store_data = s0_mem_ready_event & dec_mem_write_w & s0_rs2_mem_load_dep;
+    wire s0_mem_ready_known      = s0_mem_ready_alu | s0_mem_ready_branch
+                                 | s0_mem_ready_jalr | s0_mem_ready_load_addr
+                                 | s0_mem_ready_store_addr | s0_mem_ready_store_data;
+    wire s0_mem_ready_other      = s0_mem_ready_event & ~s0_mem_ready_known;
+
     // ================================================================
     //  Counting logic
     // ================================================================
@@ -138,6 +223,22 @@ module perf_monitor (
             cnt_load_use_mem_blocked <= 0;
             cnt_load_use_s0    <= 0;
             cnt_load_use_s1    <= 0;
+            cnt_lu_s0_alu      <= 0;
+            cnt_lu_s0_branch   <= 0;
+            cnt_lu_s0_jalr     <= 0;
+            cnt_lu_s0_load_addr <= 0;
+            cnt_lu_s0_store_addr <= 0;
+            cnt_lu_s0_store_data <= 0;
+            cnt_lu_s0_other    <= 0;
+            cnt_lu_mem_ready_s0_alu <= 0;
+            cnt_lu_mem_ready_s0_branch <= 0;
+            cnt_lu_mem_ready_s0_jalr <= 0;
+            cnt_lu_mem_ready_s0_load_addr <= 0;
+            cnt_lu_mem_ready_s0_store_addr <= 0;
+            cnt_lu_mem_ready_s0_store_data <= 0;
+            cnt_lu_mem_ready_s0_other <= 0;
+            cnt_repair_wait    <= 0;
+            cnt_jalr_ex_wait   <= 0;
             cnt_s1_wb_wait     <= 0;
             cnt_dcache_stall   <= 0;
             cnt_mmio_stall     <= 0;
@@ -188,6 +289,22 @@ module perf_monitor (
                           | (load_in_mem_w & id_s1_uses_mem_load_w)
                           | (load_in_s1_mem_w & id_s1_uses_s1_mem_load_w)))
                 cnt_load_use_s1 <= cnt_load_use_s1 + 1;
+            if (s0_lu_alu)        cnt_lu_s0_alu        <= cnt_lu_s0_alu + 1;
+            if (s0_lu_branch)     cnt_lu_s0_branch     <= cnt_lu_s0_branch + 1;
+            if (s0_lu_jalr)       cnt_lu_s0_jalr       <= cnt_lu_s0_jalr + 1;
+            if (s0_lu_load_addr)  cnt_lu_s0_load_addr  <= cnt_lu_s0_load_addr + 1;
+            if (s0_lu_store_addr) cnt_lu_s0_store_addr <= cnt_lu_s0_store_addr + 1;
+            if (s0_lu_store_data) cnt_lu_s0_store_data <= cnt_lu_s0_store_data + 1;
+            if (s0_lu_other)      cnt_lu_s0_other      <= cnt_lu_s0_other + 1;
+            if (s0_mem_ready_alu)        cnt_lu_mem_ready_s0_alu        <= cnt_lu_mem_ready_s0_alu + 1;
+            if (s0_mem_ready_branch)     cnt_lu_mem_ready_s0_branch     <= cnt_lu_mem_ready_s0_branch + 1;
+            if (s0_mem_ready_jalr)       cnt_lu_mem_ready_s0_jalr       <= cnt_lu_mem_ready_s0_jalr + 1;
+            if (s0_mem_ready_load_addr)  cnt_lu_mem_ready_s0_load_addr  <= cnt_lu_mem_ready_s0_load_addr + 1;
+            if (s0_mem_ready_store_addr) cnt_lu_mem_ready_s0_store_addr <= cnt_lu_mem_ready_s0_store_addr + 1;
+            if (s0_mem_ready_store_data) cnt_lu_mem_ready_s0_store_data <= cnt_lu_mem_ready_s0_store_data + 1;
+            if (s0_mem_ready_other)      cnt_lu_mem_ready_s0_other      <= cnt_lu_mem_ready_s0_other + 1;
+            if (id_valid & repair_use_hazard_w) cnt_repair_wait <= cnt_repair_wait + 1;
+            if (id_valid & jalr_ex_wait_hazard_w) cnt_jalr_ex_wait <= cnt_jalr_ex_wait + 1;
             if (id_valid & s1_wb_wait_hazard_w)     cnt_s1_wb_wait     <= cnt_s1_wb_wait + 1;
             if (mem_valid & !mem_ready_go_w) cnt_dcache_stall   <= cnt_dcache_stall + 1;
             if (ex_valid & !ex_ready_go_w)   cnt_mmio_stall     <= cnt_mmio_stall + 1;
@@ -271,6 +388,24 @@ module perf_monitor (
             $display("[PERF]      MEM block: %0d", cnt_load_use_mem_blocked);
             $display("[PERF]    S0 consumer: %0d", cnt_load_use_s0);
             $display("[PERF]    S1 consumer: %0d", cnt_load_use_s1);
+            $display("[PERF]    S0 role hits:");
+            $display("[PERF]      ALU:        %0d", cnt_lu_s0_alu);
+            $display("[PERF]      branch:     %0d", cnt_lu_s0_branch);
+            $display("[PERF]      JALR:       %0d", cnt_lu_s0_jalr);
+            $display("[PERF]      load addr:  %0d", cnt_lu_s0_load_addr);
+            $display("[PERF]      store addr: %0d", cnt_lu_s0_store_addr);
+            $display("[PERF]      store data: %0d", cnt_lu_s0_store_data);
+            $display("[PERF]      other:      %0d", cnt_lu_s0_other);
+            $display("[PERF]    MEM-ready S0 role hits:");
+            $display("[PERF]      ALU:        %0d", cnt_lu_mem_ready_s0_alu);
+            $display("[PERF]      branch:     %0d", cnt_lu_mem_ready_s0_branch);
+            $display("[PERF]      JALR:       %0d", cnt_lu_mem_ready_s0_jalr);
+            $display("[PERF]      load addr:  %0d", cnt_lu_mem_ready_s0_load_addr);
+            $display("[PERF]      store addr: %0d", cnt_lu_mem_ready_s0_store_addr);
+            $display("[PERF]      store data: %0d", cnt_lu_mem_ready_s0_store_data);
+            $display("[PERF]      other:      %0d", cnt_lu_mem_ready_s0_other);
+            $display("[PERF]  Repair wait:    %0d", cnt_repair_wait);
+            $display("[PERF]  JALR EX wait:   %0d", cnt_jalr_ex_wait);
             $display("[PERF]  S1-WB wait:    %0d", cnt_s1_wb_wait);
             $display("[PERF]  DCache miss:   %0d", cnt_dcache_stall);
             $display("[PERF]  MMIO hazard:   %0d", cnt_mmio_stall);
