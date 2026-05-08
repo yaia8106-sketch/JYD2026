@@ -75,6 +75,7 @@ module forwarding (
     input  logic        wb_s1_valid,
     input  logic        wb_s1_reg_write,
     input  logic [ 4:0] wb_s1_rd,
+    input  logic [31:0] wb_s1_write_data,
 
     // Outputs
     output logic [31:0] id_rs1_data,
@@ -101,11 +102,11 @@ module forwarding (
     wire TAG``_s0_mem_hit = mem_valid    && mem_reg_write    && !mem_is_load    && (mem_rd    != 5'd0) && (mem_rd    == SRC_ADDR); \
     wire TAG``_s1_wb_hit  = wb_s1_valid  && wb_s1_reg_write  && (wb_s1_rd != 5'd0) && (wb_s1_rd == SRC_ADDR); \
     wire TAG``_s0_wb_hit  = wb_valid     && wb_reg_write     && (wb_rd    != 5'd0) && (wb_rd    == SRC_ADDR); \
-    wire TAG``_s1_wb_wait = TAG``_s1_wb_hit && !TAG``_s1_ex_hit && !TAG``_s0_ex_hit && !TAG``_s1_mem_hit && !TAG``_s0_mem_hit; \
     assign OUT_DATA = TAG``_s1_ex_hit  ? ex_s1_fwd_val    : \
                       TAG``_s0_ex_hit  ? ex_fwd_val       : \
                       TAG``_s1_mem_hit ? mem_s1_fwd_val   : \
                       TAG``_s0_mem_hit ? mem_fwd_val      : \
+                      TAG``_s1_wb_hit  ? wb_s1_write_data : \
                       TAG``_s0_wb_hit  ? wb_write_data    : \
                                           RF_DATA
 
@@ -156,15 +157,11 @@ module forwarding (
 
     wire load_use_hazard = load_in_ex | load_in_s1_ex | load_in_mem | load_in_s1_mem;
 
-    // S1_WB data forwarding is intentionally pruned from the operand MUX.
-    // If no newer EX/MEM value covers the same source, wait one cycle and
-    // let the regfile read the value after Slot1 writes back.
-    wire s1_wb_wait_hazard = (id_rs1_used & s0_rs1_s1_wb_wait)
-                           | (id_rs2_used & s0_rs2_s1_wb_wait)
-                           | (id_s1_valid & id_s1_rs1_used & s1_rs1_s1_wb_wait)
-                           | (id_s1_valid & id_s1_rs2_used & s1_rs2_s1_wb_wait);
+    // S1_WB is forwarded above. Keep this named wire for the perf monitor;
+    // it now reports actual wait cycles, which should be zero for S1_WB hits.
+    wire s1_wb_wait_hazard = 1'b0;
 
-    wire id_hazard = load_use_hazard | s1_wb_wait_hazard;
+    wire id_hazard = load_use_hazard;
     assign id_ready_go = ~id_hazard;
 
 endmodule

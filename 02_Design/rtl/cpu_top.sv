@@ -1293,6 +1293,7 @@ module cpu_top (
         .wb_s1_valid       (wb_s1_valid),
         .wb_s1_reg_write   (wb_s1_reg_write_en),
         .wb_s1_rd          (wb_s1_rd),
+        .wb_s1_write_data  (wb_s1_write_data),
         .id_rs1_data    (fwd_rs1_data),
         .id_rs2_data    (fwd_rs2_data),
         .id_s1_rs1_data (fwd_s1_rs1_data),
