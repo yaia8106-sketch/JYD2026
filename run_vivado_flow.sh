@@ -25,6 +25,7 @@ set -euo pipefail
 # Workspace root and the Vivado TCL driver used by this wrapper.
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TCL_SCRIPT="${ROOT_DIR}/03_Timing_Analysis/run_vivado_flow.tcl"
+VIVADO_WORK_DIR="${VIVADO_WORK_DIR:-${ROOT_DIR}/03_Timing_Analysis/vivado_work}"
 
 # Args:
 #   $1 / COE_NAME : COE program name, e.g. current/src0/src1/src2
@@ -56,12 +57,19 @@ cat <<EOF
   coe       : ${COE_NAME}
   jobs      : ${JOBS}
   vivado    : ${VIVADO}
+  work dir  : ${VIVADO_WORK_DIR}
   flow      : COE/IP -> synth_1 -> impl_1 -> timing report
 ========================================================
 EOF
 
+mkdir -p "${VIVADO_WORK_DIR}"
+
 # Tcl flow:
 #   update COE/IP -> synth_1 -> impl_1 (no bitstream)
 #   -> open_run impl_1 -> source report_stage_timing.tcl
-exec "${VIVADO}" -mode tcl -source "${TCL_SCRIPT}" \
+cd "${VIVADO_WORK_DIR}"
+exec "${VIVADO}" -mode tcl \
+    -journal "${VIVADO_WORK_DIR}/vivado.jou" \
+    -log "${VIVADO_WORK_DIR}/vivado.log" \
+    -source "${TCL_SCRIPT}" \
     -tclargs "${ROOT_DIR}" "${COE_NAME}" "${JOBS}"
