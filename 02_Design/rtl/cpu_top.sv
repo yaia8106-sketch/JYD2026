@@ -232,6 +232,8 @@ module cpu_top (
     // ---- Forwarding ----
     wire [31:0] fwd_rs1_data;
     wire [31:0] fwd_rs2_data;
+    wire [31:0] fwd_branch_rs1_data;
+    wire [31:0] fwd_branch_rs2_data;
     wire [31:0] fwd_rs1_jalr_data;
     wire [31:0] fwd_s1_rs1_data;
     wire [31:0] fwd_s1_rs2_data;
@@ -457,8 +459,13 @@ module cpu_top (
     wire id_s0_alu_only = dec_reg_write_en & (dec_wb_sel == 2'b00)
                         & ~dec_mem_read_en & ~dec_mem_write_en
                         & ~dec_is_branch & ~dec_is_jal & ~dec_is_jalr;
-    wire id_branch_taken_pre = branch_cond_taken(fwd_rs1_data, fwd_rs2_data,
+    wire id_branch_eq = ~|(fwd_rs1_data ^ fwd_rs2_data);
+    wire id_branch_taken_eqne = dec_branch_cond[0] ? ~id_branch_eq : id_branch_eq;
+    wire id_branch_taken_cmp = branch_cond_taken(fwd_branch_rs1_data,
+                                                 fwd_branch_rs2_data,
                                                  dec_branch_cond);
+    wire id_branch_taken_pre = dec_branch_cond[2] ? id_branch_taken_cmp
+                                                  : id_branch_taken_eqne;
 
     // ---- Cacheable判定 (EX stage, 1 LUT) ----
     // DRAM区域: 0x8010_0000 ~ 0x8013_FFFF → addr[20]=1, addr[21]=0, addr[19:18]=00
@@ -652,15 +659,21 @@ module cpu_top (
     wire        can_dual_issue;
     wire        can_dual_fetch;
     logic       predict_dual;
-    wire [31:0] seq_next_pc        = predict_dual ? pc_plus8  : pc_plus4;
-    wire [31:0] seq_next_pc_plus4  = predict_dual ? pc_plus12 : pc_plus8;
+    // Aggressive sequential fetch: normally fetch the next 64-bit window.
+    // When a buffered instruction sits before the current IROM window, the
+    // next unseen window is only +4 from PC no matter whether issue consumes
+    // one or two instructions from the shifted pair.
+    wire        predict_dual_seq = (pc == 32'h7FFF_FFFC) ? 1'b0 :
+                                   if_buf_before_window ? 1'b0 : predict_dual;
+    wire [31:0] seq_next_pc        = predict_dual_seq ? pc_plus8  : pc_plus4;
+    wire [31:0] seq_next_pc_plus4  = predict_dual_seq ? pc_plus12 : pc_plus8;
     wire [31:0] seq_pc_plus16      = pc_plus12 + 32'd4;
     wire [31:0] seq_pc_plus20      = pc_plus12 + 32'd8;
-    wire [31:0] seq_next_pc_plus8  = predict_dual ? seq_pc_plus16 : pc_plus12;
-    wire [31:0] seq_next_pc_plus12 = predict_dual ? seq_pc_plus20 : seq_pc_plus16;
-    wire [11:0] seq_even_addr      = predict_dual ? pc_plus8_even_addr  : pc_plus4_even_addr;
-    wire [11:0] seq_odd_addr       = predict_dual ? pc_plus8_odd_addr   : pc_plus4_odd_addr;
-    wire        seq_fetch_odd      = predict_dual ? pc_plus8_fetch_odd  : pc_plus4_fetch_odd;
+    wire [31:0] seq_next_pc_plus8  = predict_dual_seq ? seq_pc_plus16 : pc_plus12;
+    wire [31:0] seq_next_pc_plus12 = predict_dual_seq ? seq_pc_plus20 : seq_pc_plus16;
+    wire [11:0] seq_even_addr      = predict_dual_seq ? pc_plus8_even_addr  : pc_plus4_even_addr;
+    wire [11:0] seq_odd_addr       = predict_dual_seq ? pc_plus8_odd_addr   : pc_plus4_odd_addr;
+    wire        seq_fetch_odd      = predict_dual_seq ? pc_plus8_fetch_odd  : pc_plus4_fetch_odd;
 
     // NLP: ID-stage Tournament verification (L1)
     // Compares L0 (Bimodal bht[1], used in IF) with L1 (Tournament, computed here)
@@ -1121,37 +1134,21 @@ module cpu_top (
                                if_buf_before_window ? inst_buf_valid_shifted_next :
                                inst_buf_valid_raw_next;
 
-    // Keep the IROM→skip_inst0_valid path off the full can_dual_issue MUX:
-    // skip only needs to know whether the selected source can dual-issue when
-    // predict_dual was low.  if_accept is the register CE below, so it is not
-    // repeated on the D path.
-    wire will_skip_base = ~predict_dual & (if_pc_out == pc) & ~if_skip_out;
-    wire will_skip_raw = will_skip_base
-                       & ~irom_held_valid
-                       & ~if_buf_before_window
-                       & raw_can_dual;
-    wire will_skip_shifted = will_skip_base
-                           & ~irom_held_valid
-                           & if_buf_before_window
-                           & shifted_can_dual;
-    wire will_skip_held = will_skip_base
-                        & irom_held_valid
-                        & held_can_dual_r;
-    wire will_skip_inst0 = will_skip_raw | will_skip_shifted | will_skip_held;
+    // Aggressive fetch starts at the first real instruction, so the old
+    // under-predicted +4 overlap path is no longer needed.
+    wire will_skip_inst0 = 1'b0;
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n)
-            predict_dual <= 1'b0;
+            predict_dual <= 1'b1;
         else if (if_accept & !if_skip_out)
-            predict_dual <= can_dual_fetch;
+            predict_dual <= 1'b1;
     end
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n)
             skip_inst0_valid <= 1'b0;
-        else if (id_flush | if_bp_taken_out | id_bp_redirect_raw)
-            skip_inst0_valid <= 1'b0;
-        else if (if_accept)
+        else
             skip_inst0_valid <= will_skip_inst0;
     end
 
@@ -1345,6 +1342,7 @@ module cpu_top (
         .id_rs2_used    (id_rs2_used),
         .id_s0_alu_only (id_s0_alu_only),
         .id_s0_jalr     (dec_is_jalr),
+        .id_s0_branch_ltge(dec_is_branch & dec_branch_cond[2]),
         .rf_rs1_data    (rf_rs1_data),
         .rf_rs2_data    (rf_rs2_data),
         .id_s1_valid    (id_s1_valid & ~id_s1_squash_raw),
@@ -1394,6 +1392,8 @@ module cpu_top (
         .wb_s1_write_data  (wb_s1_write_data),
         .id_rs1_data    (fwd_rs1_data),
         .id_rs2_data    (fwd_rs2_data),
+        .id_branch_rs1_data(fwd_branch_rs1_data),
+        .id_branch_rs2_data(fwd_branch_rs2_data),
         .id_rs1_jalr_data(fwd_rs1_jalr_data),
         .id_s1_rs1_data (fwd_s1_rs1_data),
         .id_s1_rs2_data (fwd_s1_rs2_data),

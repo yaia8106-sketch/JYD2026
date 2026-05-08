@@ -19,6 +19,7 @@ module forwarding (
     input  logic        id_rs2_used,
     input  logic        id_s0_alu_only,
     input  logic        id_s0_jalr,
+    input  logic        id_s0_branch_ltge,
     input  logic [31:0] rf_rs1_data,
     input  logic [31:0] rf_rs2_data,
 
@@ -84,6 +85,8 @@ module forwarding (
     // Outputs
     output logic [31:0] id_rs1_data,
     output logic [31:0] id_rs2_data,
+    output logic [31:0] id_branch_rs1_data,
+    output logic [31:0] id_branch_rs2_data,
     output logic [31:0] id_rs1_jalr_data,
     output logic [31:0] id_s1_rs1_data,
     output logic [31:0] id_s1_rs2_data,
@@ -126,6 +129,22 @@ module forwarding (
     `FWD_MUX(s1_rs2, id_s1_rs2_addr, rf_s1_rs2_data, id_s1_rs2_data);
 
 `undef FWD_MUX
+
+    // Branch compare is precomputed in ID and then registered into EX.  Keep
+    // the long S1_EX ALU-result path out of that compare; a matching S1_EX
+    // producer stalls for one cycle and is consumed from MEM_S1 instead.
+    assign id_branch_rs1_data = s0_rs1_s0_ex_hit  ? ex_fwd_val       :
+                                s0_rs1_s1_mem_hit ? mem_s1_fwd_val   :
+                                s0_rs1_s0_mem_hit ? mem_fwd_val      :
+                                s0_rs1_s1_wb_hit  ? wb_s1_write_data :
+                                s0_rs1_s0_wb_hit  ? wb_write_data    :
+                                                     rf_rs1_data;
+    assign id_branch_rs2_data = s0_rs2_s0_ex_hit  ? ex_fwd_val       :
+                                s0_rs2_s1_mem_hit ? mem_s1_fwd_val   :
+                                s0_rs2_s0_mem_hit ? mem_fwd_val      :
+                                s0_rs2_s1_wb_hit  ? wb_s1_write_data :
+                                s0_rs2_s0_wb_hit  ? wb_write_data    :
+                                                     rf_rs2_data;
 
     assign id_rs1_jalr_data = s0_rs1_s1_mem_hit ? mem_s1_fwd_val   :
                               s0_rs1_s0_mem_hit ? mem_fwd_val      :
@@ -199,11 +218,16 @@ module forwarding (
                              & ((ex_valid & ex_reg_write & (ex_rd == id_rs1_addr))
                               |  (ex_s1_valid & ex_s1_reg_write & (ex_s1_rd == id_rs1_addr)));
 
+    wire branch_s1_ex_wait_hazard = id_s0_branch_ltge
+                                  & ((id_rs1_used & s0_rs1_s1_ex_hit)
+                                   |  (id_rs2_used & s0_rs2_s1_ex_hit));
+
     // S1_WB is forwarded above. Keep this named wire for the perf monitor;
     // it now reports actual wait cycles, which should be zero for S1_WB hits.
     wire s1_wb_wait_hazard = 1'b0;
 
-    wire id_hazard = load_use_hazard | repair_use_hazard | jalr_ex_wait_hazard;
+    wire id_hazard = load_use_hazard | repair_use_hazard
+                   | jalr_ex_wait_hazard | branch_s1_ex_wait_hazard;
     assign id_ready_go = ~id_hazard;
 
 endmodule
