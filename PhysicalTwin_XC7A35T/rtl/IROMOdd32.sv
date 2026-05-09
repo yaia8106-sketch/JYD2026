@@ -8,17 +8,19 @@ module IROMOdd32 (
     output logic [31:0] douta
 );
 
-    (* rom_style = "block" *) logic [31:0] mem [0:4095];
+    localparam int DEPTH_WORDS = 1024;
+
+    (* rom_style = "distributed" *) logic [31:0] mem [0:DEPTH_WORDS-1];
 
     integer i;
     initial begin
-        for (i = 0; i < 4096; i = i + 1)
+        for (i = 0; i < DEPTH_WORDS; i = i + 1)
             mem[i] = 32'h0000_0013;
         $readmemh(`PT_IROM_SLOT1_MEM, mem);
     end
 
     always_ff @(posedge clka) begin
-        douta <= mem[addra];
+        douta <= (addra < DEPTH_WORDS) ? mem[addra[9:0]] : 32'h0000_0013;
     end
 
 endmodule

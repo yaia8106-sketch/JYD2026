@@ -17,6 +17,10 @@
 - `coe_hotspots.py` 显示 `src0/src1/src2` 热点主要集中在除法/取模风格循环：
   - 独立 slot1 branch 机会较多。
   - `andi ..., 1 -> branch` 这类 ALU-to-branch 紧邻相关也很热。
+- 自有 XC7A35T 物理板 DRAM 只有 48 个 4KiB 物理页（192KiB）可用：
+  - `dual_issue/src1` 已适配，动态页集合为 `0x00..0x2c + 0x34`，可完整放入。
+  - `dual_issue/src0` 不再做适配；完整运行需要 62 个 4KiB 页，细分到 1KiB 仍需 245KiB 级工作集，超过板卡容量。`src0=2589ms` 这类短时间是错误/提前结束路径，不作为性能结果。
+  - `dual_issue/src2` 也超过 48 页，当前板上结果只能作为容量受限实验结果，严格结果需扩展内存或改程序/数据布局。
 
 ## 下一步候选
 

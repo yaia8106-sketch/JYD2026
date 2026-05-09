@@ -49,10 +49,13 @@ From the workspace root:
 The default COE set is `02_Design/coe/dual_issue/current`. To use another set:
 
 ```bash
-./PhysicalTwin_XC7A35T/run_build.sh dual_issue/src0
+./PhysicalTwin_XC7A35T/run_build.sh dual_issue/src1
 ```
 
 Generated Vivado files go under `PhysicalTwin_XC7A35T/vivado/`. Generated memory files go under `PhysicalTwin_XC7A35T/generated/`.
+For physical builds, `prepare_mem.py` also generates a DRAM page map and three
+16K x 32 bank init files so the logical 256 KiB DRAM image can be backed by the
+48 physical pages that fit on the XC7A35T.
 
 After a successful build, `run_build.sh` also exports the bitstream to an English-only path for tools that cannot open the Chinese workspace path:
 
@@ -64,5 +67,11 @@ After a successful build, `run_build.sh` also exports the bitstream to an Englis
 ## Notes
 
 - The physical build runs the CPU at the board clock, 50 MHz. This is the conservative bring-up target; a PLL/MMCM can be added later if this board needs a faster local run.
-- `DRAM4MyOwn` is inferred as 16K x 32, or 64 KiB. The current `dual_issue/current` and `dual_issue/src0/1/2` COE sets only contain 12 initialized DRAM words, so the cropped region contains no non-zero initialization data.
+- `DRAM4MyOwn` uses three inferred 16K x 32 BRAM banks, for 48 physical 4 KiB pages. The logical DRAM address page is remapped through `generated/physical_dram_map.vh`; the per-COE maps in `scripts/prepare_mem.py` pack selected logical pages into those physical pages.
+- Physical-board support status:
+  - `dual_issue/current`: bring-up image; expected to run on the board.
+  - `dual_issue/src1`: supported. Full dynamic DRAM-page trace fits in the 48-page limit (`0x00..0x2c` plus `0x34`).
+  - `dual_issue/src0`: not adapted on this board. It needs 62 logical 4 KiB pages, and even 1 KiB chunk packing still needs 245 chunks versus the 192 KiB physical limit. Short runtimes from this image are invalid early-exit/error-path results.
+  - `dual_issue/src2`: capacity-limited. It needs 56 logical 4 KiB pages, so any current physical-board result must be treated as experimental unless expanded memory or a program/data-layout change is used.
+- `IROMEven32` and `IROMOdd32` are limited to 1024 words each and infer distributed ROM. The current `dual_issue/current` and `dual_issue/src0/1/2` instruction images fit within that depth.
 - Current Vivado DRC reports RAMB async-control warnings because the shared CPU/DCache RTL uses asynchronous reset registers that drive inferred BRAM address pins. This project leaves the CPU RTL unchanged to avoid changing behavior during the board port.

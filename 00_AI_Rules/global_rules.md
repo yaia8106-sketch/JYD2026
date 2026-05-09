@@ -164,10 +164,14 @@ python3 coe_hotspots.py src0 src1 src2 --jobs 18 --max-s0 250000
 
 ```bash
 ./PhysicalTwin_XC7A35T/run_build.sh dual_issue/current
+./PhysicalTwin_XC7A35T/run_build.sh dual_issue/src1
 ```
 
 - 生成文件在 `PhysicalTwin_XC7A35T/vivado/`。
 - 同时导出到英文路径 `/home/anokyai/CPU_Workspace_Artifacts/PhysicalTwin_XC7A35T/`。
+- XC7A35T 物理板 DRAM 当前只有 48 个 4KiB 物理页（192KiB）可用；`current` 和 `src1` 是可用目标。
+- 不再做 `src0` 物理板适配：完整动态工作集超过板上容量，短运行时间是错误/提前结束路径，不能作为性能结果。
+- `src2` 同样超过 48 页，现有物理板结果只能按容量受限实验处理；严格上板需要扩展内存或改程序/数据布局。
 
 ---
 
