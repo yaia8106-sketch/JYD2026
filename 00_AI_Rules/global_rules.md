@@ -213,7 +213,6 @@ python3 coe_hotspots.py src0 src1 src2 --jobs 18 --max-s0 250000
 ## 8. 文档维护
 
 - 当前有效文档包括：`global_rules.md`、`architecture.md`、`tradeoffs*.md`、`TODO.md`、`02_Design/coe/README.md`、`02_Design/sim/riscv_tests/test_coverage.md`、`PhysicalTwin_XC7A35T/README.md`。
-- `archive/` 下文档是历史记录，不要求和当前 RTL 完全一致，不作为当前实现依据。
 - RTL 改动通过回归后，同步更新 `architecture.md`；已否决的实验同步到 `tradeoffs*.md`。
 - 优化待办和 profiling 基线记录在项目根目录 `TODO.md`。
-- 信号名必须与 RTL 一致；当前架构文档只写当前状态，历史原因写入 tradeoff 或 archive。
+- 信号名必须与 RTL 一致；当前架构文档只写当前状态，历史原因和已否决实验写入 `tradeoffs*.md`。

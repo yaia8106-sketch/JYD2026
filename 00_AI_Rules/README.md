@@ -1,6 +1,6 @@
 # 00_AI_Rules
 
-> AI 接入本项目时，按顺序读以下文件。`archive/` 仅作历史存档，不代表当前 RTL。
+> AI 接入本项目时，按顺序读以下文件。历史存档已清理；当前实现依据只看本目录顶层文档和下方列出的工程文档。
 
 ## 阅读顺序
 
@@ -24,8 +24,7 @@
 ├── global_rules.md    ← 全局规则（不随架构变化的约束）
 ├── architecture.md    ← 当前架构（RTL 改动后同步更新）
 ├── tradeoffs_brief.md ← tradeoff 简版（防止重复走弯路）
-├── tradeoffs.md       ← tradeoff 详版（含实验数据）
-└── archive/           ← 旧文档存档（不主动读）
+└── tradeoffs.md       ← tradeoff 详版（含实验数据）
 ```
 
 ## 工作区
