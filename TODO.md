@@ -4,10 +4,11 @@
 
 ## 当前基线
 
-- 当前分支：`opt/perf`。
+- 当前分支：`master`（与 `origin/master` 同步）。
 - RTL 主线保持干净；最近一次保留的 RTL 方向是前端取指/分支预测/forwarding 已收敛版本。
 - `stage_timing_report.txt` 是 Vivado 生成物，已从 git 跟踪中移除；每次以 `./run_vivado_flow.sh current 20` 重新生成。
 - 自有物理板工程在 `PhysicalTwin_XC7A35T/`，CPU RTL 直接引用 `02_Design/rtl`，不维护第二份 CPU 代码。
+- 当前 iverilog 回归入口 `02_Design/sim/riscv_tests/run_all.sh` 覆盖 64 个测试；文档中的历史实验若写 63/63，表示当时测试集规模。
 
 ## 最近结论
 

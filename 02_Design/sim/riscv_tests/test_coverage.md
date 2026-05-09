@@ -4,9 +4,22 @@
 
 ---
 
-## 官方 RV32I 指令测试（37 个）
+## `run_all.sh` 当前覆盖规模
 
-来自 [riscv-tests](https://github.com/riscv-software-src/riscv-tests) `isa/rv32ui/`。
+当前回归入口运行 64 个测试：
+
+- 38 个基础 RV32I/smoke 测试：`simple` + 官方 `rv32ui` 指令测试（去掉 `fence_i`）。
+- 2 个综合访存测试：`ld_st`、`st_ld`。
+- 3 个压力测试：`dcache_stress`、`counter_stress`、`bp_stress`。
+- 21 个自定义双发射 / BP / DCache / RAS 测试。
+
+`riscv-tests/isa/rv32ui/` 中还保留 `ma_data.S`，`work/hex/` 中也有若干只有 hex 生成物的旧测试，但它们不在当前 `run_all.sh` 默认回归集中。
+
+---
+
+## 基础 RV32I 指令测试（38 个）
+
+来自 [riscv-tests](https://github.com/riscv-software-src/riscv-tests) `isa/rv32ui/`，当前默认回归去掉 `fence_i`，保留 `simple` smoke test。
 
 | 分类 | 测试 | 验证内容 |
 |------|------|----------|
@@ -17,7 +30,7 @@
 | Branch | `beq`, `bne`, `blt`, `bge`, `bltu`, `bgeu` | 正向/反向跳转，taken/not-taken，含边界比较 |
 | Jump | `jal`, `jalr` | 跳转 + 链接寄存器写入，含 JALR 低位清零 |
 | Upper | `lui`, `auipc` | 高位立即数加载，AUIPC 相对 PC 计算 |
-| Misc | `simple` | 最小 smoke test |
+| Smoke | `simple` | 最小 smoke test |
 
 每个测试含多个 case，自然产生前递、flush、stall 场景。
 
@@ -32,7 +45,7 @@
 
 ---
 
-## 自定义压力测试（`custom_tests/`）
+## 自定义压力测试
 
 ### dcache_stress.S
 
@@ -60,7 +73,18 @@
 | 4 | 8 个 NOP 后读回 | 流水线排空后 cache 仍有效 |
 | 5 | 函数调用栈操作 + DRAM 读取 | SP 操作与 DRAM 读交错 |
 
-### 双发射基础测试（7 个）
+### bp_stress.S
+
+分支预测压力测试，源码当前保留在 `riscv-tests/isa/rv32ui/bp_stress.S`。
+
+| # | 场景 | 验证重点 |
+|:-:|------|----------|
+| 1 | 简单 tight loop / 嵌套 loop | BHT/PHT 训练后的稳定预测 |
+| 2 | 奇偶交替、相关分支、多路 if-else | 方向模式切换与 selector 行为 |
+| 3 | 多级函数调用、递归、JALR 间接跳转 | BTB / RAS / JALR 预测与返回修正 |
+| 4 | load 后紧邻 branch、长 beqz 链 | load-use、前递、分支 flush 的组合场景 |
+
+### 双发射基础测试（10 个）
 
 | 测试 | 验证重点 |
 |------|----------|
@@ -68,11 +92,14 @@
 | `raw_block` | inst1 读取 inst0 的 rd 时退化单发，计数器不增 |
 | `branch_single` | Slot0 taken branch 后 fall-through 不提交，双发计数器不误增 |
 | `branch_dual` | **Branch+ALU 双发优化**：not-taken branch + ALU 计数器递增；cold taken branch 即使顺序取指也必须杀掉同包 Slot1 |
+| `branch_dual_flush` | Slot0 branch 与 Slot1 ALU 同包时，EX 级误预测 flush 必须同拍杀掉 Slot1，防止错误路径写回 |
+| `branch_fwd_matrix` | Branch 比较操作数来自 S0/S1 各级前递时，方向判断和 redirect 仍正确；覆盖分支比较前递矩阵 |
+| `branch_dual_edge` | 分支双发边界场景：连续 branch/ALU 组合、taken/not-taken 切换和指令缓冲交互 |
 | `waw` | 同周期 WAW 不阻止双发，Slot1 写回优先 |
 | `loaduse_dual` | Slot0 load + 独立 Slot1 ALU 可双发，后续 load-use stall 正确 |
 | `inst_buffer` | 单发时 slot1 进入缓冲，下拍作为 slot0 执行且不丢失 |
 
-### 双发射补充测试（9 个）
+### 双发射补充测试（11 个）
 
 针对基础测试未覆盖的关键盲区，按风险等级补充。
 
@@ -116,13 +143,12 @@
 
 ## 丢失的测试（待重写）
 
-源码已丢失，仅保留 `.dump` 反汇编（在 `work/hex/` 下）。
+源码已丢失，仅保留 `.hex` 生成物（在 `work/hex/` 下）；这些测试不在当前 `run_all.sh` 默认回归集中。
 
-| 测试 | 原始目的 | dump 文件 |
+| 测试 | 原始目的 | 保留生成物 |
 |------|----------|-----------|
-| `bp_stress` | 分支预测压力：简单循环、嵌套循环、交替方向、多级函数调用、JALR 间接跳转、递归、beqz 长链、Fibonacci、混合分支模式 | `rv32ui-p-bp_stress.dump` |
-| `coprime` | 互质计算（GCD 算法），测试深度嵌套分支 + 循环 | `rv32ui-p-coprime.dump` |
-| `dcache_test` | DCache 功能测试（与 dcache_stress 可能重叠） | `rv32ui-p-dcache_test.dump` |
+| `coprime` | 互质计算（GCD 算法），测试深度嵌套分支 + 循环 | `rv32ui-p-coprime.{irom,dram}.hex` |
+| `dcache_test` | DCache 功能测试（与 dcache_stress 可能重叠） | `rv32ui-p-dcache_test.{irom,dram}.hex` |
 
 ---
 
@@ -141,6 +167,8 @@
 | BP 误预测 + 双发射循环 | 中 | ✅ `bp_dual` 覆盖 |
 | Store buffer 冲突 stall | 中 | ✅ `sb_stress` 覆盖 |
 | RAS 溢出（调用深度 > 4） | 低 | ✅ `ras_overflow` 覆盖（6 层嵌套） |
+| Branch 比较前递矩阵 | 高 | ✅ `branch_fwd_matrix` 覆盖 |
+| Branch+Slot1 同拍 flush 边界 | 高 | ✅ `branch_dual_flush` / `branch_dual_edge` 覆盖 |
 | DCache refill 期间 branch flush | 高——曾出 bug | ✅ 架构上不可能：`ex_branch_flush` 被 `mem_allowin` 门控，cache miss 期间 flush 被延迟到 refill 完成后。`dcache_dual` 已隐式覆盖此延迟 flush 行为 |
 | BTB 非分支指令误预测 + Load | 高——曾出 bug | ⚠️ 无法在小测试中复现：BTB alias 需 `PC[13:2]` 完全匹配（16KB 代码间距），小程序无法构造。修复已在 RTL 中（`cache_req` 不门控 `branch_flush`），真实程序上板时隐式覆盖 |
 | FPGA 时序 / 上板约束 | 高 | ❌ 仿真无法覆盖，使用 `./run_vivado_flow.sh` 生成时序报告；物理板使用 `PhysicalTwin_XC7A35T/run_build.sh` |

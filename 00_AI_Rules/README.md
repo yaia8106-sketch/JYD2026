@@ -38,7 +38,7 @@ CPU_Workspace/
 │   ├── coe/               ← 竞赛程序 COE 文件 + 工具脚本
 │   ├── contest_readonly/  ← 赛方原版（禁止修改）
 │   └── sim/
-│       ├── riscv_tests/   ← iverilog 回归测试（63/63 PASS）
+│       ├── riscv_tests/   ← iverilog 回归测试（64/64 PASS 目标）
 │       └── debug/         ← Vivado 调试 TB
 ├── 03_Timing_Analysis/    ← 时序分析 TCL + 报告
 ├── PhysicalTwin_XC7A35T/  ← 自有 XC7A35T 板卡 Vivado 工程封装

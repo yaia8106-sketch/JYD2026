@@ -57,7 +57,7 @@ mem_branch_replay
 
 ### 功能验证
 
-两个可综合版本都做过基础功能验证：
+两个可综合版本都做过基础功能验证（当时 `run_all.sh` 测试集为 63 个；当前主线已扩展为 64 个）：
 
 - `./run_all.sh`：63/63 PASS。
 - `COMMITS=20000 MAX_CYCLES=1000000 WATCHDOG_CYCLES=150000 ./run_coe_diff.sh current src0 src1 src2`：4/4 PASS。

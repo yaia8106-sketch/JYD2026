@@ -99,7 +99,7 @@ cd 02_Design/sim/riscv_tests
 bash run_all.sh
 ```
 
-- 预期结果：**63/63 PASS**（全部 riscv-tests + 自定义双发射/BP/DCache 测试）
+- 预期结果：**64/64 PASS**（`run_all.sh` 当前测试集：基础 RV32I、综合/压力、自定义双发射/BP/DCache/RAS 测试）
 - 依赖：iverilog、`work/hex/*.hex`（已预编译，无需重新 build）
 - 编译产物自动生成在 `work/`，已 gitignore
 

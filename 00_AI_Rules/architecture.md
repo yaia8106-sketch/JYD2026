@@ -381,7 +381,7 @@ always_ff @(posedge clk or negedge rst_n)
 
 | 模块 | 职责 | 关键特征 |
 |------|------|---------|
-| `cpu_top` | 顶层连线 + 控制逻辑 | 无 assign 运算符规则（wiring only） |
+| `cpu_top` | CPU 顶层控制 + 跨模块连线 | 集中前端取指、分支重定向、流水线握手与性能计数器 |
 | `pc_reg` | PC 寄存器 | allowin 门控，flush 优先 |
 | `if_id_reg` | IF/ID 级间寄存器 | 传递 BP snapshot / inst1 / s1_valid |
 | `decoder` ×2 | 指令译码（S0 / S1） | 完整 RV32I 译码 |
