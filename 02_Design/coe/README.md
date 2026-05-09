@@ -10,7 +10,7 @@
 coe/
 ├── single_issue/         ← 单发射（32-bit 顺序 IROM）
 │   ├── current/          ← 当前使用的 COE
-│   │   ├── irom.coe          1272 条指令
+│   │   ├── irom.coe          1271 条指令
 │   │   └── dram.coe
 │   ├── src0/             ← 赛方测试程序
 │   ├── src1/
@@ -19,7 +19,7 @@ coe/
 ├── dual_issue/           ← 双发射（slot0/slot1 两个 BRAM bank）
 │   ├── current/
 │   │   ├── irom_slot0.coe    636 条（偶数地址指令）
-│   │   ├── irom_slot1.coe    636 条（奇数地址指令）
+│   │   ├── irom_slot1.coe    636 条（奇数地址指令，末尾 NOP padding）
 │   │   └── dram.coe
 │   ├── src0/
 │   ├── src1/
@@ -32,8 +32,8 @@ coe/
 
 ## 使用说明
 
-- **双发射架构**使用 `dual_issue/` 下的 `irom_slot0.coe` + `irom_slot1.coe`
-- **单发射架构**使用 `single_issue/` 下的 `irom.coe`
+- **Vivado/上板双发射工程**使用 `dual_issue/` 下的 `irom_slot0.coe` + `irom_slot1.coe`
+- **软件模型与 Iverilog COE 回归**使用 `single_issue/` 下的 `irom.coe`，testbench 内部再模拟双 bank 取指
 - DRAM coe 两种架构通用
 
 ## COE 工具

@@ -60,7 +60,7 @@
 | 4 | 8 个 NOP 后读回 | 流水线排空后 cache 仍有效 |
 | 5 | 函数调用栈操作 + DRAM 读取 | SP 操作与 DRAM 读交错 |
 
-### Phase 3 双发射基础测试（7 个）
+### 双发射基础测试（7 个）
 
 | 测试 | 验证重点 |
 |------|----------|
@@ -72,9 +72,9 @@
 | `loaduse_dual` | Slot0 load + 独立 Slot1 ALU 可双发，后续 load-use stall 正确 |
 | `inst_buffer` | 单发时 slot1 进入缓冲，下拍作为 slot0 执行且不丢失 |
 
-### Phase 4 双发射补充测试（9 个）
+### 双发射补充测试（9 个）
 
-针对 Phase 3 测试未覆盖的关键盲区，按风险等级补充。
+针对基础测试未覆盖的关键盲区，按风险等级补充。
 
 #### 前递与数据通路（3 个）
 
@@ -143,4 +143,4 @@
 | RAS 溢出（调用深度 > 4） | 低 | ✅ `ras_overflow` 覆盖（6 层嵌套） |
 | DCache refill 期间 branch flush | 高——曾出 bug | ✅ 架构上不可能：`ex_branch_flush` 被 `mem_allowin` 门控，cache miss 期间 flush 被延迟到 refill 完成后。`dcache_dual` 已隐式覆盖此延迟 flush 行为 |
 | BTB 非分支指令误预测 + Load | 高——曾出 bug | ⚠️ 无法在小测试中复现：BTB alias 需 `PC[13:2]` 完全匹配（16KB 代码间距），小程序无法构造。修复已在 RTL 中（`cache_req` 不门控 `branch_flush`），真实程序上板时隐式覆盖 |
-| FPGA 时序（WNS = -0.189ns） | 高 | ❌ 仿真无法覆盖，需上板验证 |
+| FPGA 时序 / 上板约束 | 高 | ❌ 仿真无法覆盖，使用 `./run_vivado_flow.sh` 生成时序报告；物理板使用 `PhysicalTwin_XC7A35T/run_build.sh` |

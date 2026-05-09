@@ -2,7 +2,9 @@
 
 Board-only Vivado project wrapper for the JYD2025 digital twin CPU.
 
-This directory owns only the physical-board adaptation:
+This directory owns only the physical-board adaptation.  The UART/digital-twin
+transport is intentionally not used here; switch/key inputs are tied to zero in
+`board_top.sv`.
 
 - `board_top.sv`: XC7A35T board top.
 - `mmio_bridge.sv`: physical-board MMIO display adapter with the same module name/interface used by `student_top`.
@@ -20,13 +22,19 @@ The CPU implementation itself is referenced directly from `../02_Design/rtl`, so
 
 With reset asserted, the board enters a simple I/O self-test: the six seven-segment digits show `123456`, and the LEDs show `01011010` from left to right.
 
-The six seven-segment digits show the low 24 bits of the runtime counter value written by the program to `SEG_ADDR` (`0x8020_0020`), as six hex digits.
+The original digital-twin program writes a 32-bit SEG value to `SEG_ADDR`
+(`0x8020_0020`).  On this 6-digit board, only `SEG[23:0]` is shown as six
+hex-capable digit positions; the current COE program writes packed decimal
+nibbles there, so this appears as the low six decimal digits of the runtime.
+The program's high byte (`SEG[31:24]`, normally the pass-count field on the
+original platform) is preserved internally but is not displayed on the physical
+board.
 
 LEDs are mapped left to right as status flags:
 
 - Reset asserted: `01011010`.
 - Boot / pre-counter: `00000001`.
-- Runtime counter enabled: `00000011`.
+- Runtime counter enabled, based on CNT start/stop writes: `00000011`.
 - PASS pattern observed on the original digital twin LED register: `10000000`.
 - FAIL pattern observed on the original digital twin LED register: `01000000`.
 

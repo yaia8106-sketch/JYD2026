@@ -135,6 +135,42 @@ bash run_vivado_sim.sh
 
 ---
 
+### COE 程序功能/性能检查
+
+```bash
+cd 02_Design/sim/riscv_tests
+MAX_CYCLES=1500000 WATCHDOG_CYCLES=150000 bash run_coe_suite.sh current src0 src1 src2
+COMMITS=50000 MAX_CYCLES=1500000 WATCHDOG_CYCLES=150000 bash run_coe_diff.sh current src0 src1 src2
+python3 cpi_attribution.py current src0 src1 src2 --jobs 18 --max-cyc 2000000 --queue-max-s0 200000
+python3 coe_hotspots.py src0 src1 src2 --jobs 18 --max-s0 250000
+```
+
+- `run_coe_suite.sh`：跑完整 COE 程序到 LED 结果。
+- `run_coe_diff.sh`：对比软件参考模型和 RTL commit trace，适合 RTL 改动后做长前缀正确性检查。
+- `cpi_attribution.py`：软件模型 CPI 归因。
+- `coe_hotspots.py`：动态热 PC 分析，定位分支误预测、load-use、双发阻塞热点。
+
+### Vivado 时序流
+
+```bash
+./run_vivado_flow.sh current 20
+```
+
+- 流程：更新 COE/IP → `synth_1` → `impl_1`（不生成 bitstream）→ `open_run impl_1` → `source report_stage_timing.tcl`。
+- 报告输出：`03_Timing_Analysis/stage_timing_report.txt`。
+- Vivado 工作目录：`03_Timing_Analysis/vivado_work/`，已 gitignore。
+
+### 自有物理板 bitstream
+
+```bash
+./PhysicalTwin_XC7A35T/run_build.sh dual_issue/current
+```
+
+- 生成文件在 `PhysicalTwin_XC7A35T/vivado/`。
+- 同时导出到英文路径 `/home/anokyai/CPU_Workspace_Artifacts/PhysicalTwin_XC7A35T/`。
+
+---
+
 ## 7. 工程卫生
 
 ### 目录职责（不得混放）
@@ -145,7 +181,8 @@ bash run_vivado_sim.sh
 | `02_Design/sim/riscv_tests/` | 回归 TB + 脚本 | 临时调试 TB |
 | `02_Design/sim/debug/` | Vivado 调试 TB | 编译产物 |
 | `02_Design/coe/` | COE 文件 + 工具脚本 | 仿真产物 |
-| `00_AI_Rules/` | global_rules.md, architecture.md | 其他文档 |
+| `00_AI_Rules/` | 当前规则、架构、tradeoff 文档 | 临时实验记录 |
+| `PhysicalTwin_XC7A35T/` | 自有板工程封装和板级文档 | CPU RTL 副本 |
 
 ### 临时/实验性文件
 
@@ -171,6 +208,8 @@ bash run_vivado_sim.sh
 
 ## 8. 文档维护
 
-- 只维护 global_rules.md 和 architecture.md 两个文档，不新建文档文件
-- 优化待办和 profiling 基线记录在项目根目录 `TODO.md`
-- 信号名必须与 RTL 一致，不写规划、不写历史、只写当前状态
+- 当前有效文档包括：`global_rules.md`、`architecture.md`、`tradeoffs*.md`、`TODO.md`、`02_Design/coe/README.md`、`02_Design/sim/riscv_tests/test_coverage.md`、`PhysicalTwin_XC7A35T/README.md`。
+- `archive/` 下文档是历史记录，不要求和当前 RTL 完全一致，不作为当前实现依据。
+- RTL 改动通过回归后，同步更新 `architecture.md`；已否决的实验同步到 `tradeoffs*.md`。
+- 优化待办和 profiling 基线记录在项目根目录 `TODO.md`。
+- 信号名必须与 RTL 一致；当前架构文档只写当前状态，历史原因写入 tradeoff 或 archive。
