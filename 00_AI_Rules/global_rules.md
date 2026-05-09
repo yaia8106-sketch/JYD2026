@@ -90,7 +90,67 @@ end
 
 ---
 
-## 6. 验证流程
+## 6. 性能优化立项门槛
+
+> 2026-05-09 追加：先评估，再修改。禁止先写 RTL 再用脚本证明“也许有用”。
+
+性能目标以**程序运行时间**为准：
+
+```text
+runtime ~= cycles * clock_period
+```
+
+因此 CPI/cycles 只是半个指标。任何降低 CPI 但明显恶化 Fmax/时序收敛的方案，都按运行时间退化处理。
+
+### RTL 修改前必须完成
+
+1. 从干净 `master` 开实验分支，确认 `git status --short` 为空。
+2. 写清楚假设：要改善哪个 benchmark/热点、预期减少哪类 stall 或哪条关键路径、可能伤害哪条路径。
+3. 用脚本拿 baseline，而不是凭感觉：
+   - benchmark cycles：`run_perf.sh` 或 COE suite/diff。
+   - CPI 归因：`cpi_attribution.py` / `coe_hotspots.py`。
+   - 时序相关方案：先跑 Vivado timing，至少确认当前 top critical paths。
+4. 设定淘汰线。没有明确超过门槛的预期，不动 RTL。
+   - cycles/runtime 类优化：预期至少约 `1%` 运行时间收益。
+   - 时序类优化：必须解释预期切断的路径，或预期改善至少约 `0.3ns` WNS。
+   - 大型/流水线切分：必须同时给出 cycles 代价和 Fmax 收益的估算。
+5. 先把评估结论写到 `TODO.md` 或临时 `/tmp/` 报告，再开始 RTL。
+
+### RTL 修改后必须验证
+
+- 功能：`run_all.sh` 必须全通过。
+- 长前缀正确性：涉及前端/分支/访存时，必须跑 `run_coe_diff.sh`。
+- 性能：必须和 baseline cycles/runtime 对比，不能只报“功能通过”。
+- 时序：任何影响 IF/IROM、redirect、DCache ready、forwarding/hazard 的改动都必须跑 Vivado timing。
+- 失败实验必须记录到 `tradeoffs*.md`，再删除实验分支；不要让废案分支长期留在工作区。
+
+### 实验记录归档
+
+脚本结果必须可追溯，避免后续重复跑同一批昂贵实验。
+
+每次正式 profiling / timing / COE diff / 热点分析，都在 `05_Experiment_Records/` 下新建目录：
+
+```text
+05_Experiment_Records/YYYYMMDD_short_topic/
+├── README.md      # 必须提交：目的、baseline、命令、参数、结果摘要、结论
+├── commands.sh    # 必须提交：可复现命令
+├── env.txt        # 必须提交：分支、commit、工具版本、关键环境变量
+└── raw/           # 本地保存：完整 stdout、Vivado 报告、长日志；默认 gitignore
+```
+
+记录内容至少包括：
+
+- 为什么跑：要验证哪个假设、面向哪个 benchmark/热点。
+- 在什么状态跑：branch、commit、是否有 dirty diff、COE 目标、Vivado/iverilog 版本。
+- 怎么跑：完整命令、参数、超时/commit 数、并行度。
+- 得到什么：cycles/CPI/stall/timing/utilization 的关键数字。
+- 结论：继续、淘汰、还是需要补充实验。
+
+默认并行度：本机脚本优先使用 **18 核**，例如 `--jobs 18`、`JOBS=18` 或 `./run_vivado_flow.sh current 18`。如果脚本或 Vivado flow 对并行不稳定，必须在记录中说明实际使用的并行度和原因。
+
+---
+
+## 7. 验证流程
 
 ### 回归测试（RTL 改动后必须跑）
 
@@ -153,7 +213,7 @@ python3 coe_hotspots.py src0 src1 src2 --jobs 18 --max-s0 250000
 ### Vivado 时序流
 
 ```bash
-./run_vivado_flow.sh current 20
+./run_vivado_flow.sh current 18
 ```
 
 - 流程：更新 COE/IP → `synth_1` → `impl_1`（不生成 bitstream）→ `open_run impl_1` → `source report_stage_timing.tcl`。
@@ -175,7 +235,7 @@ python3 coe_hotspots.py src0 src1 src2 --jobs 18 --max-s0 250000
 
 ---
 
-## 7. 工程卫生
+## 8. 工程卫生
 
 ### 目录职责（不得混放）
 
@@ -186,6 +246,7 @@ python3 coe_hotspots.py src0 src1 src2 --jobs 18 --max-s0 250000
 | `02_Design/sim/debug/` | Vivado 调试 TB | 编译产物 |
 | `02_Design/coe/` | COE 文件 + 工具脚本 | 仿真产物 |
 | `00_AI_Rules/` | 当前规则、架构、tradeoff 文档 | 临时实验记录 |
+| `05_Experiment_Records/` | 实验摘要、命令、环境、结论；`raw/` 本地保存完整输出 | RTL 源码、临时脚本 |
 | `PhysicalTwin_XC7A35T/` | 自有板工程封装和板级文档 | CPU RTL 副本 |
 
 ### 临时/实验性文件
@@ -210,7 +271,7 @@ python3 coe_hotspots.py src0 src1 src2 --jobs 18 --max-s0 250000
 
 ---
 
-## 8. 文档维护
+## 9. 文档维护
 
 - 当前有效文档包括：`global_rules.md`、`architecture.md`、`tradeoffs*.md`、`TODO.md`、`02_Design/coe/README.md`、`02_Design/sim/riscv_tests/test_coverage.md`、`PhysicalTwin_XC7A35T/README.md`。
 - RTL 改动通过回归后，同步更新 `architecture.md`；已否决的实验同步到 `tradeoffs*.md`。

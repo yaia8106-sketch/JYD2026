@@ -26,3 +26,24 @@
 
 - 若继续优化分支惩罚，考虑注册化 redirect/FIFO，而不是零周期进 IROM。
 - CPI 优化优先看 load-use、slot1 发射限制、JALR 预测等不直接加长 IROM 地址快路径的方向。
+
+---
+
+## T2. Fetch queue / 伪前端切分不保留
+
+**结论**：不保留 2-entry fetch packet queue 这类“队列补丁式”的前端切分。它没有真正切断 IROM 地址关键路径，反而把取指、预测、redirect、backpressure 耦合得更重。
+
+**实测结果**：
+
+| 对比项 | master | fetch queue 实验 |
+|--------|--------|------------------|
+| 官方 4 项 cycles | `3645` | `3642` |
+| post-route WNS | `+0.049ns` | `-1.015ns` |
+| post-route TNS | `0.000ns` | `-615.607ns` |
+| failing endpoints | `0` | `1192` |
+| Slice LUTs | `8666` | `9082` |
+| Slice Registers | `4743` | `4926` |
+
+**为什么否决**：周期只少 `3 cycles`，但 5ns 时钟下大面积时序失败。按运行时间看，若为了收敛放慢时钟，收益会被时钟周期恶化完全吞掉。
+
+**后续规则**：如果重做前端流水线，必须是真正的 IF1/IF2 寄存边界，并在动 RTL 前估算 `cycles * clock_period`，不能再用队列补丁碰运气。

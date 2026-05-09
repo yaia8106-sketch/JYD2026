@@ -4,7 +4,7 @@
 
 ## 阅读顺序
 
-1. **`global_rules.md`** — 地址映射、赛方约束、BRAM 时序、握手协议、编码规则
+1. **`global_rules.md`** — 地址映射、赛方约束、BRAM 时序、握手协议、编码规则、性能优化立项门槛
 2. **`architecture.md`** — 当前 RTL 的双发射架构描述（从代码反向生成）
 3. **`tradeoffs_brief.md`** — 已否决/已验证 tradeoff 的简短结论
 4. **`TODO.md`** — 当前优化方向、最近分析结论
@@ -42,6 +42,7 @@ CPU_Workspace/
 │       └── debug/         ← Vivado 调试 TB
 ├── 03_Timing_Analysis/    ← 时序分析 TCL + 报告
 ├── PhysicalTwin_XC7A35T/  ← 自有 XC7A35T 板卡 Vivado 工程封装
+├── 05_Experiment_Records/ ← 性能/时序实验摘要、命令、环境和结论归档
 ├── JYD2025_Contest-rv32i/ ← Vivado 工程
 └── riscv-tests/           ← 测试源码（build_tests.sh 依赖）
 ```

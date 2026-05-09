@@ -155,3 +155,135 @@ assign irom_addr = id_actual_redirect_raw ? id_control_redirect_target : ...;
 4. **更保守的分支优化**
    - 继续改预测器表项或 JALR 预测时，要避免新增 IF address critical path。
    - 优先选择注册表项、预计算字段、低 fanout 的修正路径。
+
+---
+
+## T2. Fetch queue / 伪前端切分 vs 运行时间
+
+### 结论
+
+不保留 2-entry fetch packet queue 这类“队列补丁式”的前端切分。
+
+这次实验功能可以通过，但性能收益太小，时序代价太大。它没有真正建立清晰的 IF1/IF2 寄存边界，反而把取指窗口、预测元数据、redirect、IROM backpressure、DCache stall 的控制关系继续耦合在同一片前端逻辑中。
+
+后续如果重做前端流水线，必须先证明：
+
+```text
+new_cycles * new_clock_period < baseline_cycles * baseline_clock_period
+```
+
+不能只看 CPI，也不能只靠“切分流水线应该能提频”的直觉。
+
+### 背景
+
+这次实验来自一个正确的问题：当前程序运行时间受 `cycles` 和 `clock_period` 共同影响。若能通过流水线切分显著提高 Fmax，即使 CPI 略变差，也可能提升真实运行时间。
+
+错误在执行方式：先写了 fetch queue 式 RTL，再用脚本证明收益很小、时序很差。后续规则已经写入 `global_rules.md`：先评估，再修改。
+
+### 实验方案
+
+尝试在 IF 前端加入 2-entry fetch packet queue：
+
+- 队列保存 64-bit fetch window 和预测元数据。
+- 空队列时做 live IROM bypass，避免 redirect 后多一个气泡。
+- 队列非空时 IF 从队首发射。
+- 正常请求 PC 继续尝试顺序 `+8`，队列满时 backpressure。
+- slot1 buffered predicted-taken 时做 late redirect。
+
+表面目标是缓冲 IF/ID backpressure，减少前端气泡；实际效果更接近“在原有关键路径旁边再加一层选择和状态”，并没有把 IROM 地址生成路径从 redirect/backpressure 中切开。
+
+### 功能验证
+
+实验 RTL 曾通过：
+
+- `git diff --check`
+- `run_perf.sh simple`
+- 定向性能/压力用例：`add dual_alu inst_buffer instbuf_stall branch_dual branch_dual_flush bp_dual dcache_dual lh counter_stress bp_stress`
+- `run_all.sh`：64/64 PASS
+- `run_coe_diff.sh`：4/4 PASS，2000 commits match
+
+完整 `run_coe_suite.sh current src0 src1 src2` 曾尝试运行，但 `current` 时间过长后被终止；不作为通过或失败结论。
+
+### cycles 数据
+
+官方 4 项 perf：
+
+| 测试 | master cycles | fetch queue cycles | 改善 |
+|------|---------------|--------------------|------|
+| `bp_stress` | 2009 | 2006 | -3 |
+| `dcache_stress` | 1135 | 1135 | 0 |
+| `counter_stress` | 389 | 389 | 0 |
+| `sb_stress` | 112 | 112 | 0 |
+| **合计** | **3645** | **3642** | **-3** |
+
+总收益约 `0.08%`，低于任何值得冒险的 RTL 结构改动门槛。
+
+### 时序数据
+
+为避开 Vivado run manager 卡住的问题，使用同一套 direct in-memory Vivado flow 对 master 和实验版做相对比较。该 flow 复用同一批 IP/OOC 产物，不作为官方提交报告，但适合比较两版 RTL 的相对时序风险。
+
+| 对比项 | master | fetch queue 实验 |
+|--------|--------|------------------|
+| post-route WNS | `+0.049ns` | `-1.015ns` |
+| post-route TNS | `0.000ns` | `-615.607ns` |
+| failing endpoints | `0` | `1192` |
+| Slice LUTs | `8666` | `9082` |
+| Slice Registers | `4743` | `4926` |
+
+master 最差路径：
+
+```text
+u_cpu/u_id_ex_reg/ex_alu_src1_reg[5]/C
+-> u_cpu/u_id_ex_reg/ex_branch_taken_reg/D
+Slack: +0.049ns
+```
+
+fetch queue 实验最差路径：
+
+```text
+u_dcache/mem_tag_reg[0]/C
+-> u_irom_slot1/.../RAMB36E1/ADDRARDADDR[3]
+Slack: -1.015ns
+Data path delay: 5.490ns
+Route: 4.880ns (88.889%)
+```
+
+这说明前端地址路径不只是逻辑级数问题，还被跨模块控制和布线压力拖垮。队列增加的状态与选择没有切断关键路径，反而让路由更难。
+
+### 为什么否决
+
+这次实验同时违反两个性能判断：
+
+1. cycles 几乎没降：官方 4 项只少 `3 cycles`。
+2. clock period 必然变差：5ns 目标下 WNS 从正裕量变成 `-1.015ns`，且 TNS 大面积失败。
+
+如果为了让实验版收敛而放慢时钟，哪怕粗略按 `5.000ns -> 6.015ns` 估算，时钟周期会恶化约 20%。这会完全吞掉 `0.08%` 的 cycles 收益。
+
+### 当前决策
+
+不保留本次 RTL 改动，不保留实验分支。
+
+不要恢复以下方向：
+
+- 在现有 IF 逻辑旁边补一个小 fetch queue，却仍让 redirect/backpressure/IROM request 当拍互相影响。
+- 用 live IROM bypass + queue head MUX 叠加在现有前端上，试图在不重画阶段边界的情况下获得流水线收益。
+- 未先估算收益门槛就写大块 RTL。
+
+### 后续可行方向
+
+1. **真正的 IF1/IF2 切分**
+   - IF1 只负责 next request PC / bank address。
+   - IF2 接收上一拍 IROM response 和预测快照。
+   - redirect/flush 明确跨寄存边界传播。
+   - 先估算新增 bubble，再估算 Fmax 收益。
+
+2. **先做 CPI/stall 归因**
+   - 使用 `cpi_attribution.py` 和 `coe_hotspots.py` 找真实大头。
+   - 没有约 `1%` 运行时间收益预期，不写 RTL。
+
+3. **避免 IF/IROM 快路径加逻辑**
+   - 新预测器字段、branch 修正、inst buffer 控制都不能未经评估进入 `irom_addr` / bank address 快路径。
+
+4. **失败实验要快速关停**
+   - 功能通过不等于值得保留。
+   - cycles、timing、资源任一项明显低于门槛，就记录到 tradeoff，然后删除分支。
