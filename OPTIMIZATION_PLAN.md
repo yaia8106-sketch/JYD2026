@@ -30,7 +30,7 @@
 
 ## V1 设计契约：Slot1 Conditional Branch
 
-当前实现状态：最小功能版已落地在 `cpu_top.sv`，`riscv-tests` 65/65 功能回归通过。V1 暂不增加 slot1 branch predictor update，taken branch 通过 MEM replay 风格延迟 redirect 修正前端。
+当前实现状态：最小功能版已落地在 `cpu_top.sv`，`riscv-tests` 65/65 功能回归通过。V1 明确不增加 slot1 branch predictor update，taken branch 通过 MEM replay 风格延迟 redirect 修正前端。
 
 ### 目标
 
@@ -114,15 +114,17 @@ slot0 redirect 发生时：
 
 ### 预测器更新
 
-第一版可以不让 IF L0 预测 slot1 branch 的方向；slot1 branch 在 EX/MEM 发现 taken 后 redirect，not-taken 不 redirect。
+V1 决策：不做 slot1 branch predictor update。
 
-更新策略：
+原因：
 
-- slot1 branch 可以更新 BHT/PHT/selector/BTB，但必须 valid gating。
-- slot0 redirect 或 flush 杀掉的 slot1 branch 不能更新预测器。
-- 第一版若为了降低接口风险，也可以暂不更新 slot1 branch 预测器；这会牺牲后续同 PC 的预测收益，但功能正确。若这样做，文档和 perf 结论必须明确。
+- 现有 `branch_predictor` 只有一个 EX update 来源，且 IF/ID -> ID/EX 只流水化 slot0 的 BP snapshot。
+- slot1 branch 若要正确更新 BHT/PHT/selector/BTB，需要把 slot1 自己的 `PC+4` snapshot 一路带到 EX。raw、shifted、held、inst_buf-before-window 路径都要保证 snapshot 与 S1 指令严格对应。
+- 发射规则已经禁止 `slot0 control + slot1 branch`，所以同周期 slot0/slot1 两个 branch update 冲突不是主要问题；主要成本是新增 S1 BP metadata 管线和 update 选择逻辑。
+- 收益只覆盖“同一 slot1 branch 反复 taken 后仍能被 L0/L1 预测”这类路径；当前 V1 功能正确，taken 由 MEM replay 修正。
+- 该改动会触及前端 metadata、预测器 update、GHR snapshot 和 selector 训练路径；在没有 profiling 证明收益前，不值得把 V1 复杂化。
 
-更稳妥的第一版：增加 slot1 branch 更新通道前，先只做功能 redirect；确认功能后再决定是否复用/仲裁 `branch_predictor` EX update 口。
+后续若 profiling 显示 slot1 taken branch 是热点，再单独做 V2：给 S1 增加 BP snapshot 管线，复用单 update 口做 slot0 优先 / S1 次优先仲裁，并单独跑功能、前缀、性能和时序验证。
 
 ### 写回与计数器
 
@@ -137,8 +139,8 @@ slot1 branch 不写 rd，`reg_write_en=0`，`wb_sel` 不产生可见副作用。
 - `cpu_top.sv`：slot1 发射判定、raw/shifted/held pair 规则、slot1 branch compare/target/redirect、flush 优先级。
 - `id_ex_reg_s1.sv`：branch metadata 已基本传递；优先复用 `alu_s1_result` 作为 target，避免新增 imm/target 寄存器。
 - `ex_mem_reg_s1.sv`：必要时承载 slot1 branch redirect metadata。
-- `branch_predictor.sv`：若启用 slot1 branch update，需要新增或仲裁更新口。
-- `perf_monitor.sv`：可选，增加 slot1 branch 发射/提交统计。
+- `branch_predictor.sv`：V1 不改；slot1 branch update 延后到有 profiling 证据的 V2。
+- `perf_monitor.sv`：V1 不改；若后续要判断 predictor update 收益，再增加 slot1 branch 发射/提交/taken 统计。
 - `test_coverage.md` 和新增/更新测试：覆盖 slot1 branch not-taken/taken、slot0 flush 优先级、load-use stall、inst_buf 清空。
 
 ## 后续候选：Slot1 LSU
@@ -175,5 +177,5 @@ pair_struct_ok && operands_ready
 
 ## 当前下一步
 
-1. 评估是否给 `branch_predictor` 增加 slot1 update 仲裁；若不做，保留 V1 功能正确、预测收益欠缺的结论。
-2. 进入 slot1 LSU 前，先列出 load/store 双发对 DCache、forwarding、load-use 和 WAW 优先级的接口改动清单。
+1. 进入 slot1 LSU 前，先列出 load/store 双发对 DCache、forwarding、load-use 和 WAW 优先级的接口改动清单。
+2. 根据接口清单决定 slot1 LSU 是否拆成 load-only / store-only / load+store 三个阶段推进。
