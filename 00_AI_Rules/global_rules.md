@@ -1,6 +1,6 @@
 # 全局规则
 
-> AI 每次新会话必读。本文件定义不随架构变化的约束和规范。
+> 需要熟悉工程或修改 RTL 时先读。本文件定义不随架构变化的约束和规范。
 
 ---
 
@@ -93,6 +93,7 @@ end
 ## 6. 性能优化立项门槛
 
 > 2026-05-09 追加：先评估，再修改。禁止先写 RTL 再用脚本证明“也许有用”。
+> 这些脚本是按需入口，不是新会话或“熟悉工程”时的默认动作；只有用户要求、准备做性能 RTL 改动，或需要验证已完成修改时才运行。
 
 性能目标以**程序运行时间**为准：
 
@@ -106,7 +107,7 @@ runtime ~= cycles * clock_period
 
 1. 从干净 `master` 开实验分支，确认 `git status --short` 为空。
 2. 写清楚假设：要改善哪个 benchmark/热点、预期减少哪类 stall 或哪条关键路径、可能伤害哪条路径。
-3. 用脚本拿 baseline，而不是凭感觉：
+3. 对性能 RTL 改动，用脚本或已有记录拿 baseline，而不是凭感觉：
    - benchmark cycles：`run_perf.sh` 或 COE suite/diff。
    - 更细的 CPI/热点归因：优先用临时 `/tmp/` 分析脚本，不把一次性评估脚本放进仓库。
    - 时序相关方案：先跑 Vivado timing，至少确认当前 top critical paths。
@@ -116,12 +117,12 @@ runtime ~= cycles * clock_period
    - 大型/流水线切分：必须同时给出 cycles 代价和 Fmax 收益的估算。
 5. 先把评估结论写到 `OPTIMIZATION_STATUS.md` 或临时 `/tmp/` 报告，再开始 RTL。
 
-### RTL 修改后必须验证
+### RTL 修改后验证
 
-- 功能：`run_all.sh` 必须全通过。
-- 长前缀正确性：涉及前端/分支/访存时，必须跑 `run_coe_diff.sh`。
-- 性能：必须和 baseline cycles/runtime 对比，不能只报“功能通过”。
-- 时序：任何影响 IF/IROM、redirect、DCache ready、forwarding/hazard 的改动都必须跑 Vivado timing。
+- 功能：改 RTL 后运行 `run_all.sh`，目标是全通过。
+- 长前缀正确性：涉及前端/分支/访存时，运行 `run_coe_diff.sh`。
+- 性能：性能相关改动需要和 baseline cycles/runtime 对比，不能只报“功能通过”。
+- 时序：任何影响 IF/IROM、redirect、DCache ready、forwarding/hazard 的改动需要跑 Vivado timing。
 - 失败实验只在 `OPTIMIZATION_STATUS.md` 里保留短结论；删除实验分支，不在仓库中维护长实验归档。
 
 ### 实验记录策略
@@ -134,7 +135,7 @@ runtime ~= cycles * clock_period
 
 ## 7. 验证流程
 
-### 回归测试（RTL 改动后必须跑）
+### 回归测试（仅在 RTL 改动后或用户要求时运行）
 
 ```bash
 cd 02_Design/sim/riscv_tests
@@ -145,14 +146,14 @@ bash run_all.sh
 - 依赖：iverilog、`work/hex/*.hex`（已预编译，无需重新 build）
 - 编译产物自动生成在 `work/`，已 gitignore
 
-### 性能 Profiling
+### 性能 Profiling（按需运行）
 
 ```bash
 cd 02_Design/sim/riscv_tests
 bash run_perf.sh [test_name...]
 ```
 
-- 默认跑 `bp_stress dcache_stress counter_stress sb_stress`
+- 不带参数时脚本会跑 `bp_stress dcache_stress counter_stress sb_stress`
 - 输出 `[PERF]` 开头的性能报告（CPI、stall 分解、双发射率、BP 误预测率）
 
 ### 重新编译测试（仅在修改/新增测试用例时）
