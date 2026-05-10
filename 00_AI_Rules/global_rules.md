@@ -108,13 +108,13 @@ runtime ~= cycles * clock_period
 2. 写清楚假设：要改善哪个 benchmark/热点、预期减少哪类 stall 或哪条关键路径、可能伤害哪条路径。
 3. 用脚本拿 baseline，而不是凭感觉：
    - benchmark cycles：`run_perf.sh` 或 COE suite/diff。
-   - CPI 归因：`cpi_attribution.py` / `coe_hotspots.py`。
+   - 更细的 CPI/热点归因：优先用临时 `/tmp/` 分析脚本，不把一次性评估脚本放进仓库。
    - 时序相关方案：先跑 Vivado timing，至少确认当前 top critical paths。
 4. 设定淘汰线。没有明确超过门槛的预期，不动 RTL。
    - cycles/runtime 类优化：预期至少约 `1%` 运行时间收益。
    - 时序类优化：必须解释预期切断的路径，或预期改善至少约 `0.3ns` WNS。
    - 大型/流水线切分：必须同时给出 cycles 代价和 Fmax 收益的估算。
-5. 先把评估结论写到 `TODO.md` 或临时 `/tmp/` 报告，再开始 RTL。
+5. 先把评估结论写到 `OPTIMIZATION_STATUS.md` 或临时 `/tmp/` 报告，再开始 RTL。
 
 ### RTL 修改后必须验证
 
@@ -122,31 +122,13 @@ runtime ~= cycles * clock_period
 - 长前缀正确性：涉及前端/分支/访存时，必须跑 `run_coe_diff.sh`。
 - 性能：必须和 baseline cycles/runtime 对比，不能只报“功能通过”。
 - 时序：任何影响 IF/IROM、redirect、DCache ready、forwarding/hazard 的改动都必须跑 Vivado timing。
-- 失败实验必须记录到 `tradeoffs*.md`，再删除实验分支；不要让废案分支长期留在工作区。
+- 失败实验只在 `OPTIMIZATION_STATUS.md` 里保留短结论；删除实验分支，不在仓库中维护长实验归档。
 
-### 实验记录归档
+### 实验记录策略
 
-脚本结果必须可追溯，避免后续重复跑同一批昂贵实验。
+默认不在仓库中保留长实验记录。性能方向由人工确认后再进入 RTL；脚本输出、Vivado 报告和中间分析默认放 `/tmp/` 或本地工作目录，只把仍然影响后续决策的短结论写入 `OPTIMIZATION_STATUS.md`。
 
-每次正式 profiling / timing / COE diff / 热点分析，都在 `05_Experiment_Records/` 下新建目录：
-
-```text
-05_Experiment_Records/YYYYMMDD_short_topic/
-├── README.md      # 必须提交：目的、baseline、命令、参数、结果摘要、结论
-├── commands.sh    # 必须提交：可复现命令
-├── env.txt        # 必须提交：分支、commit、工具版本、关键环境变量
-└── raw/           # 本地保存：完整 stdout、Vivado 报告、长日志；默认 gitignore
-```
-
-记录内容至少包括：
-
-- 为什么跑：要验证哪个假设、面向哪个 benchmark/热点。
-- 在什么状态跑：branch、commit、是否有 dirty diff、COE 目标、Vivado/iverilog 版本。
-- 怎么跑：完整命令、参数、超时/commit 数、并行度。
-- 得到什么：cycles/CPI/stall/timing/utilization 的关键数字。
-- 结论：继续、淘汰、还是需要补充实验。
-
-默认并行度：本机脚本优先使用 **18 核**，例如 `--jobs 18`、`JOBS=18` 或 `./run_vivado_flow.sh current 18`。如果脚本或 Vivado flow 对并行不稳定，必须在记录中说明实际使用的并行度和原因。
+本机脚本优先使用 **18 核**，例如 `--jobs 18`、`JOBS=18` 或 Vivado Tcl flow 的 jobs 参数为 `18`。如果降低并行度，只需在当前讨论或短结论中说明原因。
 
 ---
 
@@ -201,19 +183,17 @@ bash run_vivado_sim.sh
 cd 02_Design/sim/riscv_tests
 MAX_CYCLES=1500000 WATCHDOG_CYCLES=150000 bash run_coe_suite.sh current src0 src1 src2
 COMMITS=50000 MAX_CYCLES=1500000 WATCHDOG_CYCLES=150000 bash run_coe_diff.sh current src0 src1 src2
-python3 cpi_attribution.py current src0 src1 src2 --jobs 18 --max-cyc 2000000 --queue-max-s0 200000
-python3 coe_hotspots.py src0 src1 src2 --jobs 18 --max-s0 250000
 ```
 
 - `run_coe_suite.sh`：跑完整 COE 程序到 LED 结果。
 - `run_coe_diff.sh`：对比软件参考模型和 RTL commit trace，适合 RTL 改动后做长前缀正确性检查。
-- `cpi_attribution.py`：软件模型 CPI 归因。
-- `coe_hotspots.py`：动态热 PC 分析，定位分支误预测、load-use、双发阻塞热点。
 
 ### Vivado 时序流
 
 ```bash
-./run_vivado_flow.sh current 18
+vivado -mode tcl \
+  -source 03_Timing_Analysis/run_vivado_flow.tcl \
+  -tclargs "$PWD" current 18
 ```
 
 - 流程：更新 COE/IP → `synth_1` → `impl_1`（不生成 bitstream）→ `open_run impl_1` → `source report_stage_timing.tcl`。
@@ -245,8 +225,7 @@ python3 coe_hotspots.py src0 src1 src2 --jobs 18 --max-s0 250000
 | `02_Design/sim/riscv_tests/` | 回归 TB + 脚本 | 临时调试 TB |
 | `02_Design/sim/debug/` | Vivado 调试 TB | 编译产物 |
 | `02_Design/coe/` | COE 文件 + 工具脚本 | 仿真产物 |
-| `00_AI_Rules/` | 当前规则、架构、tradeoff 文档 | 临时实验记录 |
-| `05_Experiment_Records/` | 实验摘要、命令、环境、结论；`raw/` 本地保存完整输出 | RTL 源码、临时脚本 |
+| `00_AI_Rules/` | 当前规则、架构文档 | 临时实验记录 |
 | `PhysicalTwin_XC7A35T/` | 自有板工程封装和板级文档 | CPU RTL 副本 |
 
 ### 临时/实验性文件
@@ -273,7 +252,7 @@ python3 coe_hotspots.py src0 src1 src2 --jobs 18 --max-s0 250000
 
 ## 9. 文档维护
 
-- 当前有效文档包括：`global_rules.md`、`architecture.md`、`tradeoffs*.md`、`TODO.md`、`02_Design/coe/README.md`、`02_Design/sim/riscv_tests/test_coverage.md`、`PhysicalTwin_XC7A35T/README.md`。
-- RTL 改动通过回归后，同步更新 `architecture.md`；已否决的实验同步到 `tradeoffs*.md`。
-- 优化待办和 profiling 基线记录在项目根目录 `TODO.md`。
-- 信号名必须与 RTL 一致；当前架构文档只写当前状态，历史原因和已否决实验写入 `tradeoffs*.md`。
+- 当前有效文档包括：`global_rules.md`、`architecture.md`、`OPTIMIZATION_STATUS.md`、`02_Design/coe/README.md`、`02_Design/sim/riscv_tests/test_coverage.md`、`PhysicalTwin_XC7A35T/README.md`。
+- RTL 改动通过回归后，同步更新 `architecture.md`；已否决的方向只在 `OPTIMIZATION_STATUS.md` 保留短结论。
+- 优化状态和 profiling 基线记录在项目根目录 `OPTIMIZATION_STATUS.md`。
+- 信号名必须与 RTL 一致；当前架构文档只写当前状态，不保存长实验档案。

@@ -171,4 +171,4 @@
 | Branch+Slot1 同拍 flush 边界 | 高 | ✅ `branch_dual_flush` / `branch_dual_edge` 覆盖 |
 | DCache refill 期间 branch flush | 高——曾出 bug | ✅ 架构上不可能：`ex_branch_flush` 被 `mem_allowin` 门控，cache miss 期间 flush 被延迟到 refill 完成后。`dcache_dual` 已隐式覆盖此延迟 flush 行为 |
 | BTB 非分支指令误预测 + Load | 高——曾出 bug | ⚠️ 无法在小测试中复现：BTB alias 需 `PC[13:2]` 完全匹配（16KB 代码间距），小程序无法构造。修复已在 RTL 中（`cache_req` 不门控 `branch_flush`），真实程序上板时隐式覆盖 |
-| FPGA 时序 / 上板约束 | 高 | ❌ 仿真无法覆盖，使用 `./run_vivado_flow.sh` 生成时序报告；物理板使用 `PhysicalTwin_XC7A35T/run_build.sh` |
+| FPGA 时序 / 上板约束 | 高 | ❌ 仿真无法覆盖，使用 `03_Timing_Analysis/run_vivado_flow.tcl` 生成时序报告；物理板使用 `PhysicalTwin_XC7A35T/run_build.sh` |

@@ -6,12 +6,10 @@
 
 1. **`global_rules.md`** — 地址映射、赛方约束、BRAM 时序、握手协议、编码规则、性能优化立项门槛
 2. **`architecture.md`** — 当前 RTL 的双发射架构描述（从代码反向生成）
-3. **`tradeoffs_brief.md`** — 已否决/已验证 tradeoff 的简短结论
-4. **`TODO.md`** — 当前优化方向、最近分析结论
+3. **`OPTIMIZATION_STATUS.md`** — 当前优化方向、最近分析结论、已否决方向的短结论
 
 按需阅读：
 
-- **`tradeoffs.md`** — tradeoff 的详细实验数据和原因
 - **`02_Design/sim/riscv_tests/test_coverage.md`** — 回归测试覆盖范围
 - **`02_Design/coe/README.md`** — COE 文件、转换脚本和静态分布
 - **`PhysicalTwin_XC7A35T/README.md`** — 自有物理板工程与显示映射
@@ -22,9 +20,7 @@
 00_AI_Rules/
 ├── README.md          ← 本文件
 ├── global_rules.md    ← 全局规则（不随架构变化的约束）
-├── architecture.md    ← 当前架构（RTL 改动后同步更新）
-├── tradeoffs_brief.md ← tradeoff 简版（防止重复走弯路）
-└── tradeoffs.md       ← tradeoff 详版（含实验数据）
+└── architecture.md    ← 当前架构（RTL 改动后同步更新）
 ```
 
 ## 工作区
@@ -32,7 +28,7 @@
 ```
 CPU_Workspace/
 ├── 00_AI_Rules/           ← 你正在看的目录
-├── TODO.md                ← 当前优化待办和最新分析结论
+├── OPTIMIZATION_STATUS.md ← 当前优化状态和最新分析结论
 ├── 02_Design/
 │   ├── rtl/               ← 自研 CPU RTL 源码
 │   ├── coe/               ← 竞赛程序 COE 文件 + 工具脚本
@@ -42,7 +38,6 @@ CPU_Workspace/
 │       └── debug/         ← Vivado 调试 TB
 ├── 03_Timing_Analysis/    ← 时序分析 TCL + 报告
 ├── PhysicalTwin_XC7A35T/  ← 自有 XC7A35T 板卡 Vivado 工程封装
-├── 05_Experiment_Records/ ← 性能/时序实验摘要、命令、环境和结论归档
 ├── JYD2025_Contest-rv32i/ ← Vivado 工程
 └── riscv-tests/           ← 测试源码（build_tests.sh 依赖）
 ```

@@ -15,9 +15,6 @@ NutShell/
 03_Timing_Analysis/stage_timing_report.txt
 03_Timing_Analysis/vivado_work/
 
-# --- Experiment raw artifacts ---
-05_Experiment_Records/**/raw/
-
 # --- Simulation Artifacts ---
 02_Design/sim/riscv_tests/work/*
 !02_Design/sim/riscv_tests/work/.gitkeep
@@ -40,7 +37,5 @@ NutShell/
 .vscode/
 __pycache__/
 
-# --- Local Scripts ---
-build.sh
-copy_bitstream.sh
+# --- Local Editor Config ---
 .windsurfrules

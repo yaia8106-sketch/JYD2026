@@ -5,18 +5,15 @@
 #   COE/IP update -> synthesis -> implementation (no bitstream) ->
 #   open_run impl_1 -> source report_stage_timing.tcl
 #
-# Called by:
-#   ./run_vivado_flow.sh [coe_name] [jobs]
-#
 # Direct Vivado usage:
 #   vivado -mode tcl -source 03_Timing_Analysis/run_vivado_flow.tcl \
-#          -tclargs /home/anokyai/桌面/CPU_Workspace src0 20
+#          -tclargs /home/anokyai/Desktop/CPU_Workspace current 18
 # ============================================================
 
 if {$argc >= 1} {
     set workspace [lindex $argv 0]
 } else {
-    set workspace "/home/anokyai/桌面/CPU_Workspace"
+    set workspace [file normalize [file join [file dirname [info script]] ".."]]
 }
 if {$argc >= 2} { set coe_name [lindex $argv 1] } else { set coe_name "current" }
 if {$argc >= 3} { set build_jobs [lindex $argv 2] } else { set build_jobs 20 }
