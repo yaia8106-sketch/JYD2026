@@ -316,6 +316,10 @@ module cpu_top (
     wire        ex_branch_redirect;    // EX-stage fast frontend redirect
     wire        ex_redirect_to_target;
     wire        ex_redirect_to_fallthrough;
+    wire        ex_s1_branch_redirect; // Slot1 branch delayed frontend redirect
+    wire [31:0] ex_s1_branch_target;
+    wire        ex_registered_branch_flush;
+    wire [31:0] ex_registered_branch_target;
 
     // ---- Registered branch flush (MEM stage, for 250MHz timing) ----
     wire        mem_branch_flush;      // branch_flush delayed 1 cycle (from EX/MEM reg)
@@ -723,6 +727,15 @@ module cpu_top (
                                                                  : ex_fallthrough_odd_addr;
     wire        ex_redirect_fetch_odd = branch_redirect_to_target ? ex_branch_target_fetch_odd
                                                                   : ex_fallthrough_fetch_odd;
+    wire [11:0] ex_s1_branch_even_addr = irom_even_bank_addr(ex_s1_branch_target);
+    wire [11:0] ex_s1_branch_odd_addr = irom_odd_bank_addr(ex_s1_branch_target);
+    wire        ex_s1_branch_fetch_odd = ex_s1_branch_target[2];
+    wire [11:0] ex_registered_redirect_even_addr = ex_branch_redirect ? ex_redirect_even_addr
+                                                                      : ex_s1_branch_even_addr;
+    wire [11:0] ex_registered_redirect_odd_addr = ex_branch_redirect ? ex_redirect_odd_addr
+                                                                     : ex_s1_branch_odd_addr;
+    wire        ex_registered_redirect_fetch_odd = ex_branch_redirect ? ex_redirect_fetch_odd
+                                                                      : ex_s1_branch_fetch_odd;
 
     // irom_addr = flat priority MUX (stall branch removed)
     // Priority: EX/MEM redirect > NLP redirect > L0 prediction > sequential
@@ -917,9 +930,9 @@ module cpu_top (
             mem_branch_odd_addr_r <= 12'd0;
             mem_branch_fetch_odd_r <= 1'b0;
         end else begin
-            mem_branch_even_addr_r <= ex_redirect_even_addr;
-            mem_branch_odd_addr_r <= ex_redirect_odd_addr;
-            mem_branch_fetch_odd_r <= ex_redirect_fetch_odd;
+            mem_branch_even_addr_r <= ex_registered_redirect_even_addr;
+            mem_branch_odd_addr_r <= ex_registered_redirect_odd_addr;
+            mem_branch_fetch_odd_r <= ex_registered_redirect_fetch_odd;
         end
     end
 
@@ -1013,6 +1026,7 @@ module cpu_top (
     localparam [6:0] OP_R_TYPE_LOCAL = 7'b0110011;
     localparam [6:0] OP_I_ALU_LOCAL  = 7'b0010011;
     localparam [6:0] OP_LOAD_LOCAL   = 7'b0000011;
+    localparam [6:0] OP_STORE_LOCAL  = 7'b0100011;
     localparam [6:0] OP_BRANCH_LOCAL = 7'b1100011;
     localparam [6:0] OP_LUI_LOCAL    = 7'b0110111;
     localparam [6:0] OP_AUIPC_LOCAL  = 7'b0010111;
@@ -1030,10 +1044,13 @@ module cpu_top (
                                 | (raw_inst1_opcode == OP_I_ALU_LOCAL)
                                 | (raw_inst1_opcode == OP_LUI_LOCAL)
                                 | (raw_inst1_opcode == OP_AUIPC_LOCAL);
+    wire raw_inst1_is_branch = (raw_inst1_opcode == OP_BRANCH_LOCAL);
 
     wire raw_inst0_is_control = (raw_inst0_opcode == OP_BRANCH_LOCAL)
                                | (raw_inst0_opcode == OP_JAL_LOCAL)
                                | (raw_inst0_opcode == OP_JALR_LOCAL);
+    wire raw_inst0_is_lsu = (raw_inst0_opcode == OP_LOAD_LOCAL)
+                           | (raw_inst0_opcode == OP_STORE_LOCAL);
 
     wire raw_inst0_is_jump = (raw_inst0_opcode == OP_JAL_LOCAL)
                             | (raw_inst0_opcode == OP_JALR_LOCAL);
@@ -1046,16 +1063,18 @@ module cpu_top (
                               | raw_inst0_is_jump;
 
     wire raw_inst1_uses_rs1 = (raw_inst1_opcode == OP_R_TYPE_LOCAL)
-                             | (raw_inst1_opcode == OP_I_ALU_LOCAL);
-    wire raw_inst1_uses_rs2 = (raw_inst1_opcode == OP_R_TYPE_LOCAL);
+                             | (raw_inst1_opcode == OP_I_ALU_LOCAL)
+                             | raw_inst1_is_branch;
+    wire raw_inst1_uses_rs2 = (raw_inst1_opcode == OP_R_TYPE_LOCAL)
+                             | raw_inst1_is_branch;
 
     wire raw_pair_raw = raw_inst0_writes_rd & (raw_inst0_rd != 5'd0)
                       & ((raw_inst1_uses_rs1 & (raw_inst1_rs1 == raw_inst0_rd))
                        | (raw_inst1_uses_rs2 & (raw_inst1_rs2 == raw_inst0_rd)));
 
-    wire raw_pair_can_dual = raw_inst1_is_alu_type
-                           & ~raw_pair_raw
-                           & ~raw_inst0_is_jump;
+    wire raw_pair_can_dual = ~raw_pair_raw
+                           & ((raw_inst1_is_alu_type & ~raw_inst0_is_jump)
+                            | (raw_inst1_is_branch & ~raw_inst0_is_control & ~raw_inst0_is_lsu));
 
     wire raw_can_dual = if_valid
                       & ~if_skip_inst0
@@ -1077,6 +1096,13 @@ module cpu_top (
                                     | (shifted_inst1_opcode == OP_I_ALU_LOCAL)
                                     | (shifted_inst1_opcode == OP_LUI_LOCAL)
                                     | (shifted_inst1_opcode == OP_AUIPC_LOCAL);
+    wire shifted_inst1_is_branch = (shifted_inst1_opcode == OP_BRANCH_LOCAL);
+
+    wire shifted_inst0_is_control = (shifted_inst0_opcode == OP_BRANCH_LOCAL)
+                                   | (shifted_inst0_opcode == OP_JAL_LOCAL)
+                                   | (shifted_inst0_opcode == OP_JALR_LOCAL);
+    wire shifted_inst0_is_lsu = (shifted_inst0_opcode == OP_LOAD_LOCAL)
+                              | (shifted_inst0_opcode == OP_STORE_LOCAL);
 
     wire shifted_inst0_is_jump = (shifted_inst0_opcode == OP_JAL_LOCAL)
                                 | (shifted_inst0_opcode == OP_JALR_LOCAL);
@@ -1089,16 +1115,18 @@ module cpu_top (
                                   | shifted_inst0_is_jump;
 
     wire shifted_inst1_uses_rs1 = (shifted_inst1_opcode == OP_R_TYPE_LOCAL)
-                                 | (shifted_inst1_opcode == OP_I_ALU_LOCAL);
-    wire shifted_inst1_uses_rs2 = (shifted_inst1_opcode == OP_R_TYPE_LOCAL);
+                                 | (shifted_inst1_opcode == OP_I_ALU_LOCAL)
+                                 | shifted_inst1_is_branch;
+    wire shifted_inst1_uses_rs2 = (shifted_inst1_opcode == OP_R_TYPE_LOCAL)
+                                 | shifted_inst1_is_branch;
 
     wire shifted_pair_raw = shifted_inst0_writes_rd & (shifted_inst0_rd != 5'd0)
                           & ((shifted_inst1_uses_rs1 & (shifted_inst1_rs1 == shifted_inst0_rd))
                            | (shifted_inst1_uses_rs2 & (shifted_inst1_rs2 == shifted_inst0_rd)));
 
-    wire shifted_pair_can_dual = shifted_inst1_is_alu_type
-                               & ~shifted_pair_raw
-                               & ~shifted_inst0_is_jump;
+    wire shifted_pair_can_dual = ~shifted_pair_raw
+                               & ((shifted_inst1_is_alu_type & ~shifted_inst0_is_jump)
+                                | (shifted_inst1_is_branch & ~shifted_inst0_is_control & ~shifted_inst0_is_lsu));
 
     wire shifted_can_dual = if_valid
                           & (inst_buf_pc != 32'h7FFF_FFFC)
@@ -1607,6 +1635,22 @@ module cpu_top (
         .actual_target    (actual_target)
     );
 
+    // Slot1 conditional branch is resolved in EX but redirected through the
+    // registered MEM replay path. It deliberately avoids the slot0 fast
+    // redirect path to keep EX compare/target logic off the IROM address MUX.
+    wire ex_s1_branch_taken = branch_cond_taken(ex_s1_rs1_data,
+                                                ex_s1_rs2_data,
+                                                ex_s1_branch_cond);
+    assign ex_s1_branch_target = alu_s1_result;
+    assign ex_s1_branch_redirect = ex_s1_valid & ex_s1_is_branch
+                                 & ex_s1_branch_taken
+                                 & (ex_s1_branch_target != ex_s1_pc_plus_4)
+                                 & ~mem_branch_flush
+                                 & ex_ready_go_w & mem_allowin;
+    assign ex_registered_branch_flush = ex_branch_redirect | ex_s1_branch_redirect;
+    assign ex_registered_branch_target = ex_branch_redirect ? branch_target
+                                                            : ex_s1_branch_target;
+
     // Store interface (EX stage → DCache)
     mem_interface u_mem_interface (
         // Store side (EX stage)
@@ -1641,8 +1685,8 @@ module cpu_top (
         // Gate with EX readiness: don't propagate while the EX instruction stalls.
         // (DCache refill). This ensures the flush-generating instruction advances
         // to MEM first, rather than being killed by its own registered flush.
-        .ex_branch_flush  (ex_branch_redirect),
-        .ex_branch_target (branch_target),
+        .ex_branch_flush  (ex_registered_branch_flush),
+        .ex_branch_target (ex_registered_branch_target),
         .mem_branch_flush (mem_branch_flush),
         .mem_branch_target(mem_branch_target),
         .ex_alu_result    (alu_result),

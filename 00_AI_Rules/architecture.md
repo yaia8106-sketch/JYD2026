@@ -1,4 +1,4 @@
-# 双发射 CPU 架构文档（从 RTL 反向生成，2026-05-09 更新）
+# 双发射 CPU 架构文档（从 RTL 反向生成，2026-05-10 更新）
 
 > **本文档描述当前 RTL 的实际实现**，而非设计规划。所有内容均从代码中提取。
 >
@@ -12,11 +12,11 @@
 
 ```
 IF → ID → EX → MEM → WB
-         ↑ Slot1 shadow pipeline (ALU-only)
+         ↑ Slot1 shadow pipeline (ALU + conditional branch)
 ```
 
 - **Slot 0**（主槽）：ALU / Branch / JAL / JALR / Load / Store — 万能槽
-- **Slot 1**（副槽）：ALU only（R-type / I-ALU / LUI / AUIPC）
+- **Slot 1**（副槽）：ALU（R-type / I-ALU / LUI / AUIPC）+ 条件分支（B-type）
 - 两 Slot 同步推进，共享 `allowin`，不可独立 stall
 
 ---
@@ -45,7 +45,7 @@ irom_inst1 = irom_data[63:32]  // inst at PC + 4
 5 路 flat MUX（无 allowin 链依赖）：
 
 ```
-irom_addr = mem_branch_replay  ? mem_branch_target :   // 1. 未被 EX fast redirect 覆盖的 MEM replay
+irom_addr = mem_branch_replay  ? mem_branch_target :   // 1. MEM replay / slot1 branch delayed redirect
             ex_redirect_to_target      ? ex_branch_target_pre :
             ex_redirect_to_fallthrough ? ex_fallthrough_pc :
             id_bp_redirect_raw ? id_redirect_target :  // 3. NLP ID redirect（raw）
@@ -55,7 +55,7 @@ irom_addr = mem_branch_replay  ? mem_branch_target :   // 1. 未被 EX fast redi
 
 `irom_even_addr` / `irom_odd_addr` / `irom_fetch_odd` 各有独立的同优先级 MUX，源头的 bank 地址来自寄存器或短组合计算：
 
-- **MEM replay**：`mem_branch_even_addr_r` / `mem_branch_odd_addr_r`（寄存器）
+- **MEM replay**：`mem_branch_even_addr_r` / `mem_branch_odd_addr_r`（寄存器）；覆盖未被 EX fast redirect 消费的 replay，也覆盖 slot1 taken branch 的延迟 redirect
 - **EX fast redirect**：`branch_target` / `fallthrough_pc` 已在 ID 阶段预计算；EX 从这两个寄存值并行计算 bank 地址，并用 `redirect_to_target` / `redirect_to_fallthrough` 两个 one-hot 信号直接选择，避免先经过 `actual_taken ? target : fallthrough` 数据 MUX
 - **NLP redirect**：`id_redirect_even_addr` 等（组合计算，路径短）
 - **BP taken**：`bp_even_addr` 等（含 held / inst_buf / live 三类来源；skip 快照逻辑保留但当前关闭）
@@ -112,10 +112,10 @@ wire raw_can_dual = if_valid
                   & ~if_skip_inst0              // 当前该条件恒通过；保留给旧 skip 路径
                   & (pc != 32'h7FFF_FFFC)
                   & if_sequential_fetch         // 非 flush/redirect/bp_taken
-                  & raw_pair_can_dual;           // slot1 是 ALU、无同对 RAW、slot0 非 JAL/JALR
+                  & raw_pair_can_dual;           // slot1 是 ALU 或条件分支，且满足同包约束
 
 // shifted path：inst_buf 在窗口前，配对 inst_buf + irom_inst0
-wire shifted_can_dual = if_valid & ... & shifted_inst1_is_alu_type & ...;
+wire shifted_can_dual = if_valid & ... & shifted_pair_can_dual;
 
 // held path：stall 入口时快照
 assign can_dual_fetch = if_skip_out ? 1'b0 :
@@ -133,15 +133,19 @@ wire raw_pair_raw = raw_inst0_writes_rd & (raw_inst0_rd != 5'd0)
 ```
 
 - `raw_inst0_writes_rd`：R / I-ALU / Load / LUI / AUIPC / JAL / JALR
-- `raw_inst1_uses_rs1`：R / I-ALU；`raw_inst1_uses_rs2`：R-type only
+- `raw_inst1_uses_rs1`：R / I-ALU / Branch；`raw_inst1_uses_rs2`：R / Branch
 - WAW **不阻止双发**（regfile 和前递保证 Slot1 > Slot0 优先级）
 
-### 3.3 分支双发约束
+### 3.3 Slot1 类型约束
 
-| slot0 类型 | 能否双发 | 原因 |
-|-----------|---------|------|
-| 条件分支（BEQ/BNE/...）| ✅ 可以 | NLP squash + EX flush 保证安全 |
-| JAL / JALR | ❌ 不可以 | `~raw_inst0_is_jump` 显式屏蔽（bp_taken 也自然屏蔽） |
+| Slot1 类型 | 能否双发 | 额外约束 |
+|-----------|---------|----------|
+| ALU（R/I-ALU/LUI/AUIPC） | ✅ 可以 | 无同包 RAW；slot0 不是 JAL/JALR。slot0 branch + slot1 ALU 仍允许，slot0 taken/redirect 时同拍杀掉 slot1 |
+| 条件分支（B-type） | ✅ 可以 | 无同包 RAW；slot0 必须是 non-control、non-LSU，即不是 Branch/JAL/JALR/Load/Store |
+| JAL / JALR | ❌ 不可以 | slot1 不做跳转链接或间接跳转 |
+| Load / Store | ❌ 不可以 | V1 仍禁止 slot1 LSU，避免同拍第二个 DCache/MMIO 请求 |
+
+slot1 条件分支在 EX 级比较，复用 S1 ALU 的 `PC+imm` 结果作为 target。not-taken 不产生 redirect；taken 通过 EX/MEM 打拍后的 MEM replay 路径重定向前端，因此不把 S1 compare/target 接回 IROM 当拍快路径。
 
 ---
 
@@ -166,6 +170,8 @@ id_tournament_taken = id_use_bimodal ? id_bimodal_taken : id_gshare_taken;
 ```
 
 当 L0 和 L1 对 BRANCH 方向不一致时 → `id_bp_redirect_raw` 触发重定向。
+
+当前 L0/L1 预测和验证只面向 slot0 控制流。slot1 条件分支 V1 不参与 IF 级预测，也不在 ID 级触发 NLP redirect；它在 EX 级解析后，taken 时走延迟 replay。
 
 ### 4.3 NLP Redirect 与 Slot1 Squash
 
@@ -205,13 +211,15 @@ frontend_branch_flush = mem_branch_replay | ex_branch_redirect;
 ```
 
 - `ex_branch_redirect` 当拍驱动 `pc_reg` / `irom_addr` / IF-ID flush / ID-EX flush。
-- `mem_branch_flush` 仍由 `ex_mem_reg` 打拍，用于 DCache/backend cleanup。
+- `mem_branch_flush` 仍由 `ex_mem_reg` 打拍；slot0 fast redirect 后用于 DCache/backend cleanup，slot1 delayed redirect 后用于前端 replay。
 - `fast_branch_redirect_r` 抑制下一拍 `mem_branch_flush` 对前端的重复 redirect/flush，避免正确目标首条指令被二次冲刷。
 - 当 EX 因 `mem_allowin=0` 或 `ex_ready_go_w=0` 停住时，不发出 fast redirect；等分支指令可前进时再 redirect。
 
+slot1 条件分支不使用上述 EX fast redirect。它在 EX 级用 `branch_cond_taken(ex_s1_rs1_data, ex_s1_rs2_data, ex_s1_branch_cond)` 解析，target 为 `alu_s1_result`，并在 taken 且 target 不等于 `ex_s1_pc_plus_4` 时生成 `ex_s1_branch_redirect`。该 redirect 与 slot0 `ex_branch_redirect` 一起写入 `ex_mem_reg` 的 registered flush/target；下一拍通过 `mem_branch_replay` 修正前端。若 slot0 同拍也 redirect，slot0 target 优先。
+
 ### 4.5 EX 级更新
 
-所有预测器状态（GHR / PHT / BTB / BHT / Selector）在 EX 级更新。
+slot0 的预测器状态（GHR / PHT / BTB / BHT / Selector）在 EX 级更新。
 `ex_valid` 门控 `~mem_branch_flush`，防止错误路径指令污染预测器。
 
 JAL/JALR 分类在 EX 级使用 `x1/x5` link-register 规则：
@@ -230,6 +238,8 @@ ex_sidecar_jalr = (ex_is_jalr_call | ex_is_ret)
 这覆盖 `src0/src1/src2` 中 libgcc 辅助函数常见的 `jr t0` 返回路径，使其经过一次冷启动后可由 RAS 预测，而不是每次等 EX redirect。软件前缀模型显示，x5 JALR 如果直接写主 BTB 会在 `src1` 覆盖热 JAL；因此当前实现把这类 JALR 放入 sidecar，主 BTB 不被污染。
 
 预测器更新在 EX 同拍写入；普通 IF 读口在时钟沿后自然看到更新后的表项。lookahead 与 inst_buf buffered-slot 读口只对轻量 history / PHT / selector 状态做同拍旁路，BTB/JALR target 表使用当前拍读出的快照，不旁路 EX target/update 结果，避免把 EX branch compare 重新接回前端寄存器；少数同拍 BTB/JALR 更新会多保留一次旧 buffered 预测，由正常 EX redirect 修正。
+
+slot1 条件分支 V1 暂不更新预测器。功能正确性依赖 EX/MEM replay；代价是同一 slot1 branch 后续再次 taken 时仍可能重复等待延迟 redirect。
 
 ### 4.6 Lookahead / Buffered-slot 预测
 
@@ -253,7 +263,7 @@ BP 额外暴露 `la_*` 和 `buf_*` 端口：
 
 - 控制：`allowin` 每级一个，`ready_go` = `s0_rg & (s1_rg | !s1_valid)`（实际由 forwarding 的 `id_ready_go` 统一输出）
 - `id_ex_reg` 额外传递 `ex_branch_target` / `ex_fallthrough_pc`，供 EX fast redirect 使用
-- Slot 1 全链传递 valid / pc / inst / alu_result / rd / reg_write_en / wb_sel
+- Slot 1 全链传递 valid / pc / inst / alu_result / rd / reg_write_en / wb_sel；ID/EX 额外保留 `is_branch` / `branch_cond`，用于 EX 级 slot1 条件分支解析
 
 ---
 
@@ -316,21 +326,24 @@ Load-use 只对指令实际使用的源操作数生效：
 
 - **EX 级**：`branch_unit` 组合产生 `redirect_to_target` / `redirect_to_fallthrough`，再 OR 成 `branch_flush`（方向错 / 目标错）
 - **EX fast redirect**：`ex_redirect_fire = ~mem_branch_flush & ex_ready_go_w & mem_allowin`，再分别门控 two one-hot redirect 类型
-- **MEM 级**：`mem_branch_flush` = `ex_branch_redirect` 打拍，用于 DCache/backend cleanup
+- **Slot1 branch delayed redirect**：`ex_s1_branch_redirect` 只在 slot1 条件分支 taken 时产生，不驱动当拍前端；它和 slot0 `ex_branch_redirect` 一起写入 EX/MEM registered flush/target
+- **MEM 级**：`mem_branch_flush` = `ex_registered_branch_flush` 打拍；slot0 fast redirect 后主要用于 DCache/backend cleanup，slot1 branch redirect 则在这一拍通过 replay 修正前端
 - **前端 replay 抑制**：`mem_branch_replay = mem_branch_flush & ~fast_branch_redirect_r`
 - **Flush 范围**：
   - `id_flush = frontend_branch_flush | id_bp_redirect`（杀 IF/ID）
   - `ex_flush = frontend_branch_flush`（杀 ID/EX 两个 Slot）
-  - `ex_mem_reg_s1.s1_flush = branch_flush | mem_branch_flush`（同拍杀 S1 进 MEM）
+  - `ex_mem_reg_s1.s1_flush = branch_flush | mem_branch_flush`（slot0 同拍 redirect 或上一拍 replay 杀 S1 进 MEM；slot1 branch 自己的 delayed redirect 不杀自身）
   - 指令缓冲清空
 
 ### 9.2 Slot1 同拍 Flush
 
-当 slot0(branch) + slot1(ALU) 在 EX 级，branch 误预测时：
+当 slot0(branch) + slot1(ALU/branch) 在 EX 级，slot0 branch 误预测时：
 - `branch_flush` / `ex_branch_redirect` 当拍有效，`mem_branch_flush` 下拍才生效
 - `ex_mem_reg_s1` 接 `ex_branch_flush = branch_flush`，防止 slot1 漏进 MEM
 
 > ⚠️ 不能只用 `mem_branch_flush`——它下拍才生效，同拍 slot1 会漏进 MEM 并错误写回。
+
+当 slot1 branch taken 且 slot0 没有 redirect 时，slot1 branch 本身作为有效 S1 指令继续进入 MEM/WB（无 rd 写回），下一拍 `mem_branch_replay` 杀掉更年轻的 IF/ID 与 ID/EX 指令并清空 `inst_buf`。
 
 ### 9.3 Stall
 
@@ -373,7 +386,7 @@ always_ff @(posedge clk or negedge rst_n)
     else if (wb_s1_valid) dual_issue_count <= dual_issue_count + 1;
 ```
 
-通过 MMIO Load `0x80200060` 读取。只在 Slot1 指令真正提交（WB valid）时计数，避免错误路径污染。
+通过 MMIO Load `0x80200060` 读取。只在 Slot1 指令真正提交（WB valid）时计数，避免错误路径污染。slot1 条件分支不写 rd，但若作为有效 S1 指令提交，也计入双发射提交数。
 
 ---
 
@@ -389,11 +402,11 @@ always_ff @(posedge clk or negedge rst_n)
 | `regfile` | 寄存器堆 | FF 4R2W，S1 > S0 WAW |
 | `forwarding` | 前递 + ID 冒险检测 | 7 选 1 MUX，S1_WB 直接前递 |
 | `alu_src_mux` ×2 | ALU 操作数选择（ID 级） | rs / PC / imm / 0 |
-| `id_ex_reg` / `_s1` | ID/EX 级间寄存器 | S0 携带预计算 redirect target / fallthrough；S1 版本接 squash 门控 |
+| `id_ex_reg` / `_s1` | ID/EX 级间寄存器 | S0 携带预计算 redirect target / fallthrough；S1 版本接 squash 门控并携带 branch metadata |
 | `alu` ×2 | ALU（S0 / S1） | 含独立地址加法器 `alu_addr` |
-| `branch_unit` | 分支判断 + 误预测检测 | 只处理 S0，使用 ID 预计算 target/fallthrough |
+| `branch_unit` | 分支判断 + 误预测检测 | 只处理 S0，使用 ID 预计算 target/fallthrough；S1 branch 在 `cpu_top` 中用共享条件函数解析 |
 | `mem_interface` | Store 移位 / Load 扩展 | EX store，WB load |
-| `ex_mem_reg` / `_s1` | EX/MEM 级间寄存器 | S1 版本接 `ex_branch_flush` |
+| `ex_mem_reg` / `_s1` | EX/MEM 级间寄存器 | S0 版本承载 registered redirect target；S1 版本接 slot0 `ex_branch_flush` |
 | `mem_wb_reg` / `_s1` | MEM/WB 级间寄存器 | S1 无 load 路径 |
 | `wb_mux` ×2 | 写回选择（ALU / Load / PC+4） | S1 的 load 输入接 0 |
 | `branch_predictor` | Tournament BP (BTB+GShare+Selector+RAS) | L0 IF 快速预测，L1 ID 验证 |

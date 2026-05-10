@@ -27,7 +27,8 @@ branch_taken:
     addi  s1, s1, 0
 
     sub   t2, s1, s0
-    bnez  t2, fail_count
+    li    t3, 1
+    bne   t2, t3, fail_count
     bnez  t0, fail_value
 
 pass:

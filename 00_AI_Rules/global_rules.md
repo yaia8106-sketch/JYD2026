@@ -115,7 +115,7 @@ runtime ~= cycles * clock_period
    - cycles/runtime 类优化：预期至少约 `1%` 运行时间收益。
    - 时序类优化：必须解释预期切断的路径，或预期改善至少约 `0.3ns` WNS。
    - 大型/流水线切分：必须同时给出 cycles 代价和 Fmax 收益的估算。
-5. 先把评估结论写到 `OPTIMIZATION_STATUS.md` 或临时 `/tmp/` 报告，再开始 RTL。
+5. 先把评估结论写到 `OPTIMIZATION_PLAN.md` 或临时 `/tmp/` 报告，再开始 RTL。
 
 ### RTL 修改后验证
 
@@ -123,11 +123,11 @@ runtime ~= cycles * clock_period
 - 长前缀正确性：涉及前端/分支/访存时，运行 `run_coe_diff.sh`。
 - 性能：性能相关改动需要和 baseline cycles/runtime 对比，不能只报“功能通过”。
 - 时序：任何影响 IF/IROM、redirect、DCache ready、forwarding/hazard 的改动需要跑 Vivado timing。
-- 失败实验只在 `OPTIMIZATION_STATUS.md` 里保留短结论；删除实验分支，不在仓库中维护长实验归档。
+- 失败实验只在 `OPTIMIZATION_PLAN.md` 里保留短结论；删除实验分支，不在仓库中维护长实验归档。
 
 ### 实验记录策略
 
-默认不在仓库中保留长实验记录。性能方向由人工确认后再进入 RTL；脚本输出、Vivado 报告和中间分析默认放 `/tmp/` 或本地工作目录，只把仍然影响后续决策的短结论写入 `OPTIMIZATION_STATUS.md`。
+默认不在仓库中保留长实验记录。性能方向由人工确认后再进入 RTL；脚本输出、Vivado 报告和中间分析默认放 `/tmp/` 或本地工作目录，只把仍然影响后续决策的短结论写入 `OPTIMIZATION_PLAN.md`。
 
 本机脚本优先使用 **18 核**，例如 `--jobs 18`、`JOBS=18` 或 Vivado Tcl flow 的 jobs 参数为 `18`。如果降低并行度，只需在当前讨论或短结论中说明原因。
 
@@ -253,7 +253,7 @@ vivado -mode tcl \
 
 ## 9. 文档维护
 
-- 当前有效文档包括：`global_rules.md`、`architecture.md`、`OPTIMIZATION_STATUS.md`、`02_Design/coe/README.md`、`02_Design/sim/riscv_tests/test_coverage.md`、`PhysicalTwin_XC7A35T/README.md`。
-- RTL 改动通过回归后，同步更新 `architecture.md`；已否决的方向只在 `OPTIMIZATION_STATUS.md` 保留短结论。
-- 优化状态和 profiling 基线记录在项目根目录 `OPTIMIZATION_STATUS.md`。
+- 当前有效文档包括：`global_rules.md`、`architecture.md`、`OPTIMIZATION_PLAN.md`、`02_Design/coe/README.md`、`02_Design/sim/riscv_tests/test_coverage.md`、`PhysicalTwin_XC7A35T/README.md`。
+- RTL 改动通过回归后，同步更新 `architecture.md`；已否决的方向只在 `OPTIMIZATION_PLAN.md` 保留短结论。
+- 优化计划、设计契约和 profiling 基线记录在项目根目录 `OPTIMIZATION_PLAN.md`。
 - 信号名必须与 RTL 一致；当前架构文档只写当前状态，不保存长实验档案。

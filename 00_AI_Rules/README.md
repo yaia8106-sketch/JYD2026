@@ -6,7 +6,7 @@
 
 1. **`global_rules.md`** — 地址映射、赛方约束、BRAM 时序、握手协议、编码规则、性能优化立项门槛
 2. **`architecture.md`** — 当前 RTL 的双发射架构描述（从代码反向生成）
-3. **`OPTIMIZATION_STATUS.md`** — 当前优化方向、最近分析结论、已否决方向的短结论
+3. **`OPTIMIZATION_PLAN.md`** — 当前优化计划、设计契约、已否决方向的短结论
 
 按需阅读：
 
@@ -28,7 +28,7 @@
 ```
 CPU_Workspace/
 ├── 00_AI_Rules/           ← 你正在看的目录
-├── OPTIMIZATION_STATUS.md ← 当前优化状态和最新分析结论
+├── OPTIMIZATION_PLAN.md   ← 当前优化计划和设计契约
 ├── 02_Design/
 │   ├── rtl/               ← 自研 CPU RTL 源码
 │   ├── coe/               ← 竞赛程序 COE 文件 + 工具脚本

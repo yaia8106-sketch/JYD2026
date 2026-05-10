@@ -6,12 +6,12 @@
 
 ## `run_all.sh` 当前覆盖规模
 
-当前回归入口运行 64 个测试：
+当前回归脚本列表包含 65 个测试；新增测试需要先运行 `build_tests.sh` 生成对应 hex，否则 `run_all.sh` 会按现有逻辑跳过缺失 hex：
 
 - 38 个基础 RV32I/smoke 测试：`simple` + 官方 `rv32ui` 指令测试（去掉 `fence_i`）。
 - 2 个综合访存测试：`ld_st`、`st_ld`。
 - 3 个压力测试：`dcache_stress`、`counter_stress`、`bp_stress`。
-- 21 个自定义双发射 / BP / DCache / RAS 测试。
+- 22 个自定义双发射 / BP / DCache / RAS 测试。
 
 `riscv-tests/isa/rv32ui/` 中还保留 `ma_data.S`，`work/hex/` 中也有若干只有 hex 生成物的旧测试，但它们不在当前 `run_all.sh` 默认回归集中。
 
@@ -84,17 +84,18 @@
 | 3 | 多级函数调用、递归、JALR 间接跳转 | BTB / RAS / JALR 预测与返回修正 |
 | 4 | load 后紧邻 branch、长 beqz 链 | load-use、前递、分支 flush 的组合场景 |
 
-### 双发射基础测试（10 个）
+### 双发射基础测试（11 个）
 
 | 测试 | 验证重点 |
 |------|----------|
 | `dual_alu` | 对齐 ALU+ALU 无 RAW 时 Slot1 提交，计数器递增 |
 | `raw_block` | inst1 读取 inst0 的 rd 时退化单发，计数器不增 |
-| `branch_single` | Slot0 taken branch 后 fall-through 不提交，双发计数器不误增 |
+| `branch_single` | load-use/inst_buf 后的 taken branch 可在 S1 提交；fall-through 不提交，双发计数器按 S1 branch 提交递增 |
 | `branch_dual` | **Branch+ALU 双发优化**：not-taken branch + ALU 计数器递增；cold taken branch 即使顺序取指也必须杀掉同包 Slot1 |
 | `branch_dual_flush` | Slot0 branch 与 Slot1 ALU 同包时，EX 级误预测 flush 必须同拍杀掉 Slot1，防止错误路径写回 |
 | `branch_fwd_matrix` | Branch 比较操作数来自 S0/S1 各级前递时，方向判断和 redirect 仍正确；覆盖分支比较前递矩阵 |
 | `branch_dual_edge` | 分支双发边界场景：连续 branch/ALU 组合、taken/not-taken 切换和指令缓冲交互 |
+| `slot1_branch` | **Slot1 条件分支双发**：slot0 ALU + slot1 branch 的 taken/not-taken；taken 后延迟 redirect 必须杀掉 fall-through；slot0 LSU + slot1 branch 必须退化单发 |
 | `waw` | 同周期 WAW 不阻止双发，Slot1 写回优先 |
 | `loaduse_dual` | Slot0 load + 独立 Slot1 ALU 可双发，后续 load-use stall 正确 |
 | `inst_buffer` | 单发时 slot1 进入缓冲，下拍作为 slot0 执行且不丢失 |
