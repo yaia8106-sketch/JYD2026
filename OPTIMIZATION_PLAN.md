@@ -1,6 +1,6 @@
 # 当前优化计划与设计契约
 
-更新日期：2026-05-10
+更新日期：2026-05-11
 
 本文只记录仍会影响后续决策的优化方向、设计契约和已否决结论。长实验记录、一次性脚本输出和 Vivado 报告不放进仓库，默认放 `/tmp/` 或本地工作目录。
 
@@ -27,6 +27,18 @@
 4. 固定 bypass 点，限制 late repair 扩散
 
 不先做重型软件评估，但不盲改。第一版只要求轻量证据：静态机会数或已有 profiling/COE 观察能说明方向不是冷路径即可。真正 RTL 改动后仍按影响范围做功能、前缀、性能和时序验证。
+
+## 前端解耦设计
+
+biRISC-V 的主要启发不是单独的 BTB 或 slot1 branch 支持，而是 `fetch PC` / `expected PC` 分离、fetch FIFO per-word valid、以及 issue 按真实消费 PC 选择 primary/secondary candidate。详细设计记录见 `FRONTEND_DECOUPLING_PLAN.md`。
+
+当前决策：
+
+- 不直接重写整个前端。
+- 不立即把 BTB 改成 biRISC-V 风格 CAM。
+- 不立即做 slot1 branch predictor update。
+- 先把当前 `pc` / `if_pc_live` / `inst_buf_pc` / `skip_inst0` 等隐式 expected-PC 职责梳理清楚。
+- 下一轮 RTL 前，先细化 `expected_pc` 显式化和 `inst_buf` 演进为小型 fetch buffer 的改动清单。
 
 ## V1 设计契约：Slot1 Conditional Branch
 
@@ -177,5 +189,6 @@ pair_struct_ok && operands_ready
 
 ## 当前下一步
 
-1. 进入 slot1 LSU 前，先列出 load/store 双发对 DCache、forwarding、load-use 和 WAW 优先级的接口改动清单。
-2. 根据接口清单决定 slot1 LSU 是否拆成 load-only / store-only / load+store 三个阶段推进。
+1. 细化 `FRONTEND_DECOUPLING_PLAN.md` 的 Phase 1：列出当前 PC 状态职责、`expected_pc` 更新优先级、primary/secondary candidate 选择规则。
+2. 决定 `inst_buf` 是先扩展为 2-word fetch buffer，还是先增加 `expected_pc` 观测/断言。
+3. 前端解耦设计收敛后，再回到 slot1 LSU 接口清单。
