@@ -37,8 +37,8 @@ biRISC-V 的主要启发不是单独的 BTB 或 slot1 branch 支持，而是 `fe
 - 不直接重写整个前端。
 - 不立即把 BTB 改成 biRISC-V 风格 CAM。
 - 不立即做 slot1 branch predictor update。
-- 先把当前 `pc` / `if_pc_live` / `inst_buf_pc` / `skip_inst0` 等隐式 expected-PC 职责梳理清楚。
-- 下一轮 RTL 前，先细化 `expected_pc` 显式化和 `inst_buf` 演进为小型 fetch buffer 的改动清单。
+- 当前 `pc` / `if_pc_live` / `inst_buf_pc` / `skip_inst0` 等隐式 expected-PC 职责已收敛到 `FRONTEND_DECOUPLING_PLAN.md`。
+- 下一轮 RTL 从 Phase 1 shadow fetch buffer 开始：只建立 per-word buffer 边界和观测，不切 IF/ID 输入源。
 
 ## V1 设计契约：Slot1 Conditional Branch
 
@@ -189,6 +189,6 @@ pair_struct_ok && operands_ready
 
 ## 当前下一步
 
-1. 细化 `FRONTEND_DECOUPLING_PLAN.md` 的 Phase 1：列出当前 PC 状态职责、`expected_pc` 更新优先级、primary/secondary candidate 选择规则。
-2. 决定 `inst_buf` 是先扩展为 2-word fetch buffer，还是先增加 `expected_pc` 观测/断言。
-3. 前端解耦设计收敛后，再回到 slot1 LSU 接口清单。
+1. 按 `FRONTEND_DECOUPLING_PLAN.md` 的 Phase 1 新增 shadow fetch buffer：per-word entry、epoch/stale response、flush/redirect 清空、overflow/mismatch 计数。
+2. 第一批 RTL 不切 IF/ID 输入源，不改 BTB，不新增 slot1 BP update。
+3. shadow buffer 能解释当前真实消费流后，再进入 Phase 2，把 issue primary 切到 buffer；前端解耦稳定后再回到 slot1 LSU 接口清单。
