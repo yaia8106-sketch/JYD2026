@@ -35,6 +35,7 @@ NutShell/
 # --- Editor / Tool Caches ---
 .Xil/
 .vscode/
+.idea/
 __pycache__/
 
 # --- Local Editor Config ---
