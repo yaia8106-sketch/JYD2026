@@ -340,3 +340,167 @@ Phase 1 不改变：
 2. `inst_buf` leftover 路径是否能被单 entry buffered word 模型完整解释。
 3. slot1 branch redirect 是否能用 `expected_pc` 更新优先级表达。
 4. 若不能表达，是否需要先扩展为 2-word fetch buffer。
+
+## Phase 1A RTL Observation Checklist
+
+Phase 1A 是最低风险实现：只增加观测信号和可选断言，不改变取指、发射、redirect 或 predictor 行为。
+
+### 新增状态
+
+建议新增一个调试寄存器：
+
+```text
+dbg_expected_pc
+```
+
+语义：
+
+```text
+issue/dispatch 侧下一条按程序顺序应该消费的 PC
+```
+
+第一版建议命名带 `dbg_` 或受 synthesis/debug 宏保护，避免它被误认为已参与架构控制。
+
+### 初始化规则
+
+当前 reset 后第一条有效指令地址为 `0x8000_0000`，而 `pc_reg` 内部 reset 基准使用 `0x7FFF_FFFC` 再进入 `+4` 取指约定。
+
+Phase 1A 的 `dbg_expected_pc` 应直接初始化为第一条 architectural instruction PC：
+
+```text
+dbg_expected_pc = 32'h8000_0000
+```
+
+若后续 reset vector 参数化，应改为：
+
+```text
+dbg_expected_pc = reset_vector
+```
+
+### 更新事件来源
+
+Phase 1A 不应使用 `predict_dual` 更新 `dbg_expected_pc`。`predict_dual` 是前端取指推进预测，不等于真实消费。
+
+建议只使用真实进入 ID/EX 的发射语义。当前 `if_id_reg` 中 `id_allowin` 表示 IF/ID 能否接收新指令，不等同于 ID 指令已发射到 EX；`id_ex_reg` 在 `ex_allowin` 且 `id_valid & id_ready_go` 时接收 ID 指令。因此观测逻辑应以 ID->EX fire 为准：
+
+```text
+issue_fire_s0 = id_valid && id_ready_go && ex_allowin && !frontend_branch_flush
+issue_fire_s1 = issue_fire_s0 && id_s1_valid && !id_s1_squash_raw
+```
+
+这里的信号名只是设计意图，进入 RTL 前需要按现有 valid/allowin/flush 时序确认。核心要求是：
+
+- 只有真实进入后端流水的指令推进 `dbg_expected_pc`。
+- 被 flush/squash 的 slot1 不能计入 `issue_fire_s1`。
+- stall 时不推进。
+- `id_bp_redirect` 不是杀掉当前 ID branch，而是修正其 prediction metadata 并 flush 更年轻前端状态；当前 ID 指令仍可能进入 EX。
+
+### Redirect 覆盖规则
+
+`dbg_expected_pc` 的 redirect 优先级应镜像现有前端控制优先级，但只表达“下一条正确消费 PC”。
+
+建议顺序：
+
+1. reset：`32'h8000_0000`。
+2. MEM replay / registered branch flush：`mem_branch_target`。
+3. slot0 EX redirect to target：slot0 actual target。
+4. slot0 EX redirect to fallthrough：slot0 fallthrough。
+5. ID/NLP redirect 生效：`id_redirect_target`。
+6. slot1 registered redirect：slot1 actual target，经现有 registered/MEM replay 路径体现。
+7. 无 redirect 时按真实 issue count `+4/+8/hold`。
+
+注意：
+
+- 当前 IROM 地址 MUX 使用 `id_bp_redirect_raw` 走快路径，但 IF/ID flush 和 ID/EX prediction 修正使用 gated `id_bp_redirect = id_bp_redirect_raw & id_ready_go & ex_allowin`。`dbg_expected_pc` 应以 gated `id_bp_redirect` 为准，避免在 ID 无法前进时误认为 architectural 消费流已经跳转。
+- 当前 slot1 branch redirect 已被并入 registered branch flush 路径。Phase 1A 不需要额外开新 redirect 通道，但文档和断言必须能区分它和 slot0 EX fast redirect。
+- 若同周期既有 redirect 又有 issue fire，`dbg_expected_pc` 以 redirect target 覆盖 issue count 推进。
+
+### Candidate Match 观测
+
+建议新增组合观测：
+
+```text
+dbg_primary_pc
+dbg_primary_valid
+dbg_secondary_pc
+dbg_secondary_valid
+dbg_expected_match
+```
+
+初始映射：
+
+- `dbg_primary_pc` 使用当前实际送入 IF/ID 的 `if_pc_out`。
+- `dbg_primary_valid` 使用当前 IF->ID 接收事件：`if_accept && !id_flush`。若要观测 ID->EX 发射，应另设 `dbg_issue_primary_pc = id_pc`。
+- `dbg_secondary_pc` 使用 `if_pc_out + 4`，或当前 slot1 实际 PC。
+- `dbg_secondary_valid` 使用 `if_s1_valid` 经 squash/flush 后的实际 slot1 valid。
+- `dbg_expected_match = !dbg_primary_valid || (dbg_primary_pc == dbg_expected_pc)`。
+
+若 `inst_buf_valid` 或 `skip_inst0_valid` 存在，`dbg_primary_pc` 必须来自实际 mux 后的 PC，而不是直接用 `pc`。
+
+推荐把观测分成两层：
+
+```text
+IF candidate match：if_pc_out 是否等于 dbg_expected_pc
+ID issue match：id_pc 在 issue_fire_s0 时是否等于 dbg_expected_pc
+```
+
+第一层检查前端供给是否对齐，第二层检查真实消费是否对齐。Phase 1A 的 `dbg_expected_pc` 更新应以后者为准。
+
+### 可选断言
+
+第一版断言只建议在仿真宏下启用：
+
+```text
+ASSERT_EXPECTED_PRIMARY_MATCH:
+    issue_fire_s0 && !redirect_in_flight -> id_pc == dbg_expected_pc
+```
+
+需要先屏蔽的状态：
+
+- reset 后前几拍。
+- IROM held/stall 进入与退出边界。
+- flush 同拍。
+- branch redirect 同拍和后一拍。
+- 已知 `inst_buf_before_window` 过渡态。
+- `id_bp_redirect_raw` 已拉高但 gated `id_bp_redirect` 尚未生效的前端快路径窗口。
+
+若断言噪声过多，先降级为 performance/debug counter：
+
+```text
+dbg_expected_mismatch_count
+```
+
+并在仿真结束时观察是否为 0。
+
+### 覆盖点
+
+Phase 1A 至少应观察以下路径：
+
+- 顺序 single issue：`dbg_expected_pc += 4`。
+- 顺序 dual issue：`dbg_expected_pc += 8`。
+- single issue 后 `inst_buf` leftover：下一次 primary PC 等于 leftover PC。
+- shifted pair dual issue：primary 来自 buffer，secondary 来自 current lower。
+- stall hold：`dbg_expected_pc` 不因 stall 错误推进。
+- slot0 branch taken redirect：`dbg_expected_pc` 到 target。
+- slot0 branch not-taken 修正：`dbg_expected_pc` 到 fallthrough。
+- slot1 branch taken registered redirect：`dbg_expected_pc` 到 slot1 target。
+- slot0 redirect 同拍 squash slot1：slot1 不计入 `+8`。
+
+### 不进入 Phase 1A 的内容
+
+- 不改 `irom_addr`。
+- 不改 `seq_next_pc`。
+- 不改 `predict_dual`。
+- 不改 `inst_buf` 容量。
+- 不新增 `PC+4` BTB 查询。
+- 不新增 slot1 BP update。
+- 不把断言失败直接当作 RTL bug；第一轮应先判断是否为观测模型遗漏。
+
+### Phase 1A 产出
+
+实现后应形成：
+
+1. RTL 中的 `dbg_expected_pc` 观测逻辑。
+2. 可选断言或 mismatch counter。
+3. focused test 波形/日志证明主要路径能解释。
+4. 文档更新：若某条现有路径无法用单 entry `inst_buf` 模型解释，记录为 Phase 2 输入。
