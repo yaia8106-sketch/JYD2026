@@ -9,7 +9,7 @@
 
 按需阅读：
 
-- **`02_Design/sim/riscv_tests/test_coverage.md`** — 回归测试覆盖范围
+- **`02_Design/riscv_tests/test_coverage.md`** — 回归测试覆盖范围
 - **`02_Design/coe/README.md`** — COE 文件、转换脚本和静态分布
 - **`PhysicalTwin_XC7A35T/README.md`** — 自有物理板工程与显示映射
 
@@ -31,11 +31,8 @@ CPU_Workspace/
 │   ├── rtl/               ← 自研 CPU RTL 源码
 │   ├── coe/               ← 竞赛程序 COE 文件 + 工具脚本
 │   ├── contest_readonly/  ← 赛方原版（禁止修改）
-│   └── sim/
-│       ├── riscv_tests/   ← iverilog 回归测试（64/64 PASS 目标）
-│       └── debug/         ← Vivado 调试 TB
+│   └── riscv_tests/       ← iverilog 回归测试（64/64 PASS 目标）
 ├── 03_Timing_Analysis/    ← 时序分析 TCL + 报告
 ├── PhysicalTwin_XC7A35T/  ← 自有 XC7A35T 板卡 Vivado 工程封装
-├── JYD2025_Contest-rv32i/ ← Vivado 工程
-└── riscv-tests/           ← 测试源码（build_tests.sh 依赖）
+└── JYD2025_Contest-rv32i/ ← Vivado 工程
 ```
