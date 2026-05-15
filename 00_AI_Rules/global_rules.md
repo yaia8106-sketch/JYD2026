@@ -115,19 +115,18 @@ runtime ~= cycles * clock_period
    - cycles/runtime 类优化：预期至少约 `1%` 运行时间收益。
    - 时序类优化：必须解释预期切断的路径，或预期改善至少约 `0.3ns` WNS。
    - 大型/流水线切分：必须同时给出 cycles 代价和 Fmax 收益的估算。
-5. 先把评估结论写到 `OPTIMIZATION_PLAN.md` 或临时 `/tmp/` 报告，再开始 RTL。
+5. 先把评估结论写到临时 `/tmp/` 报告，再开始 RTL。
 
 ### RTL 修改后验证
 
 - 功能：改 RTL 后运行 `run_all.sh`，目标是全通过。
 - 长前缀正确性：涉及前端/分支/访存时，运行 `run_coe_diff.sh`。
-- 性能：性能相关改动需要和 baseline cycles/runtime 对比，不能只报“功能通过”。
+- 性能：性能相关改动需要和 baseline cycles/runtime 对比，不能只报”功能通过”。
 - 时序：任何影响 IF/IROM、redirect、DCache ready、forwarding/hazard 的改动需要跑 Vivado timing。
-- 失败实验只在 `OPTIMIZATION_PLAN.md` 里保留短结论；删除实验分支，不在仓库中维护长实验归档。
 
 ### 实验记录策略
 
-默认不在仓库中保留长实验记录。性能方向由人工确认后再进入 RTL；脚本输出、Vivado 报告和中间分析默认放 `/tmp/` 或本地工作目录，只把仍然影响后续决策的短结论写入 `OPTIMIZATION_PLAN.md`。
+默认不在仓库中保留长实验记录。性能方向由人工确认后再进入 RTL；脚本输出、Vivado 报告和中间分析默认放 `/tmp/` 或本地工作目录。
 
 本机脚本优先使用 **18 核**，例如 `--jobs 18`、`JOBS=18` 或 Vivado Tcl flow 的 jobs 参数为 `18`。如果降低并行度，只需在当前讨论或短结论中说明原因。
 
@@ -138,7 +137,7 @@ runtime ~= cycles * clock_period
 ### 回归测试（仅在 RTL 改动后或用户要求时运行）
 
 ```bash
-cd 02_Design/sim/riscv_tests
+cd 02_Design/riscv_tests
 bash run_all.sh
 ```
 
@@ -149,7 +148,7 @@ bash run_all.sh
 ### 性能 Profiling（按需运行）
 
 ```bash
-cd 02_Design/sim/riscv_tests
+cd 02_Design/riscv_tests
 bash run_perf.sh [test_name...]
 ```
 
@@ -159,29 +158,17 @@ bash run_perf.sh [test_name...]
 ### 重新编译测试（仅在修改/新增测试用例时）
 
 ```bash
-cd 02_Design/sim/riscv_tests
+cd 02_Design/riscv_tests
 bash build_tests.sh
 ```
 
 - 依赖：`riscv64-unknown-elf-gcc`、项目根目录 `riscv-tests/` 源码
 - 中间产物放 `/tmp/riscv_build/`，只有 .hex 输出到 `work/hex/`
 
-### Vivado 仿真（跑竞赛程序看波形）
-
-```bash
-cd 02_Design/sim/debug
-bash run_vivado_sim.sh
-```
-
-- 例化 `student_top`，COE 由 BRAM IP 自动加载
-- 或在 Vivado GUI 中设 `tb_student_top` 为仿真顶层
-
----
-
 ### COE 程序功能/性能检查
 
 ```bash
-cd 02_Design/sim/riscv_tests
+cd 02_Design/riscv_tests
 MAX_CYCLES=1500000 WATCHDOG_CYCLES=150000 bash run_coe_suite.sh current src0 src1 src2
 COMMITS=50000 MAX_CYCLES=1500000 WATCHDOG_CYCLES=150000 bash run_coe_diff.sh current src0 src1 src2
 ```
@@ -193,6 +180,8 @@ COMMITS=50000 MAX_CYCLES=1500000 WATCHDOG_CYCLES=150000 bash run_coe_diff.sh cur
 
 ```bash
 vivado -mode tcl \
+  -log 03_Timing_Analysis/vivado_work/vivado.log \
+  -journal 03_Timing_Analysis/vivado_work/vivado.jou \
   -source 03_Timing_Analysis/run_vivado_flow.tcl \
   -tclargs "$PWD" current 18
 ```
@@ -223,8 +212,7 @@ vivado -mode tcl \
 | 目录 | 允许内容 | 禁止 |
 |------|---------|------|
 | `02_Design/rtl/` | 可综合 RTL 源码 | TB、脚本、文档 |
-| `02_Design/sim/riscv_tests/` | 回归 TB + 脚本 | 临时调试 TB |
-| `02_Design/sim/debug/` | Vivado 调试 TB | 编译产物 |
+| `02_Design/riscv_tests/` | 回归 TB + 脚本 | 临时调试 TB |
 | `02_Design/coe/` | COE 文件 + 工具脚本 | 仿真产物 |
 | `00_AI_Rules/` | 当前规则、架构文档 | 临时实验记录 |
 | `PhysicalTwin_XC7A35T/` | 自有板工程封装和板级文档 | CPU RTL 副本 |
@@ -253,7 +241,6 @@ vivado -mode tcl \
 
 ## 9. 文档维护
 
-- 当前有效文档包括：`global_rules.md`、`architecture.md`、`OPTIMIZATION_PLAN.md`、`02_Design/coe/README.md`、`02_Design/sim/riscv_tests/test_coverage.md`、`PhysicalTwin_XC7A35T/README.md`。
-- RTL 改动通过回归后，同步更新 `architecture.md`；已否决的方向只在 `OPTIMIZATION_PLAN.md` 保留短结论。
-- 优化计划、设计契约和 profiling 基线记录在项目根目录 `OPTIMIZATION_PLAN.md`。
+- 当前有效文档包括：`global_rules.md`、`architecture.md`、`02_Design/coe/README.md`、`02_Design/riscv_tests/test_coverage.md`、`PhysicalTwin_XC7A35T/README.md`。
+- RTL 改动通过回归后，同步更新 `architecture.md`。
 - 信号名必须与 RTL 一致；当前架构文档只写当前状态，不保存长实验档案。

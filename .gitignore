@@ -5,7 +5,6 @@
 # --- Large / External Directories ---
 01_Docs/
 JYD2025_Contest-rv32i/
-riscv-tests/
 rt-thread/
 Nutshell/
 NutShell/
@@ -16,12 +15,11 @@ NutShell/
 03_Timing_Analysis/vivado_work/
 
 # --- Simulation Artifacts ---
-02_Design/sim/riscv_tests/work/*
-!02_Design/sim/riscv_tests/work/.gitkeep
-!02_Design/sim/riscv_tests/work/.gitignore
-!02_Design/sim/riscv_tests/work/dcache_data_ram.v
-!02_Design/sim/riscv_tests/work/hex/
-02_Design/sim/debug/debug_state.md
+02_Design/riscv_tests/work/*
+!02_Design/riscv_tests/work/.gitkeep
+!02_Design/riscv_tests/work/.gitignore
+!02_Design/riscv_tests/work/dcache_data_ram.v
+!02_Design/riscv_tests/work/hex/
 *.vcd
 *.wcfg
 

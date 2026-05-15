@@ -6,7 +6,10 @@
 #   open_run impl_1 -> source report_stage_timing.tcl
 #
 # Direct Vivado usage:
-#   vivado -mode tcl -source 03_Timing_Analysis/run_vivado_flow.tcl \
+#   vivado -mode tcl \
+#          -log 03_Timing_Analysis/vivado_work/vivado.log \
+#          -journal 03_Timing_Analysis/vivado_work/vivado.jou \
+#          -source 03_Timing_Analysis/run_vivado_flow.tcl \
 #          -tclargs /home/anokyai/Desktop/CPU_Workspace current 18
 # ============================================================
 
