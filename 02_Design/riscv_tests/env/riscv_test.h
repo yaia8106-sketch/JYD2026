@@ -1,10 +1,10 @@
-// Custom riscv_test.h for RV32I CPU without CSR support
+// Custom riscv_test.h for RV32I/Zicsr CPU tests
 // Pass/Fail signaling via LED MMIO (0x80200040)
 //   PASS: LED = 0x00000001
 //   FAIL: LED = test_num << 1 | 1
 
-#ifndef _ENV_CUSTOM_NOCSR_H
-#define _ENV_CUSTOM_NOCSR_H
+#ifndef _ENV_CUSTOM_RV32I_ZICSR_H
+#define _ENV_CUSTOM_RV32I_ZICSR_H
 
 //-----------------------------------------------------------------------
 // Begin/End Macros

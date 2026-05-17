@@ -51,6 +51,12 @@ module id_ex_reg (
     input  logic        id_branch_taken,
     input  logic        id_is_jal,
     input  logic        id_is_jalr,
+    input  logic        id_is_csr,
+    input  logic        id_csr_uses_imm,
+    input  logic [ 2:0] id_csr_cmd,
+    input  logic [11:0] id_csr_addr,
+    input  logic        id_is_ecall,
+    input  logic        id_is_mret,
 
     // Branch prediction (ID → EX passthrough)
     input  logic        id_bp_taken,
@@ -86,6 +92,12 @@ module id_ex_reg (
     output logic        ex_branch_taken,
     output logic        ex_is_jal,
     output logic        ex_is_jalr,
+    output logic        ex_is_csr,
+    output logic        ex_csr_uses_imm,
+    output logic [ 2:0] ex_csr_cmd,
+    output logic [11:0] ex_csr_addr,
+    output logic        ex_is_ecall,
+    output logic        ex_is_mret,
 
     // Branch prediction out (to EX stage)
     output logic        ex_bp_taken,
@@ -128,6 +140,12 @@ module id_ex_reg (
             ex_branch_taken  <= 1'b0;
             ex_is_jal        <= 1'b0;
             ex_is_jalr       <= 1'b0;
+            ex_is_csr        <= 1'b0;
+            ex_csr_uses_imm  <= 1'b0;
+            ex_csr_cmd       <= 3'd0;
+            ex_csr_addr      <= 12'd0;
+            ex_is_ecall      <= 1'b0;
+            ex_is_mret       <= 1'b0;
             ex_bp_taken      <= 1'b0;
             ex_bp_target     <= 32'd0;
             ex_bp_ghr_snap   <= 8'd0;
@@ -163,6 +181,12 @@ module id_ex_reg (
             ex_branch_taken  <= id_branch_taken;
             ex_is_jal        <= id_is_jal;
             ex_is_jalr       <= id_is_jalr;
+            ex_is_csr        <= id_is_csr;
+            ex_csr_uses_imm  <= id_csr_uses_imm;
+            ex_csr_cmd       <= id_csr_cmd;
+            ex_csr_addr      <= id_csr_addr;
+            ex_is_ecall      <= id_is_ecall;
+            ex_is_mret       <= id_is_mret;
             ex_bp_taken      <= id_bp_taken;
             ex_bp_target     <= id_bp_target;
             ex_bp_ghr_snap   <= id_bp_ghr_snap;

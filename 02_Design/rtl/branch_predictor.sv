@@ -249,27 +249,6 @@ module branch_predictor (
     wire btb_taken = bp_taken_raw & tag_match;
     assign bp_taken = jr_taken | btb_taken;
 
-    // bp_target: 3-way AND-OR MUX (one-hot selects)
-    //   JAL/CALL/BRANCH → BTB target (ID stage needs it for redirect)
-    //   RET + ras_valid → RAS top
-    //   otherwise       → don't-care (bp_taken=0 → irom_addr skips bp_target)
-    //
-    // 250MHz: use r_valid instead of btb_hit_w (removes tag_match from
-    //   serial chain). Safe because bp_target is only consumed when
-    //   bp_taken=1, which already implies tag_match=1.
-    wire sel_jr_btb = jr_hit & jr_is_call;                         // sidecar CALL
-    wire sel_jr_ras = jr_hit & jr_is_ret & ras_valid;              // sidecar RET
-    wire sel_btb = ~jr_taken & r_valid & ~(r_type[1] & r_type[0]); // JAL/CALL/BRANCH
-    wire sel_ras = ~jr_taken & r_valid &  r_type[1] & r_type[0] & ras_valid; // RET
-    // sel_seq removed: when neither sel_btb nor sel_ras, bp_taken=0
-    // guarantees bp_target is unused (irom_addr MUX skips it)
-    // Removing if_pc+4 eliminates carry chain from pc→bp_target→IROM path
-
-    assign bp_target = ({32{sel_jr_btb}} & {jr_tgt, 2'b00})
-                     | ({32{sel_jr_ras}} & ras_top)
-                     | ({32{sel_btb}} & {r_tgt, 2'b00})
-                     | ({32{sel_ras}} & ras_top);
-
     wire [11:0] jr_tgt_odd_addr  = btb_odd_bank_addr(jr_tgt);
     wire [11:0] r_tgt_odd_addr  = btb_odd_bank_addr(r_tgt);
     wire [11:0] ras_even_addr   = full_even_bank_addr(ras_top);
@@ -278,47 +257,52 @@ module branch_predictor (
     wire [11:0] ras_p8_even_addr  = ras_even_addr + 12'd1;
     wire [11:0] ras_p12_even_addr = ras_odd_addr + 12'd2;
 
-    assign bp_even_addr = ({12{sel_jr_btb}} & jr_even)
-                        | ({12{sel_jr_ras}} & ras_even_addr)
-                        | ({12{sel_btb}} & r_even)
-                        | ({12{sel_ras}} & ras_even_addr);
-    assign bp_odd_addr = ({12{sel_jr_btb}} & jr_tgt_odd_addr)
-                       | ({12{sel_jr_ras}} & ras_odd_addr)
-                       | ({12{sel_btb}} & r_tgt_odd_addr)
-                       | ({12{sel_ras}} & ras_odd_addr);
-    assign bp_fetch_odd = (sel_jr_btb & jr_tgt[0])
-                        | (sel_jr_ras & ras_top[2])
-                        | (sel_btb & r_tgt[0])
-                        | (sel_ras & ras_top[2]);
+    // Target/address candidates are built in two independent trees:
+    //   sidecar JALR candidate and main BTB/RAS candidate.
+    // The old one-hot AND-OR form fed ~jr_taken into every main candidate bit,
+    // so the JALR tag-compare result serialized through the main target mux.
+    // Keep the two candidates parallel and use jr_taken only as the final
+    // priority select.  When bp_taken=0 the address outputs are don't-care.
+    wire main_is_ret_taken = r_valid & r_type[1] & r_type[0] & ras_valid;
+    wire jr_select_ras = jr_is_ret;
 
-    assign bp_plus4_even_addr = ({12{sel_jr_btb}} & jr_p4_even)
-                              | ({12{sel_jr_ras}} & ras_p4_even_addr)
-                              | ({12{sel_btb}} & r_p4_even)
-                              | ({12{sel_ras}} & ras_p4_even_addr);
-    assign bp_plus4_odd_addr = ({12{sel_jr_btb}} & jr_even)
-                             | ({12{sel_jr_ras}} & ras_even_addr)
-                             | ({12{sel_btb}} & r_even)
-                             | ({12{sel_ras}} & ras_even_addr);
+    wire [31:0] main_target = main_is_ret_taken ? ras_top : {r_tgt, 2'b00};
+    wire [31:0] jr_target = jr_select_ras ? ras_top : {jr_tgt, 2'b00};
+
+    wire [11:0] main_even_addr = main_is_ret_taken ? ras_even_addr : r_even;
+    wire [11:0] main_odd_addr = main_is_ret_taken ? ras_odd_addr : r_tgt_odd_addr;
+    wire        main_fetch_odd = main_is_ret_taken ? ras_top[2] : r_tgt[0];
+    wire [11:0] jr_even_addr = jr_select_ras ? ras_even_addr : jr_even;
+    wire [11:0] jr_odd_addr = jr_select_ras ? ras_odd_addr : jr_tgt_odd_addr;
+    wire        jr_fetch_odd = jr_select_ras ? ras_top[2] : jr_tgt[0];
+
+    assign bp_target = jr_taken ? jr_target : main_target;
+    assign bp_even_addr = jr_taken ? jr_even_addr : main_even_addr;
+    assign bp_odd_addr = jr_taken ? jr_odd_addr : main_odd_addr;
+    assign bp_fetch_odd = jr_taken ? jr_fetch_odd : main_fetch_odd;
+
+    wire [11:0] main_plus4_even_addr = main_is_ret_taken ? ras_p4_even_addr : r_p4_even;
+    wire [11:0] main_plus4_odd_addr = main_is_ret_taken ? ras_even_addr : r_even;
+    wire [11:0] jr_plus4_even_addr = jr_select_ras ? ras_p4_even_addr : jr_p4_even;
+    wire [11:0] jr_plus4_odd_addr = jr_select_ras ? ras_even_addr : jr_even;
+    assign bp_plus4_even_addr = jr_taken ? jr_plus4_even_addr : main_plus4_even_addr;
+    assign bp_plus4_odd_addr = jr_taken ? jr_plus4_odd_addr : main_plus4_odd_addr;
     assign bp_plus4_fetch_odd = ~bp_fetch_odd;
 
-    assign bp_plus8_even_addr = ({12{sel_jr_btb}} & jr_p8_even)
-                              | ({12{sel_jr_ras}} & ras_p8_even_addr)
-                              | ({12{sel_btb}} & r_p8_even)
-                              | ({12{sel_ras}} & ras_p8_even_addr);
-    assign bp_plus8_odd_addr = ({12{sel_jr_btb}} & jr_p4_even)
-                             | ({12{sel_jr_ras}} & ras_p4_even_addr)
-                             | ({12{sel_btb}} & r_p4_even)
-                             | ({12{sel_ras}} & ras_p4_even_addr);
+    wire [11:0] main_plus8_even_addr = main_is_ret_taken ? ras_p8_even_addr : r_p8_even;
+    wire [11:0] main_plus8_odd_addr = main_is_ret_taken ? ras_p4_even_addr : r_p4_even;
+    wire [11:0] jr_plus8_even_addr = jr_select_ras ? ras_p8_even_addr : jr_p8_even;
+    wire [11:0] jr_plus8_odd_addr = jr_select_ras ? ras_p4_even_addr : jr_p4_even;
+    assign bp_plus8_even_addr = jr_taken ? jr_plus8_even_addr : main_plus8_even_addr;
+    assign bp_plus8_odd_addr = jr_taken ? jr_plus8_odd_addr : main_plus8_odd_addr;
     assign bp_plus8_fetch_odd = bp_fetch_odd;
 
-    assign bp_plus12_even_addr = ({12{sel_jr_btb}} & jr_p12_even)
-                               | ({12{sel_jr_ras}} & ras_p12_even_addr)
-                               | ({12{sel_btb}} & r_p12_even)
-                               | ({12{sel_ras}} & ras_p12_even_addr);
-    assign bp_plus12_odd_addr = ({12{sel_jr_btb}} & jr_p8_even)
-                              | ({12{sel_jr_ras}} & ras_p8_even_addr)
-                              | ({12{sel_btb}} & r_p8_even)
-                              | ({12{sel_ras}} & ras_p8_even_addr);
+    wire [11:0] main_plus12_even_addr = main_is_ret_taken ? ras_p12_even_addr : r_p12_even;
+    wire [11:0] main_plus12_odd_addr = main_is_ret_taken ? ras_p8_even_addr : r_p8_even;
+    wire [11:0] jr_plus12_even_addr = jr_select_ras ? ras_p12_even_addr : jr_p12_even;
+    wire [11:0] jr_plus12_odd_addr = jr_select_ras ? ras_p8_even_addr : jr_p8_even;
+    assign bp_plus12_even_addr = jr_taken ? jr_plus12_even_addr : main_plus12_even_addr;
+    assign bp_plus12_odd_addr = jr_taken ? jr_plus12_odd_addr : main_plus12_odd_addr;
     assign bp_plus12_fetch_odd = ~bp_fetch_odd;
 
     // ---- Snapshot outputs ----

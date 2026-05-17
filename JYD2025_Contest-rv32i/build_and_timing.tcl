@@ -15,7 +15,7 @@
 #   set build_mode all; set coe_name src2; source build_and_timing.tcl
 # ============================================================
 
-set workspace      "/home/anokyai/桌面/CPU_Workspace"
+set workspace      [file normalize [file join [file dirname [info script]] ".."]]
 set project_path   "${workspace}/JYD2025_Contest-rv32i/digital_twin.xpr"
 set timing_script  "${workspace}/03_Timing_Analysis/report_stage_timing.tcl"
 set coe_dst        "${workspace}/JYD2025_Contest-rv32i/digital_twin.srcs/sources_1/imports/JYD2025/resource/coe"
@@ -189,7 +189,12 @@ proc verify_irom_slot_coes {irom slot0 slot1} {
 proc verify_ip_coe_binding {ip coe_file} {
     set actual [get_property CONFIG.Coe_File [get_ips $ip]]
     set expected_norm [file normalize $coe_file]
-    set actual_norm [file normalize $actual]
+    if {[file pathtype $actual] eq "absolute"} {
+        set actual_norm [file normalize $actual]
+    } else {
+        set ip_file [get_property IP_FILE [get_ips $ip]]
+        set actual_norm [file normalize [file join [file dirname $ip_file] $actual]]
+    }
     if {$actual_norm ne $expected_norm} {
         error "${ip} CONFIG.Coe_File mismatch: expected ${expected_norm}, got ${actual_norm}"
     }

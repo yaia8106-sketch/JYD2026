@@ -34,5 +34,6 @@ package cpu_defs;
     localparam logic [6:0] OP_AUIPC  = 7'b0010111;
     localparam logic [6:0] OP_JAL    = 7'b1101111;
     localparam logic [6:0] OP_JALR   = 7'b1100111;
+    localparam logic [6:0] OP_SYSTEM = 7'b1110011;
 
 endpackage

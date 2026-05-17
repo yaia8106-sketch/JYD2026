@@ -6,12 +6,13 @@
 
 ## `run_all.sh` 当前覆盖规模
 
-当前回归脚本列表包含 65 个测试；新增测试需要先运行 `build_tests.sh` 生成对应 hex，否则 `run_all.sh` 会按现有逻辑跳过缺失 hex：
+当前回归脚本列表包含 67 个测试；新增测试需要先运行 `build_tests.sh` 生成对应 hex，否则 `run_all.sh` 会按现有逻辑跳过缺失 hex：
 
 - 38 个基础 RV32I/smoke 测试：`simple` + 官方 `rv32ui` 指令测试（去掉 `fence_i`）。
 - 2 个综合访存测试：`ld_st`、`st_ld`。
 - 3 个压力测试：`dcache_stress`、`counter_stress`、`bp_stress`。
 - 22 个自定义双发射 / BP / DCache / RAS 测试。
+- 2 个 Zicsr / Trap 测试：`zicsr_basic`、`trap_mret`。
 
 `riscv-tests/isa/rv32ui/` 中还保留 `ma_data.S`，`work/hex/` 中也有若干只有 hex 生成物的旧测试，但它们不在当前 `run_all.sh` 默认回归集中。
 
@@ -140,6 +141,13 @@
 | `sb_stress` | **Store buffer 冲突 stall**：连续两次 store 命中同一 cache line → `sb_conflict` → S\_SB\_DRAIN 额外 stall 周期；三连 store（含覆盖写）验证 last-store-wins；store + 双发 ALU + store 交错场景 |
 | `ras_overflow` | **RAS 溢出恢复**：4 层嵌套调用（RAS 容量内）验证正常返回；6 层嵌套（溢出 2 层）验证 `branch_flush` 纠正错误 RAS 预测后仍能正确返回；溢出恢复后再做 2 层调用验证 RAS 状态正常 |
 
+### Zicsr 与 Trap 测试（2 个）
+
+| 测试 | 验证重点 |
+|------|----------|
+| `zicsr_basic` | **Zicsr 基础语义**：覆盖 CSRRW/CSRRS/CSRRC 及立即数字段版本，检查旧值返回、零寄存器/零立即数字段只读规则、CSR 结果紧随使用、背靠背 CSR 可见性、`mtvec` 写入值读回保留、未支持 CSR 读零写忽略 |
+| `trap_mret` | **ECALL/MRET 精确 Trap**：设置 `mtvec` Direct 入口，ECALL 保存自身 PC 到 `mepc` 并写 `mcause=11`，Trap 期间 `mstatus.MIE/MPIE` 更新，handler 修改 `mepc` 后 MRET 返回；同时验证 ECALL 后顺序指令不会在 Trap 前错误提交 |
+
 ---
 
 ## 丢失的测试（待重写）
@@ -168,6 +176,8 @@
 | BP 误预测 + 双发射循环 | 中 | ✅ `bp_dual` 覆盖 |
 | Store buffer 冲突 stall | 中 | ✅ `sb_stress` 覆盖 |
 | RAS 溢出（调用深度 > 4） | 低 | ✅ `ras_overflow` 覆盖（6 层嵌套） |
+| Zicsr 读改写与零源语义 | 中 | ✅ `zicsr_basic` 覆盖 |
+| ECALL/MRET 精确 Trap | 高 | ✅ `trap_mret` 覆盖 |
 | Branch 比较前递矩阵 | 高 | ✅ `branch_fwd_matrix` 覆盖 |
 | Branch+Slot1 同拍 flush 边界 | 高 | ✅ `branch_dual_flush` / `branch_dual_edge` 覆盖 |
 | DCache refill 期间 branch flush | 高——曾出 bug | ✅ 架构上不可能：`ex_branch_flush` 被 `mem_allowin` 门控，cache miss 期间 flush 被延迟到 refill 完成后。`dcache_dual` 已隐式覆盖此延迟 flush 行为 |

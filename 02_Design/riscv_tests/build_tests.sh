@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================
 # build_tests.sh - 编译 riscv-tests 并转换为 hex 文件
-# 使用自定义 env (无 CSR) + 自定义 link.ld (IROM/DRAM 分离)
+# 使用自定义 env + 自定义 link.ld (IROM/DRAM 分离)
 # ============================================================
 
 set -e
@@ -12,7 +12,7 @@ BUILD_DIR="/tmp/riscv_build"
 
 CC=riscv64-unknown-elf-gcc
 OBJDUMP="riscv64-unknown-elf-objdump"
-CFLAGS="-march=rv32i -mabi=ilp32 -static -mcmodel=medany -fvisibility=hidden -nostdlib -nostartfiles"
+CFLAGS="-march=rv32i_zicsr -mabi=ilp32 -static -mcmodel=medany -fvisibility=hidden -nostdlib -nostartfiles"
 INCLUDES="-I$SCRIPT_DIR/env"
 LDFLAGS="-T$SCRIPT_DIR/env/link.ld"
 
@@ -34,13 +34,14 @@ TESTS="simple \
        dual_alu raw_block branch_single branch_dual branch_dual_flush branch_fwd_matrix branch_dual_edge slot1_branch waw loaduse_dual inst_buffer \
        fwd_s1 waw_fwd flush_instbuf pc_align loaduse_cross lui_auipc_s1 \
        dcache_dual instbuf_stall bp_dual \
-       sb_stress ras_overflow"
+       sb_stress ras_overflow \
+       zicsr_basic trap_mret"
 
 mkdir -p "$HEX_DIR"
 mkdir -p "$BUILD_DIR"
 
 echo "========================================================"
-echo " Building riscv-tests for RV32I (custom env, no CSR)"
+echo " Building riscv-tests for RV32I/Zicsr (custom env)"
 echo " Source:  $SCRIPT_DIR/src/rv32ui/"
 echo " Output:  $HEX_DIR/"
 echo "========================================================"

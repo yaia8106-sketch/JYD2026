@@ -201,6 +201,11 @@ module cpu_top (
     wire [ 2:0] dec_branch_cond;
     wire        dec_is_jal;
     wire        dec_is_jalr;
+    wire        dec_is_csr;
+    wire        dec_csr_uses_rs1;
+    wire        dec_csr_uses_imm;
+    wire        dec_is_ecall;
+    wire        dec_is_mret;
     wire [ 2:0] dec_imm_type;
 
     // ---- Slot 1 decoder outputs ----
@@ -217,6 +222,11 @@ module cpu_top (
     wire [ 2:0] dec1_branch_cond;
     wire        dec1_is_jal;
     wire        dec1_is_jalr;
+    wire        dec1_is_csr;
+    wire        dec1_csr_uses_rs1;
+    wire        dec1_csr_uses_imm;
+    wire        dec1_is_ecall;
+    wire        dec1_is_mret;
     wire [ 2:0] dec1_imm_type;
 
     // ---- Immediate ----
@@ -274,6 +284,12 @@ module cpu_top (
     wire [ 2:0] ex_branch_cond;
     wire        ex_is_jal;
     wire        ex_is_jalr;
+    wire        ex_is_csr;
+    wire        ex_csr_uses_imm;
+    wire [ 2:0] ex_csr_cmd;
+    wire [11:0] ex_csr_addr;
+    wire        ex_is_ecall;
+    wire        ex_is_mret;
 
     // ---- Slot 1 shadow pipeline (valid stays 0 in Phase 1) ----
     wire        ex_s1_valid;
@@ -318,6 +334,10 @@ module cpu_top (
     wire        ex_redirect_to_fallthrough;
     wire        ex_s1_branch_redirect; // Slot1 branch delayed frontend redirect
     wire [31:0] ex_s1_branch_target;
+    wire        ex_system_redirect;
+    wire [31:0] ex_system_target;
+    wire        ex_fast_redirect;
+    wire [31:0] ex_fast_redirect_target;
     wire        ex_registered_branch_flush;
     wire [31:0] ex_registered_branch_target;
 
@@ -396,6 +416,21 @@ module cpu_top (
     wire [31:0] wb_write_data;
     wire [31:0] wb_s1_write_data;
 
+    // ---- Minimal M-mode CSR state ----
+    localparam [11:0] CSR_MSTATUS = 12'h300;
+    localparam [11:0] CSR_MTVEC   = 12'h305;
+    localparam [11:0] CSR_MEPC    = 12'h341;
+    localparam [11:0] CSR_MCAUSE  = 12'h342;
+    localparam [31:0] MSTATUS_WR_MASK = 32'h0000_0088; // MIE and MPIE
+    logic [31:0] csr_mstatus;
+    logic [31:0] csr_mtvec;
+    logic [31:0] csr_mepc;
+    logic [31:0] csr_mcause;
+    wire [31:0] ex_csr_rdata;
+    wire [31:0] ex_csr_wdata;
+    wire [31:0] ex_forward_result;
+    wire [31:0] ex_pipe_alu_result;
+
     // ---- Dual-issue performance counter ----
     localparam [31:0] DUAL_ISSUE_CNT_ADDR = 32'h8020_0060;
     logic [31:0] dual_issue_count;
@@ -424,20 +459,24 @@ module cpu_top (
     // ---- Flush / redirect ----
     wire id_bp_redirect;            // NLP: ID-stage Tournament redirect
     wire ex_redirect_fire = ~mem_branch_flush & ex_ready_go_w & mem_allowin;
-    assign ex_redirect_to_target = branch_redirect_to_target & ex_redirect_fire;
-    assign ex_redirect_to_fallthrough = branch_redirect_to_fallthrough & ex_redirect_fire;
+    wire ex_system_inst = ex_is_ecall | ex_is_mret;
+    assign ex_redirect_to_target = branch_redirect_to_target & ex_redirect_fire & ~ex_system_inst;
+    assign ex_redirect_to_fallthrough = branch_redirect_to_fallthrough & ex_redirect_fire & ~ex_system_inst;
     assign ex_branch_redirect = ex_redirect_to_target | ex_redirect_to_fallthrough;
+    assign ex_system_redirect = ex_valid & ex_system_inst & ex_redirect_fire;
+    assign ex_system_target = ex_is_ecall ? {csr_mtvec[31:2], 2'b00} : csr_mepc;
+    assign ex_fast_redirect = ex_branch_redirect | ex_system_redirect;
+    assign ex_fast_redirect_target = ex_branch_redirect ? branch_target : ex_system_target;
     assign mem_branch_replay = mem_branch_flush & ~fast_branch_redirect_r;
-    assign frontend_branch_flush  = mem_branch_replay | ex_branch_redirect;
+    assign frontend_branch_flush  = mem_branch_replay | ex_fast_redirect;
     assign frontend_branch_target = mem_branch_replay ? mem_branch_target :
-                                    ex_redirect_to_target ? ex_branch_target_pre :
-                                                           ex_fallthrough_pc;
+                                    ex_fast_redirect_target;
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n)
             fast_branch_redirect_r <= 1'b0;
         else
-            fast_branch_redirect_r <= ex_branch_redirect;
+            fast_branch_redirect_r <= ex_fast_redirect;
     end
 
     wire id_flush = frontend_branch_flush | id_bp_redirect;
@@ -452,17 +491,20 @@ module cpu_top (
     wire [4:0] id_s1_rd_addr  = id_inst1[11:7];
     wire [31:0] id_pc_plus_4 = id_pc + 32'd4;
     wire [31:0] id_s1_pc = id_pc_plus_4;
+    wire [ 2:0] id_csr_cmd = id_inst[14:12];
+    wire [11:0] id_csr_addr = id_inst[31:20];
     wire [31:0] id_pc_branch_target_sum = id_pc + id_imm;
     wire [31:0] id_jalr_target_sum = fwd_rs1_jalr_data + id_imm;
     wire [31:0] id_branch_target_pre = dec_is_jalr ? {id_jalr_target_sum[31:1], 1'b0}
                                                     : id_pc_branch_target_sum;
-    wire id_rs1_used = (dec_alu_src1_sel == 2'b00) | dec_is_branch;
+    wire id_rs1_used = (dec_alu_src1_sel == 2'b00) | dec_is_branch | dec_csr_uses_rs1;
     wire id_rs2_used = (dec_alu_src2_sel == 1'b0) | dec_is_branch | dec_mem_write_en;
-    wire id_s1_rs1_used = (dec1_alu_src1_sel == 2'b00) | dec1_is_branch;
+    wire id_s1_rs1_used = (dec1_alu_src1_sel == 2'b00) | dec1_is_branch | dec1_csr_uses_rs1;
     wire id_s1_rs2_used = (dec1_alu_src2_sel == 1'b0) | dec1_is_branch | dec1_mem_write_en;
     wire id_s0_alu_only = dec_reg_write_en & (dec_wb_sel == 2'b00)
                         & ~dec_mem_read_en & ~dec_mem_write_en
-                        & ~dec_is_branch & ~dec_is_jal & ~dec_is_jalr;
+                        & ~dec_is_branch & ~dec_is_jal & ~dec_is_jalr
+                        & ~dec_is_csr;
     wire id_branch_eq = ~|(fwd_rs1_data ^ fwd_rs2_data);
     wire id_branch_taken_eqne = dec_branch_cond[0] ? ~id_branch_eq : id_branch_eq;
     wire id_branch_taken_cmp = branch_cond_taken(fwd_branch_rs1_data,
@@ -730,12 +772,18 @@ module cpu_top (
     wire [11:0] ex_s1_branch_even_addr = irom_even_bank_addr(ex_s1_branch_target);
     wire [11:0] ex_s1_branch_odd_addr = irom_odd_bank_addr(ex_s1_branch_target);
     wire        ex_s1_branch_fetch_odd = ex_s1_branch_target[2];
-    wire [11:0] ex_registered_redirect_even_addr = ex_branch_redirect ? ex_redirect_even_addr
-                                                                      : ex_s1_branch_even_addr;
-    wire [11:0] ex_registered_redirect_odd_addr = ex_branch_redirect ? ex_redirect_odd_addr
-                                                                     : ex_s1_branch_odd_addr;
-    wire        ex_registered_redirect_fetch_odd = ex_branch_redirect ? ex_redirect_fetch_odd
-                                                                      : ex_s1_branch_fetch_odd;
+    wire [11:0] ex_system_even_addr = irom_even_bank_addr(ex_system_target);
+    wire [11:0] ex_system_odd_addr = irom_odd_bank_addr(ex_system_target);
+    wire        ex_system_fetch_odd = ex_system_target[2];
+    wire [11:0] ex_registered_redirect_even_addr = ex_branch_redirect ? ex_redirect_even_addr :
+                                                   ex_system_redirect ? ex_system_even_addr :
+                                                                        ex_s1_branch_even_addr;
+    wire [11:0] ex_registered_redirect_odd_addr = ex_branch_redirect ? ex_redirect_odd_addr :
+                                                  ex_system_redirect ? ex_system_odd_addr :
+                                                                       ex_s1_branch_odd_addr;
+    wire        ex_registered_redirect_fetch_odd = ex_branch_redirect ? ex_redirect_fetch_odd :
+                                                   ex_system_redirect ? ex_system_fetch_odd :
+                                                                        ex_s1_branch_fetch_odd;
 
     // irom_addr = flat priority MUX (stall branch removed)
     // Priority: EX/MEM redirect > NLP redirect > L0 prediction > sequential
@@ -775,6 +823,7 @@ module cpu_top (
     assign irom_addr = mem_branch_replay         ? mem_branch_target :
                        ex_redirect_to_target     ? ex_branch_target_pre :
                        ex_redirect_to_fallthrough ? ex_fallthrough_pc :
+                       ex_system_redirect        ? ex_system_target :
                        id_bp_redirect_raw        ? id_redirect_target : // NLP: ID redirect (raw, fast)
                        bp_taken_for_if           ? bp_target_for_if :   // L0 预测 taken
                                                    seq_next_pc;        // 顺序取指（+4/+8）
@@ -782,18 +831,21 @@ module cpu_top (
     assign irom_even_addr = mem_branch_replay         ? mem_branch_even_addr_r :
                             ex_redirect_to_target     ? ex_branch_target_even_addr :
                             ex_redirect_to_fallthrough ? ex_fallthrough_even_addr :
+                            ex_system_redirect        ? ex_system_even_addr :
                             id_bp_redirect_raw        ? id_redirect_even_addr :
                             bp_taken_for_if           ? bp_even_addr :
                                                         seq_even_addr;
     assign irom_odd_addr  = mem_branch_replay         ? mem_branch_odd_addr_r :
                             ex_redirect_to_target     ? ex_branch_target_odd_addr :
                             ex_redirect_to_fallthrough ? ex_fallthrough_odd_addr :
+                            ex_system_redirect        ? ex_system_odd_addr :
                             id_bp_redirect_raw        ? id_redirect_odd_addr :
                             bp_taken_for_if           ? bp_odd_addr :
                                                         seq_odd_addr;
     assign irom_fetch_odd = mem_branch_replay         ? mem_branch_fetch_odd_r :
                             ex_redirect_to_target     ? ex_branch_target_fetch_odd :
                             ex_redirect_to_fallthrough ? ex_fallthrough_fetch_odd :
+                            ex_system_redirect        ? ex_system_fetch_odd :
                             id_bp_redirect_raw        ? id_redirect_fetch_odd :
                             bp_taken_for_if           ? bp_fetch_odd :
                                                         seq_fetch_odd;
@@ -867,19 +919,19 @@ module cpu_top (
             pc_plus12_even_addr <= irom_even_bank_addr(mem_branch_target + 32'd12);
             pc_plus12_odd_addr <= irom_odd_bank_addr(mem_branch_target + 32'd12);
             pc_plus12_fetch_odd <= irom_bank_fetch_odd(mem_branch_target + 32'd12);
-        end else if (ex_branch_redirect) begin
-            pc_plus4 <= branch_target + 32'd4;       // EX redirect: target already precomputed
-            pc_plus8 <= branch_target + 32'd8;
-            pc_plus12 <= branch_target + 32'd12;
-            pc_plus4_even_addr <= irom_even_bank_addr(branch_target + 32'd4);
-            pc_plus4_odd_addr <= irom_odd_bank_addr(branch_target + 32'd4);
-            pc_plus4_fetch_odd <= irom_bank_fetch_odd(branch_target + 32'd4);
-            pc_plus8_even_addr <= irom_even_bank_addr(branch_target + 32'd8);
-            pc_plus8_odd_addr <= irom_odd_bank_addr(branch_target + 32'd8);
-            pc_plus8_fetch_odd <= irom_bank_fetch_odd(branch_target + 32'd8);
-            pc_plus12_even_addr <= irom_even_bank_addr(branch_target + 32'd12);
-            pc_plus12_odd_addr <= irom_odd_bank_addr(branch_target + 32'd12);
-            pc_plus12_fetch_odd <= irom_bank_fetch_odd(branch_target + 32'd12);
+        end else if (ex_fast_redirect) begin
+            pc_plus4 <= ex_fast_redirect_target + 32'd4;       // EX redirect: target already known
+            pc_plus8 <= ex_fast_redirect_target + 32'd8;
+            pc_plus12 <= ex_fast_redirect_target + 32'd12;
+            pc_plus4_even_addr <= irom_even_bank_addr(ex_fast_redirect_target + 32'd4);
+            pc_plus4_odd_addr <= irom_odd_bank_addr(ex_fast_redirect_target + 32'd4);
+            pc_plus4_fetch_odd <= irom_bank_fetch_odd(ex_fast_redirect_target + 32'd4);
+            pc_plus8_even_addr <= irom_even_bank_addr(ex_fast_redirect_target + 32'd8);
+            pc_plus8_odd_addr <= irom_odd_bank_addr(ex_fast_redirect_target + 32'd8);
+            pc_plus8_fetch_odd <= irom_bank_fetch_odd(ex_fast_redirect_target + 32'd8);
+            pc_plus12_even_addr <= irom_even_bank_addr(ex_fast_redirect_target + 32'd12);
+            pc_plus12_odd_addr <= irom_odd_bank_addr(ex_fast_redirect_target + 32'd12);
+            pc_plus12_fetch_odd <= irom_bank_fetch_odd(ex_fast_redirect_target + 32'd12);
         end else if (!if_allowin_w) begin
             ;                                       // stall: hold
         end else if (id_bp_redirect_raw) begin
@@ -1032,6 +1084,7 @@ module cpu_top (
     localparam [6:0] OP_AUIPC_LOCAL  = 7'b0010111;
     localparam [6:0] OP_JAL_LOCAL    = 7'b1101111;
     localparam [6:0] OP_JALR_LOCAL   = 7'b1100111;
+    localparam [6:0] OP_SYSTEM_LOCAL = 7'b1110011;
 
     // Parallel decode from raw BRAM output (bypasses inst_buf/held MUX chain)
     wire [6:0] raw_inst0_opcode = irom_inst0[6:0];
@@ -1048,12 +1101,14 @@ module cpu_top (
 
     wire raw_inst0_is_control = (raw_inst0_opcode == OP_BRANCH_LOCAL)
                                | (raw_inst0_opcode == OP_JAL_LOCAL)
-                               | (raw_inst0_opcode == OP_JALR_LOCAL);
+                               | (raw_inst0_opcode == OP_JALR_LOCAL)
+                               | (raw_inst0_opcode == OP_SYSTEM_LOCAL);
     wire raw_inst0_is_lsu = (raw_inst0_opcode == OP_LOAD_LOCAL)
                            | (raw_inst0_opcode == OP_STORE_LOCAL);
 
     wire raw_inst0_is_jump = (raw_inst0_opcode == OP_JAL_LOCAL)
-                            | (raw_inst0_opcode == OP_JALR_LOCAL);
+                            | (raw_inst0_opcode == OP_JALR_LOCAL)
+                            | (raw_inst0_opcode == OP_SYSTEM_LOCAL);
 
     wire raw_inst0_writes_rd = (raw_inst0_opcode == OP_R_TYPE_LOCAL)
                               | (raw_inst0_opcode == OP_I_ALU_LOCAL)
@@ -1100,12 +1155,14 @@ module cpu_top (
 
     wire shifted_inst0_is_control = (shifted_inst0_opcode == OP_BRANCH_LOCAL)
                                    | (shifted_inst0_opcode == OP_JAL_LOCAL)
-                                   | (shifted_inst0_opcode == OP_JALR_LOCAL);
+                                   | (shifted_inst0_opcode == OP_JALR_LOCAL)
+                                   | (shifted_inst0_opcode == OP_SYSTEM_LOCAL);
     wire shifted_inst0_is_lsu = (shifted_inst0_opcode == OP_LOAD_LOCAL)
                               | (shifted_inst0_opcode == OP_STORE_LOCAL);
 
     wire shifted_inst0_is_jump = (shifted_inst0_opcode == OP_JAL_LOCAL)
-                                | (shifted_inst0_opcode == OP_JALR_LOCAL);
+                                | (shifted_inst0_opcode == OP_JALR_LOCAL)
+                                | (shifted_inst0_opcode == OP_SYSTEM_LOCAL);
 
     wire shifted_inst0_writes_rd = (shifted_inst0_opcode == OP_R_TYPE_LOCAL)
                                   | (shifted_inst0_opcode == OP_I_ALU_LOCAL)
@@ -1309,6 +1366,11 @@ module cpu_top (
         .branch_cond    (dec_branch_cond),
         .is_jal         (dec_is_jal),
         .is_jalr        (dec_is_jalr),
+        .is_csr         (dec_is_csr),
+        .csr_uses_rs1   (dec_csr_uses_rs1),
+        .csr_uses_imm   (dec_csr_uses_imm),
+        .is_ecall       (dec_is_ecall),
+        .is_mret        (dec_is_mret),
         .imm_type       (dec_imm_type)
     );
 
@@ -1327,6 +1389,11 @@ module cpu_top (
         .branch_cond    (dec1_branch_cond),
         .is_jal         (dec1_is_jal),
         .is_jalr        (dec1_is_jalr),
+        .is_csr         (dec1_is_csr),
+        .csr_uses_rs1   (dec1_csr_uses_rs1),
+        .csr_uses_imm   (dec1_csr_uses_imm),
+        .is_ecall       (dec1_is_ecall),
+        .is_mret        (dec1_is_mret),
         .imm_type       (dec1_imm_type)
     );
 
@@ -1384,7 +1451,7 @@ module cpu_top (
         .ex_reg_write   (ex_reg_write_en),
         .ex_mem_read    (ex_mem_read_en),
         .ex_rd          (ex_rd),
-        .ex_alu_result  (alu_forward_result),
+        .ex_alu_result  (ex_forward_result),
         .ex_pc_plus_4   (ex_pc_plus_4),
         .ex_wb_sel      (ex_wb_sel),
         .ex_wb_repair   (ex_rs1_wb_repair | ex_rs2_wb_repair),
@@ -1489,6 +1556,12 @@ module cpu_top (
         .id_branch_taken  (id_branch_taken_pre),
         .id_is_jal        (dec_is_jal),
         .id_is_jalr       (dec_is_jalr),
+        .id_is_csr        (dec_is_csr),
+        .id_csr_uses_imm  (dec_csr_uses_imm),
+        .id_csr_cmd       (id_csr_cmd),
+        .id_csr_addr      (id_csr_addr),
+        .id_is_ecall      (dec_is_ecall),
+        .id_is_mret       (dec_is_mret),
         // Branch prediction passthrough (NLP: corrected by Tournament in ID)
         // When ID redirect fires, override L0's prediction with Tournament's result
         // so EX stage sees the corrected prediction for misprediction detection
@@ -1523,6 +1596,12 @@ module cpu_top (
         .ex_branch_taken  (ex_branch_taken_pre),
         .ex_is_jal        (ex_is_jal),
         .ex_is_jalr       (ex_is_jalr),
+        .ex_is_csr        (ex_is_csr),
+        .ex_csr_uses_imm  (ex_csr_uses_imm),
+        .ex_csr_cmd       (ex_csr_cmd),
+        .ex_csr_addr      (ex_csr_addr),
+        .ex_is_ecall      (ex_is_ecall),
+        .ex_is_mret       (ex_is_mret),
         // Branch prediction out (NLP: removed btb_way)
         .ex_bp_taken      (ex_bp_taken),
         .ex_bp_target     (ex_bp_target),
@@ -1617,6 +1696,70 @@ module cpu_top (
         .alu_addr   (alu_s1_addr)
     );
 
+    // ==================== Minimal M-mode CSR / Trap ====================
+    wire ex_csr_supported = (ex_csr_addr == CSR_MSTATUS)
+                          | (ex_csr_addr == CSR_MTVEC)
+                          | (ex_csr_addr == CSR_MEPC)
+                          | (ex_csr_addr == CSR_MCAUSE);
+
+    assign ex_csr_rdata = (ex_csr_addr == CSR_MSTATUS) ? csr_mstatus :
+                          (ex_csr_addr == CSR_MTVEC)   ? csr_mtvec :
+                          (ex_csr_addr == CSR_MEPC)    ? csr_mepc :
+                          (ex_csr_addr == CSR_MCAUSE)  ? csr_mcause :
+                                                         32'd0;
+
+    wire [31:0] ex_csr_src = ex_csr_uses_imm ? {27'd0, ex_rs1_addr} : ex_rs1_data;
+    wire        ex_csr_src_nonzero = |ex_csr_src;
+    wire        ex_csr_cmd_write = (ex_csr_cmd[1:0] == 2'b01);
+    wire        ex_csr_cmd_set   = (ex_csr_cmd[1:0] == 2'b10);
+    wire        ex_csr_cmd_clear = (ex_csr_cmd[1:0] == 2'b11);
+    wire        ex_csr_write_req = ex_is_csr & ex_csr_supported
+                                 & (ex_csr_cmd_write
+                                  | ((ex_csr_cmd_set | ex_csr_cmd_clear) & ex_csr_src_nonzero));
+
+    assign ex_csr_wdata = ex_csr_cmd_write ? ex_csr_src :
+                          ex_csr_cmd_set   ? (ex_csr_rdata | ex_csr_src) :
+                          ex_csr_cmd_clear ? (ex_csr_rdata & ~ex_csr_src) :
+                                             ex_csr_rdata;
+
+    wire ex_csr_fire = ex_valid & ex_is_csr & ~mem_branch_flush
+                     & ex_ready_go_w & mem_allowin;
+    wire ex_csr_write_fire = ex_csr_fire & ex_csr_write_req;
+    wire ex_ecall_fire = ex_system_redirect & ex_is_ecall;
+    wire ex_mret_fire = ex_system_redirect & ex_is_mret;
+
+    assign ex_forward_result = ex_is_csr ? ex_csr_rdata : alu_forward_result;
+    assign ex_pipe_alu_result = ex_is_csr ? ex_csr_rdata : alu_result;
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            csr_mstatus <= 32'd0;
+            csr_mtvec   <= 32'd0;
+            csr_mepc    <= 32'd0;
+            csr_mcause  <= 32'd0;
+        end else begin
+            if (ex_csr_write_fire) begin
+                case (ex_csr_addr)
+                    CSR_MSTATUS: csr_mstatus <= ex_csr_wdata & MSTATUS_WR_MASK;
+                    CSR_MTVEC:   csr_mtvec   <= ex_csr_wdata;
+                    CSR_MEPC:    csr_mepc    <= ex_csr_wdata;
+                    CSR_MCAUSE:  csr_mcause  <= ex_csr_wdata;
+                    default:     ;
+                endcase
+            end
+
+            if (ex_ecall_fire) begin
+                csr_mepc         <= ex_pc;
+                csr_mcause       <= 32'd11;
+                csr_mstatus[7]   <= csr_mstatus[3]; // MPIE <= MIE
+                csr_mstatus[3]   <= 1'b0;           // MIE  <= 0
+            end else if (ex_mret_fire) begin
+                csr_mstatus[3]   <= csr_mstatus[7]; // MIE  <= MPIE
+                csr_mstatus[7]   <= 1'b1;           // MPIE <= 1
+            end
+        end
+    end
+
     branch_unit u_branch_unit (
         .target_pc        (ex_branch_target_pre),
         .fallthrough_pc   (ex_fallthrough_pc),
@@ -1647,9 +1790,10 @@ module cpu_top (
                                  & (ex_s1_branch_target != ex_s1_pc_plus_4)
                                  & ~mem_branch_flush
                                  & ex_ready_go_w & mem_allowin;
-    assign ex_registered_branch_flush = ex_branch_redirect | ex_s1_branch_redirect;
-    assign ex_registered_branch_target = ex_branch_redirect ? branch_target
-                                                            : ex_s1_branch_target;
+    assign ex_registered_branch_flush = ex_branch_redirect | ex_system_redirect | ex_s1_branch_redirect;
+    assign ex_registered_branch_target = ex_branch_redirect ? branch_target :
+                                         ex_system_redirect ? ex_system_target :
+                                                              ex_s1_branch_target;
 
     // Store interface (EX stage → DCache)
     mem_interface u_mem_interface (
@@ -1689,7 +1833,7 @@ module cpu_top (
         .ex_branch_target (ex_registered_branch_target),
         .mem_branch_flush (mem_branch_flush),
         .mem_branch_target(mem_branch_target),
-        .ex_alu_result    (alu_result),
+        .ex_alu_result    (ex_pipe_alu_result),
         .ex_pc            (ex_pc),
         .ex_pc_plus_4     (ex_pc_plus_4),
         .ex_rd            (ex_rd),

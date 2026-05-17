@@ -22,8 +22,8 @@
 #  配置区
 # ────────────────────────────────────────────────────────────────
 
-# 输出目录（绝对路径，每次覆盖旧文件）
-set OUTPUT_DIR "/home/anokyai/桌面/CPU_Workspace/03_Timing_Analysis"
+# 输出目录（默认写到本脚本所在目录，每次覆盖旧文件）
+set OUTPUT_DIR [file normalize [file dirname [info script]]]
 
 # 每组最多报告的路径条数
 set MAX_PATHS 3

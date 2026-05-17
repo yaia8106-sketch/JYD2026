@@ -23,6 +23,11 @@ module decoder
     output logic [ 2:0] branch_cond,
     output logic        is_jal,
     output logic        is_jalr,
+    output logic        is_csr,
+    output logic        csr_uses_rs1,
+    output logic        csr_uses_imm,
+    output logic        is_ecall,
+    output logic        is_mret,
     output logic [ 2:0] imm_type
 );
 
@@ -30,6 +35,7 @@ module decoder
     wire [6:0] opcode  = inst[6:0];
     wire [2:0] funct3  = inst[14:12];
     wire       funct7_5 = inst[30];
+    wire       is_system = (opcode == OP_SYSTEM);
 
     // ================================================================
     // Packed control word (opcode-dependent, constant per instruction type)
@@ -78,9 +84,18 @@ module decoder
     end
 
     // ---- Unpack control word ----
-    assign {alu_src1_sel, alu_src2_sel, reg_write_en, wb_sel,
+    logic ctrl_reg_write_en;
+
+    assign {alu_src1_sel, alu_src2_sel, ctrl_reg_write_en, wb_sel,
             mem_read_en, mem_write_en, is_branch, is_jal, is_jalr,
             imm_type} = ctrl_word;
+
+    assign is_csr       = is_system & (funct3 != 3'b000);
+    assign csr_uses_imm = is_csr & funct3[2];
+    assign csr_uses_rs1 = is_csr & ~funct3[2];
+    assign is_ecall     = (inst == 32'h0000_0073);
+    assign is_mret      = (inst == 32'h3020_0073);
+    assign reg_write_en = ctrl_reg_write_en | is_csr;
 
     // ================================================================
     // Signals that depend on funct3 / funct7 (not constant per opcode)
