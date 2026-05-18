@@ -69,7 +69,9 @@ TESTS="simple \
        fwd_s1 waw_fwd flush_instbuf pc_align loaduse_cross lui_auipc_s1 \
        dcache_dual instbuf_stall bp_dual \
        sb_stress ras_overflow \
-       zicsr_basic trap_mret"
+       zicsr_basic zicsr_edge csr_forwarding csr_trap_stall trap_mret trap_slot1 trap_flush trap_nested"
+
+SIM_GUARD_ARGS="${SIM_GUARD_ARGS:-+pc_guard +watchdog=5000}"
 
 mkdir -p "$WORK_DIR"
 
@@ -118,7 +120,7 @@ for test_name in $TESTS; do
     if [ "$SIMULATOR" = "iverilog" ]; then
         result=$(vvp -N "$SIM_BIN" \
             "+irom=$irom_hex" "+dram=$dram_hex" "+test=$test_name" \
-            "+cycles=50000" 2>&1 | grep -E "^\[(PASS|FAIL|TIMEOUT)\]" | head -1)
+            "+cycles=50000" $SIM_GUARD_ARGS 2>&1 | grep -E "^\[(PASS|FAIL|TIMEOUT)\]" | head -1)
     elif [ "$SIMULATOR" = "xsim" ]; then
         # Vivado xsim flow (requires pre-elaborated snapshot)
         result=$(xsim riscv_tests_sim \
@@ -126,6 +128,8 @@ for test_name in $TESTS; do
             -testplusarg "dram=$dram_hex" \
             -testplusarg "test=$test_name" \
             -testplusarg "cycles=50000" \
+            -testplusarg "pc_guard" \
+            -testplusarg "watchdog=5000" \
             -runall 2>&1 | grep -E "^\[(PASS|FAIL|TIMEOUT)\]" | head -1)
     fi
 

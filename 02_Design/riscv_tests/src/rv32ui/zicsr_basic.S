@@ -61,23 +61,62 @@ RVTEST_CODE_BEGIN
     li    TESTNUM, 11
     bne   t6, t0, fail
 
+    csrrw x0, mscratch, x0
     li    t1, 0x123
-    csrrw x0, mscratch, t1
-    csrrs t2, mscratch, x0
+    csrrw t2, mscratch, t1
     li    TESTNUM, 12
+    bne   t2, x0, fail
+
+    csrrs t3, mscratch, x0
+    li    TESTNUM, 13
+    bne   t3, t1, fail
+
+    li    t4, 0x40
+    csrrs t5, mscratch, t4
+    li    TESTNUM, 14
+    bne   t5, t1, fail
+
+    li    t6, 0x163
+    csrrc t2, mscratch, t4
+    li    TESTNUM, 15
+    bne   t2, t6, fail
+
+    csrrwi t3, mscratch, 5
+    li    TESTNUM, 16
+    bne   t3, t1, fail
+
+    csrrsi t4, mscratch, 3
+    li    t0, 5
+    li    TESTNUM, 17
+    bne   t4, t0, fail
+
+    csrrci t5, mscratch, 1
+    li    t0, 7
+    li    TESTNUM, 18
+    bne   t5, t0, fail
+
+    csrrs t6, mscratch, x0
+    li    t0, 6
+    li    TESTNUM, 19
+    bne   t6, t0, fail
+
+    li    t1, 0x456
+    csrrw x0, 0x7c0, t1
+    csrrs t2, 0x7c0, x0
+    li    TESTNUM, 20
     bne   t2, x0, fail
 
     li    t0, 0x80000100
     csrrw x0, mepc, t0
     csrrs t1, mepc, x0
-    li    TESTNUM, 13
+    li    TESTNUM, 21
     bne   t1, t0, fail
 
     la    t0, mtvec_target
     ori   t1, t0, 1
     csrrw x0, mtvec, t1
     csrrs t2, mtvec, x0
-    li    TESTNUM, 14
+    li    TESTNUM, 22
     bne   t2, t1, fail
 
     RVTEST_PASS

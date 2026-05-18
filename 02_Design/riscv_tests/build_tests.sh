@@ -35,7 +35,7 @@ TESTS="simple \
        fwd_s1 waw_fwd flush_instbuf pc_align loaduse_cross lui_auipc_s1 \
        dcache_dual instbuf_stall bp_dual \
        sb_stress ras_overflow \
-       zicsr_basic trap_mret"
+       zicsr_basic zicsr_edge csr_forwarding csr_trap_stall trap_mret trap_slot1 trap_flush trap_nested"
 
 mkdir -p "$HEX_DIR"
 mkdir -p "$BUILD_DIR"
