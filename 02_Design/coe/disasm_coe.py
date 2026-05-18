@@ -4,11 +4,12 @@ COE → 反汇编脚本
 将 Vivado BRAM COE 文件中的 hex 指令转为 RISC-V 反汇编。
 
 用法:
-    python3 disasm_coe.py                  # 反汇编所有子目录
-    python3 disasm_coe.py src0             # 只反汇编 src0
-    python3 disasm_coe.py src0 src1        # 反汇编 src0 和 src1
+    python3 disasm_coe.py                  # 反汇编所有 single_issue/dual_issue 子目录
+    python3 disasm_coe.py src0             # 反汇编 single_issue/src0 和 dual_issue/src0
+    python3 disasm_coe.py single_issue/src0
+    python3 disasm_coe.py dual_issue/src0
 
-输出: 每个目录下生成 irom_disasm.txt
+输出: 每个 IROM 目录下生成 irom_disasm.txt
 """
 
 import sys
@@ -115,10 +116,12 @@ def disassemble(words, objdump, base_addr=TEXT_BASE):
         os.unlink(tmp_path)
 
 
-def format_output(raw_disasm, words, base_addr=TEXT_BASE):
+def format_output(raw_disasm, words, base_addr=TEXT_BASE, source_desc=None):
     """格式化输出：提取有效反汇编行，跳过 objdump 文件头"""
     lines = []
     lines.append(f"# RISC-V Disassembly (base=0x{base_addr:08X}, {len(words)} instructions)")
+    if source_desc:
+        lines.append(f"# Source: {source_desc}")
     lines.append(f"# {'='*70}")
     lines.append("")
 
@@ -138,17 +141,105 @@ def format_output(raw_disasm, words, base_addr=TEXT_BASE):
     return "\n".join(lines)
 
 
+def interleave_slot_words(slot0_words, slot1_words):
+    """将双发射 slot0/slot1 IROM 还原为顺序指令流。"""
+    words = []
+    max_len = max(len(slot0_words), len(slot1_words))
+    for i in range(max_len):
+        if i < len(slot0_words):
+            words.append(slot0_words[i])
+        if i < len(slot1_words):
+            words.append(slot1_words[i])
+    return words
+
+
+def find_irom_words(coe_dir):
+    """读取一个 COE 目录中的 IROM，支持单发射和双发射目录。"""
+    single_irom = coe_dir / "irom.coe"
+    slot0_irom = coe_dir / "irom_slot0.coe"
+    slot1_irom = coe_dir / "irom_slot1.coe"
+
+    if single_irom.exists():
+        return parse_coe(single_irom), "irom.coe"
+
+    if slot0_irom.exists() and slot1_irom.exists():
+        slot0_words = parse_coe(slot0_irom)
+        slot1_words = parse_coe(slot1_irom)
+        return (
+            interleave_slot_words(slot0_words, slot1_words),
+            f"irom_slot0.coe + irom_slot1.coe (interleaved, slot0={len(slot0_words)}, slot1={len(slot1_words)})",
+        )
+
+    return None, None
+
+
+def discover_directories(script_dir):
+    """扫描 single_issue/ 和 dual_issue/ 下包含 IROM COE 的目录。"""
+    roots = [Path(script_dir) / "single_issue", Path(script_dir) / "dual_issue"]
+    dirs = []
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for child in sorted(root.iterdir()):
+            if not child.is_dir():
+                continue
+            words, _ = find_irom_words(child)
+            if words is not None:
+                dirs.append(child)
+    return dirs
+
+
+def resolve_target_dirs(script_dir, targets):
+    """将命令行目标解析为实际目录。"""
+    if not targets:
+        return discover_directories(script_dir)
+
+    script_path = Path(script_dir)
+    resolved = []
+    for target in targets:
+        target_path = Path(target)
+        candidates = []
+
+        if target_path.is_absolute() or len(target_path.parts) > 1:
+            candidates.append(script_path / target_path)
+        else:
+            candidates.extend([
+                script_path / "single_issue" / target,
+                script_path / "dual_issue" / target,
+                script_path / target,
+            ])
+
+        matched = False
+        for candidate in candidates:
+            if candidate.is_dir():
+                words, _ = find_irom_words(candidate)
+                if words is not None:
+                    resolved.append(candidate)
+                    matched = True
+
+        if not matched:
+            print(f"⚠ 目录 {target} 不存在或未找到 IROM COE，跳过")
+
+    # 去重但保持顺序
+    unique = []
+    seen = set()
+    for directory in resolved:
+        key = directory.resolve()
+        if key not in seen:
+            unique.append(directory)
+            seen.add(key)
+    return unique
+
+
 def process_directory(coe_dir, objdump):
     """处理一个 COE 目录"""
-    irom_path = os.path.join(coe_dir, "irom.coe")
-    if not os.path.exists(irom_path):
-        print(f"  ⚠ 未找到 {irom_path}，跳过")
+    words, source_desc = find_irom_words(coe_dir)
+    if words is None:
+        print(f"  ⚠ 未找到 {coe_dir}/irom*.coe，跳过")
         return False
 
-    dir_name = os.path.basename(coe_dir)
-    print(f"  📖 解析 {dir_name}/irom.coe ...", end=" ")
-
-    words = parse_coe(irom_path)
+    rel_name = os.path.relpath(coe_dir, os.path.dirname(os.path.abspath(__file__)))
+    print(f"  📖 解析 {rel_name}/{source_desc} ...", end=" ")
     print(f"{len(words)} 条指令")
 
     if not words:
@@ -173,15 +264,15 @@ def process_directory(coe_dir, objdump):
     # 反汇编
     print(f"  🔧 反汇编中...")
     raw = disassemble(words, objdump)
-    output = format_output(raw, words)
+    output = format_output(raw, words, source_desc=source_desc)
 
     # 写出
-    out_path = os.path.join(coe_dir, "irom_disasm.txt")
+    out_path = coe_dir / "irom_disasm.txt"
     with open(out_path, "w") as f:
         f.write(output)
         f.write("\n")
 
-    print(f"  ✅ 输出: {dir_name}/irom_disasm.txt")
+    print(f"  ✅ 输出: {rel_name}/irom_disasm.txt")
     return True
 
 
@@ -195,28 +286,15 @@ def main():
         sys.exit(1)
     print(f"🔧 使用: {objdump}\n")
 
-    # 确定要处理的目录
-    all_dirs = ["src0", "src1", "src2", "current"]
+    target_dirs = resolve_target_dirs(script_dir, sys.argv[1:])
 
-    if len(sys.argv) > 1:
-        target_dirs = sys.argv[1:]
-    else:
-        target_dirs = all_dirs
-
-    for d in target_dirs:
-        # 优先查找 single_issue/ 下的目录
-        full_path = os.path.join(script_dir, 'single_issue', d)
-        if not os.path.isdir(full_path):
-            full_path = os.path.join(script_dir, d)  # fallback
-        if not os.path.isdir(full_path):
-            print(f"⚠ 目录 {d} 不存在，跳过\n")
-            continue
-
-        print(f"━━━ {d} ━━━")
+    for full_path in target_dirs:
+        rel_path = os.path.relpath(full_path, script_dir)
+        print(f"━━━ {rel_path} ━━━")
         process_directory(full_path, objdump)
         print()
 
-    print("🎉 全部完成！")
+    print(f"🎉 全部完成：处理 {len(target_dirs)} 个目录")
 
 
 if __name__ == "__main__":

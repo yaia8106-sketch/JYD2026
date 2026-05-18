@@ -1,5 +1,5 @@
-# RISC-V Disassembly (base=0x80000000, 1271 instructions)
-# Source: irom.coe
+# RISC-V Disassembly (base=0x80000000, 1272 instructions)
+# Source: irom_slot0.coe + irom_slot1.coe (interleaved, slot0=636, slot1=636)
 # ======================================================================
 
 80000000:	00108117          	auipc	sp,0x108
@@ -1273,3 +1273,4 @@
 800013d0:	f61ff0ef          	jal	0x80001330
 800013d4:	40b00533          	neg	a0,a1
 800013d8:	00028067          	jr	t0
+800013dc:	00000013          	nop
