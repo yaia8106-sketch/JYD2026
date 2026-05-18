@@ -290,6 +290,7 @@ BP 额外暴露 `la_*` 和 `buf_*` 端口：
 |-----|------|
 | `mstatus` | 只保存和读写 `MIE(bit3)` / `MPIE(bit7)`；其他位读为 0 |
 | `mtvec` | 写入值原样保存并可读回；异常入口按 Direct 基址 `{mtvec[31:2], 2'b00}` 使用 |
+| `mscratch` | 32-bit 普通可读写暂存 CSR；Trap 和 MRET 不自动修改 |
 | `mepc` | ECALL 时保存触发异常的指令 PC；也支持 CSR 普通读写 |
 | `mcause` | ECALL 时写入 M-mode environment call 原因 `11`；也支持 CSR 普通读写 |
 

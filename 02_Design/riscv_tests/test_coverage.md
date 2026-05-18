@@ -1,185 +1,171 @@
 # 测试覆盖说明
 
-> 记录每个测试用例验证了什么场景，方便定位 Cache/BP 相关 bug。
+本文记录默认回归中各测试程序覆盖的处理器行为。
 
----
+## 默认回归规模
 
-## `run_all.sh` 当前覆盖规模
+`run_all.sh` 默认运行 73 个测试：
 
-当前回归脚本列表包含 67 个测试；新增测试需要先运行 `build_tests.sh` 生成对应 hex，否则 `run_all.sh` 会按现有逻辑跳过缺失 hex：
-
-- 38 个基础 RV32I/smoke 测试：`simple` + 官方 `rv32ui` 指令测试（去掉 `fence_i`）。
+- 38 个基础 RV32I/smoke 测试：`simple` + 官方 `rv32ui` 指令测试（不包含 `fence_i`）。
 - 2 个综合访存测试：`ld_st`、`st_ld`。
 - 3 个压力测试：`dcache_stress`、`counter_stress`、`bp_stress`。
-- 22 个自定义双发射 / BP / DCache / RAS 测试。
-- 2 个 Zicsr / Trap 测试：`zicsr_basic`、`trap_mret`。
+- 22 个双发射、分支预测、DCache、RAS 相关测试。
+- 8 个 Zicsr / Trap 测试：`zicsr_basic`、`zicsr_edge`、`csr_forwarding`、`csr_trap_stall`、`trap_mret`、`trap_slot1`、`trap_flush`、`trap_nested`。
 
-`riscv-tests/isa/rv32ui/` 中还保留 `ma_data.S`，`work/hex/` 中也有若干只有 hex 生成物的旧测试，但它们不在当前 `run_all.sh` 默认回归集中。
+## 基础 RV32I 指令测试
 
----
-
-## 基础 RV32I 指令测试（38 个）
-
-来自 [riscv-tests](https://github.com/riscv-software-src/riscv-tests) `isa/rv32ui/`，当前默认回归去掉 `fence_i`，保留 `simple` smoke test。
-
-| 分类 | 测试 | 验证内容 |
+| 分类 | 测试 | 覆盖内容 |
 |------|------|----------|
-| ALU-R | `add`, `sub`, `and`, `or`, `xor`, `sll`, `srl`, `sra`, `slt`, `sltu` | 寄存器-寄存器运算，含边界值（0, -1, 溢出） |
-| ALU-I | `addi`, `andi`, `ori`, `xori`, `slli`, `srli`, `srai`, `slti`, `sltiu` | 寄存器-立即数运算，含符号扩展 |
-| Load | `lb`, `lbu`, `lh`, `lhu`, `lw` | 各宽度读取 + 符号/零扩展 |
-| Store | `sb`, `sh`, `sw` | 各宽度写入 + 字节选通（WEA） |
-| Branch | `beq`, `bne`, `blt`, `bge`, `bltu`, `bgeu` | 正向/反向跳转，taken/not-taken，含边界比较 |
-| Jump | `jal`, `jalr` | 跳转 + 链接寄存器写入，含 JALR 低位清零 |
+| ALU-R | `add`, `sub`, `and`, `or`, `xor`, `sll`, `srl`, `sra`, `slt`, `sltu` | 寄存器-寄存器运算，含 0、-1、符号位、溢出相关边界值 |
+| ALU-I | `addi`, `andi`, `ori`, `xori`, `slli`, `srli`, `srai`, `slti`, `sltiu` | 寄存器-立即数运算，含立即数符号扩展和移位量 |
+| Load | `lb`, `lbu`, `lh`, `lhu`, `lw` | 字节、半字、字读取，以及符号扩展/零扩展 |
+| Store | `sb`, `sh`, `sw` | 字节、半字、字写入，以及写掩码 |
+| Branch | `beq`, `bne`, `blt`, `bge`, `bltu`, `bgeu` | 正向/反向分支，taken/not-taken，带符号和无符号比较 |
+| Jump | `jal`, `jalr` | 跳转目标、返回地址写入、JALR 低位清零 |
 | Upper | `lui`, `auipc` | 高位立即数加载，AUIPC 相对 PC 计算 |
-| Smoke | `simple` | 最小 smoke test |
+| Smoke | `simple` | 最小启动、执行、PASS 路径 |
 
-每个测试含多个 case，自然产生前递、flush、stall 场景。
+## 综合访存测试
 
----
+| 测试 | 覆盖内容 |
+|------|----------|
+| `ld_st` | 不同宽度 load/store 混合访问同一数据区，验证读取扩展和写掩码组合 |
+| `st_ld` | store 后紧随 load，验证写入后可见性和 store/load 相关处理 |
 
-## 自定义综合测试
+## 压力测试
 
-| 测试 | 来源 | 验证内容 |
-|------|------|----------|
-| `ld_st` | 官方补充 | 不同宽度混合读写同一地址，字节选通正确性 |
-| `st_ld` | 官方补充 | Store 后立即 Load，验证 forwarding / store buffer |
+### `dcache_stress`
 
----
-
-## 自定义压力测试
-
-### dcache_stress.S
-
-覆盖 DCache 边界场景。**曾直接捕获 BTB 误预测导致 DCache 数据损坏的 bug。**
-
-| # | 场景 | 验证重点 |
+| # | 场景 | 覆盖内容 |
 |:-:|------|----------|
-| 1 | Store→立即 Load（同 word） | Store buffer forwarding / WT 可见性 |
-| 2 | Store→Load（同 line 不同 word） | 行内多 word 一致性 |
-| 3 | 跨 set 冲突（stride=1KB，触发 evict） | 2-way LRU 替换 + refill 正确性 |
-| 4 | MMIO 读夹在 cacheable 操作间 | non-cacheable 不破坏 cache 状态 |
-| 5 | 100 次连续 store-load 循环 | Store buffer drain 时序 |
-| 6 | Branch 跨过 cache miss 指令 | flush 不破坏 pending cache 请求 |
-| 7 | 4 个不同 set 写入→逆序读回 | 多 set 并发 miss |
+| 1 | Store 后立即 Load 同一 word | store buffer forwarding / 写后读可见性 |
+| 2 | 同一 cache line 内不同 word 访问 | 行内多 word 数据保持 |
+| 3 | 跨 set/tag 冲突访问 | 2-way 替换、refill、LRU 更新 |
+| 4 | MMIO 读取夹在 cacheable 访问之间 | non-cacheable 访问不破坏 cacheable 数据 |
+| 5 | 连续 store-load 循环 | store buffer drain 与连续写后读 |
+| 6 | 分支跨过 cache miss 指令 | flush 与 pending cache 请求交互 |
+| 7 | 多个 set 写入后逆序读回 | 多 set 状态保持和 refill 后读回 |
 
-### counter_stress.S
+### `counter_stress`
 
-模拟真实程序的 load-modify-store 模式。
-
-| # | 场景 | 验证重点 |
+| # | 场景 | 覆盖内容 |
 |:-:|------|----------|
-| 1 | 单次 LW→ADDI→SW→LW | 冷启动 miss→refill→回读 |
-| 2 | 循环 36 次 increment | 热循环中 cache 一致性 |
-| 3 | 最终值校验（期望 37） | 累积误差检测 |
-| 4 | 8 个 NOP 后读回 | 流水线排空后 cache 仍有效 |
-| 5 | 函数调用栈操作 + DRAM 读取 | SP 操作与 DRAM 读交错 |
+| 1 | 单次 LW -> ADDI -> SW -> LW | load-modify-store 基本链 |
+| 2 | 多轮计数循环 | 热循环中的 cache 一致性和累积结果 |
+| 3 | 循环后最终值检查 | 多次读写后的最终数据正确性 |
+| 4 | 空操作后再次读回 | 流水线排空后的数据保持 |
+| 5 | 函数调用栈操作与 DRAM 访问交错 | SP 相关访存、调用返回、普通 DRAM 访问组合 |
 
-### bp_stress.S
+### `bp_stress`
 
-分支预测压力测试，源码当前保留在 `riscv-tests/isa/rv32ui/bp_stress.S`。
-
-| # | 场景 | 验证重点 |
+| # | 场景 | 覆盖内容 |
 |:-:|------|----------|
-| 1 | 简单 tight loop / 嵌套 loop | BHT/PHT 训练后的稳定预测 |
-| 2 | 奇偶交替、相关分支、多路 if-else | 方向模式切换与 selector 行为 |
-| 3 | 多级函数调用、递归、JALR 间接跳转 | BTB / RAS / JALR 预测与返回修正 |
-| 4 | load 后紧邻 branch、长 beqz 链 | load-use、前递、分支 flush 的组合场景 |
+| 1 | tight loop 和嵌套 loop | 分支方向预测稳定性 |
+| 2 | 奇偶交替、相关分支、多路 if-else | 方向模式切换和选择器行为 |
+| 3 | 多级调用、递归、JALR 返回 | BTB、RAS、JALR 预测和返回修正 |
+| 4 | load 后紧邻 branch、长分支链 | load-use、前递、分支 flush 组合 |
 
-### 双发射基础测试（11 个）
+## 双发射测试
 
-| 测试 | 验证重点 |
+### 基础双发射
+
+| 测试 | 覆盖内容 |
 |------|----------|
-| `dual_alu` | 对齐 ALU+ALU 无 RAW 时 Slot1 提交，计数器递增 |
-| `raw_block` | inst1 读取 inst0 的 rd 时退化单发，计数器不增 |
-| `branch_single` | load-use/inst_buf 后的 taken branch 可在 S1 提交；fall-through 不提交，双发计数器按 S1 branch 提交递增 |
-| `branch_dual` | **Branch+ALU 双发优化**：not-taken branch + ALU 计数器递增；cold taken branch 即使顺序取指也必须杀掉同包 Slot1 |
-| `branch_dual_flush` | Slot0 branch 与 Slot1 ALU 同包时，EX 级误预测 flush 必须同拍杀掉 Slot1，防止错误路径写回 |
-| `branch_fwd_matrix` | Branch 比较操作数来自 S0/S1 各级前递时，方向判断和 redirect 仍正确；覆盖分支比较前递矩阵 |
-| `branch_dual_edge` | 分支双发边界场景：连续 branch/ALU 组合、taken/not-taken 切换和指令缓冲交互 |
-| `slot1_branch` | **Slot1 条件分支双发**：slot0 ALU + slot1 branch 的 taken/not-taken；taken 后延迟 redirect 必须杀掉 fall-through；slot0 LSU + slot1 branch 必须退化单发 |
-| `waw` | 同周期 WAW 不阻止双发，Slot1 写回优先 |
-| `loaduse_dual` | Slot0 load + 独立 Slot1 ALU 可双发，后续 load-use stall 正确 |
-| `inst_buffer` | 单发时 slot1 进入缓冲，下拍作为 slot0 执行且不丢失 |
+| `dual_alu` | Slot0 ALU + Slot1 ALU 无 RAW 时双发射和双发计数 |
+| `raw_block` | Slot1 读取 Slot0 写入目标时退化单发 |
+| `branch_single` | load-use / inst_buf 后的 Slot1 branch 提交和 fall-through 清除 |
+| `branch_dual` | Slot0 branch + Slot1 ALU 的 not-taken 双发和 taken 清除 |
+| `branch_dual_flush` | Slot0 branch 误预测时，同包 Slot1 被同拍清除 |
+| `branch_fwd_matrix` | 分支比较操作数来自 S0/S1 各级前递时的方向判断 |
+| `branch_dual_edge` | 连续 branch/ALU 组合、taken/not-taken 切换、指令缓冲交互 |
+| `slot1_branch` | Slot0 ALU + Slot1 branch 的 taken/not-taken；Slot0 LSU + Slot1 branch 退化单发 |
+| `waw` | 同周期 WAW 下 Slot1 写回优先 |
+| `loaduse_dual` | Slot0 load + 独立 Slot1 ALU 双发，以及后续 load-use stall |
+| `inst_buffer` | 单发时 Slot1 进入指令缓冲，并在后续周期作为 Slot0 执行 |
 
-### 双发射补充测试（11 个）
+### 前递与数据相关
 
-针对基础测试未覆盖的关键盲区，按风险等级补充。
-
-#### 前递与数据通路（3 个）
-
-| 测试 | 验证重点 |
+| 测试 | 覆盖内容 |
 |------|----------|
-| `fwd_s1` | **S1 跨槽前递**：S1 写 rd → 下一对 S0/S1 通过前递读取。分 4 部分分别测试 S1\_EX→S0/S1、S1\_MEM→S0/S1、S1\_WB→S0/S1、以及 S1\_EX 优先级高于 S0\_MEM 的正确性 |
-| `waw_fwd` | **WAW 前递优先级**：S0 与 S1 同时写同一 rd 后，后续指令通过前递读回，验证 S1\_EX > S0\_EX 优先级在 EX/MEM/WB 三阶段均正确。含链式 WAW（连续两对双写） |
-| `loaduse_cross` | **跨对 load-use 与 S1**：上一拍 S0 load → 本拍 S1.rs1 或 S1.rs2 依赖 load 结果 → 必须触发 stall。同时验证 S0 stall 时 S1 被正确冻结 |
+| `fwd_s1` | Slot1 写回结果在后续 S0/S1 的 EX、MEM、WB 前递路径 |
+| `waw_fwd` | Slot0/Slot1 同写同一寄存器后的前递优先级和链式 WAW |
+| `loaduse_cross` | 上一拍 Slot0 load 被下一拍 S0/S1 使用时的 stall 和冻结 |
 
-#### 指令缓冲与 Flush（2 个）
+### 指令缓冲与 Flush
 
-| 测试 | 验证重点 |
+| 测试 | 覆盖内容 |
 |------|----------|
-| `flush_instbuf` | **Flush 清空指令缓冲**：sw 单发→S1 入 buf→正常消费；beq taken→buf 中指令必须丢弃（不执行）；jal→buf 清空。若 buf 未清，错误路径指令会写入寄存器 |
-| `instbuf_stall` | **指令缓冲 + 流水线 stall 交互**：sw→S1 缓冲→缓冲指令是 lw→下一拍 load-use stall→缓冲内容必须存活；快速 sw→buf→消费→sw→buf 连续填充-消费链；BP 循环中反复触发缓冲 |
+| `flush_instbuf` | 分支/JAL flush 时清空指令缓冲，避免错误路径指令执行 |
+| `instbuf_stall` | 指令缓冲内容遇到 load-use stall、连续填充/消费和分支循环时保持正确 |
 
-#### 取指对齐与 S1 类型约束（2 个）
+### 取指对齐与 Slot1 类型约束
 
-| 测试 | 验证重点 |
+| 测试 | 覆盖内容 |
 |------|----------|
-| `pc_align` | **PC\[2\]=1 取指窗口**：分支跳转到非 8 字节对齐地址时仍需取到 `{PC+4, PC}` 并按序执行。同时测试 S1 位置为 load/store/branch 时阻止双发，以及 S1 位置为 branch 时正确进入 inst\_buf 并在下一拍作为 S0 执行 |
-| `lui_auipc_s1` | **LUI/AUIPC 在 Slot1**：LUI/AUIPC 属于 ALU-type 但使用特殊操作数选择（alu\_src1=0/PC），验证 S1 解码器和 ALU 源 MUX 正确处理。含 AUIPC 精确 PC 值校验、LUI 结果前递给后续 sw、以及 8 对连续双发的持续吞吐压力测试 |
+| `pc_align` | PC[2]=1 的取指窗口、非 8 字节对齐目标、Slot1 为 load/store/branch 时的发射约束 |
+| `lui_auipc_s1` | LUI/AUIPC 位于 Slot1 时的操作数选择、PC 计算、结果前递和持续双发 |
 
-#### DCache 与分支预测交互（2 个）
+### DCache、分支预测、Store Buffer、RAS 组合
 
-| 测试 | 验证重点 |
+| 测试 | 覆盖内容 |
 |------|----------|
-| `dcache_dual` | **DCache miss + 双发射 stall**：3 个同 set 不同 tag 的 store 驱逐 cache way → lw(miss) + addi(S1) 双发 → refill 期间 S1 流水线寄存器必须保持。第二部分验证 miss 恢复后 S1 结果能被后续指令正确前递。第三部分测试 write-allocate 路径的 store miss |
-| `bp_dual` | **BP 误预测 + 双发射循环**：紧凑循环体内 ALU 双发 + 出口误预测 flush 两个 slot；嵌套循环 + 双发对累加器；JAL 子程序调用后返回点执行双发对并校验 ra；背靠背 branch→双发→branch 连续切换 |
+| `dcache_dual` | DCache miss/refill 期间的双发射保持、miss 后前递、store miss write-allocate |
+| `bp_dual` | 误预测 flush 与双发循环、嵌套循环、JAL 返回点双发、背靠背分支组合 |
+| `sb_stress` | store buffer 冲突 stall、连续 store 覆盖写、store 与双发 ALU 交错 |
+| `ras_overflow` | RAS 容量内调用、超出容量后的返回修正，以及恢复后的再次调用 |
 
-#### Store Buffer 与 RAS（2 个）
+## Zicsr 与 Trap 测试
 
-| 测试 | 验证重点 |
+### 覆盖范围
+
+Zicsr / Trap 测试覆盖 M 模式下的最小 CSR 与同步异常行为：
+
+- 六类 Zicsr 指令语义：CSRRW、CSRRS、CSRRC、CSRRWI、CSRRSI、CSRRCI。
+- `mstatus`：`MIE(bit3)`、`MPIE(bit7)` 的读写和 Trap/MRET 更新。
+- `mtvec`：写入值读回保留，Trap 入口按 Direct 基址使用。
+- `mscratch`：普通 32-bit 可读写暂存 CSR，支持完整读写和读改写。
+- `mepc`：普通读写，以及 ECALL 时保存触发异常的指令地址。
+- `mcause`：普通读写，以及 ECALL 时写入 M-mode environment call 原因 `11`。
+- 未实现 CSR：读零，写忽略，不触发非法指令异常。
+- 系统类指令顺序化：CSR、ECALL、MRET 只作为 Slot0 执行；位于 Slot1 位置时进入后续周期执行。
+- 错误路径清除：被更老跳转/分支清除的 CSR、ECALL、MRET 不产生可见副作用。
+
+这些测试不覆盖异步中断、Vectored Trap、多特权级切换、完整 `mstatus` 字段、计数类 CSR、非法指令异常和 `ebreak` Trap。
+
+### 测试程序
+
+| 测试 | 覆盖内容 |
 |------|----------|
-| `sb_stress` | **Store buffer 冲突 stall**：连续两次 store 命中同一 cache line → `sb_conflict` → S\_SB\_DRAIN 额外 stall 周期；三连 store（含覆盖写）验证 last-store-wins；store + 双发 ALU + store 交错场景 |
-| `ras_overflow` | **RAS 溢出恢复**：4 层嵌套调用（RAS 容量内）验证正常返回；6 层嵌套（溢出 2 层）验证 `branch_flush` 纠正错误 RAS 预测后仍能正确返回；溢出恢复后再做 2 层调用验证 RAS 状态正常 |
+| `zicsr_basic` | Zicsr 六类基础读改写、旧值返回、零寄存器/零立即数字段语义、背靠背 CSR 可见性、`mscratch`、`mepc`、`mtvec` 基本读写、未实现 CSR 读零写忽略 |
+| `zicsr_edge` | `mstatus` 写掩码，CSRRS/CSRRC 零源只读，常见未实现 CSR 读零写忽略，load-use 后 CSR 源操作数，CSR 位于 Slot1/指令缓冲时的顺序化，taken branch 后 wrong-path CSR 清除 |
+| `csr_forwarding` | ALU 结果紧随写 CSR，CSR 旧值返回后紧随 ALU/branch 使用，CSR 读结果作为 store 数据、load 地址、store 地址和下一条 CSR 写源 |
+| `csr_trap_stall` | 冷 DCache load 后紧随 CSR 写、ECALL、MRET 时，系统类指令等待更老访存完成后再提交或重定向 |
+| `trap_mret` | ECALL 精确 Trap，`mepc/mcause/mstatus` 更新，handler 修改 `mepc` 后 MRET 返回，ECALL 后顺序指令不提前提交 |
+| `trap_slot1` | ECALL 位于 Slot1 位置时顺序化后精确 Trap；handler 内 MRET 位于 Slot1 位置时顺序化后返回 |
+| `trap_flush` | taken branch / JAL 后 wrong-path ECALL、MRET、`mtvec/mepc/mscratch` 写入被清除 |
+| `trap_nested` | handler 内再次 ECALL，内层 Trap 覆盖 `mepc/mcause`，`mstatus.MIE/MPIE` 二次堆叠，两次 MRET 后返回外层指定目标 |
 
-### Zicsr 与 Trap 测试（2 个）
+## 覆盖索引
 
-| 测试 | 验证重点 |
+| 场景 | 覆盖测试 |
 |------|----------|
-| `zicsr_basic` | **Zicsr 基础语义**：覆盖 CSRRW/CSRRS/CSRRC 及立即数字段版本，检查旧值返回、零寄存器/零立即数字段只读规则、CSR 结果紧随使用、背靠背 CSR 可见性、`mtvec` 写入值读回保留、未支持 CSR 读零写忽略 |
-| `trap_mret` | **ECALL/MRET 精确 Trap**：设置 `mtvec` Direct 入口，ECALL 保存自身 PC 到 `mepc` 并写 `mcause=11`，Trap 期间 `mstatus.MIE/MPIE` 更新，handler 修改 `mepc` 后 MRET 返回；同时验证 ECALL 后顺序指令不会在 Trap 前错误提交 |
-
----
-
-## 丢失的测试（待重写）
-
-源码已丢失，仅保留 `.hex` 生成物（在 `work/hex/` 下）；这些测试不在当前 `run_all.sh` 默认回归集中。
-
-| 测试 | 原始目的 | 保留生成物 |
-|------|----------|-----------|
-| `coprime` | 互质计算（GCD 算法），测试深度嵌套分支 + 循环 | `rv32ui-p-coprime.{irom,dram}.hex` |
-| `dcache_test` | DCache 功能测试（与 dcache_stress 可能重叠） | `rv32ui-p-dcache_test.{irom,dram}.hex` |
-
----
-
-## 覆盖盲区
-
-| 场景 | 风险 | 状态 |
-|------|------|------|
-| S1 跨槽前递 (EX/MEM/WB) | 高 | ✅ `fwd_s1` 覆盖 |
-| WAW 前递优先级 | 高 | ✅ `waw_fwd` 覆盖 |
-| Flush 清空指令缓冲 | 高 | ✅ `flush_instbuf` 覆盖 |
-| PC[2]=1 取指窗口 / S1 类型约束 | 高 | ✅ `pc_align` 覆盖 |
-| 跨对 load-use 与 S1 | 中 | ✅ `loaduse_cross` 覆盖 |
-| LUI/AUIPC 在 S1 | 低 | ✅ `lui_auipc_s1` 覆盖 |
-| DCache miss + 双发射 stall | 高 | ✅ `dcache_dual` 覆盖 |
-| inst_buf + stall 交互 | 中 | ✅ `instbuf_stall` 覆盖 |
-| BP 误预测 + 双发射循环 | 中 | ✅ `bp_dual` 覆盖 |
-| Store buffer 冲突 stall | 中 | ✅ `sb_stress` 覆盖 |
-| RAS 溢出（调用深度 > 4） | 低 | ✅ `ras_overflow` 覆盖（6 层嵌套） |
-| Zicsr 读改写与零源语义 | 中 | ✅ `zicsr_basic` 覆盖 |
-| ECALL/MRET 精确 Trap | 高 | ✅ `trap_mret` 覆盖 |
-| Branch 比较前递矩阵 | 高 | ✅ `branch_fwd_matrix` 覆盖 |
-| Branch+Slot1 同拍 flush 边界 | 高 | ✅ `branch_dual_flush` / `branch_dual_edge` 覆盖 |
-| DCache refill 期间 branch flush | 高——曾出 bug | ✅ 架构上不可能：`ex_branch_flush` 被 `mem_allowin` 门控，cache miss 期间 flush 被延迟到 refill 完成后。`dcache_dual` 已隐式覆盖此延迟 flush 行为 |
-| BTB 非分支指令误预测 + Load | 高——曾出 bug | ⚠️ 无法在小测试中复现：BTB alias 需 `PC[13:2]` 完全匹配（16KB 代码间距），小程序无法构造。修复已在 RTL 中（`cache_req` 不门控 `branch_flush`），真实程序上板时隐式覆盖 |
-| FPGA 时序 / 上板约束 | 高 | ❌ 仿真无法覆盖，使用 `03_Timing_Analysis/run_vivado_flow.tcl` 生成时序报告；物理板使用 `PhysicalTwin_XC7A35T/run_build.sh` |
+| S1 跨槽前递 | `fwd_s1` |
+| WAW 前递优先级 | `waw_fwd` |
+| Flush 清空指令缓冲 | `flush_instbuf` |
+| PC[2]=1 取指窗口 / S1 类型约束 | `pc_align` |
+| 跨对 load-use 与 S1 | `loaduse_cross` |
+| LUI/AUIPC 在 S1 | `lui_auipc_s1` |
+| DCache miss + 双发射 stall | `dcache_dual` |
+| inst_buf + stall 交互 | `instbuf_stall` |
+| BP 误预测 + 双发射循环 | `bp_dual` |
+| Store buffer 冲突 stall | `sb_stress` |
+| RAS 溢出与恢复 | `ras_overflow` |
+| Zicsr 读改写与零源语义 | `zicsr_basic`, `zicsr_edge` |
+| 未实现 CSR 读零写忽略 | `zicsr_basic`, `zicsr_edge` |
+| CSR load-use / inst_buf / wrong-path flush 边界 | `zicsr_edge` |
+| CSR 结果前递到 ALU/branch/store/load/CSR | `csr_forwarding` |
+| CSR/ECALL/MRET 被前级 DCache miss stall 时保持和提交 | `csr_trap_stall` |
+| ECALL/MRET 精确 Trap | `trap_mret` |
+| ECALL/MRET 位于 Slot1 / 指令缓冲 | `trap_slot1` |
+| wrong-path ECALL/MRET/关键 CSR 写入清除 | `trap_flush` |
+| handler 内嵌套同步 Trap / `mstatus` 二次堆叠 | `trap_nested` |

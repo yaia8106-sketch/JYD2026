@@ -141,7 +141,8 @@ cd 02_Design/riscv_tests
 bash run_all.sh
 ```
 
-- 预期结果：**67/67 PASS**（`run_all.sh` 当前测试集：基础 RV32I、综合/压力、自定义双发射/BP/DCache/RAS、Zicsr/Trap 测试）
+- 预期结果：**73/73 PASS**（`run_all.sh` 当前测试集：基础 RV32I、综合/压力、自定义双发射/BP/DCache/RAS、Zicsr/Trap 测试）
+- 默认启用 PC 越界 guard 和流水线无进展 watchdog；PC 跑出 IROM 窗口会直接报错，避免只表现为长时间 timeout。
 - 依赖：iverilog、`work/hex/*.hex`（已预编译，无需重新 build）
 - 编译产物自动生成在 `work/`，已 gitignore
 
