@@ -155,6 +155,8 @@ module branch_predictor (
     (* ram_style = "distributed" *) logic [11:0]           btb_p12_even [0:BTB_ENTRIES-1];
     (* ram_style = "distributed" *) logic [1:0]            btb_type  [0:BTB_ENTRIES-1];
     (* ram_style = "distributed" *) logic [1:0]            btb_bht   [0:BTB_ENTRIES-1];
+    (* ram_style = "distributed" *) logic                  btb_l0_taken [0:BTB_ENTRIES-1];
+    (* ram_style = "distributed" *) logic                  btb_needs_ras [0:BTB_ENTRIES-1];
 
     // ---- JALR sidecar ----
     // x5-link JALR sites are very few but hot in the contest COE programs.
@@ -167,7 +169,7 @@ module branch_predictor (
     (* ram_style = "distributed" *) logic [11:0]           jalr_p4_even  [0:JALR_ENTRIES-1];
     (* ram_style = "distributed" *) logic [11:0]           jalr_p8_even  [0:JALR_ENTRIES-1];
     (* ram_style = "distributed" *) logic [11:0]           jalr_p12_even [0:JALR_ENTRIES-1];
-    (* ram_style = "distributed" *) logic [1:0]            jalr_type  [0:JALR_ENTRIES-1];
+    (* ram_style = "distributed" *) logic                  jalr_needs_ras [0:JALR_ENTRIES-1];
 
     // ---- GShare ----
     logic [GHR_W-1:0]      ghr;
@@ -199,6 +201,8 @@ module branch_predictor (
     wire [11:0]           r_p12_even = btb_p12_even [if_idx];
     wire [1:0]            r_type  = btb_type [if_idx];
     wire [1:0]            r_bht   = btb_bht  [if_idx];
+    wire                  r_l0_taken = btb_l0_taken[if_idx];
+    wire                  r_needs_ras = btb_needs_ras[if_idx];
 
     // Tag compare (used by bp_taken in parallel, not serial)
     wire tag_match  = (r_tag == if_tag);
@@ -227,12 +231,10 @@ module branch_predictor (
     wire [11:0]           jr_p4_even  = jalr_p4_even  [if_jalr_idx];
     wire [11:0]           jr_p8_even  = jalr_p8_even  [if_jalr_idx];
     wire [11:0]           jr_p12_even = jalr_p12_even [if_jalr_idx];
-    wire [1:0]            jr_type  = jalr_type [if_jalr_idx];
+    wire                  jr_needs_ras = jalr_needs_ras[if_jalr_idx];
 
     wire jr_hit       = jr_valid & (jr_tag == if_jalr_tag);
-    wire jr_is_call   = (jr_type == TYPE_CALL);
-    wire jr_is_ret    = (jr_type == TYPE_RET);
-    wire jr_taken     = jr_hit & (jr_is_call | (jr_is_ret & ras_valid));
+    wire jr_taken     = jr_hit & (~jr_needs_ras | ras_valid);
 
     // ---- L0 Fast prediction (parallelized: tag_match as late AND) ----
     // NLP key: BRANCH direction uses bht[1] only (Bimodal)
@@ -241,11 +243,7 @@ module branch_predictor (
     // Parallel structure:
     //   Main BTB path keeps tag_match as the late AND.
     //   x5 JALR sidecar runs in parallel and only ORs into the final result.
-    wire bp_taken_raw = r_valid & (
-          ~r_type[1]                    // JAL/CALL: always taken
-        | (~r_type[0] & r_bht[1])      // BRANCH: bimodal direction
-        | ( r_type[0] & ras_valid)     // RET: RAS valid
-    );
+    wire bp_taken_raw = r_valid & r_l0_taken & (~r_needs_ras | ras_valid);
     wire btb_taken = bp_taken_raw & tag_match;
     assign bp_taken = jr_taken | btb_taken;
 
@@ -263,15 +261,19 @@ module branch_predictor (
     // so the JALR tag-compare result serialized through the main target mux.
     // Keep the two candidates parallel and use jr_taken only as the final
     // priority select.  When bp_taken=0 the address outputs are don't-care.
-    wire main_is_ret_taken = r_valid & r_type[1] & r_type[0] & ras_valid;
-    wire jr_select_ras = jr_is_ret;
+    // Address candidates do not need r_valid in their local select.  If the
+    // BTB entry is invalid, bp_taken is false and these addresses are not used.
+    // Keeping r_valid out avoids serializing valid RAM read into the bank
+    // address mux select on the PC -> IROM path.
+    wire main_select_ras = r_needs_ras & ras_valid;
+    wire jr_select_ras = jr_needs_ras;
 
-    wire [31:0] main_target = main_is_ret_taken ? ras_top : {r_tgt, 2'b00};
+    wire [31:0] main_target = main_select_ras ? ras_top : {r_tgt, 2'b00};
     wire [31:0] jr_target = jr_select_ras ? ras_top : {jr_tgt, 2'b00};
 
-    wire [11:0] main_even_addr = main_is_ret_taken ? ras_even_addr : r_even;
-    wire [11:0] main_odd_addr = main_is_ret_taken ? ras_odd_addr : r_tgt_odd_addr;
-    wire        main_fetch_odd = main_is_ret_taken ? ras_top[2] : r_tgt[0];
+    wire [11:0] main_even_addr = main_select_ras ? ras_even_addr : r_even;
+    wire [11:0] main_odd_addr = main_select_ras ? ras_odd_addr : r_tgt_odd_addr;
+    wire        main_fetch_odd = main_select_ras ? ras_top[2] : r_tgt[0];
     wire [11:0] jr_even_addr = jr_select_ras ? ras_even_addr : jr_even;
     wire [11:0] jr_odd_addr = jr_select_ras ? ras_odd_addr : jr_tgt_odd_addr;
     wire        jr_fetch_odd = jr_select_ras ? ras_top[2] : jr_tgt[0];
@@ -281,24 +283,24 @@ module branch_predictor (
     assign bp_odd_addr = jr_taken ? jr_odd_addr : main_odd_addr;
     assign bp_fetch_odd = jr_taken ? jr_fetch_odd : main_fetch_odd;
 
-    wire [11:0] main_plus4_even_addr = main_is_ret_taken ? ras_p4_even_addr : r_p4_even;
-    wire [11:0] main_plus4_odd_addr = main_is_ret_taken ? ras_even_addr : r_even;
+    wire [11:0] main_plus4_even_addr = main_select_ras ? ras_p4_even_addr : r_p4_even;
+    wire [11:0] main_plus4_odd_addr = main_select_ras ? ras_even_addr : r_even;
     wire [11:0] jr_plus4_even_addr = jr_select_ras ? ras_p4_even_addr : jr_p4_even;
     wire [11:0] jr_plus4_odd_addr = jr_select_ras ? ras_even_addr : jr_even;
     assign bp_plus4_even_addr = jr_taken ? jr_plus4_even_addr : main_plus4_even_addr;
     assign bp_plus4_odd_addr = jr_taken ? jr_plus4_odd_addr : main_plus4_odd_addr;
     assign bp_plus4_fetch_odd = ~bp_fetch_odd;
 
-    wire [11:0] main_plus8_even_addr = main_is_ret_taken ? ras_p8_even_addr : r_p8_even;
-    wire [11:0] main_plus8_odd_addr = main_is_ret_taken ? ras_p4_even_addr : r_p4_even;
+    wire [11:0] main_plus8_even_addr = main_select_ras ? ras_p8_even_addr : r_p8_even;
+    wire [11:0] main_plus8_odd_addr = main_select_ras ? ras_p4_even_addr : r_p4_even;
     wire [11:0] jr_plus8_even_addr = jr_select_ras ? ras_p8_even_addr : jr_p8_even;
     wire [11:0] jr_plus8_odd_addr = jr_select_ras ? ras_p4_even_addr : jr_p4_even;
     assign bp_plus8_even_addr = jr_taken ? jr_plus8_even_addr : main_plus8_even_addr;
     assign bp_plus8_odd_addr = jr_taken ? jr_plus8_odd_addr : main_plus8_odd_addr;
     assign bp_plus8_fetch_odd = bp_fetch_odd;
 
-    wire [11:0] main_plus12_even_addr = main_is_ret_taken ? ras_p12_even_addr : r_p12_even;
-    wire [11:0] main_plus12_odd_addr = main_is_ret_taken ? ras_p8_even_addr : r_p8_even;
+    wire [11:0] main_plus12_even_addr = main_select_ras ? ras_p12_even_addr : r_p12_even;
+    wire [11:0] main_plus12_odd_addr = main_select_ras ? ras_p8_even_addr : r_p8_even;
     wire [11:0] jr_plus12_even_addr = jr_select_ras ? ras_p12_even_addr : jr_p12_even;
     wire [11:0] jr_plus12_odd_addr = jr_select_ras ? ras_p8_even_addr : jr_p8_even;
     assign bp_plus12_even_addr = jr_taken ? jr_plus12_even_addr : main_plus12_even_addr;
@@ -368,6 +370,8 @@ module branch_predictor (
     wire [1:0] ex_wr_bht_if_taken     = ex_is_branch ? (ex_btb_hit ? ex_bht_inc : 2'b10) : 2'b11;
     wire [1:0] ex_wr_bht_if_not_taken = ex_is_branch ? (ex_btb_hit ? ex_bht_dec : 2'b01) : 2'b11;
     wire [1:0] ex_wr_bht = ex_actual_taken ? ex_wr_bht_if_taken : ex_wr_bht_if_not_taken;
+    wire       ex_wr_l0_taken = ex_is_branch ? ex_wr_bht[1] : 1'b1;
+    wire       ex_wr_needs_ras = ex_is_ret;
 
     // Target for BTB entry
     wire [BTB_TGT_W-1:0] ex_wr_tgt = ex_actual_target[31:2];
@@ -441,18 +445,18 @@ module branch_predictor (
     wire [11:0]          la_r_even  = btb_even [la_idx];
     wire [1:0]           la_r_type  = btb_type [la_idx];
     wire [1:0]           la_r_bht   = btb_bht  [la_idx];
+    wire                 la_r_l0_taken = btb_l0_taken[la_idx];
+    wire                 la_r_needs_ras = btb_needs_ras[la_idx];
 
     wire                  la_jr_valid = jalr_valid[la_jalr_idx];
     wire [JALR_TAG_W-1:0] la_jr_tag   = jalr_tag  [la_jalr_idx];
     wire [BTB_TGT_W-1:0]  la_jr_tgt   = jalr_tgt  [la_jalr_idx];
-    wire [1:0]            la_jr_type  = jalr_type [la_jalr_idx];
+    wire                  la_jr_needs_ras = jalr_needs_ras[la_jalr_idx];
 
     wire la_tag_match = (la_r_tag == la_tag);
     wire la_btb_hit_w = la_r_valid & la_tag_match;
     wire la_jr_hit     = la_jr_valid & (la_jr_tag == la_jalr_tag);
-    wire la_jr_is_call = (la_jr_type == TYPE_CALL);
-    wire la_jr_is_ret  = (la_jr_type == TYPE_RET);
-    wire la_jr_taken   = la_jr_hit & (la_jr_is_call | (la_jr_is_ret & la_ras_valid_next));
+    wire la_jr_taken   = la_jr_hit & (~la_jr_needs_ras | la_ras_valid_next);
 
     wire [GHR_W-1:0] la_pht_idx = la_ghr_next ^ la_pc[9:2];
     wire [1:0]       la_pht_raw = pht[la_pht_idx];
@@ -464,18 +468,14 @@ module branch_predictor (
     wire             la_sel_bypass = ex_sel_write & (ex_sel_idx == la_sel_idx);
     wire [1:0]       la_sel_val = la_sel_bypass ? ex_new_sel : la_sel_raw;
 
-    wire la_bp_taken_raw = la_r_valid & (
-          ~la_r_type[1]
-        | (~la_r_type[0] & la_r_bht[1])
-        | ( la_r_type[0] & la_ras_valid_next)
-    );
+    wire la_bp_taken_raw = la_r_valid & la_r_l0_taken & (~la_r_needs_ras | la_ras_valid_next);
     wire la_btb_taken = la_bp_taken_raw & la_tag_match;
     assign la_bp_taken = la_jr_taken | la_btb_taken;
 
-    wire la_sel_jr_btb = la_jr_hit & la_jr_is_call;
-    wire la_sel_jr_ras = la_jr_hit & la_jr_is_ret & la_ras_valid_next;
-    wire la_sel_btb = ~la_jr_taken & la_r_valid & ~(la_r_type[1] & la_r_type[0]);
-    wire la_sel_ras = ~la_jr_taken & la_r_valid &  la_r_type[1] & la_r_type[0] & la_ras_valid_next;
+    wire la_sel_jr_btb = la_jr_hit & ~la_jr_needs_ras;
+    wire la_sel_jr_ras = la_jr_hit &  la_jr_needs_ras & la_ras_valid_next;
+    wire la_sel_btb = ~la_jr_taken & la_btb_hit_w & ~la_r_needs_ras;
+    wire la_sel_ras = ~la_jr_taken & la_btb_hit_w & la_r_l0_taken &  la_r_needs_ras & la_ras_valid_next;
 
     assign la_bp_target = ({32{la_sel_jr_btb}} & {la_jr_tgt, 2'b00})
                         | ({32{la_sel_jr_ras}} & la_ras_top_next)
@@ -527,18 +527,18 @@ module branch_predictor (
     wire [11:0]          buf_r_even  = btb_even [buf_idx];
     wire [1:0]           buf_r_type  = btb_type [buf_idx];
     wire [1:0]           buf_r_bht   = btb_bht  [buf_idx];
+    wire                 buf_r_l0_taken = btb_l0_taken[buf_idx];
+    wire                 buf_r_needs_ras = btb_needs_ras[buf_idx];
 
     wire                  buf_jr_valid = jalr_valid[buf_jalr_idx];
     wire [JALR_TAG_W-1:0] buf_jr_tag   = jalr_tag  [buf_jalr_idx];
     wire [BTB_TGT_W-1:0]  buf_jr_tgt   = jalr_tgt  [buf_jalr_idx];
-    wire [1:0]            buf_jr_type  = jalr_type [buf_jalr_idx];
+    wire                  buf_jr_needs_ras = jalr_needs_ras[buf_jalr_idx];
 
     wire buf_tag_match = (buf_r_tag == buf_tag);
     wire buf_btb_hit_w = buf_r_valid & buf_tag_match;
     wire buf_jr_hit     = buf_jr_valid & (buf_jr_tag == buf_jalr_tag);
-    wire buf_jr_is_call = (buf_jr_type == TYPE_CALL);
-    wire buf_jr_is_ret  = (buf_jr_type == TYPE_RET);
-    wire buf_jr_taken   = buf_jr_hit & (buf_jr_is_call | (buf_jr_is_ret & la_ras_valid_next));
+    wire buf_jr_taken   = buf_jr_hit & (~buf_jr_needs_ras | la_ras_valid_next);
 
     wire [GHR_W-1:0] buf_pht_idx = la_ghr_next ^ buf_pc[9:2];
     wire [1:0]       buf_pht_raw = pht[buf_pht_idx];
@@ -550,18 +550,14 @@ module branch_predictor (
     wire             buf_sel_bypass = ex_sel_write & (ex_sel_idx == buf_sel_idx);
     wire [1:0]       buf_sel_val = buf_sel_bypass ? ex_new_sel : buf_sel_raw;
 
-    wire buf_bp_taken_raw = buf_r_valid & (
-          ~buf_r_type[1]
-        | (~buf_r_type[0] & buf_r_bht[1])
-        | ( buf_r_type[0] & la_ras_valid_next)
-    );
+    wire buf_bp_taken_raw = buf_r_valid & buf_r_l0_taken & (~buf_r_needs_ras | la_ras_valid_next);
     wire buf_btb_taken = buf_bp_taken_raw & buf_tag_match;
     assign buf_bp_taken = buf_jr_taken | buf_btb_taken;
 
-    wire buf_sel_jr_btb = buf_jr_hit & buf_jr_is_call;
-    wire buf_sel_jr_ras = buf_jr_hit & buf_jr_is_ret & la_ras_valid_next;
-    wire buf_sel_btb = ~buf_jr_taken & buf_r_valid & ~(buf_r_type[1] & buf_r_type[0]);
-    wire buf_sel_ras = ~buf_jr_taken & buf_r_valid &  buf_r_type[1] & buf_r_type[0] & la_ras_valid_next;
+    wire buf_sel_jr_btb = buf_jr_hit & ~buf_jr_needs_ras;
+    wire buf_sel_jr_ras = buf_jr_hit &  buf_jr_needs_ras & la_ras_valid_next;
+    wire buf_sel_btb = ~buf_jr_taken & buf_btb_hit_w & ~buf_r_needs_ras;
+    wire buf_sel_ras = ~buf_jr_taken & buf_btb_hit_w & buf_r_l0_taken &  buf_r_needs_ras & la_ras_valid_next;
 
     assign buf_bp_target = ({32{buf_sel_jr_btb}} & {buf_jr_tgt, 2'b00})
                          | ({32{buf_sel_jr_ras}} & la_ras_top_next)
@@ -603,7 +599,11 @@ module branch_predictor (
     // but branch_unit will detect misprediction and flush → functionally correct.
     // Same pattern as PHT and selector.
     initial begin
-        for (int i = 0; i < BTB_ENTRIES; i++) btb_valid[i] = 1'b0;
+        for (int i = 0; i < BTB_ENTRIES; i++) begin
+            btb_valid[i] = 1'b0;
+            btb_l0_taken[i] = 1'b0;
+            btb_needs_ras[i] = 1'b0;
+        end
     end
     always_ff @(posedge clk) begin
         if (ex_btb_write) begin
@@ -616,12 +616,17 @@ module branch_predictor (
             btb_p12_even[ex_idx] <= ex_wr_p12_even;
             btb_type [ex_idx] <= ex_wr_type;
             btb_bht  [ex_idx] <= ex_wr_bht;
+            btb_l0_taken[ex_idx] <= ex_wr_l0_taken;
+            btb_needs_ras[ex_idx] <= ex_wr_needs_ras;
         end
     end
 
     // ---- x5 JALR sidecar ----
     initial begin
-        for (int i = 0; i < JALR_ENTRIES; i++) jalr_valid[i] = 1'b0;
+        for (int i = 0; i < JALR_ENTRIES; i++) begin
+            jalr_valid[i] = 1'b0;
+            jalr_needs_ras[i] = 1'b0;
+        end
     end
     always_ff @(posedge clk) begin
         if (ex_jalr_side_write) begin
@@ -632,7 +637,7 @@ module branch_predictor (
             jalr_p4_even [ex_jalr_idx] <= ex_wr_p4_even;
             jalr_p8_even [ex_jalr_idx] <= ex_wr_p8_even;
             jalr_p12_even[ex_jalr_idx] <= ex_wr_p12_even;
-            jalr_type [ex_jalr_idx] <= ex_is_jalr_call ? TYPE_CALL : TYPE_RET;
+            jalr_needs_ras[ex_jalr_idx] <= ex_is_ret;
         end
     end
 

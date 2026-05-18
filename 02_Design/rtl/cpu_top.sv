@@ -419,11 +419,13 @@ module cpu_top (
     // ---- Minimal M-mode CSR state ----
     localparam [11:0] CSR_MSTATUS = 12'h300;
     localparam [11:0] CSR_MTVEC   = 12'h305;
+    localparam [11:0] CSR_MSCRATCH = 12'h340;
     localparam [11:0] CSR_MEPC    = 12'h341;
     localparam [11:0] CSR_MCAUSE  = 12'h342;
     localparam [31:0] MSTATUS_WR_MASK = 32'h0000_0088; // MIE and MPIE
     logic [31:0] csr_mstatus;
     logic [31:0] csr_mtvec;
+    logic [31:0] csr_mscratch;
     logic [31:0] csr_mepc;
     logic [31:0] csr_mcause;
     wire [31:0] ex_csr_rdata;
@@ -1699,11 +1701,13 @@ module cpu_top (
     // ==================== Minimal M-mode CSR / Trap ====================
     wire ex_csr_supported = (ex_csr_addr == CSR_MSTATUS)
                           | (ex_csr_addr == CSR_MTVEC)
+                          | (ex_csr_addr == CSR_MSCRATCH)
                           | (ex_csr_addr == CSR_MEPC)
                           | (ex_csr_addr == CSR_MCAUSE);
 
     assign ex_csr_rdata = (ex_csr_addr == CSR_MSTATUS) ? csr_mstatus :
                           (ex_csr_addr == CSR_MTVEC)   ? csr_mtvec :
+                          (ex_csr_addr == CSR_MSCRATCH) ? csr_mscratch :
                           (ex_csr_addr == CSR_MEPC)    ? csr_mepc :
                           (ex_csr_addr == CSR_MCAUSE)  ? csr_mcause :
                                                          32'd0;
@@ -1735,6 +1739,7 @@ module cpu_top (
         if (!rst_n) begin
             csr_mstatus <= 32'd0;
             csr_mtvec   <= 32'd0;
+            csr_mscratch <= 32'd0;
             csr_mepc    <= 32'd0;
             csr_mcause  <= 32'd0;
         end else begin
@@ -1742,6 +1747,7 @@ module cpu_top (
                 case (ex_csr_addr)
                     CSR_MSTATUS: csr_mstatus <= ex_csr_wdata & MSTATUS_WR_MASK;
                     CSR_MTVEC:   csr_mtvec   <= ex_csr_wdata;
+                    CSR_MSCRATCH: csr_mscratch <= ex_csr_wdata;
                     CSR_MEPC:    csr_mepc    <= ex_csr_wdata;
                     CSR_MCAUSE:  csr_mcause  <= ex_csr_wdata;
                     default:     ;
