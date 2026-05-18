@@ -1,4 +1,4 @@
-# 双发射 CPU 架构文档（从 RTL 反向生成，2026-05-10 更新）
+# 双发射 CPU 架构文档（从 RTL 反向生成，2026-05-18 更新）
 
 > **本文档描述当前 RTL 的实际实现**，而非设计规划。所有内容均从代码中提取。
 >
@@ -422,8 +422,12 @@ always_ff @(posedge clk or negedge rst_n)
 
 | 模块 | 职责 | 关键特征 |
 |------|------|---------|
-| `cpu_top` | CPU 顶层控制 + 跨模块连线 | 集中前端取指、分支/系统重定向、流水线握手、CSR 状态与性能计数器 |
+| `cpu_top` | CPU 流水线骨架 + 跨模块连线 | 保留 stage 间实例、共享信号声明和少量局部 glue；前端/redirect/CSR/访存等控制已拆入子模块 |
+| `id_stage_derive` | ID 级派生信号 | 提取 rs/rd/CSR 字段，预计算 branch/JALR target，生成源操作数使用标志与 NLP redirect |
 | `pc_reg` | PC 寄存器 | allowin 门控，flush 优先 |
+| `irom_addr_ctrl` | IROM 地址控制 | 维护 `pc_plus4/8/12` 和 bank 地址寄存器，生成 IROM flat priority MUX 与 MEM replay bank 地址 |
+| `if_stage_buffer` | IF hold + inst buffer | 管理 IROM stall hold、单指令缓冲、skip/inst_buf BP 快照和 IF 输出选择 |
+| `dual_issue_decider` | 双发射判定 | raw / shifted / held 三条路径判定同包 RAW、slot1 类型约束和 inst_buf next-valid |
 | `if_id_reg` | IF/ID 级间寄存器 | 传递 BP snapshot / inst1 / s1_valid |
 | `decoder` ×2 | 指令译码（S0 / S1） | 完整 RV32I 译码 |
 | `imm_gen` ×2 | 立即数生成（S0 / S1） | R/I/S/B/U/J 六种格式 |
@@ -432,12 +436,18 @@ always_ff @(posedge clk or negedge rst_n)
 | `alu_src_mux` ×2 | ALU 操作数选择（ID 级） | rs / PC / imm / 0 |
 | `id_ex_reg` / `_s1` | ID/EX 级间寄存器 | S0 携带预计算 redirect target / fallthrough；S1 版本接 squash 门控并携带 branch metadata |
 | `alu` ×2 | ALU（S0 / S1） | 含独立地址加法器 `alu_addr` |
-| `branch_unit` | 分支判断 + 误预测检测 | 只处理 S0，使用 ID 预计算 target/fallthrough；S1 branch 在 `cpu_top` 中用共享条件函数解析 |
+| `branch_condition` | Branch 条件比较 | 复用 RV32 B-type 条件判断，供 ID 预计算和 S1 branch 使用 |
+| `branch_unit` | 分支判断 + 误预测检测 | 只处理 S0，使用 ID 预计算 target/fallthrough |
+| `redirect_ctrl` | 前端 redirect/flush 控制 | 生成 EX fast redirect、MEM replay、`frontend_branch_flush/target`，并抑制 fast redirect 的重复 replay |
+| `csr_trap_unit` | 最小 M-mode CSR / Trap | 保存 `mstatus/mtvec/mscratch/mepc/mcause`，处理 CSR 读写、ECALL/MRET redirect |
+| `ex_stage_ctrl` | EX 局部控制 | S0 load repair operand 选择、CSR/ALU 结果选择、S1 branch delayed redirect 合并 |
 | `mem_interface` | Store 移位 / Load 扩展 | EX store，WB load |
+| `memory_access_unit` | Cache/MMIO 访问路由 | 生成 DCache/MMIO 端口、cacheable 判定、MMIO store-load hazard、双发计数器 MMIO 读 |
 | `ex_mem_reg` / `_s1` | EX/MEM 级间寄存器 | S0 版本承载 registered redirect target；S1 版本接 slot0 `ex_branch_flush` |
 | `mem_wb_reg` / `_s1` | MEM/WB 级间寄存器 | S1 无 load 路径 |
 | `wb_mux` ×2 | 写回选择（ALU / Load / PC+4） | S1 的 load 输入接 0 |
 | `branch_predictor` | Tournament BP (BTB+GShare+Selector+RAS) | L0 IF 快速预测，L1 ID 验证 |
+| `dual_issue_counter` | 双发提交计数器 | Slot1 WB valid 时累加，供 `0x8020_0060` MMIO 读取 |
 | `dcache` | 2-way WT+WA 数据缓存 | Store buffer + refill FSM |
 | `mmio_bridge` | MMIO 外设桥 | LED / SEG / SW / KEY / CNT |
 | `student_top` | 顶层集成 | cpu + IROM + DCache + DRAM + MMIO |

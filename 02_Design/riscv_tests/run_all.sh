@@ -35,9 +35,19 @@ RTL_FILES="
     $RTL_DIR/id_ex_reg.sv
     $RTL_DIR/id_ex_reg_s1.sv
     $RTL_DIR/alu.sv
+    $RTL_DIR/branch_condition.sv
+    $RTL_DIR/id_stage_derive.sv
+    $RTL_DIR/ex_stage_ctrl.sv
     $RTL_DIR/branch_unit.sv
     $RTL_DIR/branch_predictor.sv
     $RTL_DIR/mem_interface.sv
+    $RTL_DIR/redirect_ctrl.sv
+    $RTL_DIR/csr_trap_unit.sv
+    $RTL_DIR/memory_access_unit.sv
+    $RTL_DIR/dual_issue_counter.sv
+    $RTL_DIR/dual_issue_decider.sv
+    $RTL_DIR/if_stage_buffer.sv
+    $RTL_DIR/irom_addr_ctrl.sv
     $RTL_DIR/ex_mem_reg.sv
     $RTL_DIR/ex_mem_reg_s1.sv
     $RTL_DIR/mem_wb_reg.sv

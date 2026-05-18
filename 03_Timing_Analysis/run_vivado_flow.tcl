@@ -247,6 +247,34 @@ proc step_regen_ip {coe_dst} {
     }
 }
 
+proc refresh_cpu_rtl_sources {workspace} {
+    puts ">>> Refreshing CPU RTL sources from 02_Design/rtl..."
+    set rtl_dir "${workspace}/02_Design/rtl"
+
+    set stale_imports [get_files -quiet "${workspace}/JYD2025_Contest-rv32i/digital_twin.srcs/sources_1/imports/rtl/*.sv"]
+    if {[llength $stale_imports] > 0} {
+        remove_files $stale_imports
+    }
+
+    set rtl_files [lsort [glob -nocomplain "${rtl_dir}/*.sv"]]
+    if {[llength $rtl_files] == 0} {
+        die "No RTL sources found under ${rtl_dir}"
+    }
+    set add_list {}
+    foreach src $rtl_files {
+        set path [file normalize $src]
+        ensure_file $path "RTL source"
+        if {[llength [get_files -quiet $path]] == 0} {
+            lappend add_list $path
+        }
+    }
+
+    if {[llength $add_list] > 0} {
+        add_files -norecurse $add_list
+    }
+    update_compile_order -fileset sources_1
+}
+
 proc step_synth {jobs} {
     puts ">>> Resetting and running synthesis (-jobs ${jobs})..."
     reset_run synth_1
@@ -298,6 +326,7 @@ puts "========================================================"
 
 open_project $project_path
 
+refresh_cpu_rtl_sources $workspace
 step_copy_coe $coe_src $coe_dst $coe_name
 step_regen_ip $coe_dst
 step_synth $build_jobs

@@ -41,23 +41,33 @@ set cpu_rtl [list \
     [file join $workspace_dir 02_Design rtl cpu_defs.sv] \
     [file join $workspace_dir 02_Design rtl alu.sv] \
     [file join $workspace_dir 02_Design rtl alu_src_mux.sv] \
+    [file join $workspace_dir 02_Design rtl branch_condition.sv] \
     [file join $workspace_dir 02_Design rtl branch_predictor.sv] \
     [file join $workspace_dir 02_Design rtl branch_unit.sv] \
+    [file join $workspace_dir 02_Design rtl csr_trap_unit.sv] \
     [file join $workspace_dir 02_Design rtl cpu_top.sv] \
     [file join $workspace_dir 02_Design rtl dcache.sv] \
     [file join $workspace_dir 02_Design rtl decoder.sv] \
+    [file join $workspace_dir 02_Design rtl dual_issue_counter.sv] \
+    [file join $workspace_dir 02_Design rtl dual_issue_decider.sv] \
+    [file join $workspace_dir 02_Design rtl ex_stage_ctrl.sv] \
     [file join $workspace_dir 02_Design rtl ex_mem_reg.sv] \
     [file join $workspace_dir 02_Design rtl ex_mem_reg_s1.sv] \
     [file join $workspace_dir 02_Design rtl forwarding.sv] \
     [file join $workspace_dir 02_Design rtl id_ex_reg.sv] \
     [file join $workspace_dir 02_Design rtl id_ex_reg_s1.sv] \
+    [file join $workspace_dir 02_Design rtl id_stage_derive.sv] \
     [file join $workspace_dir 02_Design rtl if_id_reg.sv] \
+    [file join $workspace_dir 02_Design rtl if_stage_buffer.sv] \
     [file join $workspace_dir 02_Design rtl imm_gen.sv] \
+    [file join $workspace_dir 02_Design rtl irom_addr_ctrl.sv] \
     [file join $workspace_dir 02_Design rtl mem_interface.sv] \
     [file join $workspace_dir 02_Design rtl mem_wb_reg.sv] \
     [file join $workspace_dir 02_Design rtl mem_wb_reg_s1.sv] \
+    [file join $workspace_dir 02_Design rtl memory_access_unit.sv] \
     [file join $workspace_dir 02_Design rtl next_pc_mux.sv] \
     [file join $workspace_dir 02_Design rtl pc_reg.sv] \
+    [file join $workspace_dir 02_Design rtl redirect_ctrl.sv] \
     [file join $workspace_dir 02_Design rtl regfile.sv] \
     [file join $workspace_dir 02_Design rtl student_top.sv] \
     [file join $workspace_dir 02_Design rtl wb_mux.sv] \
