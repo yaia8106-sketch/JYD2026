@@ -26,8 +26,6 @@ module branch_unit (
 
     // Flush outputs
     output logic        branch_flush,
-    output logic        redirect_to_target,
-    output logic        redirect_to_fallthrough,
     output logic [31:0] branch_target,    // redirect target (correct PC)
 
     // Actual outcome (for predictor update)
@@ -45,12 +43,15 @@ module branch_unit (
     // Timing: keep the EX compare result as a late MUX select instead of
     // feeding both XOR and target-wrong OR trees on the redirect path.
     wire target_mismatch = (target_pc != predicted_target);
-    wire flush_if_taken = ~predicted_taken | target_mismatch;
-    wire flush_if_not_taken = predicted_taken;
+    wire direction_to_target = actual_taken & ~predicted_taken;
+    wire direction_to_fallthrough = ~actual_taken & predicted_taken;
+    wire target_mismatch_flush = actual_taken & predicted_taken & target_mismatch;
 
-    assign redirect_to_target      = ex_valid &  actual_taken & flush_if_taken;
-    assign redirect_to_fallthrough = ex_valid & ~actual_taken & flush_if_not_taken;
-    assign branch_flush = redirect_to_target | redirect_to_fallthrough;
+    // Keep branch redirects out of the same-cycle IROM address path.  All
+    // branch misses replay from the registered EX/MEM redirect one cycle later.
+    assign branch_flush = ex_valid & (direction_to_target
+                                    | direction_to_fallthrough
+                                    | target_mismatch_flush);
 
     // ---- Flush target (correct next PC) ----
     // Actual taken → redirect to actual target

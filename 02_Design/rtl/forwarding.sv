@@ -19,7 +19,7 @@ module forwarding (
     input  logic        id_rs2_used,
     input  logic        id_s0_alu_only,
     input  logic        id_s0_jalr,
-    input  logic        id_s0_branch_ltge,
+    input  logic        id_s0_branch,
     input  logic [31:0] rf_rs1_data,
     input  logic [31:0] rf_rs2_data,
 
@@ -130,21 +130,27 @@ module forwarding (
 
 `undef FWD_MUX
 
-    // Branch compare is precomputed in ID and then registered into EX.  Keep
-    // the long S1_EX ALU-result path out of that compare; a matching S1_EX
-    // producer stalls for one cycle and is consumed from MEM_S1 instead.
-    assign id_branch_rs1_data = s0_rs1_s0_ex_hit  ? ex_fwd_val       :
-                                s0_rs1_s1_mem_hit ? mem_s1_fwd_val   :
-                                s0_rs1_s0_mem_hit ? mem_fwd_val      :
-                                s0_rs1_s1_wb_hit  ? wb_s1_write_data :
-                                s0_rs1_s0_wb_hit  ? wb_write_data    :
-                                                     rf_rs1_data;
-    assign id_branch_rs2_data = s0_rs2_s0_ex_hit  ? ex_fwd_val       :
-                                s0_rs2_s1_mem_hit ? mem_s1_fwd_val   :
-                                s0_rs2_s0_mem_hit ? mem_fwd_val      :
-                                s0_rs2_s1_wb_hit  ? wb_s1_write_data :
-                                s0_rs2_s0_wb_hit  ? wb_write_data    :
-                                                     rf_rs2_data;
+    // Branch compare is precomputed in ID and then registered into EX. Keep
+    // EX-stage producer results out of that compare; a matching EX producer
+    // stalls for one cycle and is consumed from MEM instead. Use priority
+    // one-hot selects so this path does not synthesize as a long mux chain
+    // before the branch comparator.
+`define FWD_BRANCH_MUX(TAG, RF_DATA, OUT_DATA) \
+    wire TAG``_br_s1_mem = TAG``_s1_mem_hit; \
+    wire TAG``_br_s0_mem = ~TAG``_br_s1_mem & TAG``_s0_mem_hit; \
+    wire TAG``_br_s1_wb  = ~TAG``_br_s1_mem & ~TAG``_br_s0_mem & TAG``_s1_wb_hit; \
+    wire TAG``_br_s0_wb  = ~TAG``_br_s1_mem & ~TAG``_br_s0_mem & ~TAG``_br_s1_wb & TAG``_s0_wb_hit; \
+    wire TAG``_br_rf     = ~TAG``_br_s1_mem & ~TAG``_br_s0_mem & ~TAG``_br_s1_wb & ~TAG``_br_s0_wb; \
+    assign OUT_DATA = ({32{TAG``_br_s1_mem}} & mem_s1_fwd_val)   | \
+                      ({32{TAG``_br_s0_mem}} & mem_fwd_val)      | \
+                      ({32{TAG``_br_s1_wb }} & wb_s1_write_data) | \
+                      ({32{TAG``_br_s0_wb }} & wb_write_data)    | \
+                      ({32{TAG``_br_rf    }} & RF_DATA)
+
+    `FWD_BRANCH_MUX(s0_rs1, rf_rs1_data, id_branch_rs1_data);
+    `FWD_BRANCH_MUX(s0_rs2, rf_rs2_data, id_branch_rs2_data);
+
+`undef FWD_BRANCH_MUX
 
     assign id_rs1_jalr_data = s0_rs1_s1_mem_hit ? mem_s1_fwd_val   :
                               s0_rs1_s0_mem_hit ? mem_fwd_val      :
@@ -218,16 +224,16 @@ module forwarding (
                              & ((ex_valid & ex_reg_write & (ex_rd == id_rs1_addr))
                               |  (ex_s1_valid & ex_s1_reg_write & (ex_s1_rd == id_rs1_addr)));
 
-    wire branch_s1_ex_wait_hazard = id_s0_branch_ltge
-                                  & ((id_rs1_used & s0_rs1_s1_ex_hit)
-                                   |  (id_rs2_used & s0_rs2_s1_ex_hit));
+    wire branch_ex_wait_hazard = id_s0_branch
+                               & ((id_rs1_used & (s0_rs1_s0_ex_hit | s0_rs1_s1_ex_hit))
+                                |  (id_rs2_used & (s0_rs2_s0_ex_hit | s0_rs2_s1_ex_hit)));
 
     // S1_WB is forwarded above. Keep this named wire for the perf monitor;
     // it now reports actual wait cycles, which should be zero for S1_WB hits.
     wire s1_wb_wait_hazard = 1'b0;
 
     wire id_hazard = load_use_hazard | repair_use_hazard
-                   | jalr_ex_wait_hazard | branch_s1_ex_wait_hazard;
+                   | jalr_ex_wait_hazard | branch_ex_wait_hazard;
     assign id_ready_go = ~id_hazard;
 
 endmodule

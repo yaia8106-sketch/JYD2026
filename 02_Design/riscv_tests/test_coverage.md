@@ -4,12 +4,13 @@
 
 ## 默认回归规模
 
-`run_all.sh` 默认运行 73 个测试：
+`run_all.sh` 默认运行 74 个测试：
 
 - 38 个基础 RV32I/smoke 测试：`simple` + 官方 `rv32ui` 指令测试（不包含 `fence_i`）。
 - 2 个综合访存测试：`ld_st`、`st_ld`。
 - 3 个压力测试：`dcache_stress`、`counter_stress`、`bp_stress`。
 - 22 个双发射、分支预测、DCache、RAS 相关测试。
+- 1 个 RV32M 覆盖测试：`m_ext`。
 - 8 个 Zicsr / Trap 测试：`zicsr_basic`、`zicsr_edge`、`csr_forwarding`、`csr_trap_stall`、`trap_mret`、`trap_slot1`、`trap_flush`、`trap_nested`。
 
 ## 基础 RV32I 指令测试
@@ -31,6 +32,12 @@
 |------|----------|
 | `ld_st` | 不同宽度 load/store 混合访问同一数据区，验证读取扩展和写掩码组合 |
 | `st_ld` | store 后紧随 load，验证写入后可见性和 store/load 相关处理 |
+
+## RV32M 扩展测试
+
+| 测试 | 覆盖内容 |
+|------|----------|
+| `m_ext` | MUL/MULH/MULHSU/MULHU、DIV/DIVU、REM/REMU 的正负数、零、符号位、除零、`INT_MIN / -1` 溢出、结果前递、背靠背 M 指令、load 后 M 操作数、M 位于 Slot1 取指位置时顺序化、wrong-path M 指令清除 |
 
 ## 压力测试
 
@@ -160,6 +167,8 @@ Zicsr / Trap 测试覆盖 M 模式下的最小 CSR 与同步异常行为：
 | BP 误预测 + 双发射循环 | `bp_dual` |
 | Store buffer 冲突 stall | `sb_stress` |
 | RAS 溢出与恢复 | `ras_overflow` |
+| RV32M 乘除取余与边界条件 | `m_ext` |
+| M 结果前递 / 背靠背 M / M wrong-path flush | `m_ext` |
 | Zicsr 读改写与零源语义 | `zicsr_basic`, `zicsr_edge` |
 | 未实现 CSR 读零写忽略 | `zicsr_basic`, `zicsr_edge` |
 | CSR load-use / inst_buf / wrong-path flush 边界 | `zicsr_edge` |

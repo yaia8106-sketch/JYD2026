@@ -54,7 +54,7 @@ module cpu_top (
 
     // ---- IF/ID ----
     wire        id_valid;
-    wire        id_allowin;
+    (* max_fanout = 16 *) wire        id_allowin;
     wire        id_ready_go;
     wire [31:0] id_pc;
     wire [31:0] id_inst;           // registered instruction from IF/ID
@@ -98,6 +98,7 @@ module cpu_top (
     wire        dec_csr_uses_imm;
     wire        dec_is_ecall;
     wire        dec_is_mret;
+    wire        dec_is_muldiv;
     wire [ 2:0] dec_imm_type;
 
     // ---- Slot 1 decoder outputs ----
@@ -119,6 +120,7 @@ module cpu_top (
     wire        dec1_csr_uses_imm;
     wire        dec1_is_ecall;
     wire        dec1_is_mret;
+    wire        dec1_is_muldiv;
     wire [ 2:0] dec1_imm_type;
 
     // ---- Immediate ----
@@ -176,6 +178,8 @@ module cpu_top (
     wire [11:0] ex_csr_addr;
     wire        ex_is_ecall;
     wire        ex_is_mret;
+    wire        ex_is_muldiv;
+    wire [ 2:0] ex_muldiv_op;
 
     // ---- Slot 1 shadow pipeline (valid stays 0 in Phase 1) ----
     wire        ex_s1_valid;
@@ -211,15 +215,11 @@ module cpu_top (
 
     // ---- Branch ----
     wire        branch_flush;          // EX stage combinational (for predictor update)
-    wire        branch_redirect_to_target;
-    wire        branch_redirect_to_fallthrough;
     wire [31:0] branch_target;         // EX stage combinational
     wire        actual_taken;          // for predictor update
     wire [31:0] actual_target;         // for predictor update
     wire        ex_branch_taken_pre;   // ID-precomputed branch compare result
-    wire        ex_branch_redirect;    // EX-stage fast frontend redirect
-    wire        ex_redirect_to_target;
-    wire        ex_redirect_to_fallthrough;
+    wire        ex_branch_registered_flush;
     wire        ex_s1_branch_redirect; // Slot1 branch delayed frontend redirect
     wire [31:0] ex_s1_branch_target;
     wire        ex_redirect_fire;
@@ -230,6 +230,8 @@ module cpu_top (
     wire [31:0] ex_fast_redirect_target;
     wire        ex_registered_branch_flush;
     wire [31:0] ex_registered_branch_target;
+
+    assign ex_branch_registered_flush = branch_flush & ex_redirect_fire & ~ex_system_inst;
 
     // ---- Registered branch flush (MEM stage, for 250MHz timing) ----
     wire        mem_branch_flush;      // branch_flush delayed 1 cycle (from EX/MEM reg)
@@ -281,7 +283,7 @@ module cpu_top (
     wire        wb_allowin;
     wire [31:0] wb_alu_result;
     wire [31:0] wb_pc_plus_4;
-    wire [ 4:0] wb_rd;
+    (* max_fanout = 8 *) wire [ 4:0] wb_rd;
     wire        wb_reg_write_en;
     wire [ 1:0] wb_wb_sel;
     wire        wb_is_load;
@@ -296,7 +298,7 @@ module cpu_top (
     wire [31:0] wb_s1_inst;
     wire [31:0] wb_s1_alu_result;
     wire [31:0] wb_s1_pc_plus_4;
-    wire [ 4:0] wb_s1_rd;
+    (* max_fanout = 8 *) wire [ 4:0] wb_s1_rd;
     wire        wb_s1_reg_write_en;
     wire [ 1:0] wb_s1_wb_sel;
 
@@ -310,6 +312,15 @@ module cpu_top (
     wire [31:0] ex_forward_result;
     wire [31:0] ex_pipe_alu_result;
 
+    // ---- RV32M multi-cycle unit ----
+    wire        muldiv_busy;
+    wire        muldiv_done;
+    wire [31:0] muldiv_result;
+    wire        ex_muldiv_req = ex_valid & ex_is_muldiv & ~mem_branch_flush;
+    wire        muldiv_consume = ex_valid & ex_is_muldiv & muldiv_done
+                               & mem_allowin & ~mem_branch_flush;
+    wire        muldiv_flush = frontend_branch_flush | mem_branch_flush;
+
     // ---- Dual-issue performance counter ----
     wire [31:0] dual_issue_count;
 
@@ -319,7 +330,8 @@ module cpu_top (
     // ---- Handshake ----
     wire if_ready_go_w  = 1'b1;     // BRAM latency absorbed by pipeline
     wire mmio_st_ld_hazard;
-    wire ex_ready_go_w  = ~mmio_st_ld_hazard;
+    wire ex_muldiv_ready = mem_branch_flush | ~ex_muldiv_req | muldiv_done;
+    wire ex_ready_go_w  = ~mmio_st_ld_hazard & ex_muldiv_ready;
     wire mem_ready_go_w = cache_ready; // DCache controls MEM stage flow
 
     // ---- Flush / redirect ----
@@ -394,16 +406,9 @@ module cpu_top (
         .mem_allowin                 (mem_allowin),
         .mem_branch_flush            (mem_branch_flush),
         .mem_branch_target           (mem_branch_target),
-        .branch_redirect_to_target   (branch_redirect_to_target),
-        .branch_redirect_to_fallthrough(branch_redirect_to_fallthrough),
-        .branch_target               (branch_target),
-        .ex_system_inst              (ex_system_inst),
         .ex_system_redirect          (ex_system_redirect),
         .ex_system_target            (ex_system_target),
         .ex_redirect_fire            (ex_redirect_fire),
-        .ex_redirect_to_target       (ex_redirect_to_target),
-        .ex_redirect_to_fallthrough  (ex_redirect_to_fallthrough),
-        .ex_branch_redirect          (ex_branch_redirect),
         .ex_fast_redirect            (ex_fast_redirect),
         .ex_fast_redirect_target     (ex_fast_redirect_target),
         .mem_branch_replay           (mem_branch_replay),
@@ -629,7 +634,7 @@ module cpu_top (
 
     // ==================== Pre-IF ====================
 
-    wire        if_allowin_w = id_allowin;   // for irom_addr mux
+    (* max_fanout = 16 *) wire        if_allowin_w = id_allowin;   // for irom_addr mux
     wire        can_dual_issue;
     wire        can_dual_fetch;
     wire        raw_pair_raw;
@@ -794,16 +799,14 @@ module cpu_top (
         .clk                       (clk),
         .rst_n                     (rst_n),
         .if_allowin                (if_allowin_w),
-        .pc                        (pc),
         .predict_dual              (predict_dual),
         .if_buf_before_window      (if_buf_before_window),
         .mem_branch_replay         (mem_branch_replay),
         .mem_branch_target         (mem_branch_target),
         .ex_fast_redirect          (ex_fast_redirect),
         .ex_fast_redirect_target   (ex_fast_redirect_target),
-        .ex_redirect_to_target     (ex_redirect_to_target),
-        .ex_redirect_to_fallthrough(ex_redirect_to_fallthrough),
-        .ex_branch_redirect        (ex_branch_redirect),
+        .ex_branch_redirect        (ex_branch_registered_flush),
+        .ex_branch_registered_to_target(actual_taken),
         .ex_branch_target_pre      (ex_branch_target_pre),
         .ex_fallthrough_pc         (ex_fallthrough_pc),
         .ex_system_redirect        (ex_system_redirect),
@@ -911,6 +914,7 @@ module cpu_top (
         .csr_uses_imm   (dec_csr_uses_imm),
         .is_ecall       (dec_is_ecall),
         .is_mret        (dec_is_mret),
+        .is_muldiv      (dec_is_muldiv),
         .imm_type       (dec_imm_type)
     );
 
@@ -934,6 +938,7 @@ module cpu_top (
         .csr_uses_imm   (dec1_csr_uses_imm),
         .is_ecall       (dec1_is_ecall),
         .is_mret        (dec1_is_mret),
+        .is_muldiv      (dec1_is_muldiv),
         .imm_type       (dec1_imm_type)
     );
 
@@ -977,7 +982,7 @@ module cpu_top (
         .id_rs2_used    (id_rs2_used),
         .id_s0_alu_only (id_s0_alu_only),
         .id_s0_jalr     (dec_is_jalr),
-        .id_s0_branch_ltge(dec_is_branch & dec_branch_cond[2]),
+        .id_s0_branch   (dec_is_branch),
         .rf_rs1_data    (rf_rs1_data),
         .rf_rs2_data    (rf_rs2_data),
         .id_s1_valid    (id_s1_valid & ~id_s1_squash_raw),
@@ -988,7 +993,7 @@ module cpu_top (
         .rf_s1_rs1_data (rf_s1_rs1_data),
         .rf_s1_rs2_data (rf_s1_rs2_data),
         .ex_valid       (ex_valid),
-        .ex_reg_write   (ex_reg_write_en),
+        .ex_reg_write   (ex_reg_write_en & (~ex_is_muldiv | muldiv_done)),
         .ex_mem_read    (ex_mem_read_en),
         .ex_rd          (ex_rd),
         .ex_alu_result  (ex_forward_result),
@@ -1102,6 +1107,8 @@ module cpu_top (
         .id_csr_addr      (id_csr_addr),
         .id_is_ecall      (dec_is_ecall),
         .id_is_mret       (dec_is_mret),
+        .id_is_muldiv     (dec_is_muldiv),
+        .id_muldiv_op     (id_inst[14:12]),
         // Branch prediction passthrough (NLP: corrected by Tournament in ID)
         // When ID redirect fires, override L0's prediction with Tournament's result
         // so EX stage sees the corrected prediction for misprediction detection
@@ -1142,6 +1149,8 @@ module cpu_top (
         .ex_csr_addr      (ex_csr_addr),
         .ex_is_ecall      (ex_is_ecall),
         .ex_is_mret       (ex_is_mret),
+        .ex_is_muldiv     (ex_is_muldiv),
+        .ex_muldiv_op     (ex_muldiv_op),
         // Branch prediction out (NLP: removed btb_way)
         .ex_bp_taken      (ex_bp_taken),
         .ex_bp_target     (ex_bp_target),
@@ -1216,6 +1225,8 @@ module cpu_top (
         .ex_alu_src2                (ex_alu_src2),
         .ex_is_csr                  (ex_is_csr),
         .ex_csr_rdata               (ex_csr_rdata),
+        .ex_is_muldiv               (ex_is_muldiv),
+        .ex_muldiv_result           (muldiv_result),
         .alu_forward_result         (alu_forward_result),
         .alu_result                 (alu_result),
         .ex_s1_valid                (ex_s1_valid),
@@ -1227,7 +1238,7 @@ module cpu_top (
         .mem_branch_flush           (mem_branch_flush),
         .ex_ready_go                (ex_ready_go_w),
         .mem_allowin                (mem_allowin),
-        .ex_branch_redirect         (ex_branch_redirect),
+        .ex_branch_redirect         (ex_branch_registered_flush),
         .branch_target              (branch_target),
         .ex_system_redirect         (ex_system_redirect),
         .ex_system_target           (ex_system_target),
@@ -1270,6 +1281,20 @@ module cpu_top (
         .alu_addr   (alu_s1_addr)
     );
 
+    muldiv_unit u_muldiv_unit (
+        .clk       (clk),
+        .rst_n     (rst_n),
+        .req_valid (ex_muldiv_req),
+        .req_op    (ex_muldiv_op),
+        .req_rs1   (ex_alu_src1_repair),
+        .req_rs2   (ex_alu_src2_repair),
+        .consume   (muldiv_consume),
+        .flush     (muldiv_flush),
+        .busy      (muldiv_busy),
+        .done      (muldiv_done),
+        .result    (muldiv_result)
+    );
+
     // ==================== Minimal M-mode CSR / Trap ====================
     csr_trap_unit u_csr_trap_unit (
         .clk               (clk),
@@ -1305,8 +1330,6 @@ module cpu_top (
         .predicted_taken  (ex_bp_taken),
         .predicted_target (ex_bp_target),
         .branch_flush     (branch_flush),
-        .redirect_to_target(branch_redirect_to_target),
-        .redirect_to_fallthrough(branch_redirect_to_fallthrough),
         .branch_target    (branch_target),
         .actual_taken     (actual_taken),
         .actual_target    (actual_target)
@@ -1341,8 +1364,8 @@ module cpu_top (
         .mem_valid        (mem_valid),
         .mem_ready_go     (mem_ready_go_w),
         .wb_allowin       (wb_allowin),
-        // Register the fast redirect pulse for DCache/backend cleanup only.
-        // Frontend PC/IF/ID/ID/EX have already consumed ex_branch_redirect.
+        // Register branch redirects before replaying the frontend.  Keeping
+        // this off the same-cycle IROM path buys timing at one extra miss cycle.
         // Gate with EX readiness: don't propagate while the EX instruction stalls.
         // (DCache refill). This ensures the flush-generating instruction advances
         // to MEM first, rather than being killed by its own registered flush.

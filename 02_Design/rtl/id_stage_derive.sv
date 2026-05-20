@@ -96,7 +96,7 @@ module id_stage_derive (
                           & ~dec_is_branch & ~dec_is_jal & ~dec_is_jalr
                           & ~dec_is_csr;
 
-    wire id_branch_eq = ~|(fwd_rs1_data ^ fwd_rs2_data);
+    wire id_branch_eq = ~|(fwd_branch_rs1_data ^ fwd_branch_rs2_data);
     wire id_branch_taken_eqne = dec_branch_cond[0] ? ~id_branch_eq : id_branch_eq;
     wire id_branch_taken_cmp;
 

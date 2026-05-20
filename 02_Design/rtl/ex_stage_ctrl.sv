@@ -15,6 +15,8 @@ module ex_stage_ctrl (
 
     input  logic        ex_is_csr,
     input  logic [31:0] ex_csr_rdata,
+    input  logic        ex_is_muldiv,
+    input  logic [31:0] ex_muldiv_result,
     input  logic [31:0] alu_forward_result,
     input  logic [31:0] alu_result,
 
@@ -51,8 +53,12 @@ module ex_stage_ctrl (
     assign ex_s1_pc_plus_4 = ex_s1_pc + 32'd4;
     assign ex_alu_src1_repair = ex_rs1_wb_repair ? wb_write_data : ex_alu_src1;
     assign ex_alu_src2_repair = ex_rs2_wb_repair ? wb_write_data : ex_alu_src2;
-    assign ex_forward_result = ex_is_csr ? ex_csr_rdata : alu_forward_result;
-    assign ex_pipe_alu_result = ex_is_csr ? ex_csr_rdata : alu_result;
+    assign ex_forward_result = ex_is_csr    ? ex_csr_rdata :
+                               ex_is_muldiv ? ex_muldiv_result :
+                                              alu_forward_result;
+    assign ex_pipe_alu_result = ex_is_csr    ? ex_csr_rdata :
+                                ex_is_muldiv ? ex_muldiv_result :
+                                               alu_result;
 
     branch_condition u_s1_branch_condition (
         .rs1_data   (ex_s1_rs1_data),

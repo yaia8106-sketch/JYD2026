@@ -30,7 +30,7 @@
 
 ## 2. 赛方约束
 
-- 指令集：**RV32I** 37 条 + 区域赛最小 Zicsr/Trap 子集（CSR / ECALL / MRET）；`fence`/`ebreak` 仍可按 NOP 处理
+- 指令集：**RV32IM** + 区域赛最小 Zicsr/Trap 子集（CSR / ECALL / MRET）；`fence`/`ebreak` 仍可按 NOP 处理
 - 可修改：`Core_cpu`（`student_top.sv`）、PLL
 - **禁止修改**：`contest_readonly/` 下所有文件
 - PC 复位值：`0x7FFF_FFFC`（text_base - 4）
@@ -141,7 +141,7 @@ cd 02_Design/riscv_tests
 bash run_all.sh
 ```
 
-- 预期结果：**73/73 PASS**（`run_all.sh` 当前测试集：基础 RV32I、综合/压力、自定义双发射/BP/DCache/RAS、Zicsr/Trap 测试）
+- 预期结果：**74/74 PASS**（`run_all.sh` 当前测试集：基础 RV32I、RV32M、综合/压力、自定义双发射/BP/DCache/RAS、Zicsr/Trap 测试）
 - 默认启用 PC 越界 guard 和流水线无进展 watchdog；PC 跑出 IROM 窗口会直接报错，避免只表现为长时间 timeout。
 - 依赖：iverilog、`work/hex/*.hex`（已预编译，无需重新 build）
 - 编译产物自动生成在 `work/`，已 gitignore

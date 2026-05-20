@@ -21,65 +21,125 @@ module perf_monitor (
     // ================================================================
 
     // -- Overall --
-    integer cnt_cycles;
-    integer cnt_s0_commit;       // slot0 instructions committed (wb_valid)
-    integer cnt_s1_commit;       // slot1 instructions committed (wb_s1_valid)
+    longint unsigned cnt_cycles;
+    longint unsigned cnt_s0_commit;       // slot0 instructions committed (wb_valid)
+    longint unsigned cnt_s1_commit;       // slot1 instructions committed (wb_s1_valid)
 
     // -- Stall breakdown --
-    integer cnt_load_use_stall;  // load_use_hazard & id_valid
-    integer cnt_load_use_ex;     // load-use caused by load in EX
-    integer cnt_load_use_mem;    // load-use caused only by load in MEM
-    integer cnt_load_use_mem_ready;   // MEM-only load-use while MEM can advance
-    integer cnt_load_use_mem_blocked; // MEM-only load-use hidden by DCache/MEM stall
-    integer cnt_load_use_s0;     // slot0 consumer participates in load-use
-    integer cnt_load_use_s1;     // slot1 consumer participates in load-use
-    integer cnt_lu_s0_alu;       // S0 load-use where consumer is ordinary ALU
-    integer cnt_lu_s0_branch;    // S0 load-use where consumer is branch compare
-    integer cnt_lu_s0_jalr;      // S0 load-use where consumer is JALR target
-    integer cnt_lu_s0_load_addr; // S0 load-use on load address rs1
-    integer cnt_lu_s0_store_addr;// S0 load-use on store address rs1
-    integer cnt_lu_s0_store_data;// S0 load-use on store data rs2
-    integer cnt_lu_s0_other;     // S0 load-use that did not fit the above
-    integer cnt_lu_mem_ready_s0_alu;
-    integer cnt_lu_mem_ready_s0_branch;
-    integer cnt_lu_mem_ready_s0_jalr;
-    integer cnt_lu_mem_ready_s0_load_addr;
-    integer cnt_lu_mem_ready_s0_store_addr;
-    integer cnt_lu_mem_ready_s0_store_data;
-    integer cnt_lu_mem_ready_s0_other;
-    integer cnt_repair_wait;     // younger consumer waiting for repaired EX ALU result
-    integer cnt_jalr_ex_wait;    // JALR waits for EX/S1_EX producer to reach MEM
-    integer cnt_s1_wb_wait;      // pruned S1_WB forwarding path wait
-    integer cnt_dcache_stall;    // ~mem_ready_go & mem_valid
-    integer cnt_mmio_stall;      // ~ex_ready_go & ex_valid
+    longint unsigned cnt_load_use_stall;  // load_use_hazard & id_valid
+    longint unsigned cnt_load_use_ex;     // load-use caused by load in EX
+    longint unsigned cnt_load_use_mem;    // load-use caused only by load in MEM
+    longint unsigned cnt_load_use_mem_ready;   // MEM-only load-use while MEM can advance
+    longint unsigned cnt_load_use_mem_blocked; // MEM-only load-use hidden by DCache/MEM stall
+    longint unsigned cnt_load_use_s0;     // slot0 consumer participates in load-use
+    longint unsigned cnt_load_use_s1;     // slot1 consumer participates in load-use
+    longint unsigned cnt_lu_s0_alu;       // S0 load-use where consumer is ordinary ALU
+    longint unsigned cnt_lu_s0_branch;    // S0 load-use where consumer is branch compare
+    longint unsigned cnt_lu_s0_jalr;      // S0 load-use where consumer is JALR target
+    longint unsigned cnt_lu_s0_load_addr; // S0 load-use on load address rs1
+    longint unsigned cnt_lu_s0_store_addr;// S0 load-use on store address rs1
+    longint unsigned cnt_lu_s0_store_data;// S0 load-use on store data rs2
+    longint unsigned cnt_lu_s0_other;     // S0 load-use that did not fit the above
+    longint unsigned cnt_lu_mem_ready_s0_alu;
+    longint unsigned cnt_lu_mem_ready_s0_branch;
+    longint unsigned cnt_lu_mem_ready_s0_jalr;
+    longint unsigned cnt_lu_mem_ready_s0_load_addr;
+    longint unsigned cnt_lu_mem_ready_s0_store_addr;
+    longint unsigned cnt_lu_mem_ready_s0_store_data;
+    longint unsigned cnt_lu_mem_ready_s0_other;
+    longint unsigned cnt_repair_wait;     // younger consumer waiting for repaired EX ALU result
+    longint unsigned cnt_jalr_ex_wait;    // JALR waits for EX/S1_EX producer to reach MEM
+    longint unsigned cnt_s1_wb_wait;      // pruned S1_WB forwarding path wait
+    longint unsigned cnt_dcache_stall;    // ~mem_ready_go & mem_valid
+    longint unsigned cnt_mmio_stall;      // ~ex_ready_go & ex_valid
+    longint unsigned cnt_muldiv_stall;    // RV32M multi-cycle EX wait
+
+    // -- RAW stall readiness breakdown --
+    longint unsigned cnt_raw_id_stall;
+    longint unsigned cnt_raw_not_ready_total;
+    longint unsigned cnt_raw_not_ready_ex_load;
+    longint unsigned cnt_raw_not_ready_mem_load_wait;
+    longint unsigned cnt_raw_not_ready_muldiv_dep;
+    longint unsigned cnt_raw_ready_no_fwd_total;
+    longint unsigned cnt_raw_ready_mem_load_no_fwd;
+    longint unsigned cnt_raw_ready_mem_load_s0_branch;
+    longint unsigned cnt_raw_ready_mem_load_s0_jalr;
+    longint unsigned cnt_raw_ready_mem_load_s0_load_addr;
+    longint unsigned cnt_raw_ready_mem_load_s0_store_addr;
+    longint unsigned cnt_raw_ready_mem_load_s0_store_data;
+    longint unsigned cnt_raw_ready_mem_load_s1;
+    longint unsigned cnt_raw_ready_repair_chain;
+    longint unsigned cnt_raw_ready_repair_rs1;
+    longint unsigned cnt_raw_ready_repair_rs2;
+    longint unsigned cnt_raw_ready_branch_ex_no_fwd;
+    longint unsigned cnt_raw_ready_branch_ex_rs1;
+    longint unsigned cnt_raw_ready_branch_ex_rs2;
+    longint unsigned cnt_raw_ready_branch_ex_s0_prod;
+    longint unsigned cnt_raw_ready_branch_ex_s1_prod;
+    longint unsigned cnt_raw_ready_jalr_ex_no_fwd;
+    longint unsigned cnt_raw_ready_jalr_ex_s0_prod;
+    longint unsigned cnt_raw_ready_jalr_ex_s1_prod;
+    longint unsigned cnt_raw_ready_other_no_fwd;
+    longint unsigned cnt_raw_unclassified_stall;
 
     // -- Flush --
-    integer cnt_branch_flush;    // branch misprediction (EX)
-    integer cnt_nlp_redirect;    // NLP L1 redirect (ID)
-    integer cnt_total_branch;    // total branch instructions reaching EX
+    longint unsigned cnt_branch_flush;    // branch misprediction (EX)
+    longint unsigned cnt_nlp_redirect;    // NLP L1 redirect (ID)
+    longint unsigned cnt_total_branch;    // total branch instructions reaching EX
 
     // -- Dual-issue opportunity loss --
-    integer cnt_fetch_valid;     // if_valid cycles (fetch active)
-    integer cnt_pc2_fetch;       // PC[2]=1 fetch cycles (no longer blocks dual)
-    integer cnt_raw_block;       // same-pair RAW dependency
-    integer cnt_inst1_not_alu;   // slot1 not ALU type
-    integer cnt_inst0_jump;      // slot0 is JAL/JALR
-    integer cnt_not_sequential;  // flush/redirect/bp_taken preventing dual
-    integer cnt_dual_issued;     // actually dual-issued
+    longint unsigned cnt_fetch_valid;     // if_valid cycles (fetch active)
+    longint unsigned cnt_pc2_fetch;       // PC[2]=1 fetch cycles (no longer blocks dual)
+    longint unsigned cnt_raw_block;       // same-pair RAW dependency
+    longint unsigned cnt_inst1_not_alu;   // slot1 not ALU type
+    longint unsigned cnt_inst0_jump;      // slot0 is JAL/JALR
+    longint unsigned cnt_not_sequential;  // flush/redirect/bp_taken preventing dual
+    longint unsigned cnt_dual_issued;     // actually dual-issued
+
+    // -- Precise IF-accept dual issue diagnosis --
+    longint unsigned cnt_if_accept;             // IF candidate accepted by IF/ID
+    longint unsigned cnt_if_s1_accept;          // accepted candidates carrying slot1
+    longint unsigned cnt_if_s1_block;           // accepted candidates without slot1
+    longint unsigned cnt_if_block_not_seq;
+    longint unsigned cnt_if_block_raw;
+    longint unsigned cnt_if_block_raw_rs1;
+    longint unsigned cnt_if_block_raw_rs2;
+    longint unsigned cnt_if_block_s0_muldiv;
+    longint unsigned cnt_if_block_s0_jump;
+    longint unsigned cnt_if_block_s1_branch_s0;
+    longint unsigned cnt_if_block_s1_unsupported;
+    longint unsigned cnt_if_block_other;
+    longint unsigned cnt_if_s1_alu_accept;
+    longint unsigned cnt_if_s1_branch_accept;
+    longint unsigned cnt_if_s1_unsup_load;
+    longint unsigned cnt_if_s1_unsup_store;
+    longint unsigned cnt_if_s1_unsup_muldiv;
+    longint unsigned cnt_if_s1_unsup_jal;
+    longint unsigned cnt_if_s1_unsup_jalr;
+    longint unsigned cnt_if_s1_unsup_system;
+    longint unsigned cnt_if_s1_unsup_other;
+    longint unsigned cnt_if_s0_muldiv_seen;
+    longint unsigned cnt_if_s0_load_seen;
+    longint unsigned cnt_if_s0_store_seen;
+    longint unsigned cnt_if_s0_control_seen;
+    longint unsigned cnt_if_s0_alu_seen;
+    longint unsigned cnt_id_s1_seen;
+    longint unsigned cnt_ex_s1_seen;
+    longint unsigned cnt_mem_s1_seen;
 
     // -- Forwarding source distribution (slot0 rs1 as representative) --
-    integer cnt_fwd_s1_ex;
-    integer cnt_fwd_s0_ex;
-    integer cnt_fwd_s1_mem;
-    integer cnt_fwd_s0_mem;
-    integer cnt_fwd_s1_wb;
-    integer cnt_fwd_s0_wb;
-    integer cnt_fwd_rf;
+    longint unsigned cnt_fwd_s1_ex;
+    longint unsigned cnt_fwd_s0_ex;
+    longint unsigned cnt_fwd_s1_mem;
+    longint unsigned cnt_fwd_s0_mem;
+    longint unsigned cnt_fwd_s1_wb;
+    longint unsigned cnt_fwd_s0_wb;
+    longint unsigned cnt_fwd_rf;
 
     // -- skip_inst0 timing fix analysis --
-    integer cnt_skip_inst0;          // cycles where skip_inst0_valid=1
-    integer cnt_skip_and_bp_taken;   // skip_inst0=1 AND bp_taken=1 (would mispredict)
-    integer cnt_predict_dual_err;    // predict_dual != can_dual (misprediction events)
+    longint unsigned cnt_skip_inst0;          // cycles where skip_inst0_valid=1
+    longint unsigned cnt_skip_and_bp_taken;   // skip_inst0=1 AND bp_taken=1 (would mispredict)
+    longint unsigned cnt_predict_dual_err;    // predict_dual != can_dual (misprediction events)
 
     // ================================================================
     //  Signal taps (hierarchical references into cpu_top)
@@ -89,9 +149,15 @@ module perf_monitor (
     wire        wb_valid        = tb_riscv_tests.u_cpu.wb_valid;
     wire        wb_s1_valid     = tb_riscv_tests.u_cpu.wb_s1_valid;
     wire        id_valid        = tb_riscv_tests.u_cpu.id_valid;
+    wire        id_s1_valid     = tb_riscv_tests.u_cpu.id_s1_valid;
+    wire        id_flush_w      = tb_riscv_tests.u_cpu.id_flush;
     wire        ex_valid        = tb_riscv_tests.u_cpu.ex_valid;
+    wire        ex_s1_valid     = tb_riscv_tests.u_cpu.ex_s1_valid;
     wire        mem_valid       = tb_riscv_tests.u_cpu.mem_valid;
+    wire        mem_s1_valid    = tb_riscv_tests.u_cpu.mem_s1_valid;
     wire        if_valid        = tb_riscv_tests.u_cpu.if_valid;
+    wire        id_allowin_w    = tb_riscv_tests.u_cpu.id_allowin;
+    wire        if_ready_go_w   = tb_riscv_tests.u_cpu.if_ready_go_w;
 
     wire        id_ready_go_w   = tb_riscv_tests.u_cpu.u_forwarding.id_ready_go;
     wire        load_use_hazard_w = tb_riscv_tests.u_cpu.u_forwarding.load_use_hazard;
@@ -109,9 +175,14 @@ module perf_monitor (
     wire        id_s1_uses_s1_mem_load_w = tb_riscv_tests.u_cpu.u_forwarding.id_s1_uses_s1_mem_load;
     wire        repair_use_hazard_w = tb_riscv_tests.u_cpu.u_forwarding.repair_use_hazard;
     wire        jalr_ex_wait_hazard_w = tb_riscv_tests.u_cpu.u_forwarding.jalr_ex_wait_hazard;
+    wire        branch_ex_wait_hazard_w = tb_riscv_tests.u_cpu.u_forwarding.branch_ex_wait_hazard;
     wire        s1_wb_wait_hazard_w = tb_riscv_tests.u_cpu.u_forwarding.s1_wb_wait_hazard;
     wire        ex_ready_go_w   = tb_riscv_tests.u_cpu.ex_ready_go_w;
     wire        mem_ready_go_w  = tb_riscv_tests.u_cpu.mem_ready_go_w;
+    wire        mem_load_ready_w = tb_riscv_tests.u_cpu.mem_load_ready;
+    wire        mmio_st_ld_hazard_w = tb_riscv_tests.u_cpu.mmio_st_ld_hazard;
+    wire        ex_is_muldiv_w  = tb_riscv_tests.u_cpu.ex_is_muldiv;
+    wire        muldiv_done_w   = tb_riscv_tests.u_cpu.muldiv_done;
 
     wire        branch_flush_w  = tb_riscv_tests.u_cpu.branch_flush;
     wire        mem_branch_flush_w = tb_riscv_tests.u_cpu.mem_branch_flush;
@@ -127,6 +198,11 @@ module perf_monitor (
     wire        raw_inst1_alu   = tb_riscv_tests.u_cpu.raw_inst1_is_alu_type;
     wire        raw_inst0_jump  = tb_riscv_tests.u_cpu.raw_inst0_is_jump;
     wire        irom_held_valid = tb_riscv_tests.u_cpu.irom_held_valid;
+    wire        if_s1_valid_w   = tb_riscv_tests.u_cpu.if_s1_valid;
+    wire        if_skip_out_w   = tb_riscv_tests.u_cpu.if_skip_out;
+    wire [31:0] if_pc_out_w     = tb_riscv_tests.u_cpu.if_pc_out;
+    wire [31:0] if_inst0_out_w  = tb_riscv_tests.u_cpu.if_inst0_out;
+    wire [31:0] if_inst1_out_w  = tb_riscv_tests.u_cpu.if_inst1_out;
 
     // skip_inst0 analysis
     wire skip_inst0_w   = tb_riscv_tests.u_cpu.skip_inst0_valid;
@@ -140,6 +216,10 @@ module perf_monitor (
     wire fwd_s0_mem = tb_riscv_tests.u_cpu.u_forwarding.s0_rs1_s0_mem_hit;
     wire fwd_s1_wb  = tb_riscv_tests.u_cpu.u_forwarding.s0_rs1_s1_wb_hit;
     wire fwd_s0_wb  = tb_riscv_tests.u_cpu.u_forwarding.s0_rs1_s0_wb_hit;
+    wire s0_rs1_s1_ex_hit_w = tb_riscv_tests.u_cpu.u_forwarding.s0_rs1_s1_ex_hit;
+    wire s0_rs1_s0_ex_hit_w = tb_riscv_tests.u_cpu.u_forwarding.s0_rs1_s0_ex_hit;
+    wire s0_rs2_s1_ex_hit_w = tb_riscv_tests.u_cpu.u_forwarding.s0_rs2_s1_ex_hit;
+    wire s0_rs2_s0_ex_hit_w = tb_riscv_tests.u_cpu.u_forwarding.s0_rs2_s0_ex_hit;
 
     // S0 load-use role classification. These mirrors are simulation-only and
     // intentionally separate rs1/rs2 so store address/data can be distinguished.
@@ -147,9 +227,15 @@ module perf_monitor (
     wire [4:0] id_rs2_addr_w = tb_riscv_tests.u_cpu.id_rs2_addr;
     wire       id_rs1_used_w = tb_riscv_tests.u_cpu.id_rs1_used;
     wire       id_rs2_used_w = tb_riscv_tests.u_cpu.id_rs2_used;
+    wire       id_s1_squash_raw_w = tb_riscv_tests.u_cpu.id_s1_squash_raw;
+    wire [4:0] id_s1_rs1_addr_w = tb_riscv_tests.u_cpu.id_s1_rs1_addr;
+    wire [4:0] id_s1_rs2_addr_w = tb_riscv_tests.u_cpu.id_s1_rs2_addr;
+    wire       id_s1_rs1_used_w = tb_riscv_tests.u_cpu.id_s1_rs1_used;
+    wire       id_s1_rs2_used_w = tb_riscv_tests.u_cpu.id_s1_rs2_used;
     wire [4:0] ex_rd_w       = tb_riscv_tests.u_cpu.ex_rd;
     wire [4:0] ex_s1_rd_w    = tb_riscv_tests.u_cpu.ex_s1_rd;
     wire [4:0] mem_rd_w      = tb_riscv_tests.u_cpu.mem_rd;
+    wire       ex_reg_write_en_w = tb_riscv_tests.u_cpu.ex_reg_write_en;
     wire       ex_mem_read_w    = tb_riscv_tests.u_cpu.ex_mem_read_en;
     wire       ex_s1_mem_read_w = tb_riscv_tests.u_cpu.ex_s1_mem_read_en;
     wire       mem_mem_read_w   = tb_riscv_tests.u_cpu.mem_mem_read_en;
@@ -161,6 +247,77 @@ module perf_monitor (
     wire       dec_is_branch_w = tb_riscv_tests.u_cpu.dec_is_branch;
     wire       dec_is_jal_w    = tb_riscv_tests.u_cpu.dec_is_jal;
     wire       dec_is_jalr_w   = tb_riscv_tests.u_cpu.dec_is_jalr;
+
+    localparam [6:0] OP_R_TYPE = 7'b0110011;
+    localparam [6:0] OP_I_ALU  = 7'b0010011;
+    localparam [6:0] OP_LOAD   = 7'b0000011;
+    localparam [6:0] OP_STORE  = 7'b0100011;
+    localparam [6:0] OP_BRANCH = 7'b1100011;
+    localparam [6:0] OP_JAL    = 7'b1101111;
+    localparam [6:0] OP_JALR   = 7'b1100111;
+    localparam [6:0] OP_LUI    = 7'b0110111;
+    localparam [6:0] OP_AUIPC  = 7'b0010111;
+    localparam [6:0] OP_SYSTEM = 7'b1110011;
+    localparam [6:0] MULDIV_FUNCT7 = 7'b0000001;
+
+    wire        if_accept_w = if_valid & if_ready_go_w & id_allowin_w & ~id_flush_w;
+    wire [6:0] if_s0_opcode = if_inst0_out_w[6:0];
+    wire [6:0] if_s1_opcode = if_inst1_out_w[6:0];
+    wire [6:0] if_s0_funct7 = if_inst0_out_w[31:25];
+    wire [6:0] if_s1_funct7 = if_inst1_out_w[31:25];
+    wire [4:0] if_s0_rd     = if_inst0_out_w[11:7];
+    wire [4:0] if_s1_rs1    = if_inst1_out_w[19:15];
+    wire [4:0] if_s1_rs2    = if_inst1_out_w[24:20];
+
+    wire if_s0_is_muldiv = (if_s0_opcode == OP_R_TYPE) & (if_s0_funct7 == MULDIV_FUNCT7);
+    wire if_s1_is_muldiv = (if_s1_opcode == OP_R_TYPE) & (if_s1_funct7 == MULDIV_FUNCT7);
+    wire if_s0_is_load   = (if_s0_opcode == OP_LOAD);
+    wire if_s0_is_store  = (if_s0_opcode == OP_STORE);
+    wire if_s0_is_branch = (if_s0_opcode == OP_BRANCH);
+    wire if_s0_is_jal    = (if_s0_opcode == OP_JAL);
+    wire if_s0_is_jalr   = (if_s0_opcode == OP_JALR);
+    wire if_s0_is_system = (if_s0_opcode == OP_SYSTEM);
+    wire if_s0_is_control = if_s0_is_branch | if_s0_is_jal | if_s0_is_jalr | if_s0_is_system;
+    wire if_s0_is_lsu     = if_s0_is_load | if_s0_is_store;
+    wire if_s0_is_jump    = if_s0_is_jal | if_s0_is_jalr | if_s0_is_system;
+    wire if_s0_is_alu_type = ((if_s0_opcode == OP_R_TYPE) & ~if_s0_is_muldiv)
+                           | (if_s0_opcode == OP_I_ALU)
+                           | (if_s0_opcode == OP_LUI)
+                           | (if_s0_opcode == OP_AUIPC);
+    wire if_s0_writes_rd = (if_s0_opcode == OP_R_TYPE)
+                         | (if_s0_opcode == OP_I_ALU)
+                         | (if_s0_opcode == OP_LOAD)
+                         | (if_s0_opcode == OP_LUI)
+                         | (if_s0_opcode == OP_AUIPC)
+                         | if_s0_is_jump;
+
+    wire if_s1_is_alu_type = ((if_s1_opcode == OP_R_TYPE) & ~if_s1_is_muldiv)
+                           | (if_s1_opcode == OP_I_ALU)
+                           | (if_s1_opcode == OP_LUI)
+                           | (if_s1_opcode == OP_AUIPC);
+    wire if_s1_is_branch = (if_s1_opcode == OP_BRANCH);
+    wire if_s1_is_load   = (if_s1_opcode == OP_LOAD);
+    wire if_s1_is_store  = (if_s1_opcode == OP_STORE);
+    wire if_s1_is_jal    = (if_s1_opcode == OP_JAL);
+    wire if_s1_is_jalr   = (if_s1_opcode == OP_JALR);
+    wire if_s1_is_system = (if_s1_opcode == OP_SYSTEM);
+    wire if_s1_uses_rs1  = (if_s1_opcode == OP_R_TYPE)
+                         | (if_s1_opcode == OP_I_ALU)
+                         | if_s1_is_branch;
+    wire if_s1_uses_rs2  = (if_s1_opcode == OP_R_TYPE)
+                         | if_s1_is_branch;
+    wire if_pair_raw_rs1 = if_s0_writes_rd & (if_s0_rd != 5'd0)
+                         & if_s1_uses_rs1 & (if_s1_rs1 == if_s0_rd);
+    wire if_pair_raw_rs2 = if_s0_writes_rd & (if_s0_rd != 5'd0)
+                         & if_s1_uses_rs2 & (if_s1_rs2 == if_s0_rd);
+    wire if_pair_raw = if_pair_raw_rs1 | if_pair_raw_rs2;
+    wire if_s1_unsupported = ~(if_s1_is_alu_type | if_s1_is_branch);
+    wire if_s1_branch_blocked_by_s0 = if_s1_is_branch & (if_s0_is_control | if_s0_is_lsu);
+    wire if_s1_blocked = if_accept_w & ~if_s1_valid_w;
+    wire if_s1_unsup_reason = if_s1_blocked & if_seq_fetch & ~if_skip_out_w
+                            & (if_pc_out_w != 32'h7FFF_FFFC)
+                            & ~if_pair_raw & ~if_s0_is_muldiv
+                            & if_s1_unsupported;
 
     wire s0_rs1_ex_load_dep = id_rs1_used_w & ex_valid & ex_mem_read_w
                             & (ex_rd_w != 5'd0) & (ex_rd_w == id_rs1_addr_w);
@@ -208,6 +365,79 @@ module perf_monitor (
                                  | s0_mem_ready_store_addr | s0_mem_ready_store_data;
     wire s0_mem_ready_other      = s0_mem_ready_event & ~s0_mem_ready_known;
 
+    wire id_s1_valid_eff = id_s1_valid & ~id_s1_squash_raw_w;
+    wire id_s0_uses_ex_muldiv = ex_valid & ex_is_muldiv_w & ~muldiv_done_w
+                               & ex_reg_write_en_w & (ex_rd_w != 5'd0)
+                               & ((id_rs1_used_w & (id_rs1_addr_w == ex_rd_w))
+                                |  (id_rs2_used_w & (id_rs2_addr_w == ex_rd_w)));
+    wire id_s1_uses_ex_muldiv = id_s1_valid_eff & ex_valid & ex_is_muldiv_w & ~muldiv_done_w
+                               & ex_reg_write_en_w & (ex_rd_w != 5'd0)
+                               & ((id_s1_rs1_used_w & (id_s1_rs1_addr_w == ex_rd_w))
+                                |  (id_s1_rs2_used_w & (id_s1_rs2_addr_w == ex_rd_w)));
+
+    wire raw_id_stall_event = id_valid & ~id_ready_go_w;
+    wire raw_nr_ex_load_event = raw_id_stall_event & (load_in_ex_w | load_in_s1_ex_w);
+    wire raw_nr_mem_load_wait_event = raw_id_stall_event
+                                    & ~raw_nr_ex_load_event
+                                    & (load_in_mem_w | load_in_s1_mem_w)
+                                    & ~mem_load_ready_w;
+    wire raw_nr_muldiv_event = id_valid & (id_s0_uses_ex_muldiv | id_s1_uses_ex_muldiv);
+
+    wire raw_ready_mem_load_no_fwd_event = raw_id_stall_event
+                                         & ~raw_nr_ex_load_event
+                                         & ~raw_nr_mem_load_wait_event
+                                         & (load_in_mem_w | load_in_s1_mem_w)
+                                         & mem_load_ready_w;
+    wire raw_ready_repair_event = raw_id_stall_event
+                                & ~raw_nr_ex_load_event
+                                & ~raw_nr_mem_load_wait_event
+                                & ~raw_ready_mem_load_no_fwd_event
+                                & repair_use_hazard_w;
+    wire raw_ready_branch_ex_event = raw_id_stall_event
+                                   & ~raw_nr_ex_load_event
+                                   & ~raw_nr_mem_load_wait_event
+                                   & ~raw_ready_mem_load_no_fwd_event
+                                   & ~raw_ready_repair_event
+                                   & branch_ex_wait_hazard_w;
+    wire raw_ready_jalr_ex_event = raw_id_stall_event
+                                 & ~raw_nr_ex_load_event
+                                 & ~raw_nr_mem_load_wait_event
+                                 & ~raw_ready_mem_load_no_fwd_event
+                                 & ~raw_ready_repair_event
+                                 & ~raw_ready_branch_ex_event
+                                 & jalr_ex_wait_hazard_w;
+    wire raw_ready_other_event = raw_id_stall_event
+                               & ~raw_nr_ex_load_event
+                               & ~raw_nr_mem_load_wait_event
+                               & ~raw_ready_mem_load_no_fwd_event
+                               & ~raw_ready_repair_event
+                               & ~raw_ready_branch_ex_event
+                               & ~raw_ready_jalr_ex_event
+                               & (s1_wb_wait_hazard_w | load_use_hazard_w
+                                | repair_use_hazard_w | jalr_ex_wait_hazard_w
+                                | branch_ex_wait_hazard_w);
+    wire raw_classified_id_stall = raw_nr_ex_load_event | raw_nr_mem_load_wait_event
+                                 | raw_ready_mem_load_no_fwd_event | raw_ready_repair_event
+                                 | raw_ready_branch_ex_event | raw_ready_jalr_ex_event
+                                 | raw_ready_other_event;
+
+    wire repair_rs1_dep = repair_use_hazard_w
+                        & ((id_rs1_used_w & (id_rs1_addr_w == ex_rd_w))
+                         |  (id_s1_valid_eff & id_s1_rs1_used_w & (id_s1_rs1_addr_w == ex_rd_w)));
+    wire repair_rs2_dep = repair_use_hazard_w
+                        & ((id_rs2_used_w & (id_rs2_addr_w == ex_rd_w))
+                         |  (id_s1_valid_eff & id_s1_rs2_used_w & (id_s1_rs2_addr_w == ex_rd_w)));
+    wire branch_ex_rs1_dep = branch_ex_wait_hazard_w & id_rs1_used_w
+                           & (s0_rs1_s0_ex_hit_w | s0_rs1_s1_ex_hit_w);
+    wire branch_ex_rs2_dep = branch_ex_wait_hazard_w & id_rs2_used_w
+                           & (s0_rs2_s0_ex_hit_w | s0_rs2_s1_ex_hit_w);
+    wire branch_ex_s0_prod = branch_ex_wait_hazard_w
+                           & ((id_rs1_used_w & s0_rs1_s0_ex_hit_w)
+                            |  (id_rs2_used_w & s0_rs2_s0_ex_hit_w));
+    wire branch_ex_s1_prod = branch_ex_wait_hazard_w
+                           & ((id_rs1_used_w & s0_rs1_s1_ex_hit_w)
+                            |  (id_rs2_used_w & s0_rs2_s1_ex_hit_w));
+
     // ================================================================
     //  Counting logic
     // ================================================================
@@ -242,6 +472,33 @@ module perf_monitor (
             cnt_s1_wb_wait     <= 0;
             cnt_dcache_stall   <= 0;
             cnt_mmio_stall     <= 0;
+            cnt_muldiv_stall   <= 0;
+            cnt_raw_id_stall   <= 0;
+            cnt_raw_not_ready_total <= 0;
+            cnt_raw_not_ready_ex_load <= 0;
+            cnt_raw_not_ready_mem_load_wait <= 0;
+            cnt_raw_not_ready_muldiv_dep <= 0;
+            cnt_raw_ready_no_fwd_total <= 0;
+            cnt_raw_ready_mem_load_no_fwd <= 0;
+            cnt_raw_ready_mem_load_s0_branch <= 0;
+            cnt_raw_ready_mem_load_s0_jalr <= 0;
+            cnt_raw_ready_mem_load_s0_load_addr <= 0;
+            cnt_raw_ready_mem_load_s0_store_addr <= 0;
+            cnt_raw_ready_mem_load_s0_store_data <= 0;
+            cnt_raw_ready_mem_load_s1 <= 0;
+            cnt_raw_ready_repair_chain <= 0;
+            cnt_raw_ready_repair_rs1 <= 0;
+            cnt_raw_ready_repair_rs2 <= 0;
+            cnt_raw_ready_branch_ex_no_fwd <= 0;
+            cnt_raw_ready_branch_ex_rs1 <= 0;
+            cnt_raw_ready_branch_ex_rs2 <= 0;
+            cnt_raw_ready_branch_ex_s0_prod <= 0;
+            cnt_raw_ready_branch_ex_s1_prod <= 0;
+            cnt_raw_ready_jalr_ex_no_fwd <= 0;
+            cnt_raw_ready_jalr_ex_s0_prod <= 0;
+            cnt_raw_ready_jalr_ex_s1_prod <= 0;
+            cnt_raw_ready_other_no_fwd <= 0;
+            cnt_raw_unclassified_stall <= 0;
             cnt_branch_flush   <= 0;
             cnt_nlp_redirect   <= 0;
             cnt_total_branch   <= 0;
@@ -252,6 +509,35 @@ module perf_monitor (
             cnt_inst0_jump     <= 0;
             cnt_not_sequential <= 0;
             cnt_dual_issued    <= 0;
+            cnt_if_accept      <= 0;
+            cnt_if_s1_accept   <= 0;
+            cnt_if_s1_block    <= 0;
+            cnt_if_block_not_seq <= 0;
+            cnt_if_block_raw   <= 0;
+            cnt_if_block_raw_rs1 <= 0;
+            cnt_if_block_raw_rs2 <= 0;
+            cnt_if_block_s0_muldiv <= 0;
+            cnt_if_block_s0_jump <= 0;
+            cnt_if_block_s1_branch_s0 <= 0;
+            cnt_if_block_s1_unsupported <= 0;
+            cnt_if_block_other <= 0;
+            cnt_if_s1_alu_accept <= 0;
+            cnt_if_s1_branch_accept <= 0;
+            cnt_if_s1_unsup_load <= 0;
+            cnt_if_s1_unsup_store <= 0;
+            cnt_if_s1_unsup_muldiv <= 0;
+            cnt_if_s1_unsup_jal <= 0;
+            cnt_if_s1_unsup_jalr <= 0;
+            cnt_if_s1_unsup_system <= 0;
+            cnt_if_s1_unsup_other <= 0;
+            cnt_if_s0_muldiv_seen <= 0;
+            cnt_if_s0_load_seen <= 0;
+            cnt_if_s0_store_seen <= 0;
+            cnt_if_s0_control_seen <= 0;
+            cnt_if_s0_alu_seen <= 0;
+            cnt_id_s1_seen <= 0;
+            cnt_ex_s1_seen <= 0;
+            cnt_mem_s1_seen <= 0;
             cnt_fwd_s1_ex      <= 0;
             cnt_fwd_s0_ex      <= 0;
             cnt_fwd_s1_mem     <= 0;
@@ -307,7 +593,50 @@ module perf_monitor (
             if (id_valid & jalr_ex_wait_hazard_w) cnt_jalr_ex_wait <= cnt_jalr_ex_wait + 1;
             if (id_valid & s1_wb_wait_hazard_w)     cnt_s1_wb_wait     <= cnt_s1_wb_wait + 1;
             if (mem_valid & !mem_ready_go_w) cnt_dcache_stall   <= cnt_dcache_stall + 1;
-            if (ex_valid & !ex_ready_go_w)   cnt_mmio_stall     <= cnt_mmio_stall + 1;
+            if (ex_valid & mmio_st_ld_hazard_w) cnt_mmio_stall  <= cnt_mmio_stall + 1;
+            if (ex_valid & ex_is_muldiv_w & !muldiv_done_w)
+                cnt_muldiv_stall <= cnt_muldiv_stall + 1;
+
+            if (raw_id_stall_event) cnt_raw_id_stall <= cnt_raw_id_stall + 1;
+            if (raw_nr_ex_load_event | raw_nr_mem_load_wait_event | raw_nr_muldiv_event)
+                cnt_raw_not_ready_total <= cnt_raw_not_ready_total + 1;
+            if (raw_nr_ex_load_event) cnt_raw_not_ready_ex_load <= cnt_raw_not_ready_ex_load + 1;
+            if (raw_nr_mem_load_wait_event) cnt_raw_not_ready_mem_load_wait <= cnt_raw_not_ready_mem_load_wait + 1;
+            if (raw_nr_muldiv_event) cnt_raw_not_ready_muldiv_dep <= cnt_raw_not_ready_muldiv_dep + 1;
+
+            if (raw_ready_mem_load_no_fwd_event | raw_ready_repair_event
+              | raw_ready_branch_ex_event | raw_ready_jalr_ex_event | raw_ready_other_event)
+                cnt_raw_ready_no_fwd_total <= cnt_raw_ready_no_fwd_total + 1;
+            if (raw_ready_mem_load_no_fwd_event) begin
+                cnt_raw_ready_mem_load_no_fwd <= cnt_raw_ready_mem_load_no_fwd + 1;
+                if (s0_mem_ready_branch)     cnt_raw_ready_mem_load_s0_branch <= cnt_raw_ready_mem_load_s0_branch + 1;
+                if (s0_mem_ready_jalr)       cnt_raw_ready_mem_load_s0_jalr <= cnt_raw_ready_mem_load_s0_jalr + 1;
+                if (s0_mem_ready_load_addr)  cnt_raw_ready_mem_load_s0_load_addr <= cnt_raw_ready_mem_load_s0_load_addr + 1;
+                if (s0_mem_ready_store_addr) cnt_raw_ready_mem_load_s0_store_addr <= cnt_raw_ready_mem_load_s0_store_addr + 1;
+                if (s0_mem_ready_store_data) cnt_raw_ready_mem_load_s0_store_data <= cnt_raw_ready_mem_load_s0_store_data + 1;
+                if (id_s1_uses_mem_load_w | id_s1_uses_s1_mem_load_w)
+                    cnt_raw_ready_mem_load_s1 <= cnt_raw_ready_mem_load_s1 + 1;
+            end
+            if (raw_ready_repair_event) begin
+                cnt_raw_ready_repair_chain <= cnt_raw_ready_repair_chain + 1;
+                if (repair_rs1_dep) cnt_raw_ready_repair_rs1 <= cnt_raw_ready_repair_rs1 + 1;
+                if (repair_rs2_dep) cnt_raw_ready_repair_rs2 <= cnt_raw_ready_repair_rs2 + 1;
+            end
+            if (raw_ready_branch_ex_event) begin
+                cnt_raw_ready_branch_ex_no_fwd <= cnt_raw_ready_branch_ex_no_fwd + 1;
+                if (branch_ex_rs1_dep) cnt_raw_ready_branch_ex_rs1 <= cnt_raw_ready_branch_ex_rs1 + 1;
+                if (branch_ex_rs2_dep) cnt_raw_ready_branch_ex_rs2 <= cnt_raw_ready_branch_ex_rs2 + 1;
+                if (branch_ex_s0_prod) cnt_raw_ready_branch_ex_s0_prod <= cnt_raw_ready_branch_ex_s0_prod + 1;
+                if (branch_ex_s1_prod) cnt_raw_ready_branch_ex_s1_prod <= cnt_raw_ready_branch_ex_s1_prod + 1;
+            end
+            if (raw_ready_jalr_ex_event) begin
+                cnt_raw_ready_jalr_ex_no_fwd <= cnt_raw_ready_jalr_ex_no_fwd + 1;
+                if (s0_rs1_s0_ex_hit_w) cnt_raw_ready_jalr_ex_s0_prod <= cnt_raw_ready_jalr_ex_s0_prod + 1;
+                if (s0_rs1_s1_ex_hit_w) cnt_raw_ready_jalr_ex_s1_prod <= cnt_raw_ready_jalr_ex_s1_prod + 1;
+            end
+            if (raw_ready_other_event) cnt_raw_ready_other_no_fwd <= cnt_raw_ready_other_no_fwd + 1;
+            if (raw_id_stall_event & ~raw_classified_id_stall)
+                cnt_raw_unclassified_stall <= cnt_raw_unclassified_stall + 1;
 
             // Flush
             if (branch_flush_w & ex_valid)   cnt_branch_flush  <= cnt_branch_flush + 1;
@@ -325,6 +654,58 @@ module perf_monitor (
                 else if (raw_inst0_jump) cnt_inst0_jump     <= cnt_inst0_jump + 1;
             end
             if (can_dual_w & if_valid) cnt_dual_issued <= cnt_dual_issued + 1;
+
+            // Precise IF-accept view. This counts each instruction pair once
+            // when it enters IF/ID, so stalls do not repeatedly inflate blockers.
+            if (if_accept_w) begin
+                cnt_if_accept <= cnt_if_accept + 1;
+
+                if (if_s0_is_muldiv) cnt_if_s0_muldiv_seen <= cnt_if_s0_muldiv_seen + 1;
+                else if (if_s0_is_load) cnt_if_s0_load_seen <= cnt_if_s0_load_seen + 1;
+                else if (if_s0_is_store) cnt_if_s0_store_seen <= cnt_if_s0_store_seen + 1;
+                else if (if_s0_is_control) cnt_if_s0_control_seen <= cnt_if_s0_control_seen + 1;
+                else if (if_s0_is_alu_type) cnt_if_s0_alu_seen <= cnt_if_s0_alu_seen + 1;
+
+                if (if_s1_valid_w) begin
+                    cnt_if_s1_accept <= cnt_if_s1_accept + 1;
+                    if (if_s1_is_alu_type) cnt_if_s1_alu_accept <= cnt_if_s1_alu_accept + 1;
+                    else if (if_s1_is_branch) cnt_if_s1_branch_accept <= cnt_if_s1_branch_accept + 1;
+                end else begin
+                    cnt_if_s1_block <= cnt_if_s1_block + 1;
+                    if (!if_seq_fetch) begin
+                        cnt_if_block_not_seq <= cnt_if_block_not_seq + 1;
+                    end else if (if_skip_out_w | (if_pc_out_w == 32'h7FFF_FFFC)) begin
+                        cnt_if_block_other <= cnt_if_block_other + 1;
+                    end else if (if_pair_raw) begin
+                        cnt_if_block_raw <= cnt_if_block_raw + 1;
+                        if (if_pair_raw_rs1) cnt_if_block_raw_rs1 <= cnt_if_block_raw_rs1 + 1;
+                        if (if_pair_raw_rs2) cnt_if_block_raw_rs2 <= cnt_if_block_raw_rs2 + 1;
+                    end else if (if_s0_is_muldiv) begin
+                        cnt_if_block_s0_muldiv <= cnt_if_block_s0_muldiv + 1;
+                    end else if (if_s1_is_alu_type & if_s0_is_jump) begin
+                        cnt_if_block_s0_jump <= cnt_if_block_s0_jump + 1;
+                    end else if (if_s1_branch_blocked_by_s0) begin
+                        cnt_if_block_s1_branch_s0 <= cnt_if_block_s1_branch_s0 + 1;
+                    end else if (if_s1_unsupported) begin
+                        cnt_if_block_s1_unsupported <= cnt_if_block_s1_unsupported + 1;
+                    end else begin
+                        cnt_if_block_other <= cnt_if_block_other + 1;
+                    end
+
+                    if (if_s1_unsup_reason) begin
+                        if (if_s1_is_load) cnt_if_s1_unsup_load <= cnt_if_s1_unsup_load + 1;
+                        else if (if_s1_is_store) cnt_if_s1_unsup_store <= cnt_if_s1_unsup_store + 1;
+                        else if (if_s1_is_muldiv) cnt_if_s1_unsup_muldiv <= cnt_if_s1_unsup_muldiv + 1;
+                        else if (if_s1_is_jal) cnt_if_s1_unsup_jal <= cnt_if_s1_unsup_jal + 1;
+                        else if (if_s1_is_jalr) cnt_if_s1_unsup_jalr <= cnt_if_s1_unsup_jalr + 1;
+                        else if (if_s1_is_system) cnt_if_s1_unsup_system <= cnt_if_s1_unsup_system + 1;
+                        else cnt_if_s1_unsup_other <= cnt_if_s1_unsup_other + 1;
+                    end
+                end
+            end
+            if (id_s1_valid)  cnt_id_s1_seen  <= cnt_id_s1_seen + 1;
+            if (ex_s1_valid)  cnt_ex_s1_seen  <= cnt_ex_s1_seen + 1;
+            if (mem_s1_valid) cnt_mem_s1_seen <= cnt_mem_s1_seen + 1;
 
             // skip_inst0 analysis
             if (skip_inst0_w)                     cnt_skip_inst0     <= cnt_skip_inst0 + 1;
@@ -349,7 +730,7 @@ module perf_monitor (
     //  Report (called from TB)
     // ================================================================
     task print_report;
-        integer total_insts, total_fwd;
+        longint unsigned total_insts, total_fwd;
         real cpi, dual_rate, mispredict_rate;
         begin
             total_insts = cnt_s0_commit + cnt_s1_commit;
@@ -409,6 +790,40 @@ module perf_monitor (
             $display("[PERF]  S1-WB wait:    %0d", cnt_s1_wb_wait);
             $display("[PERF]  DCache miss:   %0d", cnt_dcache_stall);
             $display("[PERF]  MMIO hazard:   %0d", cnt_mmio_stall);
+            $display("[PERF]  MUL/DIV wait:  %0d", cnt_muldiv_stall);
+            $display("[PERF]");
+            $display("[PERF]  --- RAW Stall Readiness Breakdown ---");
+            $display("[PERF]  ID RAW stall cycles:          %0d", cnt_raw_id_stall);
+            $display("[PERF]  Not-ready RAW cycles:         %0d  (%0.2f%% of cycles)",
+                     cnt_raw_not_ready_total,
+                     cnt_cycles > 0 ? 100.0*cnt_raw_not_ready_total/cnt_cycles : 0.0);
+            $display("[PERF]    EX load pending:            %0d", cnt_raw_not_ready_ex_load);
+            $display("[PERF]    MEM load blocked/not ready: %0d", cnt_raw_not_ready_mem_load_wait);
+            $display("[PERF]    MULDIV pending dependency:  %0d", cnt_raw_not_ready_muldiv_dep);
+            $display("[PERF]  Ready-no-forward RAW cycles:  %0d  (%0.1f%% of ID RAW stalls)",
+                     cnt_raw_ready_no_fwd_total,
+                     cnt_raw_id_stall > 0 ? 100.0*cnt_raw_ready_no_fwd_total/cnt_raw_id_stall : 0.0);
+            $display("[PERF]    MEM-ready load no fwd:      %0d", cnt_raw_ready_mem_load_no_fwd);
+            $display("[PERF]      S0 branch compare:        %0d", cnt_raw_ready_mem_load_s0_branch);
+            $display("[PERF]      S0 JALR target:           %0d", cnt_raw_ready_mem_load_s0_jalr);
+            $display("[PERF]      S0 load address:          %0d", cnt_raw_ready_mem_load_s0_load_addr);
+            $display("[PERF]      S0 store address:         %0d", cnt_raw_ready_mem_load_s0_store_addr);
+            $display("[PERF]      S0 store data:            %0d", cnt_raw_ready_mem_load_s0_store_data);
+            $display("[PERF]      S1 consumer:              %0d", cnt_raw_ready_mem_load_s1);
+            $display("[PERF]    Repaired EX chain no fwd:   %0d  rs1=%0d rs2=%0d",
+                     cnt_raw_ready_repair_chain,
+                     cnt_raw_ready_repair_rs1, cnt_raw_ready_repair_rs2);
+            $display("[PERF]    Branch EX no fwd:           %0d  rs1=%0d rs2=%0d s0_prod=%0d s1_prod=%0d",
+                     cnt_raw_ready_branch_ex_no_fwd,
+                     cnt_raw_ready_branch_ex_rs1, cnt_raw_ready_branch_ex_rs2,
+                     cnt_raw_ready_branch_ex_s0_prod, cnt_raw_ready_branch_ex_s1_prod);
+            $display("[PERF]    JALR EX no fwd:             %0d  s0_prod=%0d s1_prod=%0d",
+                     cnt_raw_ready_jalr_ex_no_fwd,
+                     cnt_raw_ready_jalr_ex_s0_prod, cnt_raw_ready_jalr_ex_s1_prod);
+            $display("[PERF]    Other ready-no-fwd:         %0d", cnt_raw_ready_other_no_fwd);
+            $display("[PERF]  Unclassified ID RAW stalls:   %0d", cnt_raw_unclassified_stall);
+            $display("[PERF]  Same-pair RAW lost slots:     %0d  rs1=%0d rs2=%0d",
+                     cnt_if_block_raw, cnt_if_block_raw_rs1, cnt_if_block_raw_rs2);
             $display("[PERF]");
             $display("[PERF]  --- Branch ---");
             $display("[PERF]  Total branch:  %0d", cnt_total_branch);
@@ -423,6 +838,52 @@ module perf_monitor (
             $display("[PERF]  inst0 JAL/JR:  %0d", cnt_inst0_jump);
             $display("[PERF]  Not seq fetch: %0d", cnt_not_sequential);
             $display("[PERF]  Dual issued:   %0d", cnt_dual_issued);
+            $display("[PERF]");
+            $display("[PERF]  --- IF Accept Dual-issue Diagnosis ---");
+            $display("[PERF]  IF accepts:    %0d", cnt_if_accept);
+            $display("[PERF]  S1 accepted:   %0d  (%0.1f%% of IF accepts)",
+                     cnt_if_s1_accept,
+                     cnt_if_accept > 0 ? 100.0*cnt_if_s1_accept/cnt_if_accept : 0.0);
+            $display("[PERF]  S1 committed:  %0d  (%0.1f%% of S1 accepts)",
+                     cnt_s1_commit,
+                     cnt_if_s1_accept > 0 ? 100.0*cnt_s1_commit/cnt_if_s1_accept : 0.0);
+            $display("[PERF]  S1 blocked:    %0d", cnt_if_s1_block);
+            $display("[PERF]    not seq:     %0d  (%0.1f%% of blocks)",
+                     cnt_if_block_not_seq,
+                     cnt_if_s1_block > 0 ? 100.0*cnt_if_block_not_seq/cnt_if_s1_block : 0.0);
+            $display("[PERF]    RAW:         %0d  (%0.1f%% of blocks)  rs1=%0d rs2=%0d",
+                     cnt_if_block_raw,
+                     cnt_if_s1_block > 0 ? 100.0*cnt_if_block_raw/cnt_if_s1_block : 0.0,
+                     cnt_if_block_raw_rs1, cnt_if_block_raw_rs2);
+            $display("[PERF]    S0 MULDIV:   %0d  (%0.1f%% of blocks)",
+                     cnt_if_block_s0_muldiv,
+                     cnt_if_s1_block > 0 ? 100.0*cnt_if_block_s0_muldiv/cnt_if_s1_block : 0.0);
+            $display("[PERF]    S0 jump/sys: %0d  (%0.1f%% of blocks)",
+                     cnt_if_block_s0_jump,
+                     cnt_if_s1_block > 0 ? 100.0*cnt_if_block_s0_jump/cnt_if_s1_block : 0.0);
+            $display("[PERF]    S1 branch blocked by S0 ctrl/LSU: %0d  (%0.1f%% of blocks)",
+                     cnt_if_block_s1_branch_s0,
+                     cnt_if_s1_block > 0 ? 100.0*cnt_if_block_s1_branch_s0/cnt_if_s1_block : 0.0);
+            $display("[PERF]    S1 unsupported: %0d  (%0.1f%% of blocks)",
+                     cnt_if_block_s1_unsupported,
+                     cnt_if_s1_block > 0 ? 100.0*cnt_if_block_s1_unsupported/cnt_if_s1_block : 0.0);
+            $display("[PERF]      load=%0d store=%0d muldiv=%0d jal=%0d jalr=%0d system=%0d other=%0d",
+                     cnt_if_s1_unsup_load, cnt_if_s1_unsup_store,
+                     cnt_if_s1_unsup_muldiv, cnt_if_s1_unsup_jal,
+                     cnt_if_s1_unsup_jalr, cnt_if_s1_unsup_system,
+                     cnt_if_s1_unsup_other);
+            $display("[PERF]    other:       %0d  (%0.1f%% of blocks)",
+                     cnt_if_block_other,
+                     cnt_if_s1_block > 0 ? 100.0*cnt_if_block_other/cnt_if_s1_block : 0.0);
+            $display("[PERF]  S1 accepted type: ALU=%0d branch=%0d",
+                     cnt_if_s1_alu_accept, cnt_if_s1_branch_accept);
+            $display("[PERF]  S0 IF-accept mix: ALU=%0d load=%0d store=%0d control=%0d muldiv=%0d",
+                     cnt_if_s0_alu_seen, cnt_if_s0_load_seen,
+                     cnt_if_s0_store_seen, cnt_if_s0_control_seen,
+                     cnt_if_s0_muldiv_seen);
+            $display("[PERF]  S1 valid cycles: ID=%0d EX=%0d MEM=%0d WB(commits)=%0d",
+                     cnt_id_s1_seen, cnt_ex_s1_seen, cnt_mem_s1_seen,
+                     cnt_s1_commit);
             $display("[PERF]");
             if (total_fwd > 0) begin
                 $display("[PERF]  --- Forwarding Source (S0-rs1, %0d samples) ---", total_fwd);

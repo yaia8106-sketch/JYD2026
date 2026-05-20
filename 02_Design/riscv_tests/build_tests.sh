@@ -12,11 +12,11 @@ BUILD_DIR="/tmp/riscv_build"
 
 CC=riscv64-unknown-elf-gcc
 OBJDUMP="riscv64-unknown-elf-objdump"
-CFLAGS="-march=rv32i_zicsr -mabi=ilp32 -static -mcmodel=medany -fvisibility=hidden -nostdlib -nostartfiles"
+CFLAGS="-march=rv32im_zicsr -mabi=ilp32 -static -mcmodel=medany -fvisibility=hidden -nostdlib -nostartfiles"
 INCLUDES="-I$SCRIPT_DIR/env"
 LDFLAGS="-T$SCRIPT_DIR/env/link.ld"
 
-# RV32I 指令测试 (去掉 fence_i)
+# RV32IM 指令测试 (去掉 fence_i)
 TESTS="simple \
        add addi sub \
        and andi or ori xor xori \
@@ -35,13 +35,14 @@ TESTS="simple \
        fwd_s1 waw_fwd flush_instbuf pc_align loaduse_cross lui_auipc_s1 \
        dcache_dual instbuf_stall bp_dual \
        sb_stress ras_overflow \
+       m_ext \
        zicsr_basic zicsr_edge csr_forwarding csr_trap_stall trap_mret trap_slot1 trap_flush trap_nested"
 
 mkdir -p "$HEX_DIR"
 mkdir -p "$BUILD_DIR"
 
 echo "========================================================"
-echo " Building riscv-tests for RV32I/Zicsr (custom env)"
+echo " Building riscv-tests for RV32IM/Zicsr (custom env)"
 echo " Source:  $SCRIPT_DIR/src/rv32ui/"
 echo " Output:  $HEX_DIR/"
 echo "========================================================"

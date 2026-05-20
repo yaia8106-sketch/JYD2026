@@ -36,4 +36,15 @@ package cpu_defs;
     localparam logic [6:0] OP_JALR   = 7'b1100111;
     localparam logic [6:0] OP_SYSTEM = 7'b1110011;
 
+    // ---- RV32M funct7/funct3 encoding ----
+    localparam logic [6:0] MULDIV_FUNCT7 = 7'b0000001;
+    localparam logic [2:0] M_OP_MUL    = 3'b000;
+    localparam logic [2:0] M_OP_MULH   = 3'b001;
+    localparam logic [2:0] M_OP_MULHSU = 3'b010;
+    localparam logic [2:0] M_OP_MULHU  = 3'b011;
+    localparam logic [2:0] M_OP_DIV    = 3'b100;
+    localparam logic [2:0] M_OP_DIVU   = 3'b101;
+    localparam logic [2:0] M_OP_REM    = 3'b110;
+    localparam logic [2:0] M_OP_REMU   = 3'b111;
+
 endpackage

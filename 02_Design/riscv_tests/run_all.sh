@@ -44,6 +44,7 @@ RTL_FILES="
     $RTL_DIR/redirect_ctrl.sv
     $RTL_DIR/csr_trap_unit.sv
     $RTL_DIR/memory_access_unit.sv
+    $RTL_DIR/muldiv_unit.sv
     $RTL_DIR/dual_issue_counter.sv
     $RTL_DIR/dual_issue_decider.sv
     $RTL_DIR/if_stage_buffer.sv
@@ -79,6 +80,7 @@ TESTS="simple \
        fwd_s1 waw_fwd flush_instbuf pc_align loaduse_cross lui_auipc_s1 \
        dcache_dual instbuf_stall bp_dual \
        sb_stress ras_overflow \
+       m_ext \
        zicsr_basic zicsr_edge csr_forwarding csr_trap_stall trap_mret trap_slot1 trap_flush trap_nested"
 
 SIM_GUARD_ARGS="${SIM_GUARD_ARGS:-+pc_guard +watchdog=5000}"

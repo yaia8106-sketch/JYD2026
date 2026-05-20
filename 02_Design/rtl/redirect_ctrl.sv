@@ -12,17 +12,10 @@ module redirect_ctrl (
     input  logic        mem_branch_flush,
     input  logic [31:0] mem_branch_target,
 
-    input  logic        branch_redirect_to_target,
-    input  logic        branch_redirect_to_fallthrough,
-    input  logic [31:0] branch_target,
-    input  logic        ex_system_inst,
     input  logic        ex_system_redirect,
     input  logic [31:0] ex_system_target,
 
     output logic        ex_redirect_fire,
-    output logic        ex_redirect_to_target,
-    output logic        ex_redirect_to_fallthrough,
-    output logic        ex_branch_redirect,
     output logic        ex_fast_redirect,
     output logic [31:0] ex_fast_redirect_target,
     output logic        mem_branch_replay,
@@ -33,15 +26,8 @@ module redirect_ctrl (
     logic fast_branch_redirect_r;
 
     assign ex_redirect_fire = ~mem_branch_flush & ex_ready_go & mem_allowin;
-    assign ex_redirect_to_target = branch_redirect_to_target
-                                 & ex_redirect_fire
-                                 & ~ex_system_inst;
-    assign ex_redirect_to_fallthrough = branch_redirect_to_fallthrough
-                                      & ex_redirect_fire
-                                      & ~ex_system_inst;
-    assign ex_branch_redirect = ex_redirect_to_target | ex_redirect_to_fallthrough;
-    assign ex_fast_redirect = ex_branch_redirect | ex_system_redirect;
-    assign ex_fast_redirect_target = ex_branch_redirect ? branch_target : ex_system_target;
+    assign ex_fast_redirect = ex_system_redirect;
+    assign ex_fast_redirect_target = ex_system_target;
     assign mem_branch_replay = mem_branch_flush & ~fast_branch_redirect_r;
     assign frontend_branch_flush = mem_branch_replay | ex_fast_redirect;
     assign frontend_branch_target = mem_branch_replay ? mem_branch_target

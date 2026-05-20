@@ -65,6 +65,7 @@ set cpu_rtl [list \
     [file join $workspace_dir 02_Design rtl mem_wb_reg.sv] \
     [file join $workspace_dir 02_Design rtl mem_wb_reg_s1.sv] \
     [file join $workspace_dir 02_Design rtl memory_access_unit.sv] \
+    [file join $workspace_dir 02_Design rtl muldiv_unit.sv] \
     [file join $workspace_dir 02_Design rtl next_pc_mux.sv] \
     [file join $workspace_dir 02_Design rtl pc_reg.sv] \
     [file join $workspace_dir 02_Design rtl redirect_ctrl.sv] \

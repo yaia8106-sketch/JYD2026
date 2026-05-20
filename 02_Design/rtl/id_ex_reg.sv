@@ -57,6 +57,8 @@ module id_ex_reg (
     input  logic [11:0] id_csr_addr,
     input  logic        id_is_ecall,
     input  logic        id_is_mret,
+    input  logic        id_is_muldiv,
+    input  logic [ 2:0] id_muldiv_op,
 
     // Branch prediction (ID → EX passthrough)
     input  logic        id_bp_taken,
@@ -98,6 +100,8 @@ module id_ex_reg (
     output logic [11:0] ex_csr_addr,
     output logic        ex_is_ecall,
     output logic        ex_is_mret,
+    output logic        ex_is_muldiv,
+    output logic [ 2:0] ex_muldiv_op,
 
     // Branch prediction out (to EX stage)
     output logic        ex_bp_taken,
@@ -146,6 +150,8 @@ module id_ex_reg (
             ex_csr_addr      <= 12'd0;
             ex_is_ecall      <= 1'b0;
             ex_is_mret       <= 1'b0;
+            ex_is_muldiv     <= 1'b0;
+            ex_muldiv_op     <= 3'd0;
             ex_bp_taken      <= 1'b0;
             ex_bp_target     <= 32'd0;
             ex_bp_ghr_snap   <= 8'd0;
@@ -187,6 +193,8 @@ module id_ex_reg (
             ex_csr_addr      <= id_csr_addr;
             ex_is_ecall      <= id_is_ecall;
             ex_is_mret       <= id_is_mret;
+            ex_is_muldiv     <= id_is_muldiv;
+            ex_muldiv_op     <= id_muldiv_op;
             ex_bp_taken      <= id_bp_taken;
             ex_bp_target     <= id_bp_target;
             ex_bp_ghr_snap   <= id_bp_ghr_snap;

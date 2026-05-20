@@ -8,7 +8,6 @@ module irom_addr_ctrl (
     input  logic        rst_n,
 
     input  logic        if_allowin,
-    input  logic [31:0] pc,
     input  logic        predict_dual,
     input  logic        if_buf_before_window,
 
@@ -16,9 +15,8 @@ module irom_addr_ctrl (
     input  logic [31:0] mem_branch_target,
     input  logic        ex_fast_redirect,
     input  logic [31:0] ex_fast_redirect_target,
-    input  logic        ex_redirect_to_target,
-    input  logic        ex_redirect_to_fallthrough,
     input  logic        ex_branch_redirect,
+    input  logic        ex_branch_registered_to_target,
     input  logic [31:0] ex_branch_target_pre,
     input  logic [31:0] ex_fallthrough_pc,
     input  logic        ex_system_redirect,
@@ -88,8 +86,7 @@ module irom_addr_ctrl (
     logic [11:0] mem_branch_odd_addr_r;
     logic        mem_branch_fetch_odd_r;
 
-    wire predict_dual_seq = (pc == 32'h7FFF_FFFC) ? 1'b0 :
-                            if_buf_before_window ? 1'b0 : predict_dual;
+    wire predict_dual_seq = if_buf_before_window ? 1'b0 : predict_dual;
     wire [31:0] seq_next_pc        = predict_dual_seq ? pc_plus8  : pc_plus4;
     wire [31:0] seq_next_pc_plus4  = predict_dual_seq ? pc_plus12 : pc_plus8;
     wire [31:0] seq_pc_plus16      = pc_plus12 + 32'd4;
@@ -110,60 +107,51 @@ module irom_addr_ctrl (
     wire [11:0] ex_fallthrough_even_addr = irom_even_bank_addr(ex_fallthrough_pc);
     wire [11:0] ex_fallthrough_odd_addr = irom_odd_bank_addr(ex_fallthrough_pc);
     wire        ex_fallthrough_fetch_odd = ex_fallthrough_pc[2];
-    wire [11:0] ex_redirect_even_addr = ex_redirect_to_target ? ex_branch_target_even_addr
-                                                               : ex_fallthrough_even_addr;
-    wire [11:0] ex_redirect_odd_addr = ex_redirect_to_target ? ex_branch_target_odd_addr
-                                                             : ex_fallthrough_odd_addr;
-    wire        ex_redirect_fetch_odd = ex_redirect_to_target ? ex_branch_target_fetch_odd
-                                                              : ex_fallthrough_fetch_odd;
-
     wire [11:0] ex_s1_branch_even_addr = irom_even_bank_addr(ex_s1_branch_target);
     wire [11:0] ex_s1_branch_odd_addr = irom_odd_bank_addr(ex_s1_branch_target);
     wire        ex_s1_branch_fetch_odd = ex_s1_branch_target[2];
     wire [11:0] ex_system_even_addr = irom_even_bank_addr(ex_system_target);
     wire [11:0] ex_system_odd_addr = irom_odd_bank_addr(ex_system_target);
     wire        ex_system_fetch_odd = ex_system_target[2];
-    wire [11:0] ex_registered_redirect_even_addr = ex_branch_redirect ? ex_redirect_even_addr :
+    wire [11:0] ex_registered_branch_even_addr = ex_branch_registered_to_target ? ex_branch_target_even_addr
+                                                                                 : ex_fallthrough_even_addr;
+    wire [11:0] ex_registered_branch_odd_addr = ex_branch_registered_to_target ? ex_branch_target_odd_addr
+                                                                               : ex_fallthrough_odd_addr;
+    wire        ex_registered_branch_fetch_odd = ex_branch_registered_to_target ? ex_branch_target_fetch_odd
+                                                                                : ex_fallthrough_fetch_odd;
+    wire [11:0] ex_registered_redirect_even_addr = ex_branch_redirect ? ex_registered_branch_even_addr :
                                                    ex_system_redirect ? ex_system_even_addr :
                                                                         ex_s1_branch_even_addr;
-    wire [11:0] ex_registered_redirect_odd_addr = ex_branch_redirect ? ex_redirect_odd_addr :
+    wire [11:0] ex_registered_redirect_odd_addr = ex_branch_redirect ? ex_registered_branch_odd_addr :
                                                   ex_system_redirect ? ex_system_odd_addr :
                                                                        ex_s1_branch_odd_addr;
-    wire        ex_registered_redirect_fetch_odd = ex_branch_redirect ? ex_redirect_fetch_odd :
+    wire        ex_registered_redirect_fetch_odd = ex_branch_redirect ? ex_registered_branch_fetch_odd :
                                                    ex_system_redirect ? ex_system_fetch_odd :
                                                                         ex_s1_branch_fetch_odd;
 
-    assign irom_addr = mem_branch_replay          ? mem_branch_target :
-                       ex_redirect_to_target      ? ex_branch_target_pre :
-                       ex_redirect_to_fallthrough ? ex_fallthrough_pc :
-                       ex_system_redirect         ? ex_system_target :
-                       id_bp_redirect_raw         ? id_redirect_target :
-                       bp_taken_for_if            ? bp_target_for_if :
-                                                    seq_next_pc;
+    assign irom_addr = mem_branch_replay  ? mem_branch_target :
+                       ex_system_redirect ? ex_system_target :
+                       id_bp_redirect_raw ? id_redirect_target :
+                       bp_taken_for_if    ? bp_target_for_if :
+                                            seq_next_pc;
 
-    assign irom_even_addr = mem_branch_replay          ? mem_branch_even_addr_r :
-                            ex_redirect_to_target      ? ex_branch_target_even_addr :
-                            ex_redirect_to_fallthrough ? ex_fallthrough_even_addr :
-                            ex_system_redirect         ? ex_system_even_addr :
-                            id_bp_redirect_raw         ? id_redirect_even_addr :
-                            bp_taken_for_if            ? bp_even_addr :
-                                                         seq_even_addr;
+    assign irom_even_addr = mem_branch_replay  ? mem_branch_even_addr_r :
+                            ex_system_redirect ? ex_system_even_addr :
+                            id_bp_redirect_raw ? id_redirect_even_addr :
+                            bp_taken_for_if    ? bp_even_addr :
+                                                 seq_even_addr;
 
-    assign irom_odd_addr = mem_branch_replay          ? mem_branch_odd_addr_r :
-                           ex_redirect_to_target      ? ex_branch_target_odd_addr :
-                           ex_redirect_to_fallthrough ? ex_fallthrough_odd_addr :
-                           ex_system_redirect         ? ex_system_odd_addr :
-                           id_bp_redirect_raw         ? id_redirect_odd_addr :
-                           bp_taken_for_if            ? bp_odd_addr :
-                                                        seq_odd_addr;
+    assign irom_odd_addr = mem_branch_replay  ? mem_branch_odd_addr_r :
+                           ex_system_redirect ? ex_system_odd_addr :
+                           id_bp_redirect_raw ? id_redirect_odd_addr :
+                           bp_taken_for_if    ? bp_odd_addr :
+                                                seq_odd_addr;
 
-    assign irom_fetch_odd = mem_branch_replay          ? mem_branch_fetch_odd_r :
-                            ex_redirect_to_target      ? ex_branch_target_fetch_odd :
-                            ex_redirect_to_fallthrough ? ex_fallthrough_fetch_odd :
-                            ex_system_redirect         ? ex_system_fetch_odd :
-                            id_bp_redirect_raw         ? id_redirect_fetch_odd :
-                            bp_taken_for_if            ? bp_fetch_odd :
-                                                         seq_fetch_odd;
+    assign irom_fetch_odd = mem_branch_replay  ? mem_branch_fetch_odd_r :
+                            ex_system_redirect ? ex_system_fetch_odd :
+                            id_bp_redirect_raw ? id_redirect_fetch_odd :
+                            bp_taken_for_if    ? bp_fetch_odd :
+                                                 seq_fetch_odd;
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin

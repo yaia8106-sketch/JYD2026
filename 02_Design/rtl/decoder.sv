@@ -28,12 +28,14 @@ module decoder
     output logic        csr_uses_imm,
     output logic        is_ecall,
     output logic        is_mret,
+    output logic        is_muldiv,
     output logic [ 2:0] imm_type
 );
 
     // ---- Field extraction ----
     wire [6:0] opcode  = inst[6:0];
     wire [2:0] funct3  = inst[14:12];
+    wire [6:0] funct7  = inst[31:25];
     wire       funct7_5 = inst[30];
     wire       is_system = (opcode == OP_SYSTEM);
 
@@ -95,6 +97,7 @@ module decoder
     assign csr_uses_rs1 = is_csr & ~funct3[2];
     assign is_ecall     = (inst == 32'h0000_0073);
     assign is_mret      = (inst == 32'h3020_0073);
+    assign is_muldiv    = (opcode == OP_R_TYPE) & (funct7 == MULDIV_FUNCT7);
     assign reg_write_en = ctrl_reg_write_en | is_csr;
 
     // ================================================================

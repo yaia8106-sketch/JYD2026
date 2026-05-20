@@ -250,29 +250,43 @@ module if_stage_buffer (
             irom_held_valid <= 1'b1;
     end
 
+    (* keep = "true", max_fanout = 32 *) wire hold_capture_inst = !irom_held_valid & !id_allowin & !id_flush;
+    (* keep = "true", max_fanout = 32 *) wire hold_capture_bp0  = !irom_held_valid & !id_allowin & !id_flush;
+    (* keep = "true", max_fanout = 32 *) wire hold_capture_bp1  = !irom_held_valid & !id_allowin & !id_flush;
+
     always_ff @(posedge clk) begin
-        if (!irom_held_valid && !id_allowin && !id_flush) begin
+        if (hold_capture_inst) begin
             irom_inst0_held <= if_inst0_live;
             irom_inst1_held <= if_inst1_live;
             irom_pc_held <= if_pc_live;
+            irom_skip_held <= if_skip_inst0;
+        end
+    end
+
+    always_ff @(posedge clk) begin
+        if (hold_capture_bp0) begin
             irom_bp_taken_held <= bp_live_taken;
             irom_bp_target_held <= bp_live_target;
             irom_bp_even_addr_held <= bp_live_even_addr;
             irom_bp_odd_addr_held <= bp_live_odd_addr;
             irom_bp_fetch_odd_held <= bp_live_fetch_odd;
+        end
+    end
+
+    always_ff @(posedge clk) begin
+        if (hold_capture_bp1) begin
             irom_bp_ghr_snap_held <= bp_live_ghr_snap;
             irom_bp_btb_hit_held <= bp_live_btb_hit;
             irom_bp_btb_type_held <= bp_live_btb_type;
             irom_bp_btb_bht_held <= bp_live_btb_bht;
             irom_bp_pht_cnt_held <= bp_live_pht_cnt;
             irom_bp_sel_cnt_held <= bp_live_sel_cnt;
-            irom_skip_held <= if_skip_inst0;
         end
     end
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n)
-            predict_dual <= 1'b1;
+            predict_dual <= 1'b0;
         else if (if_accept & !if_skip_out)
             predict_dual <= 1'b1;
     end

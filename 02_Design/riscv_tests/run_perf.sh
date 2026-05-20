@@ -41,6 +41,7 @@ RTL_FILES="
     $RTL_DIR/redirect_ctrl.sv
     $RTL_DIR/csr_trap_unit.sv
     $RTL_DIR/memory_access_unit.sv
+    $RTL_DIR/muldiv_unit.sv
     $RTL_DIR/dual_issue_counter.sv
     $RTL_DIR/dual_issue_decider.sv
     $RTL_DIR/if_stage_buffer.sv
