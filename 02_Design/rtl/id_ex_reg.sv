@@ -39,6 +39,8 @@ module id_ex_reg (
     input  logic [ 4:0] id_rd,
     input  logic [ 4:0] id_rs1_addr,
     input  logic [ 4:0] id_rs2_addr,
+    input  logic        id_alu_src1_is_rs1,
+    input  logic        id_alu_src2_is_rs2,
     input  logic [ 3:0] id_alu_op,
     input  logic        id_reg_write_en,
     input  logic [ 1:0] id_wb_sel,
@@ -82,6 +84,8 @@ module id_ex_reg (
     output logic [ 4:0] ex_rd,
     output logic [ 4:0] ex_rs1_addr,
     output logic [ 4:0] ex_rs2_addr,
+    output logic        ex_alu_src1_is_rs1,
+    output logic        ex_alu_src2_is_rs2,
     output logic [ 3:0] ex_alu_op,
     output logic        ex_reg_write_en,
     output logic [ 1:0] ex_wb_sel,
@@ -132,6 +136,8 @@ module id_ex_reg (
             ex_rd            <= 5'd0;
             ex_rs1_addr      <= 5'd0;
             ex_rs2_addr      <= 5'd0;
+            ex_alu_src1_is_rs1 <= 1'b0;
+            ex_alu_src2_is_rs2 <= 1'b0;
             ex_alu_op        <= 4'd0;
             ex_reg_write_en  <= 1'b0;
             ex_wb_sel        <= 2'd0;
@@ -175,6 +181,8 @@ module id_ex_reg (
             ex_rd            <= id_rd;
             ex_rs1_addr      <= id_rs1_addr;
             ex_rs2_addr      <= id_rs2_addr;
+            ex_alu_src1_is_rs1 <= id_alu_src1_is_rs1;
+            ex_alu_src2_is_rs2 <= id_alu_src2_is_rs2;
             ex_alu_op        <= id_alu_op;
             ex_reg_write_en  <= id_reg_write_en;
             ex_wb_sel        <= id_wb_sel;

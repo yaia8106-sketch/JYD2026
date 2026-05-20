@@ -161,6 +161,7 @@ module cpu_top (
     wire [31:0] ex_branch_target_pre;        // ID-precomputed taken target
     wire [31:0] ex_fallthrough_pc;           // ID-precomputed PC+4
     wire [ 4:0] ex_rd, ex_rs1_addr, ex_rs2_addr;
+    wire        ex_alu_src1_is_rs1, ex_alu_src2_is_rs2;
     wire [ 3:0] ex_alu_op;
     wire        ex_reg_write_en;
     wire [ 1:0] ex_wb_sel;
@@ -212,6 +213,7 @@ module cpu_top (
     wire [31:0] alu_s1_addr;
     wire [31:0] ex_alu_src1_repair;
     wire [31:0] ex_alu_src2_repair;
+    wire        ex_result_late;
 
     // ---- Branch ----
     wire        branch_flush;          // EX stage combinational (for predictor update)
@@ -999,7 +1001,7 @@ module cpu_top (
         .ex_alu_result  (ex_forward_result),
         .ex_pc_plus_4   (ex_pc_plus_4),
         .ex_wb_sel      (ex_wb_sel),
-        .ex_wb_repair   (ex_rs1_wb_repair | ex_rs2_wb_repair),
+        .ex_wb_repair   (ex_result_late),
         .ex_s1_valid       (ex_s1_valid),
         .ex_s1_reg_write   (ex_s1_reg_write_en),
         .ex_s1_mem_read    (ex_s1_mem_read_en),
@@ -1089,6 +1091,8 @@ module cpu_top (
         .id_rd            (id_rd_addr),
         .id_rs1_addr      (id_rs1_addr),
         .id_rs2_addr      (id_rs2_addr),
+        .id_alu_src1_is_rs1(dec_alu_src1_sel == 2'b00),
+        .id_alu_src2_is_rs2(~dec_alu_src2_sel),
         .id_alu_op        (dec_alu_op),
         .id_reg_write_en  (dec_reg_write_en),
         .id_wb_sel        (dec_wb_sel),
@@ -1131,6 +1135,8 @@ module cpu_top (
         .ex_rd            (ex_rd),
         .ex_rs1_addr      (ex_rs1_addr),
         .ex_rs2_addr      (ex_rs2_addr),
+        .ex_alu_src1_is_rs1(ex_alu_src1_is_rs1),
+        .ex_alu_src2_is_rs2(ex_alu_src2_is_rs2),
         .ex_alu_op        (ex_alu_op),
         .ex_reg_write_en  (ex_reg_write_en),
         .ex_wb_sel        (ex_wb_sel),
@@ -1220,9 +1226,26 @@ module cpu_top (
         .ex_s1_pc                   (ex_s1_pc),
         .ex_rs1_wb_repair           (ex_rs1_wb_repair),
         .ex_rs2_wb_repair           (ex_rs2_wb_repair),
+        .ex_alu_src1_is_rs1         (ex_alu_src1_is_rs1),
+        .ex_alu_src2_is_rs2         (ex_alu_src2_is_rs2),
+        .ex_rs1_addr                (ex_rs1_addr),
+        .ex_rs2_addr                (ex_rs2_addr),
         .wb_write_data              (wb_write_data),
         .ex_alu_src1                (ex_alu_src1),
         .ex_alu_src2                (ex_alu_src2),
+        .mem_valid                  (mem_valid),
+        .mem_reg_write_en           (mem_reg_write_en),
+        .mem_mem_read_en            (mem_mem_read_en),
+        .mem_rd                     (mem_rd),
+        .mem_wb_sel                 (mem_wb_sel),
+        .mem_alu_result             (mem_alu_result),
+        .mem_pc_plus_4              (mem_pc_plus_4),
+        .mem_s1_valid               (mem_s1_valid),
+        .mem_s1_reg_write_en        (mem_s1_reg_write_en),
+        .mem_s1_rd                  (mem_s1_rd),
+        .mem_s1_wb_sel              (mem_s1_wb_sel),
+        .mem_s1_alu_result          (mem_s1_alu_result),
+        .mem_s1_pc_plus_4           (mem_s1_pc_plus_4),
         .ex_is_csr                  (ex_is_csr),
         .ex_csr_rdata               (ex_csr_rdata),
         .ex_is_muldiv               (ex_is_muldiv),
@@ -1248,6 +1271,7 @@ module cpu_top (
         .ex_alu_src2_repair         (ex_alu_src2_repair),
         .ex_forward_result          (ex_forward_result),
         .ex_pipe_alu_result         (ex_pipe_alu_result),
+        .ex_result_late             (ex_result_late),
         .ex_s1_branch_target        (ex_s1_branch_target),
         .ex_s1_branch_redirect      (ex_s1_branch_redirect),
         .ex_registered_branch_flush (ex_registered_branch_flush),

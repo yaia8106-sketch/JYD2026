@@ -40,7 +40,7 @@ module forwarding (
     input  logic [31:0] ex_alu_result,
     input  logic [31:0] ex_pc_plus_4,   // pre-computed in EX stage
     input  logic [ 1:0] ex_wb_sel,      // 00=ALU, 01=DRAM, 10=PC+4
-    input  logic        ex_wb_repair,
+    input  logic        ex_wb_repair, // EX result depends on a late operand; do not forward to ID
 
     // Slot 1 EX stage
     input  logic        ex_s1_valid,
@@ -211,12 +211,14 @@ module forwarding (
 
     wire load_use_hazard = load_in_ex | load_in_s1_ex | load_in_mem | load_in_s1_mem;
 
-    // If the S0 EX result was repaired from WB, do not forward that late ALU
-    // result to younger ID consumers in the same cycle. They can take the
-    // registered MEM value next cycle.
+    // If the S0 EX result depends on a late operand, do not forward that
+    // result back into ID in the same cycle. S0 ALU consumers may still enter
+    // EX and consume the registered MEM result via the EX-stage bypass.
+    wire repair_s0_use_hazard = id_s0_uses_ex_load & ~id_s0_alu_only;
+    wire repair_s1_use_hazard = id_s1_uses_ex_load;
     wire repair_use_hazard = ex_valid & ex_wb_repair & ex_reg_write
                            & (ex_rd != 5'd0)
-                           & (id_s0_uses_ex_load | id_s1_uses_ex_load);
+                           & (repair_s0_use_hazard | repair_s1_use_hazard);
 
     // S0 JALR target is precomputed in ID.  Do not form an EX/S1_EX result
     // -> ID JALR target -> ID/EX timing path; wait one cycle and use MEM/WB.
