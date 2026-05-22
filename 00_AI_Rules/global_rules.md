@@ -194,15 +194,14 @@ vivado -mode tcl \
 ### 自有物理板 bitstream
 
 ```bash
-./PhysicalTwin_XC7A35T/run_build.sh dual_issue/current
-./PhysicalTwin_XC7A35T/run_build.sh dual_issue/src1
+./PhysicalTwin_Nexys4DDR/run_build.sh dual_issue/current
+./PhysicalTwin_Nexys4DDR/run_build.sh dual_issue/src1
 ```
 
-- 生成文件在 `PhysicalTwin_XC7A35T/vivado/`。
-- 同时导出到英文路径 `/home/anokyai/CPU_Workspace_Artifacts/PhysicalTwin_XC7A35T/`。
-- XC7A35T 物理板 DRAM 当前只有 48 个 4KiB 物理页（192KiB）可用；`current` 和 `src1` 是可用目标。
-- 不再做 `src0` 物理板适配：完整动态工作集超过板上容量，短运行时间是错误/提前结束路径，不能作为性能结果。
-- `src2` 同样超过 48 页，现有物理板结果只能按容量受限实验处理；严格上板需要扩展内存或改程序/数据布局。
+- 生成文件在 `PhysicalTwin_Nexys4DDR/vivado/`。
+- 生成内存初始化文件在 `PhysicalTwin_Nexys4DDR/generated/`。
+- Nexys 4 DDR 工程使用板上 BRAM 实现完整 256 KiB 逻辑 DRAM；当前不使用 DDR2/MIG。
+- `constraints/board.xdc` 是工程实际使用的约束；`constraints/Nexys-4-DDR-Master.xdc` 保留 Digilent master XDC 作为引脚参考。
 
 ---
 
@@ -216,7 +215,7 @@ vivado -mode tcl \
 | `02_Design/riscv_tests/` | 回归 TB + 脚本 | 临时调试 TB |
 | `02_Design/coe/` | COE 文件 + 工具脚本 | 仿真产物 |
 | `00_AI_Rules/` | 当前规则、架构文档 | 临时实验记录 |
-| `PhysicalTwin_XC7A35T/` | 自有板工程封装和板级文档 | CPU RTL 副本 |
+| `PhysicalTwin_Nexys4DDR/` | Nexys 4 DDR 板级封装、约束和板级文档 | CPU RTL 副本 |
 
 ### 临时/实验性文件
 
@@ -242,6 +241,6 @@ vivado -mode tcl \
 
 ## 9. 文档维护
 
-- 当前有效文档包括：`global_rules.md`、`architecture.md`、`02_Design/coe/README.md`、`02_Design/riscv_tests/test_coverage.md`、`PhysicalTwin_XC7A35T/README.md`。
+- 当前有效文档包括：`global_rules.md`、`architecture.md`、`02_Design/coe/README.md`、`02_Design/riscv_tests/test_coverage.md`、`PhysicalTwin_Nexys4DDR/README.md`。
 - RTL 改动通过回归后，同步更新 `architecture.md`。
 - 信号名必须与 RTL 一致；当前架构文档只写当前状态，不保存长实验档案。

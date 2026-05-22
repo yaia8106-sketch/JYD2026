@@ -8,7 +8,7 @@ module IROMOdd32 (
     output logic [31:0] douta
 );
 
-    localparam int DEPTH_WORDS = 1024;
+    localparam int DEPTH_WORDS = 2048;
 
     (* rom_style = "distributed" *) logic [31:0] mem [0:DEPTH_WORDS-1];
 
@@ -20,7 +20,8 @@ module IROMOdd32 (
     end
 
     always_ff @(posedge clka) begin
-        douta <= (addra < DEPTH_WORDS) ? mem[addra[9:0]] : 32'h0000_0013;
+        douta <= (addra < DEPTH_WORDS) ? mem[addra[10:0]] : 32'h0000_0013;
     end
 
 endmodule
+

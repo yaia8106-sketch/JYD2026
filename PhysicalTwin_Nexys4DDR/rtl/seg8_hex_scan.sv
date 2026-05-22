@@ -1,50 +1,46 @@
 `timescale 1ns / 1ps
 
-module seg6_hex_scan (
+module seg8_hex_scan (
     input  logic        clk,
     input  logic        rst,
-    input  logic [23:0] value,
+    input  logic [31:0] value,
 
     output logic [6:0]  seg,
     output logic        dp,
-    output logic [5:0]  an
+    output logic [7:0]  an
 );
 
-    logic [15:0] scan_cnt;
+    logic [16:0] scan_cnt;
 
     always_ff @(posedge clk) begin
-        scan_cnt <= scan_cnt + 16'd1;
+        if (rst)
+            scan_cnt <= 17'd0;
+        else
+            scan_cnt <= scan_cnt + 17'd1;
     end
 
-    wire [2:0] raw_digit = scan_cnt[15:13];
-    wire [2:0] digit = (raw_digit >= 3'd6) ? 3'd0 : raw_digit;
-
+    wire [2:0] digit = scan_cnt[16:14];
     logic [3:0] nibble;
 
-    always @* begin
+    always_comb begin
         case (digit)
-            3'd0: nibble = value[23:20];
-            3'd1: nibble = value[19:16];
-            3'd2: nibble = value[15:12];
-            3'd3: nibble = value[11: 8];
-            3'd4: nibble = value[ 7: 4];
+            3'd0: nibble = value[31:28];
+            3'd1: nibble = value[27:24];
+            3'd2: nibble = value[23:20];
+            3'd3: nibble = value[19:16];
+            3'd4: nibble = value[15:12];
+            3'd5: nibble = value[11: 8];
+            3'd6: nibble = value[ 7: 4];
             default: nibble = value[ 3: 0];
         endcase
     end
 
-    always @* begin
-        an = 6'b111111;
-        case (digit)
-            3'd0: an[0] = 1'b0;
-            3'd1: an[1] = 1'b0;
-            3'd2: an[2] = 1'b0;
-            3'd3: an[3] = 1'b0;
-            3'd4: an[4] = 1'b0;
-            default: an[5] = 1'b0;
-        endcase
+    always_comb begin
+        an = 8'hff;
+        an[digit] = 1'b0;
     end
 
-    always @* begin
+    always_comb begin
         case (nibble)
             4'h0: seg = 7'b1000000;
             4'h1: seg = 7'b1111001;
@@ -68,3 +64,4 @@ module seg6_hex_scan (
     assign dp = 1'b1;
 
 endmodule
+

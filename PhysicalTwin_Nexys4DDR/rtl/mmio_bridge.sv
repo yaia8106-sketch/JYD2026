@@ -77,12 +77,7 @@ module mmio_bridge (
                  | ({32{mem_addr == CNT_ADDR}} & cnt_rdata);
 
     assign led = led_reg;
-
-    // Board-only status bus consumed by board_top:
-    //   [23:0]  = low 6 hex digits shown on the physical display.
-    //   [31:24] = high BCD byte written by the program, normally pass count.
-    //   [32]    = counter enabled.
-    //   [39:33] = reserved.
     assign seg = {7'd0, cnt_enable_cfg, seg_wdata};
 
 endmodule
+

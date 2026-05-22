@@ -23,13 +23,13 @@ puts [exec $python [file join $project_dir scripts prepare_mem.py] \
 set vivado_dir [file join $project_dir vivado]
 file mkdir $vivado_dir
 
-create_project -force PhysicalTwin_XC7A35T $vivado_dir -part xc7a35tftg256-2
+create_project -force PhysicalTwin_Nexys4DDR $vivado_dir -part xc7a100tcsg324-1
 set_property target_language Verilog [current_project]
 set_property default_lib xil_defaultlib [current_project]
 
 set local_rtl [list \
     [file join $project_dir rtl board_top.sv] \
-    [file join $project_dir rtl seg6_hex_scan.sv] \
+    [file join $project_dir rtl seg8_hex_scan.sv] \
     [file join $project_dir rtl mmio_bridge.sv] \
     [file join $project_dir rtl IROMEven32.sv] \
     [file join $project_dir rtl IROMOdd32.sv] \
@@ -99,4 +99,5 @@ open_run impl_1
 report_utilization -file [file join $project_dir vivado utilization_impl.rpt]
 report_timing_summary -delay_type max -file [file join $project_dir vivado timing_summary_impl.rpt]
 
-puts "Bitstream: [file join $vivado_dir PhysicalTwin_XC7A35T.runs impl_1 board_top.bit]"
+puts "Bitstream: [file join $vivado_dir PhysicalTwin_Nexys4DDR.runs impl_1 board_top.bit]"
+
