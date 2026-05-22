@@ -13,8 +13,10 @@ module muldiv_unit
 
     input  logic        req_valid,
     input  logic [ 2:0] req_op,
-    input  logic [31:0] req_rs1,
-    input  logic [31:0] req_rs2,
+    input  logic [31:0] req_mul_rs1,
+    input  logic [31:0] req_mul_rs2,
+    input  logic [31:0] req_div_rs1,
+    input  logic [31:0] req_div_rs2,
     input  logic        consume,
     input  logic        flush,
 
@@ -52,17 +54,17 @@ module muldiv_unit
 
     wire mul_signed_a = (req_op == M_OP_MULH) | (req_op == M_OP_MULHSU);
     wire mul_signed_b = (req_op == M_OP_MULH);
-    wire signed [32:0] mul_a = {mul_signed_a & req_rs1[31], req_rs1};
-    wire signed [32:0] mul_b = {mul_signed_b & req_rs2[31], req_rs2};
+    wire signed [32:0] mul_a = {mul_signed_a & req_mul_rs1[31], req_mul_rs1};
+    wire signed [32:0] mul_b = {mul_signed_b & req_mul_rs2[31], req_mul_rs2};
     (* use_dsp = "yes" *) wire signed [65:0] mul_product_w = mul_a_r * mul_b_r;
 
-    wire [31:0] req_abs_rs1 = (req_is_signed_div & req_rs1[31]) ? (~req_rs1 + 32'd1) : req_rs1;
-    wire [31:0] req_abs_rs2 = (req_is_signed_div & req_rs2[31]) ? (~req_rs2 + 32'd1) : req_rs2;
-    wire        req_div_by_zero = (req_rs2 == 32'd0);
+    wire [31:0] req_abs_rs1 = (req_is_signed_div & req_div_rs1[31]) ? (~req_div_rs1 + 32'd1) : req_div_rs1;
+    wire [31:0] req_abs_rs2 = (req_is_signed_div & req_div_rs2[31]) ? (~req_div_rs2 + 32'd1) : req_div_rs2;
+    wire        req_div_by_zero = (req_div_rs2 == 32'd0);
     wire        req_div_overflow = req_is_signed_div
-                                 & (req_rs1 == 32'h8000_0000)
-                                 & (req_rs2 == 32'hffff_ffff);
-    wire [31:0] req_special_result = req_div_by_zero ? (req_is_rem ? req_rs1 : 32'hffff_ffff) :
+                                 & (req_div_rs1 == 32'h8000_0000)
+                                 & (req_div_rs2 == 32'hffff_ffff);
+    wire [31:0] req_special_result = req_div_by_zero ? (req_is_rem ? req_div_rs1 : 32'hffff_ffff) :
                                      req_div_overflow ? (req_is_rem ? 32'd0 : 32'h8000_0000) :
                                                         32'd0;
 
@@ -134,8 +136,8 @@ module muldiv_unit
                             div_remainder <= 33'd0;
                             div_quotient  <= req_abs_rs1;
                             div_count     <= 6'd32;
-                            div_quot_neg  <= req_is_signed_div & (req_rs1[31] ^ req_rs2[31]);
-                            div_rem_neg   <= req_is_signed_div & req_rs1[31];
+                            div_quot_neg  <= req_is_signed_div & (req_div_rs1[31] ^ req_div_rs2[31]);
+                            div_rem_neg   <= req_is_signed_div & req_div_rs1[31];
                             state         <= S_DIV_RUN;
                         end
                     end

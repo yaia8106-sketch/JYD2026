@@ -4,8 +4,8 @@
 // When a branch target lands at PC[2]=1 (not 8-byte aligned),
 // the IROM window must still expose {PC+4, PC} and execute correctly.
 //
-// Also tests: S1-type blocking — if inst1 is load/store/branch,
-// dual-issue must NOT happen even when fetch is aligned.
+// Also tests: S1-type edge cases at aligned fetch windows. Slot1 load/branch
+// may dual-issue; Slot1 store still serializes.
 
 #define DUAL_CNT_ADDR 0x80200060
 
@@ -51,8 +51,7 @@ odd_target:                  // +4: this is at PC[2]=1
     bne   t2, t4, fail
 
     // ================================================================
-    // Part 2: S1 is a load → must NOT dual-issue
-    // Pair: S0=addi t0,x0,10; S1=lw t1,0(a0) → S1 is load, not ALU
+    // Part 2: S1 is a load and may dual-issue with ordinary S0 ALU.
     // ================================================================
     .align 3
     li    TESTNUM, 2
@@ -70,7 +69,7 @@ odd_target:                  // +4: this is at PC[2]=1
     addi  s0, s0, 0
 
     .align 3
-    // This pair: S0=addi, S1=lw → S1 not ALU-type → single-issue
+    // This pair: S0=addi, S1=lw. The shared LSU path may issue it in S1.
     addi  t0, x0, 99         // S0
     lw    t1, 8(a0)          // S1 position: load → single-issue, goes to inst_buf
     // t1 should eventually get 0x12 from DRAM
@@ -121,7 +120,7 @@ odd_target:                  // +4: this is at PC[2]=1
     bne   t2, t4, fail
 
     // ================================================================
-    // Part 4: S1 is a branch → must NOT dual-issue
+    // Part 4: S1 is a branch. It may dual-issue and redirect from Slot1.
     // ================================================================
     .align 3
     li    TESTNUM, 5
@@ -129,9 +128,7 @@ odd_target:                  // +4: this is at PC[2]=1
 
     .align 3
     addi  t0, x0, 11         // S0
-    beq   x0, x0, s1_branch_target  // S1 position: branch → not ALU → single-issue
-    // inst_buf gets: beq x0, x0, target
-    // Next cycle: buffered beq becomes S0, branch taken
+    beq   x0, x0, s1_branch_target  // S1 position: branch
 
 s1_branch_not_taken:
     addi  t0, x0, 0xFF       // should NOT execute if branch works

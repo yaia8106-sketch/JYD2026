@@ -4,12 +4,12 @@
 
 ## 默认回归规模
 
-`run_all.sh` 默认运行 75 个测试：
+`run_all.sh` 默认运行 76 个测试：
 
 - 38 个基础 RV32I/smoke 测试：`simple` + 官方 `rv32ui` 指令测试（不包含 `fence_i`）。
 - 2 个综合访存测试：`ld_st`、`st_ld`。
 - 3 个压力测试：`dcache_stress`、`counter_stress`、`bp_stress`。
-- 23 个双发射、分支预测、DCache、RAS 相关测试。
+- 24 个双发射、分支预测、DCache、RAS 相关测试。
 - 1 个 RV32M 覆盖测试：`m_ext`。
 - 8 个 Zicsr / Trap 测试：`zicsr_basic`、`zicsr_edge`、`csr_forwarding`、`csr_trap_stall`、`trap_mret`、`trap_slot1`、`trap_flush`、`trap_nested`。
 
@@ -98,6 +98,7 @@
 | `waw_fwd` | Slot0/Slot1 同写同一寄存器后的前递优先级和链式 WAW |
 | `loaduse_cross` | 上一拍 Slot0 load 被下一拍 S0/S1 使用时的 stall 和冻结 |
 | `slot1_load` | Slot0 普通 ALU + Slot1 load 共享单端口 LSU，覆盖 LB/LBU/LH/LHU/LW、双发计数和后续 load-use stall |
+| `slot1_jal` | Slot0 普通 ALU + Slot1 JAL 共享延迟重定向路径，覆盖链接地址、fall-through flush、双发计数和 S0 LSU + S1 JAL 顺序化 |
 
 ### 指令缓冲与 Flush
 
@@ -163,6 +164,7 @@ Zicsr / Trap 测试覆盖 M 模式下的最小 CSR 与同步异常行为：
 | PC[2]=1 取指窗口 / S1 类型约束 | `pc_align` |
 | 跨对 load-use 与 S1 | `loaduse_cross` |
 | Slot1 load 共享 LSU | `slot1_load` |
+| Slot1 JAL 延迟重定向 | `slot1_jal` |
 | LUI/AUIPC 在 S1 | `lui_auipc_s1` |
 | DCache miss + 双发射 stall | `dcache_dual` |
 | inst_buf + stall 交互 | `instbuf_stall` |

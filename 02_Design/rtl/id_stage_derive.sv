@@ -26,6 +26,7 @@ module id_stage_derive (
     input  logic        dec_is_jalr,
     input  logic        dec_is_csr,
     input  logic        dec_csr_uses_rs1,
+    input  logic        dec_is_muldiv,
 
     input  logic [ 1:0] dec1_alu_src1_sel,
     input  logic        dec1_alu_src2_sel,
@@ -91,10 +92,11 @@ module id_stage_derive (
     assign id_s1_rs1_used = (dec1_alu_src1_sel == 2'b00) | dec1_is_branch | dec1_csr_uses_rs1;
     assign id_s1_rs2_used = (dec1_alu_src2_sel == 1'b0) | dec1_is_branch | dec1_mem_write_en;
 
+    wire id_s0_divrem = dec_is_muldiv & id_inst[14];
     assign id_s0_alu_only = dec_reg_write_en & (dec_wb_sel == 2'b00)
                           & ~dec_mem_read_en & ~dec_mem_write_en
                           & ~dec_is_branch & ~dec_is_jal & ~dec_is_jalr
-                          & ~dec_is_csr;
+                          & ~dec_is_csr & ~id_s0_divrem;
 
     wire id_branch_eq = ~|(fwd_branch_rs1_data ^ fwd_branch_rs2_data);
     wire id_branch_taken_eqne = dec_branch_cond[0] ? ~id_branch_eq : id_branch_eq;

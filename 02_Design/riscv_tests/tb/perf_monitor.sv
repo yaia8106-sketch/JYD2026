@@ -112,6 +112,7 @@ module perf_monitor (
     longint unsigned cnt_if_s1_alu_accept;
     longint unsigned cnt_if_s1_branch_accept;
     longint unsigned cnt_if_s1_load_accept;
+    longint unsigned cnt_if_s1_jal_accept;
     longint unsigned cnt_if_s1_unsup_load;
     longint unsigned cnt_if_s1_unsup_store;
     longint unsigned cnt_if_s1_unsup_muldiv;
@@ -313,8 +314,9 @@ module perf_monitor (
     wire if_pair_raw_rs2 = if_s0_writes_rd & (if_s0_rd != 5'd0)
                          & if_s1_uses_rs2 & (if_s1_rs2 == if_s0_rd);
     wire if_pair_raw = if_pair_raw_rs1 | if_pair_raw_rs2;
-    wire if_s1_unsupported = ~(if_s1_is_alu_type | if_s1_is_branch | if_s1_is_load);
-    wire if_s1_branch_blocked_by_s0 = if_s1_is_branch & (if_s0_is_control | if_s0_is_lsu);
+    wire if_s1_unsupported = ~(if_s1_is_alu_type | if_s1_is_branch | if_s1_is_load | if_s1_is_jal);
+    wire if_s1_branch_blocked_by_s0 = (if_s1_is_branch | if_s1_is_jal)
+                                    & (if_s0_is_control | if_s0_is_lsu);
     wire if_s1_blocked = if_accept_w & ~if_s1_valid_w;
     wire if_s1_unsup_reason = if_s1_blocked & if_seq_fetch & ~if_skip_out_w
                             & (if_pc_out_w != 32'h7FFF_FFFC)
@@ -526,6 +528,7 @@ module perf_monitor (
             cnt_if_s1_alu_accept <= 0;
             cnt_if_s1_branch_accept <= 0;
             cnt_if_s1_load_accept <= 0;
+            cnt_if_s1_jal_accept <= 0;
             cnt_if_s1_unsup_load <= 0;
             cnt_if_s1_unsup_store <= 0;
             cnt_if_s1_unsup_muldiv <= 0;
@@ -674,6 +677,7 @@ module perf_monitor (
                     if (if_s1_is_alu_type) cnt_if_s1_alu_accept <= cnt_if_s1_alu_accept + 1;
                     else if (if_s1_is_branch) cnt_if_s1_branch_accept <= cnt_if_s1_branch_accept + 1;
                     else if (if_s1_is_load) cnt_if_s1_load_accept <= cnt_if_s1_load_accept + 1;
+                    else if (if_s1_is_jal) cnt_if_s1_jal_accept <= cnt_if_s1_jal_accept + 1;
                 end else begin
                     cnt_if_s1_block <= cnt_if_s1_block + 1;
                     if (!if_seq_fetch) begin
@@ -865,7 +869,7 @@ module perf_monitor (
             $display("[PERF]    S0 jump/sys: %0d  (%0.1f%% of blocks)",
                      cnt_if_block_s0_jump,
                      cnt_if_s1_block > 0 ? 100.0*cnt_if_block_s0_jump/cnt_if_s1_block : 0.0);
-            $display("[PERF]    S1 branch blocked by S0 ctrl/LSU: %0d  (%0.1f%% of blocks)",
+            $display("[PERF]    S1 branch/JAL blocked by S0 ctrl/LSU: %0d  (%0.1f%% of blocks)",
                      cnt_if_block_s1_branch_s0,
                      cnt_if_s1_block > 0 ? 100.0*cnt_if_block_s1_branch_s0/cnt_if_s1_block : 0.0);
             $display("[PERF]    S1 unsupported: %0d  (%0.1f%% of blocks)",
@@ -879,9 +883,9 @@ module perf_monitor (
             $display("[PERF]    other:       %0d  (%0.1f%% of blocks)",
                      cnt_if_block_other,
                      cnt_if_s1_block > 0 ? 100.0*cnt_if_block_other/cnt_if_s1_block : 0.0);
-            $display("[PERF]  S1 accepted type: ALU=%0d branch=%0d load=%0d",
+            $display("[PERF]  S1 accepted type: ALU=%0d branch=%0d load=%0d jal=%0d",
                      cnt_if_s1_alu_accept, cnt_if_s1_branch_accept,
-                     cnt_if_s1_load_accept);
+                     cnt_if_s1_load_accept, cnt_if_s1_jal_accept);
             $display("[PERF]  S0 IF-accept mix: ALU=%0d load=%0d store=%0d control=%0d muldiv=%0d",
                      cnt_if_s0_alu_seen, cnt_if_s0_load_seen,
                      cnt_if_s0_store_seen, cnt_if_s0_control_seen,

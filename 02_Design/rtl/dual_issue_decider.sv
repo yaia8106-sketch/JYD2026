@@ -56,6 +56,7 @@ module dual_issue_decider
                                | (raw_inst0_opcode == OP_AUIPC);
     wire raw_inst1_is_branch = (raw_inst1_opcode == OP_BRANCH);
     wire raw_inst1_is_load   = (raw_inst1_opcode == OP_LOAD);
+    wire raw_inst1_is_jal    = (raw_inst1_opcode == OP_JAL);
     wire raw_inst0_is_control = (raw_inst0_opcode == OP_BRANCH)
                               | (raw_inst0_opcode == OP_JAL)
                               | (raw_inst0_opcode == OP_JALR)
@@ -84,6 +85,7 @@ module dual_issue_decider
                            & ~raw_inst0_is_muldiv
                            & ((raw_inst1_is_alu_type & ~raw_inst0_is_jump)
                             | (raw_inst1_is_load & raw_inst0_is_alu_type)
+                            | (raw_inst1_is_jal & raw_inst0_is_alu_type)
                             | (raw_inst1_is_branch & ~raw_inst0_is_control & ~raw_inst0_is_lsu));
     wire raw_can_dual = if_valid
                       & ~if_skip_inst0
@@ -113,6 +115,7 @@ module dual_issue_decider
                                    | (shifted_inst0_opcode == OP_AUIPC);
     wire shifted_inst1_is_branch = (shifted_inst1_opcode == OP_BRANCH);
     wire shifted_inst1_is_load   = (shifted_inst1_opcode == OP_LOAD);
+    wire shifted_inst1_is_jal    = (shifted_inst1_opcode == OP_JAL);
     wire shifted_inst0_is_control = (shifted_inst0_opcode == OP_BRANCH)
                                   | (shifted_inst0_opcode == OP_JAL)
                                   | (shifted_inst0_opcode == OP_JALR)
@@ -141,6 +144,7 @@ module dual_issue_decider
                                & ~shifted_inst0_is_muldiv
                                & ((shifted_inst1_is_alu_type & ~shifted_inst0_is_jump)
                                 | (shifted_inst1_is_load & shifted_inst0_is_alu_type)
+                                | (shifted_inst1_is_jal & shifted_inst0_is_alu_type)
                                 | (shifted_inst1_is_branch & ~shifted_inst0_is_control & ~shifted_inst0_is_lsu));
     wire shifted_can_dual = if_valid
                           & (inst_buf_pc != 32'h7FFF_FFFC)

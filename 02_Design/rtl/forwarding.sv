@@ -212,9 +212,10 @@ module forwarding (
     wire load_use_hazard = load_in_ex | load_in_s1_ex | load_in_mem | load_in_s1_mem;
 
     // If the S0 EX result depends on a late operand, do not forward that
-    // result back into ID in the same cycle. S0 ALU consumers may still enter
-    // EX and consume the registered MEM result via the EX-stage bypass.
-    wire repair_s0_use_hazard = id_s0_uses_ex_load & ~id_s0_alu_only;
+    // result back into ID in the same cycle. All direct consumers wait one
+    // cycle and then use the normal MEM/WB-side ID forwarding path; this keeps
+    // EX/MEM.rd out of the EX operand and frontend allowin timing cones.
+    wire repair_s0_use_hazard = id_s0_uses_ex_load;
     wire repair_s1_use_hazard = id_s1_uses_ex_load;
     wire repair_use_hazard = ex_valid & ex_wb_repair & ex_reg_write
                            & (ex_rd != 5'd0)
