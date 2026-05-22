@@ -19,6 +19,11 @@ module mem_wb_reg_s1 (
     input  logic [ 4:0] mem_s1_rd,
     input  logic        mem_s1_reg_write_en,
     input  logic [ 1:0] mem_s1_wb_sel,
+    input  logic        mem_s1_mem_read_en,
+    input  logic [ 1:0] mem_s1_mem_size,
+    input  logic        mem_s1_mem_unsigned,
+    input  logic [ 1:0] mem_s1_addr_low,
+    input  logic [31:0] mem_s1_load_rdata,
 
     output logic        wb_s1_valid,
     output logic [31:0] wb_s1_pc,
@@ -27,7 +32,12 @@ module mem_wb_reg_s1 (
     output logic [31:0] wb_s1_pc_plus_4,
     output logic [ 4:0] wb_s1_rd,
     output logic        wb_s1_reg_write_en,
-    output logic [ 1:0] wb_s1_wb_sel
+    output logic [ 1:0] wb_s1_wb_sel,
+    output logic        wb_s1_is_load,
+    output logic [ 1:0] wb_s1_mem_size,
+    output logic        wb_s1_mem_unsigned,
+    output logic [ 1:0] wb_s1_addr_low,
+    output logic [31:0] wb_s1_load_rdata
 );
 
     always_ff @(posedge clk or negedge rst_n) begin
@@ -40,6 +50,11 @@ module mem_wb_reg_s1 (
             wb_s1_rd           <= 5'd0;
             wb_s1_reg_write_en <= 1'b0;
             wb_s1_wb_sel       <= 2'd0;
+            wb_s1_is_load      <= 1'b0;
+            wb_s1_mem_size     <= 2'd0;
+            wb_s1_mem_unsigned <= 1'b0;
+            wb_s1_addr_low     <= 2'd0;
+            wb_s1_load_rdata   <= 32'd0;
         end else if (wb_allowin) begin
             wb_s1_valid        <= mem_s1_valid & mem_ready_go;
             wb_s1_pc           <= mem_s1_pc;
@@ -49,6 +64,11 @@ module mem_wb_reg_s1 (
             wb_s1_rd           <= mem_s1_rd;
             wb_s1_reg_write_en <= mem_s1_reg_write_en & mem_s1_valid;
             wb_s1_wb_sel       <= mem_s1_wb_sel;
+            wb_s1_is_load      <= mem_s1_mem_read_en;
+            wb_s1_mem_size     <= mem_s1_mem_size;
+            wb_s1_mem_unsigned <= mem_s1_mem_unsigned;
+            wb_s1_addr_low     <= mem_s1_addr_low;
+            wb_s1_load_rdata   <= mem_s1_load_rdata;
         end
     end
 

@@ -21,6 +21,10 @@ module ex_mem_reg_s1 (
     input  logic [ 4:0] ex_s1_rd,
     input  logic        ex_s1_reg_write_en,
     input  logic [ 1:0] ex_s1_wb_sel,
+    input  logic        ex_s1_mem_read_en,
+    input  logic [ 1:0] ex_s1_mem_size,
+    input  logic        ex_s1_mem_unsigned,
+    input  logic        ex_s1_is_cacheable,
 
     output logic        mem_s1_valid,
     output logic [31:0] mem_s1_pc,
@@ -29,7 +33,11 @@ module ex_mem_reg_s1 (
     output logic [31:0] mem_s1_pc_plus_4,
     output logic [ 4:0] mem_s1_rd,
     output logic        mem_s1_reg_write_en,
-    output logic [ 1:0] mem_s1_wb_sel
+    output logic [ 1:0] mem_s1_wb_sel,
+    output logic        mem_s1_mem_read_en,
+    output logic [ 1:0] mem_s1_mem_size,
+    output logic        mem_s1_mem_unsigned,
+    output logic        mem_s1_is_cacheable
 );
 
     wire s1_flush = ex_branch_flush | mem_branch_flush;
@@ -44,6 +52,10 @@ module ex_mem_reg_s1 (
             mem_s1_rd           <= 5'd0;
             mem_s1_reg_write_en <= 1'b0;
             mem_s1_wb_sel       <= 2'd0;
+            mem_s1_mem_read_en  <= 1'b0;
+            mem_s1_mem_size     <= 2'd0;
+            mem_s1_mem_unsigned <= 1'b0;
+            mem_s1_is_cacheable <= 1'b0;
         end else if (mem_allowin) begin
             mem_s1_valid        <= ex_s1_valid & ex_ready_go & ~s1_flush;
             mem_s1_pc           <= ex_s1_pc;
@@ -53,6 +65,10 @@ module ex_mem_reg_s1 (
             mem_s1_rd           <= ex_s1_rd;
             mem_s1_reg_write_en <= ex_s1_reg_write_en & ex_s1_valid & ~s1_flush;
             mem_s1_wb_sel       <= ex_s1_wb_sel;
+            mem_s1_mem_read_en  <= ex_s1_mem_read_en & ex_s1_valid & ~s1_flush;
+            mem_s1_mem_size     <= ex_s1_mem_size;
+            mem_s1_mem_unsigned <= ex_s1_mem_unsigned;
+            mem_s1_is_cacheable <= ex_s1_is_cacheable;
         end
     end
 

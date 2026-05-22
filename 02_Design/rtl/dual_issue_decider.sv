@@ -50,7 +50,12 @@ module dual_issue_decider
                                  | (raw_inst1_opcode == OP_I_ALU)
                                  | (raw_inst1_opcode == OP_LUI)
                                  | (raw_inst1_opcode == OP_AUIPC);
+    wire raw_inst0_is_alu_type = ((raw_inst0_opcode == OP_R_TYPE) & ~raw_inst0_is_muldiv)
+                               | (raw_inst0_opcode == OP_I_ALU)
+                               | (raw_inst0_opcode == OP_LUI)
+                               | (raw_inst0_opcode == OP_AUIPC);
     wire raw_inst1_is_branch = (raw_inst1_opcode == OP_BRANCH);
+    wire raw_inst1_is_load   = (raw_inst1_opcode == OP_LOAD);
     wire raw_inst0_is_control = (raw_inst0_opcode == OP_BRANCH)
                               | (raw_inst0_opcode == OP_JAL)
                               | (raw_inst0_opcode == OP_JALR)
@@ -68,6 +73,7 @@ module dual_issue_decider
                              | raw_inst0_is_jump;
     wire raw_inst1_uses_rs1 = (raw_inst1_opcode == OP_R_TYPE)
                             | (raw_inst1_opcode == OP_I_ALU)
+                            | raw_inst1_is_load
                             | raw_inst1_is_branch;
     wire raw_inst1_uses_rs2 = (raw_inst1_opcode == OP_R_TYPE)
                             | raw_inst1_is_branch;
@@ -77,6 +83,7 @@ module dual_issue_decider
     wire raw_pair_can_dual = ~raw_pair_raw
                            & ~raw_inst0_is_muldiv
                            & ((raw_inst1_is_alu_type & ~raw_inst0_is_jump)
+                            | (raw_inst1_is_load & raw_inst0_is_alu_type)
                             | (raw_inst1_is_branch & ~raw_inst0_is_control & ~raw_inst0_is_lsu));
     wire raw_can_dual = if_valid
                       & ~if_skip_inst0
@@ -100,7 +107,12 @@ module dual_issue_decider
                                    | (shifted_inst1_opcode == OP_I_ALU)
                                    | (shifted_inst1_opcode == OP_LUI)
                                    | (shifted_inst1_opcode == OP_AUIPC);
+    wire shifted_inst0_is_alu_type = ((shifted_inst0_opcode == OP_R_TYPE) & ~shifted_inst0_is_muldiv)
+                                   | (shifted_inst0_opcode == OP_I_ALU)
+                                   | (shifted_inst0_opcode == OP_LUI)
+                                   | (shifted_inst0_opcode == OP_AUIPC);
     wire shifted_inst1_is_branch = (shifted_inst1_opcode == OP_BRANCH);
+    wire shifted_inst1_is_load   = (shifted_inst1_opcode == OP_LOAD);
     wire shifted_inst0_is_control = (shifted_inst0_opcode == OP_BRANCH)
                                   | (shifted_inst0_opcode == OP_JAL)
                                   | (shifted_inst0_opcode == OP_JALR)
@@ -118,6 +130,7 @@ module dual_issue_decider
                                  | shifted_inst0_is_jump;
     wire shifted_inst1_uses_rs1 = (shifted_inst1_opcode == OP_R_TYPE)
                                 | (shifted_inst1_opcode == OP_I_ALU)
+                                | shifted_inst1_is_load
                                 | shifted_inst1_is_branch;
     wire shifted_inst1_uses_rs2 = (shifted_inst1_opcode == OP_R_TYPE)
                                 | shifted_inst1_is_branch;
@@ -127,6 +140,7 @@ module dual_issue_decider
     wire shifted_pair_can_dual = ~shifted_pair_raw
                                & ~shifted_inst0_is_muldiv
                                & ((shifted_inst1_is_alu_type & ~shifted_inst0_is_jump)
+                                | (shifted_inst1_is_load & shifted_inst0_is_alu_type)
                                 | (shifted_inst1_is_branch & ~shifted_inst0_is_control & ~shifted_inst0_is_lsu));
     wire shifted_can_dual = if_valid
                           & (inst_buf_pc != 32'h7FFF_FFFC)

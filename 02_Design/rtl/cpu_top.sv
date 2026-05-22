@@ -247,9 +247,12 @@ module cpu_top (
 
     // ---- Memory interface ----
     wire [ 3:0] dram_wea;
+    wire [ 3:0] s1_load_unused_wea;
+    wire [31:0] s1_load_unused_store_data;
     wire [31:0] mem_load_data;         // MEM stage: from cache (cacheable) or mmio (uncacheable)
     wire        mem_load_ready;        // ready S0_MEM load can repair S0 ALU in EX
     wire        is_cacheable;          // EX stage: addr in DRAM range
+    wire        is_cacheable_s1;       // EX stage: Slot1 addr in DRAM range
 
     // ---- EX pre-computed ----
     wire [31:0] ex_pc_plus_4;
@@ -279,6 +282,10 @@ module cpu_top (
     wire [ 4:0] mem_s1_rd;
     wire        mem_s1_reg_write_en;
     wire [ 1:0] mem_s1_wb_sel;
+    wire        mem_s1_mem_read_en;
+    wire [ 1:0] mem_s1_mem_size;
+    wire        mem_s1_mem_unsigned;
+    wire        mem_s1_is_cacheable;
 
     // ---- MEM/WB ----
     wire        wb_valid;
@@ -303,10 +310,16 @@ module cpu_top (
     (* max_fanout = 8 *) wire [ 4:0] wb_s1_rd;
     wire        wb_s1_reg_write_en;
     wire [ 1:0] wb_s1_wb_sel;
+    wire        wb_s1_is_load;
+    wire [ 1:0] wb_s1_mem_size;
+    wire        wb_s1_mem_unsigned;
+    wire [ 1:0] wb_s1_addr_low;
+    wire [31:0] wb_s1_load_rdata;
 
     // ---- WB ----
     wire [31:0] wb_load_data;
     wire [31:0] wb_write_data;
+    wire [31:0] wb_s1_load_data;
     wire [31:0] wb_s1_write_data;
 
     // ---- Minimal M-mode CSR / Trap ----
@@ -372,12 +385,19 @@ module cpu_top (
         .ex_alu_addr         (alu_addr),
         .ex_store_wea        (dram_wea),
         .ex_store_data       (store_data_shifted),
+        .ex_s1_valid         (ex_s1_valid),
+        .ex_s1_mem_read_en   (ex_s1_mem_read_en),
+        .ex_s1_alu_addr      (alu_s1_addr),
         .mem_valid           (mem_valid),
         .mem_alu_result      (mem_alu_result),
         .mem_mem_read_en     (mem_mem_read_en),
         .mem_store_wea       (mem_store_wea),
         .mem_store_data      (mem_store_data),
         .mem_is_cacheable    (is_cacheable_mem),
+        .mem_s1_valid        (mem_s1_valid),
+        .mem_s1_alu_result   (mem_s1_alu_result),
+        .mem_s1_mem_read_en  (mem_s1_mem_read_en),
+        .mem_s1_is_cacheable (mem_s1_is_cacheable),
         .mem_ready_go        (mem_ready_go_w),
         .mem_allowin         (mem_allowin),
         .mem_branch_flush    (mem_branch_flush),
@@ -385,6 +405,7 @@ module cpu_top (
         .mmio_rdata          (mmio_rdata),
         .dual_issue_count    (dual_issue_count),
         .is_cacheable        (is_cacheable),
+        .is_cacheable_s1     (is_cacheable_s1),
         .mmio_st_ld_hazard   (mmio_st_ld_hazard),
         .cache_req           (cache_req),
         .cache_wr            (cache_wr),
@@ -1019,7 +1040,7 @@ module cpu_top (
         .mem_wb_sel     (mem_wb_sel),
         .mem_s1_valid       (mem_s1_valid),
         .mem_s1_reg_write   (mem_s1_reg_write_en),
-        .mem_s1_is_load     (1'b0),
+        .mem_s1_is_load     (mem_s1_mem_read_en),
         .mem_s1_rd          (mem_s1_rd),
         .mem_s1_alu_result  (mem_s1_alu_result),
         .mem_s1_pc_plus_4   (mem_s1_pc_plus_4),
@@ -1377,6 +1398,23 @@ module cpu_top (
         .load_data_out   (wb_load_data)
     );
 
+    mem_interface u_mem_interface_s1_load (
+        // Store side unused in Slot1 first-step load support.
+        .store_valid     (1'b0),
+        .store_en        (1'b0),
+        .store_addr_low  (2'd0),
+        .store_mem_size  (2'd0),
+        .store_data_in   (32'd0),
+        .store_wea       (s1_load_unused_wea),
+        .store_data_out  (s1_load_unused_store_data),
+        // Load side (WB stage)
+        .load_addr_low   (wb_s1_addr_low),
+        .load_mem_size   (wb_s1_mem_size),
+        .load_unsigned   (wb_s1_mem_unsigned),
+        .load_dram_dout  (wb_s1_load_rdata),
+        .load_data_out   (wb_s1_load_data)
+    );
+
     // ==================== EX/MEM ====================
 
     ex_mem_reg u_ex_mem_reg (
@@ -1439,6 +1477,10 @@ module cpu_top (
         .ex_s1_rd            (ex_s1_rd),
         .ex_s1_reg_write_en  (ex_s1_reg_write_en),
         .ex_s1_wb_sel        (ex_s1_wb_sel),
+        .ex_s1_mem_read_en   (ex_s1_mem_read_en),
+        .ex_s1_mem_size      (ex_s1_mem_size),
+        .ex_s1_mem_unsigned  (ex_s1_mem_unsigned),
+        .ex_s1_is_cacheable  (is_cacheable_s1),
         .mem_s1_valid        (mem_s1_valid),
         .mem_s1_pc           (mem_s1_pc),
         .mem_s1_inst         (mem_s1_inst),
@@ -1446,7 +1488,11 @@ module cpu_top (
         .mem_s1_pc_plus_4    (mem_s1_pc_plus_4),
         .mem_s1_rd           (mem_s1_rd),
         .mem_s1_reg_write_en (mem_s1_reg_write_en),
-        .mem_s1_wb_sel       (mem_s1_wb_sel)
+        .mem_s1_wb_sel       (mem_s1_wb_sel),
+        .mem_s1_mem_read_en  (mem_s1_mem_read_en),
+        .mem_s1_mem_size     (mem_s1_mem_size),
+        .mem_s1_mem_unsigned (mem_s1_mem_unsigned),
+        .mem_s1_is_cacheable (mem_s1_is_cacheable)
     );
 
     // ==================== MEM/WB ====================
@@ -1493,6 +1539,11 @@ module cpu_top (
         .mem_s1_rd           (mem_s1_rd),
         .mem_s1_reg_write_en (mem_s1_reg_write_en),
         .mem_s1_wb_sel       (mem_s1_wb_sel),
+        .mem_s1_mem_read_en  (mem_s1_mem_read_en),
+        .mem_s1_mem_size     (mem_s1_mem_size),
+        .mem_s1_mem_unsigned (mem_s1_mem_unsigned),
+        .mem_s1_addr_low     (mem_s1_alu_result[1:0]),
+        .mem_s1_load_rdata   (mem_load_data),
         .wb_s1_valid         (wb_s1_valid),
         .wb_s1_pc            (wb_s1_pc),
         .wb_s1_inst          (wb_s1_inst),
@@ -1500,7 +1551,12 @@ module cpu_top (
         .wb_s1_pc_plus_4     (wb_s1_pc_plus_4),
         .wb_s1_rd            (wb_s1_rd),
         .wb_s1_reg_write_en  (wb_s1_reg_write_en),
-        .wb_s1_wb_sel        (wb_s1_wb_sel)
+        .wb_s1_wb_sel        (wb_s1_wb_sel),
+        .wb_s1_is_load       (wb_s1_is_load),
+        .wb_s1_mem_size      (wb_s1_mem_size),
+        .wb_s1_mem_unsigned  (wb_s1_mem_unsigned),
+        .wb_s1_addr_low      (wb_s1_addr_low),
+        .wb_s1_load_rdata    (wb_s1_load_rdata)
     );
 
     // ==================== WB stage ====================
@@ -1515,7 +1571,7 @@ module cpu_top (
 
     wb_mux u_wb_mux_s1 (
         .wb_alu_result (wb_s1_alu_result),
-        .wb_load_data  (32'd0),
+        .wb_load_data  (wb_s1_load_data),
         .wb_pc_plus_4  (wb_s1_pc_plus_4),
         .wb_sel        (wb_s1_wb_sel),
         .wb_write_data (wb_s1_write_data)

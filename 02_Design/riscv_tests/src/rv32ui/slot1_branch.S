@@ -13,10 +13,10 @@ RVTEST_CODE_BEGIN
     addi  t1, x0, 7
 
     .align 3
-    addi  t5, x0, 0
-    addi  t5, t5, 0
-    addi  t5, t5, 0
-    addi  t5, t5, 0
+    addi  t6, t6, 0
+    addi  t6, t6, 0
+    addi  t6, t6, 0
+    addi  t6, t6, 0
     lw    s0, 0(t6)
     addi  s0, s0, 0
     addi  s0, s0, 0
@@ -25,10 +25,9 @@ RVTEST_CODE_BEGIN
     addi  t0, s0, 0
     bne   t1, t1, fail_nt
 
-    addi  t0, t0, 0
-    addi  t0, t0, 0
-    addi  t0, t0, 0
-    addi  t0, t0, 0
+    addi  t6, t6, 0
+    addi  t6, t6, 0
+    addi  t6, t6, 0
     lw    s1, 0(t6)
     addi  s1, s1, 0
     addi  s1, s1, 0
@@ -41,10 +40,10 @@ RVTEST_CODE_BEGIN
     addi  t4, x0, 0
 
     .align 3
-    addi  t5, x0, 0
-    addi  t5, t5, 0
-    addi  t5, t5, 0
-    addi  t5, t5, 0
+    addi  t6, t6, 0
+    addi  t6, t6, 0
+    addi  t6, t6, 0
+    addi  t6, t6, 0
     lw    s0, 0(t6)
     addi  s0, s0, 0
     addi  s0, s0, 0
@@ -57,10 +56,9 @@ RVTEST_CODE_BEGIN
     addi  t4, x0, 100
 
 s1_taken:
-    addi  t0, t0, 0
-    addi  t0, t0, 0
-    addi  t0, t0, 0
-    addi  t0, t0, 0
+    addi  t6, t6, 0
+    addi  t6, t6, 0
+    addi  t6, t6, 0
     lw    s1, 0(t6)
     addi  s1, s1, 0
     addi  s1, s1, 0
@@ -75,25 +73,20 @@ s1_taken:
     addi  t4, x0, 0
 
     .align 3
-    addi  t5, x0, 0
-    addi  t5, t5, 0
-    addi  t5, t5, 0
-    addi  t5, t5, 0
+    addi  t6, t6, 0
+    addi  t6, t6, 0
+    addi  t6, t6, 0
+    addi  t6, t6, 0
     lw    s0, 0(t6)
-    addi  s0, s0, 0
-    addi  s0, s0, 0
-    addi  s0, s0, 0
-
     lw    t5, 0(t6)
     beq   x0, x0, lsu_s1_branch_target
 
     addi  t4, x0, 123
 
 lsu_s1_branch_target:
-    addi  t5, t5, 0
-    addi  t5, t5, 0
-    addi  t5, t5, 0
-    addi  t5, t5, 0
+    addi  t6, t6, 0
+    addi  t6, t6, 0
+    addi  t6, t6, 0
     lw    s1, 0(t6)
     addi  s1, s1, 0
     addi  s1, s1, 0
