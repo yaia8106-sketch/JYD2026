@@ -244,11 +244,11 @@ module cpu_top (
 
     // ---- Store interface (EX stage) ----
     wire [31:0] store_data_shifted;
+    wire [31:0] s1_store_data_shifted;
 
     // ---- Memory interface ----
     wire [ 3:0] dram_wea;
-    wire [ 3:0] s1_load_unused_wea;
-    wire [31:0] s1_load_unused_store_data;
+    wire [ 3:0] dram_wea_s1;
     wire [31:0] mem_load_data;         // MEM stage: from cache (cacheable) or mmio (uncacheable)
     wire        mem_load_ready;        // ready S0_MEM load can repair S0 ALU in EX
     wire        is_cacheable;          // EX stage: addr in DRAM range
@@ -283,8 +283,11 @@ module cpu_top (
     wire        mem_s1_reg_write_en;
     wire [ 1:0] mem_s1_wb_sel;
     wire        mem_s1_mem_read_en;
+    wire        mem_s1_mem_write_en;
     wire [ 1:0] mem_s1_mem_size;
     wire        mem_s1_mem_unsigned;
+    wire [ 3:0] mem_s1_store_wea;
+    wire [31:0] mem_s1_store_data;
     wire        mem_s1_is_cacheable;
 
     // ---- MEM/WB ----
@@ -387,7 +390,10 @@ module cpu_top (
         .ex_store_data       (store_data_shifted),
         .ex_s1_valid         (ex_s1_valid),
         .ex_s1_mem_read_en   (ex_s1_mem_read_en),
+        .ex_s1_mem_write_en  (ex_s1_mem_write_en),
         .ex_s1_alu_addr      (alu_s1_addr),
+        .ex_s1_store_wea     (dram_wea_s1),
+        .ex_s1_store_data    (s1_store_data_shifted),
         .mem_valid           (mem_valid),
         .mem_alu_result      (mem_alu_result),
         .mem_mem_read_en     (mem_mem_read_en),
@@ -397,6 +403,9 @@ module cpu_top (
         .mem_s1_valid        (mem_s1_valid),
         .mem_s1_alu_result   (mem_s1_alu_result),
         .mem_s1_mem_read_en  (mem_s1_mem_read_en),
+        .mem_s1_mem_write_en (mem_s1_mem_write_en),
+        .mem_s1_store_wea    (mem_s1_store_wea),
+        .mem_s1_store_data   (mem_s1_store_data),
         .mem_s1_is_cacheable (mem_s1_is_cacheable),
         .mem_ready_go        (mem_ready_go_w),
         .mem_allowin         (mem_allowin),
@@ -1386,14 +1395,14 @@ module cpu_top (
     );
 
     mem_interface u_mem_interface_s1_load (
-        // Store side unused in Slot1 first-step load support.
-        .store_valid     (1'b0),
-        .store_en        (1'b0),
-        .store_addr_low  (2'd0),
-        .store_mem_size  (2'd0),
-        .store_data_in   (32'd0),
-        .store_wea       (s1_load_unused_wea),
-        .store_data_out  (s1_load_unused_store_data),
+        // Store side (EX stage, shares the single LSU when Slot0 is non-LSU)
+        .store_valid     (ex_s1_valid),
+        .store_en        (ex_s1_mem_write_en),
+        .store_addr_low  (alu_s1_addr[1:0]),
+        .store_mem_size  (ex_s1_mem_size),
+        .store_data_in   (ex_s1_rs2_data),
+        .store_wea       (dram_wea_s1),
+        .store_data_out  (s1_store_data_shifted),
         // Load side (WB stage)
         .load_addr_low   (wb_s1_addr_low),
         .load_mem_size   (wb_s1_mem_size),
@@ -1465,8 +1474,11 @@ module cpu_top (
         .ex_s1_reg_write_en  (ex_s1_reg_write_en),
         .ex_s1_wb_sel        (ex_s1_wb_sel),
         .ex_s1_mem_read_en   (ex_s1_mem_read_en),
+        .ex_s1_mem_write_en  (ex_s1_mem_write_en),
         .ex_s1_mem_size      (ex_s1_mem_size),
         .ex_s1_mem_unsigned  (ex_s1_mem_unsigned),
+        .ex_s1_store_wea     (dram_wea_s1),
+        .ex_s1_store_data    (s1_store_data_shifted),
         .ex_s1_is_cacheable  (is_cacheable_s1),
         .mem_s1_valid        (mem_s1_valid),
         .mem_s1_pc           (mem_s1_pc),
@@ -1477,8 +1489,11 @@ module cpu_top (
         .mem_s1_reg_write_en (mem_s1_reg_write_en),
         .mem_s1_wb_sel       (mem_s1_wb_sel),
         .mem_s1_mem_read_en  (mem_s1_mem_read_en),
+        .mem_s1_mem_write_en (mem_s1_mem_write_en),
         .mem_s1_mem_size     (mem_s1_mem_size),
         .mem_s1_mem_unsigned (mem_s1_mem_unsigned),
+        .mem_s1_store_wea    (mem_s1_store_wea),
+        .mem_s1_store_data   (mem_s1_store_data),
         .mem_s1_is_cacheable (mem_s1_is_cacheable)
     );
 

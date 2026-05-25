@@ -12,7 +12,8 @@ RVTEST_CODE_BEGIN
     lui   a0, 0x80100
     addi  t1, x0, 0
 
-    // Read the dual-issue counter before the Slot1 JAL pair.
+    // Read the dual-issue counter before the Slot1 JAL pair. Slot1 stores may
+    // also commit in this window, so the delta check below is a lower bound.
     addi  t6, t6, 0
     addi  t6, t6, 0
     addi  t6, t6, 0
@@ -45,7 +46,7 @@ s1_jal_target:
     li    TESTNUM, 1
     sub   t2, s1, s0
     li    t3, 1
-    bne   t2, t3, fail
+    blt   t2, t3, fail
 
     li    TESTNUM, 2
     bnez  t1, fail

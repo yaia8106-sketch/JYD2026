@@ -103,6 +103,62 @@ proc write_irom_slot_coe {dst words offset} {
     close $fp
 }
 
+proc write_irom_bank_coe {dst words} {
+    if {[llength $words] > 4096} {
+        die "$dst has [llength $words] source words, but slot IROM supports 4096 words"
+    }
+    set fp [open $dst w]
+    puts $fp "memory_initialization_radix=16;"
+    puts $fp "memory_initialization_vector="
+    for {set i 0} {$i < 4096} {incr i} {
+        if {$i < [llength $words]} {
+            set word [string toupper [lindex $words $i]]
+        } else {
+            set word "00000013"
+        }
+        set word [string range "00000000${word}" end-7 end]
+        if {$i == 4095} {
+            puts $fp "${word};"
+        } else {
+            puts $fp "${word},"
+        }
+    }
+    close $fp
+}
+
+proc write_irom_combined_coe {dst slot0_words slot1_words} {
+    set slot0_len [llength $slot0_words]
+    set slot1_len [llength $slot1_words]
+    set max_len $slot0_len
+    if {$slot1_len > $max_len} {
+        set max_len $slot1_len
+    }
+    set total [expr {2 * $max_len}]
+    set fp [open $dst w]
+    puts $fp "memory_initialization_radix=16;"
+    puts $fp "memory_initialization_vector="
+    for {set i 0} {$i < $total} {incr i} {
+        set bank_idx [expr {$i / 2}]
+        if {[expr {$i % 2}] == 0} {
+            set words $slot0_words
+        } else {
+            set words $slot1_words
+        }
+        if {$bank_idx < [llength $words]} {
+            set word [string toupper [lindex $words $bank_idx]]
+        } else {
+            set word "00000013"
+        }
+        set word [string range "00000000${word}" end-7 end]
+        if {$i == [expr {$total - 1}]} {
+            puts $fp "${word};"
+        } else {
+            puts $fp "${word},"
+        }
+    }
+    close $fp
+}
+
 proc write_irom_slot_coes {src slot0_dst slot1_dst} {
     set words [read_irom_words $src]
     if {[llength $words] > 4096} {
@@ -217,13 +273,24 @@ proc ensure_irom_slot_ip {ip coe_file} {
 proc step_copy_coe {coe_src coe_dst coe_name} {
     puts ">>> Copying COE files (${coe_name})..."
     file mkdir $coe_dst
-    ensure_file "${coe_src}/irom.coe" "IROM COE"
     ensure_file "${coe_src}/dram.coe" "DRAM COE"
 
-    file copy -force "${coe_src}/irom.coe" "${coe_dst}/irom.coe"
     file copy -force "${coe_src}/dram.coe" "${coe_dst}/dram.coe"
-    write_irom_slot_coes "${coe_dst}/irom.coe" "${coe_dst}/irom_slot0.coe" "${coe_dst}/irom_slot1.coe"
-    verify_copied_coe "${coe_src}/irom.coe" "${coe_dst}/irom.coe" "IROM"
+    if {[file exists "${coe_src}/irom.coe"]} {
+        file copy -force "${coe_src}/irom.coe" "${coe_dst}/irom.coe"
+        write_irom_slot_coes "${coe_dst}/irom.coe" "${coe_dst}/irom_slot0.coe" "${coe_dst}/irom_slot1.coe"
+        verify_copied_coe "${coe_src}/irom.coe" "${coe_dst}/irom.coe" "IROM"
+    } elseif {[file exists "${coe_src}/irom_slot0.coe"] && [file exists "${coe_src}/irom_slot1.coe"]} {
+        puts ">>> Detected split dual-issue IROM COE input"
+        set slot0_words [read_irom_words "${coe_src}/irom_slot0.coe"]
+        set slot1_words [read_irom_words "${coe_src}/irom_slot1.coe"]
+        write_irom_bank_coe "${coe_dst}/irom_slot0.coe" $slot0_words
+        write_irom_bank_coe "${coe_dst}/irom_slot1.coe" $slot1_words
+        write_irom_combined_coe "${coe_dst}/irom.coe" $slot0_words $slot1_words
+        puts ">>> IROM slots copied: slot0=[llength $slot0_words] words, slot1=[llength $slot1_words] words -> padded to 4096"
+    } else {
+        die "IROM COE not found: expected ${coe_src}/irom.coe or split irom_slot0.coe/irom_slot1.coe"
+    }
     verify_copied_coe "${coe_src}/dram.coe" "${coe_dst}/dram.coe" "DRAM"
     verify_irom_slot_coes "${coe_dst}/irom.coe" "${coe_dst}/irom_slot0.coe" "${coe_dst}/irom_slot1.coe"
     puts ">>> COE copied: [file size ${coe_dst}/irom.coe]B irom, [file size ${coe_dst}/dram.coe]B dram"
@@ -291,6 +358,8 @@ proc step_impl {jobs} {
     set_property STEPS.PLACE_DESIGN.ARGS.DIRECTIVE ExtraTimingOpt [get_runs impl_1]
     set_property STEPS.PHYS_OPT_DESIGN.ARGS.DIRECTIVE AggressiveExplore [get_runs impl_1]
     set_property STEPS.ROUTE_DESIGN.ARGS.DIRECTIVE AggressiveExplore [get_runs impl_1]
+    set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED true [get_runs impl_1]
+    set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.ARGS.DIRECTIVE AggressiveExplore [get_runs impl_1]
     launch_runs impl_1 -jobs $jobs
     wait_on_run impl_1
     run_status_ok impl_1

@@ -98,6 +98,7 @@
 | `waw_fwd` | Slot0/Slot1 同写同一寄存器后的前递优先级和链式 WAW |
 | `loaduse_cross` | 上一拍 Slot0 load 被下一拍 S0/S1 使用时的 stall 和冻结 |
 | `slot1_load` | Slot0 普通 ALU + Slot1 load 共享单端口 LSU，覆盖 LB/LBU/LH/LHU/LW、双发计数和后续 load-use stall |
+| `slot1_store` | Slot0 普通 ALU + Slot1 store 共享单端口 LSU，覆盖 SB/SH/SW、同包 RAW 顺序化、load-use stall、S0 LSU 顺序化和 MMIO store |
 | `slot1_jal` | Slot0 普通 ALU + Slot1 JAL 共享延迟重定向路径，覆盖链接地址、fall-through flush、双发计数和 S0 LSU + S1 JAL 顺序化 |
 
 ### 指令缓冲与 Flush
@@ -164,6 +165,7 @@ Zicsr / Trap 测试覆盖 M 模式下的最小 CSR 与同步异常行为：
 | PC[2]=1 取指窗口 / S1 类型约束 | `pc_align` |
 | 跨对 load-use 与 S1 | `loaduse_cross` |
 | Slot1 load 共享 LSU | `slot1_load` |
+| Slot1 store 共享 LSU | `slot1_store` |
 | Slot1 JAL 延迟重定向 | `slot1_jal` |
 | LUI/AUIPC 在 S1 | `lui_auipc_s1` |
 | DCache miss + 双发射 stall | `dcache_dual` |

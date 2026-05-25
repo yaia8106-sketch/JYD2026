@@ -4,8 +4,8 @@
 // When a branch target lands at PC[2]=1 (not 8-byte aligned),
 // the IROM window must still expose {PC+4, PC} and execute correctly.
 //
-// Also tests: S1-type edge cases at aligned fetch windows. Slot1 load/branch
-// may dual-issue; Slot1 store still serializes.
+// Also tests: S1-type edge cases at aligned fetch windows. Slot1 load/store
+// and branch may dual-issue when their pairing policy allows it.
 
 #define DUAL_CNT_ADDR 0x80200060
 
@@ -97,7 +97,8 @@ odd_target:                  // +4: this is at PC[2]=1
     bne   t1, t4, fail
 
     // ================================================================
-    // Part 3: S1 is a store → must NOT dual-issue
+    // Part 3: S1 is a store, but this pair has same-pair RAW on store data and
+    // must serialize.
     // ================================================================
     .align 3
     li    TESTNUM, 4
@@ -105,7 +106,7 @@ odd_target:                  // +4: this is at PC[2]=1
 
     .align 3
     addi  t0, x0, 88         // S0
-    sw    t0, 12(a0)         // S1 position: store → not ALU → single-issue
+    sw    t0, 12(a0)         // S1 position: store with RAW on t0
 
     addi  s3, x0, 0
     addi  s4, x0, 0
