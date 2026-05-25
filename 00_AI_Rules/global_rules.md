@@ -141,7 +141,7 @@ cd 02_Design/riscv_tests
 bash run_all.sh
 ```
 
-- 预期结果：**74/74 PASS**（`run_all.sh` 当前测试集：基础 RV32I、RV32M、综合/压力、自定义双发射/BP/DCache/RAS、Zicsr/Trap 测试）
+- 预期结果：**76/76 PASS**（`run_all.sh` 当前测试集：基础 RV32I、RV32M、综合/压力、自定义双发射/BP/DCache/RAS、Zicsr/Trap 测试）
 - 默认启用 PC 越界 guard 和流水线无进展 watchdog；PC 跑出 IROM 窗口会直接报错，避免只表现为长时间 timeout。
 - 依赖：iverilog、`work/hex/*.hex`（已预编译，无需重新 build）
 - 编译产物自动生成在 `work/`，已 gitignore
@@ -191,20 +191,6 @@ vivado -mode tcl \
 - 报告输出：`03_Timing_Analysis/stage_timing_report.txt`。
 - Vivado 工作目录：`03_Timing_Analysis/vivado_work/`，已 gitignore。
 
-### 自有物理板 bitstream
-
-```bash
-./PhysicalTwin_Nexys4DDR/run_build.sh dual_issue/current
-./PhysicalTwin_Nexys4DDR/run_build.sh dual_issue/src1
-```
-
-- 生成文件在 `PhysicalTwin_Nexys4DDR/vivado/`。
-- 生成内存初始化文件在 `PhysicalTwin_Nexys4DDR/generated/`。
-- Nexys 4 DDR 工程使用板上 BRAM 实现完整 256 KiB 逻辑 DRAM；当前不使用 DDR2/MIG。
-- `constraints/board.xdc` 是工程实际使用的约束；`constraints/Nexys-4-DDR-Master.xdc` 保留 Digilent master XDC 作为引脚参考。
-
----
-
 ## 8. 工程卫生
 
 ### 目录职责（不得混放）
@@ -215,7 +201,7 @@ vivado -mode tcl \
 | `02_Design/riscv_tests/` | 回归 TB + 脚本 | 临时调试 TB |
 | `02_Design/coe/` | COE 文件 + 工具脚本 | 仿真产物 |
 | `00_AI_Rules/` | 当前规则、架构文档 | 临时实验记录 |
-| `PhysicalTwin_Nexys4DDR/` | Nexys 4 DDR 板级封装、约束和板级文档 | CPU RTL 副本 |
+| `JYD2025_Contest-rv32i/` | 赛方 Vivado 工程 | 临时分析脚本、仿真产物 |
 
 ### 临时/实验性文件
 
@@ -241,6 +227,6 @@ vivado -mode tcl \
 
 ## 9. 文档维护
 
-- 当前有效文档包括：`global_rules.md`、`architecture.md`、`02_Design/coe/README.md`、`02_Design/riscv_tests/test_coverage.md`、`PhysicalTwin_Nexys4DDR/README.md`。
+- 当前有效文档包括：`global_rules.md`、`architecture.md`、`02_Design/coe/README.md`、`02_Design/riscv_tests/test_coverage.md`。
 - RTL 改动通过回归后，同步更新 `architecture.md`。
 - 信号名必须与 RTL 一致；当前架构文档只写当前状态，不保存长实验档案。

@@ -11,7 +11,6 @@
 
 - **`02_Design/riscv_tests/test_coverage.md`** — 回归测试覆盖范围
 - **`02_Design/coe/README.md`** — COE 文件、转换脚本和静态分布
-- **`PhysicalTwin_Nexys4DDR/README.md`** — Nexys 4 DDR 物理板工程与显示映射
 
 ## 目录结构
 
@@ -31,8 +30,7 @@ CPU_Workspace/
 │   ├── rtl/               ← 自研 CPU RTL 源码
 │   ├── coe/               ← 竞赛程序 COE 文件 + 工具脚本
 │   ├── contest_readonly/  ← 赛方原版（禁止修改）
-│   └── riscv_tests/       ← iverilog 回归测试（74/74 PASS 目标）
+│   └── riscv_tests/       ← iverilog 回归测试（76/76 PASS 目标）
 ├── 03_Timing_Analysis/    ← 时序分析 TCL + 报告
-├── PhysicalTwin_Nexys4DDR/ ← Nexys 4 DDR 板卡 Vivado 工程封装
 └── JYD2025_Contest-rv32i/ ← Vivado 工程
 ```

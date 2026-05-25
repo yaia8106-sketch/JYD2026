@@ -32,7 +32,7 @@ coe/
 
 ## 使用说明
 
-- **Vivado/上板双发射工程**使用 `dual_issue/` 下的 `irom_slot0.coe` + `irom_slot1.coe`
+- **Vivado 双发射工程**使用 `dual_issue/` 下的 `irom_slot0.coe` + `irom_slot1.coe`
 - **软件模型与 Iverilog COE 回归**使用 `single_issue/` 下的 `irom.coe`，testbench 内部再模拟双 bank 取指
 - DRAM coe 两种架构通用
 
