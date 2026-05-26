@@ -7,9 +7,9 @@
 #
 # Direct Vivado usage:
 #   vivado -mode tcl \
-#          -log 03_Timing_Analysis/vivado_work/vivado.log \
-#          -journal 03_Timing_Analysis/vivado_work/vivado.jou \
-#          -source 03_Timing_Analysis/run_vivado_flow.tcl \
+#          -log 03_Analysis/vivado_work/vivado.log \
+#          -journal 03_Analysis/vivado_work/vivado.jou \
+#          -source 03_Analysis/run_vivado_flow.tcl \
 #          -tclargs /home/anokyai/Desktop/CPU_Workspace current 18
 # ============================================================
 
@@ -23,7 +23,7 @@ if {$argc >= 3} { set build_jobs [lindex $argv 2] } else { set build_jobs 20 }
 
 set workspace [file normalize $workspace]
 set project_path  "${workspace}/JYD2025_Contest-rv32i/digital_twin.xpr"
-set timing_script "${workspace}/03_Timing_Analysis/report_stage_timing.tcl"
+set timing_script "${workspace}/03_Analysis/report_stage_timing.tcl"
 set coe_dst       "${workspace}/JYD2025_Contest-rv32i/digital_twin.srcs/sources_1/imports/JYD2025/resource/coe"
 
 proc die {msg} {

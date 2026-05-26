@@ -11,6 +11,8 @@
 
 - **`02_Design/riscv_tests/test_coverage.md`** — 回归测试覆盖范围
 - **`02_Design/coe/README.md`** — COE 文件、转换脚本和静态分布
+- **`03_Analysis/README.md`** — 分析目录职责、覆盖式产物策略
+- **`03_Analysis/profiling/README.md`** 和 **`profile_contract.md`** — profiling 框架、脚本联动和指标契约
 
 ## 目录结构
 
@@ -31,6 +33,6 @@ CPU_Workspace/
 │   ├── coe/               ← 竞赛程序 COE 文件 + 工具脚本
 │   ├── contest_readonly/  ← 赛方原版（禁止修改）
 │   └── riscv_tests/       ← iverilog 回归测试（76/76 PASS 目标）
-├── 03_Timing_Analysis/    ← 时序分析 TCL + 报告
+├── 03_Analysis/           ← 处理器分析脚本（时序、性能 profiling 等）
 └── JYD2025_Contest-rv32i/ ← Vivado 工程
 ```

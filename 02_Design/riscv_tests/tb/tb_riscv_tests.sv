@@ -10,6 +10,9 @@
 //   iverilog -g2012 -o sim tb_riscv_tests.sv <rtl_files>
 //   vvp sim +irom=hex/rv32ui-p-add.irom.hex \
 //           +dram=hex/rv32ui-p-add.dram.hex +test=add
+//   vvp sim +irom_slot0=hex/prog.irom_slot0.hex \
+//           +irom_slot1=hex/prog.irom_slot1.hex \
+//           +dram=hex/prog.dram.hex +test=prog
 // ============================================================
 
 module tb_riscv_tests;
@@ -112,17 +115,25 @@ module tb_riscv_tests;
     //  Address: 0x80000000 ~ 0x80003FFF, 4096 x 32-bit words
     // ================================================================
     reg [31:0] irom [0:4095];
+    reg [31:0] irom_slot0 [0:4095];
+    reg [31:0] irom_slot1 [0:4095];
     reg [31:0] irom_even_data;
     reg [31:0] irom_odd_data;
     reg        irom_fetch_odd_q;
+    integer    irom_banked_enable = 0;
 
     wire [12:0] irom_even_word_addr = {irom_even_addr, 1'b0};
     wire [12:0] irom_odd_word_addr  = {irom_odd_addr,  1'b1};
 
     always @(posedge clk) begin
         irom_fetch_odd_q <= irom_fetch_odd;
-        irom_even_data <= (irom_even_word_addr < 13'd4096) ? irom[irom_even_word_addr[11:0]] : 32'h00000013;
-        irom_odd_data <= (irom_odd_word_addr < 13'd4096) ? irom[irom_odd_word_addr[11:0]] : 32'h00000013;
+        if (irom_banked_enable) begin
+            irom_even_data <= irom_slot0[irom_even_addr];
+            irom_odd_data  <= irom_slot1[irom_odd_addr];
+        end else begin
+            irom_even_data <= (irom_even_word_addr < 13'd4096) ? irom[irom_even_word_addr[11:0]] : 32'h00000013;
+            irom_odd_data  <= (irom_odd_word_addr < 13'd4096) ? irom[irom_odd_word_addr[11:0]] : 32'h00000013;
+        end
     end
 
     assign irom_data = irom_fetch_odd_q ? {irom_even_data, irom_odd_data}
@@ -182,16 +193,34 @@ module tb_riscv_tests;
 
     reg        tohost_detected;
     reg [31:0] tohost_value;
+    reg [31:0] last_tohost_value;
+    integer    led_write_count;
+    integer    led_trace_enable = 0;
+
+    wire led_write = |mmio_wea && mmio_wr_addr == LED_MMIO_ADDR;
 
     always @(posedge clk) begin
         if (!rst_n) begin
-            tohost_detected <= 1'b0;
-            tohost_value    <= 32'd0;
-        end else if (!tohost_detected &&
-                     |mmio_wea &&
-                     mmio_wr_addr == LED_MMIO_ADDR) begin
+            tohost_detected  <= 1'b0;
+            tohost_value     <= 32'd0;
+            last_tohost_value <= 32'd0;
+            led_write_count  <= 0;
+        end else if (!tohost_detected && led_write) begin
             tohost_detected <= 1'b1;
             tohost_value    <= mmio_wdata;
+            last_tohost_value <= mmio_wdata;
+            led_write_count <= led_write_count + 1;
+            if (led_trace_enable)
+                $display("[LED] %0s  cycle=%0d mem_pc=0x%08x value=0x%08x writes=%0d",
+                         test_name_r, cycle_cnt, u_cpu.mem_pc, mmio_wdata,
+                         led_write_count + 1);
+        end else if (led_write) begin
+            last_tohost_value <= mmio_wdata;
+            led_write_count <= led_write_count + 1;
+            if (led_trace_enable)
+                $display("[LED] %0s  cycle=%0d mem_pc=0x%08x value=0x%08x writes=%0d",
+                         test_name_r, cycle_cnt, u_cpu.mem_pc, mmio_wdata,
+                         led_write_count + 1);
         end
     end
 
@@ -210,21 +239,41 @@ module tb_riscv_tests;
     integer watchdog_fired = 0;
     integer pc_guard_fired = 0;
     integer commit_limit_hit = 0;
+    integer stop_pc_enable = 0;
+    integer stop_pc_hit = 0;
     reg [31:0] pc_guard_min = 32'h8000_0000;
     reg [31:0] pc_guard_max = 32'h8000_4000;
     reg [31:0] pc_guard_bad_pc = 32'd0;
+    reg [31:0] stop_pc = 32'd0;
+    reg [31:0] stop_pc_seen = 32'd0;
+    reg [31:0] last_wb0_pc = 32'd0;
+    reg [31:0] last_wb1_pc = 32'd0;
 
     // Plusarg strings
     reg [256*8-1:0] irom_file_r;
+    reg [256*8-1:0] irom_slot0_file_r;
+    reg [256*8-1:0] irom_slot1_file_r;
     reg [256*8-1:0] dram_file_r;
     reg [256*8-1:0] test_name_r;
     reg [256*8-1:0] trace_file_r;
 
     initial begin
         // ---- Parse plusargs ----
-        if (!$value$plusargs("irom=%s", irom_file_r)) begin
-            $display("ERROR: specify +irom=<file.hex>");
+        irom_banked_enable = 0;
+        if ($value$plusargs("irom_slot0=%s", irom_slot0_file_r)) begin
+            if (!$value$plusargs("irom_slot1=%s", irom_slot1_file_r)) begin
+                $display("ERROR: specify both +irom_slot0=<file.hex> and +irom_slot1=<file.hex>");
+                $finish;
+            end
+            irom_banked_enable = 1;
+        end else if ($value$plusargs("irom_slot1=%s", irom_slot1_file_r)) begin
+            $display("ERROR: specify both +irom_slot0=<file.hex> and +irom_slot1=<file.hex>");
             $finish;
+        end else begin
+            if (!$value$plusargs("irom=%s", irom_file_r)) begin
+                $display("ERROR: specify +irom=<file.hex> or +irom_slot0=<file.hex> +irom_slot1=<file.hex>");
+                $finish;
+            end
         end
         if (!$value$plusargs("dram=%s", dram_file_r)) begin
             $display("ERROR: specify +dram=<file.hex>");
@@ -236,8 +285,11 @@ module tb_riscv_tests;
             ; // optional override
         if ($value$plusargs("commits=%d", max_commits))
             ; // optional commit-count stop for differential trace
+        if ($value$plusargs("stop_pc=%h", stop_pc))
+            stop_pc_enable = 1;
         if ($value$plusargs("watchdog=%d", watchdog_cycles))
             ; // optional idle-cycle watchdog
+        led_trace_enable = $test$plusargs("led_trace");
         trace_enable = $test$plusargs("trace");
         if (!$value$plusargs("trace_file=%s", trace_file_r))
             trace_file_r = "riscv_trace.log";
@@ -257,12 +309,20 @@ module tb_riscv_tests;
         end
 
         // ---- Initialize memories ----
-        for (integer i = 0; i < 4096; i = i + 1)
+        for (integer i = 0; i < 4096; i = i + 1) begin
             irom[i] = 32'h0000_0013;  // addi x0, x0, 0 (NOP)
+            irom_slot0[i] = 32'h0000_0013;
+            irom_slot1[i] = 32'h0000_0013;
+        end
         for (integer i = 0; i < 65536; i = i + 1)
             dram[i] = 32'h0;
 
-        $readmemh(irom_file_r, irom);
+        if (irom_banked_enable) begin
+            $readmemh(irom_slot0_file_r, irom_slot0);
+            $readmemh(irom_slot1_file_r, irom_slot1);
+        end else begin
+            $readmemh(irom_file_r, irom);
+        end
         $readmemh(dram_file_r, dram);
 
         // ---- Reset sequence ----
@@ -273,10 +333,13 @@ module tb_riscv_tests;
         // ---- Wait for result or timeout ----
         fork
             begin : wait_tohost
-                wait (tohost_detected);
+                wait (!stop_pc_enable && tohost_detected);
             end
             begin : wait_timeout
                 wait (cycle_cnt >= max_cycles);
+            end
+            begin : wait_stop_pc
+                wait (stop_pc_hit);
             end
             begin : wait_commit_limit
                 wait (commit_limit_hit);
@@ -293,24 +356,43 @@ module tb_riscv_tests;
         #40;    // wait 2 more cycles for pipeline drain
 
         // ---- Report result ----
-        if (tohost_detected) begin
+        if (stop_pc_hit) begin
+            $display("[DONE] %0s  reached stop_pc=0x%08x commits=%0d first_led=0x%08x last_led=0x%08x led_writes=%0d pc=0x%08x last_wb0_pc=0x%08x last_wb1_pc=0x%08x  (%0d cycles)",
+                     test_name_r, stop_pc_seen, commit_cnt, tohost_value,
+                     last_tohost_value, led_write_count, u_cpu.pc,
+                     last_wb0_pc, last_wb1_pc, cycle_cnt);
+        end else if (!stop_pc_enable && tohost_detected) begin
             if (tohost_value == 32'd1) begin
-                $display("[PASS] %0s  (%0d cycles)", test_name_r, cycle_cnt);
+                $display("[PASS] %0s  commits=%0d first_led=0x%08x last_led=0x%08x led_writes=%0d pc=0x%08x last_wb0_pc=0x%08x last_wb1_pc=0x%08x  (%0d cycles)",
+                         test_name_r, commit_cnt, tohost_value,
+                         last_tohost_value, led_write_count, u_cpu.pc,
+                         last_wb0_pc, last_wb1_pc, cycle_cnt);
             end else begin
-                $display("[FAIL] %0s  test #%0d failed  (%0d cycles)",
-                         test_name_r, tohost_value >> 1, cycle_cnt);
+                $display("[FAIL] %0s  test #%0d failed commits=%0d first_led=0x%08x last_led=0x%08x led_writes=%0d pc=0x%08x last_wb0_pc=0x%08x last_wb1_pc=0x%08x  (%0d cycles)",
+                         test_name_r, tohost_value >> 1, commit_cnt,
+                         tohost_value, last_tohost_value, led_write_count,
+                         u_cpu.pc, last_wb0_pc, last_wb1_pc, cycle_cnt);
             end
         end else if (pc_guard_fired) begin
-            $display("[FAIL] %0s  PC_OUT_OF_RANGE pc=0x%08x allowed=[0x%08x,0x%08x)  (%0d cycles)",
-                     test_name_r, pc_guard_bad_pc, pc_guard_min, pc_guard_max, cycle_cnt);
+            $display("[FAIL] %0s  PC_OUT_OF_RANGE pc=0x%08x allowed=[0x%08x,0x%08x) commits=%0d first_led=0x%08x last_led=0x%08x led_writes=%0d last_wb0_pc=0x%08x last_wb1_pc=0x%08x  (%0d cycles)",
+                     test_name_r, pc_guard_bad_pc, pc_guard_min, pc_guard_max,
+                     commit_cnt, tohost_value, last_tohost_value,
+                     led_write_count, last_wb0_pc, last_wb1_pc, cycle_cnt);
         end else if (watchdog_fired) begin
-            $display("[TIMEOUT] %0s  no pipeline progress for %0d cycles  (%0d cycles)",
-                     test_name_r, watchdog_cycles, cycle_cnt);
+            $display("[TIMEOUT] %0s  no pipeline progress for %0d cycles commits=%0d first_led=0x%08x last_led=0x%08x led_writes=%0d pc=0x%08x last_wb0_pc=0x%08x last_wb1_pc=0x%08x  (%0d cycles)",
+                     test_name_r, watchdog_cycles, commit_cnt, tohost_value,
+                     last_tohost_value, led_write_count, u_cpu.pc,
+                     last_wb0_pc, last_wb1_pc, cycle_cnt);
         end else if (commit_limit_hit) begin
-            $display("[DONE] %0s  reached %0d commits  (%0d cycles)",
-                     test_name_r, commit_cnt, cycle_cnt);
+            $display("[DONE] %0s  reached %0d commits first_led=0x%08x last_led=0x%08x led_writes=%0d pc=0x%08x last_wb0_pc=0x%08x last_wb1_pc=0x%08x  (%0d cycles)",
+                     test_name_r, commit_cnt, tohost_value, last_tohost_value,
+                     led_write_count, u_cpu.pc, last_wb0_pc, last_wb1_pc,
+                     cycle_cnt);
         end else begin
-            $display("[TIMEOUT] %0s  (>%0d cycles)", test_name_r, max_cycles);
+            $display("[TIMEOUT] %0s  commits=%0d first_led=0x%08x last_led=0x%08x led_writes=%0d pc=0x%08x last_wb0_pc=0x%08x last_wb1_pc=0x%08x  (>%0d cycles)",
+                     test_name_r, commit_cnt, tohost_value, last_tohost_value,
+                     led_write_count, u_cpu.pc, last_wb0_pc, last_wb1_pc,
+                     max_cycles);
         end
 
         // ---- Performance report (when +perf is specified) ----
@@ -341,12 +423,30 @@ module tb_riscv_tests;
             pc_guard_fired  <= 0;
             commit_cnt      <= 0;
             commit_limit_hit <= 0;
+            stop_pc_hit     <= 0;
             pc_guard_bad_pc <= 32'd0;
+            stop_pc_seen    <= 32'd0;
+            last_wb0_pc     <= 32'd0;
+            last_wb1_pc     <= 32'd0;
         end else begin
             commit_cnt <= commit_cnt + (u_cpu.wb_valid ? 1 : 0)
                                      + (u_cpu.wb_s1_valid ? 1 : 0);
+            if (u_cpu.wb_valid)
+                last_wb0_pc <= u_cpu.wb_pc_plus_4 - 32'd4;
+            if (u_cpu.wb_s1_valid)
+                last_wb1_pc <= u_cpu.wb_s1_pc;
             if (max_commits != 0 && commit_cnt >= max_commits)
                 commit_limit_hit <= 1;
+
+            if (stop_pc_enable && !stop_pc_hit) begin
+                if (u_cpu.wb_valid && ((u_cpu.wb_pc_plus_4 - 32'd4) == stop_pc)) begin
+                    stop_pc_hit  <= 1;
+                    stop_pc_seen <= u_cpu.wb_pc_plus_4 - 32'd4;
+                end else if (u_cpu.wb_s1_valid && (u_cpu.wb_s1_pc == stop_pc)) begin
+                    stop_pc_hit  <= 1;
+                    stop_pc_seen <= u_cpu.wb_s1_pc;
+                end
+            end
 
             if (sim_progress)
                 idle_cycles <= 0;
