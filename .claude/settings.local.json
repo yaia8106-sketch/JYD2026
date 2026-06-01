@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(du -sh vivado*.jou vivado*.log)",
+      "Bash(sort -t_ -k2 -n)",
+      "Bash(ls -la vivado*.jou vivado*.log)",
+      "Bash(git submodule:*)",
+      "Bash(git -C riscv-tests remote -v)",
+      "Bash(grep -l 'rv64ui\\\\|rv32ui' /home/anokyai/Desktop/CPU_Workspace/riscv-tests/isa/rv32ui/*.S)",
+      "Bash(grep -rn '#include' /home/anokyai/Desktop/CPU_Workspace/riscv-tests/isa/rv32ui/*.S)",
+      "Bash(bash run_perf.sh simple)",
+      "Bash(bash build_tests.sh)",
+      "Bash(bash run_all.sh 2>&1)",
+      "Bash(ls:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Skill(update-config)"
+    ]
+  }
+}

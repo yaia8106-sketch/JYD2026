@@ -14,8 +14,9 @@
 //
 // 复位约定:
 //   top.sv 传入 w_clk_rst = ~pll_locked (高有效)
-//   cpu_top 需要 rst_n (低有效) → 取反
-//   mmio_bridge 需要 rst (高有效) → 直连
+//   student_top 内部对 CPU 时钟域做 async assert / sync release
+//   cpu_top 需要 rst_n (低有效) → 使用同步释放后的反相信号
+//   mmio_bridge 需要 rst (高有效) → 使用同步释放后的高有效信号
 // ============================================================
 
 module student_top #(
@@ -77,11 +78,31 @@ module student_top #(
     logic cache_pipeline_stall;
 
     // ================================================================
+    //  Reset synchronizer
+    //  w_clk_rst comes from PLL locked in the contest top. Keep assertion
+    //  asynchronous, but release reset on w_cpu_clk to avoid board-only
+    //  startup hazards in CPU/DCache/BRAM control paths.
+    // ================================================================
+    logic [1:0] cpu_rst_pipe;
+    logic       cpu_rst;
+    logic       cpu_rst_n;
+
+    always_ff @(posedge w_cpu_clk or posedge w_clk_rst) begin
+        if (w_clk_rst)
+            cpu_rst_pipe <= 2'b11;
+        else
+            cpu_rst_pipe <= {cpu_rst_pipe[0], 1'b0};
+    end
+
+    assign cpu_rst   = cpu_rst_pipe[1];
+    assign cpu_rst_n = ~cpu_rst;
+
+    // ================================================================
     //  CPU Core
     // ================================================================
     cpu_top u_cpu (
         .clk         (w_cpu_clk),
-        .rst_n       (~w_clk_rst),
+        .rst_n       (cpu_rst_n),
 
         // IROM 接口 (IF stage)
         .irom_even_addr (irom_even_addr),
@@ -123,8 +144,8 @@ module student_top #(
     assign irom_data      = irom_fetch_odd_q ? {irom_even_data, irom_odd_data}
                                              : {irom_odd_data,  irom_even_data};
 
-    always_ff @(posedge w_cpu_clk or posedge w_clk_rst) begin
-        if (w_clk_rst)
+    always_ff @(posedge w_cpu_clk or posedge cpu_rst) begin
+        if (cpu_rst)
             irom_fetch_odd_q <= 1'b0;
         else
             irom_fetch_odd_q <= irom_fetch_odd;
@@ -147,7 +168,7 @@ module student_top #(
     // ================================================================
     dcache u_dcache (
         .clk         (w_cpu_clk),
-        .rst_n       (~w_clk_rst),
+        .rst_n       (cpu_rst_n),
 
         // CPU interface
         .cpu_req     (cache_req),
@@ -198,7 +219,7 @@ module student_top #(
     mmio_bridge u_mmio (
         .clk     (w_cpu_clk),
         .cnt_clk (w_clk_50Mhz),
-        .rst     (w_clk_rst),
+        .rst     (cpu_rst),
 
         // CPU MMIO bus
         .addr     (mmio_addr),
