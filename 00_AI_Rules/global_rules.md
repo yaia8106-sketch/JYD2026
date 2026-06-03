@@ -180,16 +180,14 @@ COMMITS=50000 MAX_CYCLES=1500000 WATCHDOG_CYCLES=150000 bash run_coe_diff.sh cur
 ### Vivado 时序流
 
 ```bash
-vivado -mode tcl \
-  -log 03_Analysis/vivado_work/vivado.log \
-  -journal 03_Analysis/vivado_work/vivado.jou \
-  -source 03_Analysis/run_vivado_flow.tcl \
-  -tclargs "$PWD" current 18
+open_project /home/anokyai/Desktop/CPU_Workspace/JYD2025_Contest-rv32i/digital_twin.xpr
+open_run impl_1
+source /home/anokyai/Desktop/CPU_Workspace/03_Timing_Analysis/report_stage_timing.tcl
 ```
 
-- 流程：更新 COE/IP → `synth_1` → `impl_1`（不生成 bitstream）→ `open_run impl_1` → `source report_stage_timing.tcl`。
-- 报告输出：`03_Analysis/stage_timing_report.txt`。
-- Vivado 工作目录：`03_Analysis/vivado_work/`，已 gitignore。
+- 前提：Vivado 工程已经完成 `synth_1` / `impl_1`。
+- 报告输出：`03_Timing_Analysis/stage_timing_report.txt`。
+- Vivado 工作目录：`03_Timing_Analysis/vivado_work/`，已 gitignore。
 
 ## 8. 工程卫生
 
@@ -200,14 +198,14 @@ vivado -mode tcl \
 | `02_Design/rtl/` | 可综合 RTL 源码 | TB、脚本、文档 |
 | `02_Design/riscv_tests/` | 回归 TB + 脚本 | 临时调试 TB |
 | `02_Design/coe/` | COE 文件 + 工具脚本 | 仿真产物 |
-| `03_Analysis/` | 可复用分析脚本、分析说明、覆盖式 latest 报告 | 历史长日志、一次性实验归档 |
+| `03_Timing_Analysis/` | 实现后的 timing 分析脚本、覆盖式 latest timing 报告、Vivado timing 日志 | 性能 profiling、架构设计文档、一次性实验归档 |
 | `00_AI_Rules/` | 当前规则、架构文档 | 临时实验记录 |
 | `JYD2025_Contest-rv32i/` | 赛方 Vivado 工程 | 临时分析脚本、仿真产物 |
 
 ### 临时/实验性文件
 
 - **一律放 `/tmp/`**（如 `/tmp/dcache_opt/`、`/tmp/riscv_build/`）
-- 例外：`03_Analysis/` 可保留固定文件名、覆盖式生成的 latest 分析报告，例如 `stage_timing_report.txt` 和 `profile_report.*`。
+- 例外：`03_Timing_Analysis/` 可保留固定文件名、覆盖式生成的 latest timing 报告，例如 `stage_timing_report.txt`。
 - 验证有价值后再决定是否纳入工程目录
 - **禁止**在工程目录下随手建 `test_xxx.sv`、`debug_xxx.py` 等临时文件
 
@@ -229,6 +227,6 @@ vivado -mode tcl \
 
 ## 9. 文档维护
 
-- 当前有效文档包括：`global_rules.md`、`architecture.md`、`02_Design/coe/README.md`、`02_Design/riscv_tests/test_coverage.md`、`03_Analysis/README.md`、`03_Analysis/profiling/README.md`、`03_Analysis/profiling/profile_contract.md`、`03_Analysis/profiling/document_rules.md`。
+- 当前有效文档包括：`README.md`、`00_AI_Rules/global_rules.md`、`00_AI_Rules/architecture.md`、`02_Design/coe/README.md`、`02_Design/riscv_tests/test_coverage.md`。
 - RTL 改动通过回归后，同步更新 `architecture.md`。
 - 信号名必须与 RTL 一致；当前架构文档只写当前状态，不保存长实验档案。
