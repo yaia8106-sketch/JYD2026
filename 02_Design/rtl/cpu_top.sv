@@ -11,11 +11,9 @@ module cpu_top (
     input  logic        clk,
     input  logic        rst_n,
 
-    // IROM 接口 (IF stage)
-    output logic [11:0] irom_even_addr,  // even bank address, pre-budgeted before source MUX
-    output logic [11:0] irom_odd_addr,   // odd bank address, pre-budgeted before source MUX
-    output logic        irom_fetch_odd,  // selected fetch PC[2], delayed in student_top for data rotate
-    input  logic [63:0] irom_data,       // 64-bit fetch window (Phase 0 uses low 32-bit inst0)
+    // IROM 接口 (IF stage): 64-bit aligned block ROM
+    output logic [11:0] irom_addr,
+    input  logic [63:0] irom_data,
 
     // DCache 接口 (EX → MEM stage)
     output logic        cache_req,       // EX stage: 有访存请求
@@ -42,8 +40,6 @@ module cpu_top (
 
     // ---- PC & IF ----
     wire [31:0] pc;
-    wire [31:0] irom_addr;        // full next PC, internal only; BRAMs use budgeted bank addresses
-    // next_pc eliminated: inlined into irom_addr for 1 fewer LUT level on PC→IROM path
     wire        if_valid;
 
     // 250MHz: Pre-computed PC+4 register — eliminates carry chain from irom_addr default path
@@ -346,7 +342,7 @@ module cpu_top (
     wire is_cacheable_mem;
 
     // ---- Handshake ----
-    wire if_ready_go_w  = 1'b1;     // BRAM latency absorbed by pipeline
+    wire if_ready_go_w;             // driven by frontend_ftq
     wire mmio_st_ld_hazard;
     wire ex_muldiv_ready = mem_branch_flush | ~ex_muldiv_req | muldiv_done;
     wire ex_ready_go_w  = ~mmio_st_ld_hazard & ex_muldiv_ready;
@@ -510,6 +506,7 @@ module cpu_top (
     wire [ 1:0] id_bp_btb_bht;
     wire [ 1:0] id_bp_pht_cnt;
     wire [ 1:0] id_bp_sel_cnt;
+    wire        id_bp_verified;
 
     // EX stage prediction (from ID/EX reg)
     wire        ex_bp_taken;
@@ -562,6 +559,7 @@ module cpu_top (
         .id_bp_pht_cnt     (id_bp_pht_cnt),
         .id_bp_sel_cnt     (id_bp_sel_cnt),
         .id_bp_target      (id_bp_target),
+        .id_bp_verified    (id_bp_verified),
         .id_rs1_addr       (id_rs1_addr),
         .id_rs2_addr       (id_rs2_addr),
         .id_rd_addr        (id_rd_addr),
@@ -593,7 +591,7 @@ module cpu_top (
         .rst_n           (rst_n),
 
         // IF prediction (L0: fast path)
-        .if_pc           (bp_pc_live),
+        .if_pc           (pc),
         .bp_taken        (bp_taken),
         .bp_target       (bp_target),
         .bp_even_addr    (bp_target_even_addr),
@@ -618,7 +616,7 @@ module cpu_top (
         // Lookahead prediction for possible next-cycle skip_inst0 fetch.
         // When current PC P was predicted single but actually dual-issues,
         // next cycle issues P+8 from irom_inst1, so query P+8 now.
-        .la_pc           (pc_plus8),
+        .la_pc           (pc + 32'd8),
         .la_bp_taken     (la_bp_taken),
         .la_bp_target    (la_bp_target),
         .la_bp_even_addr (la_bp_even_addr),
@@ -632,7 +630,7 @@ module cpu_top (
         .la_bp_sel_cnt   (la_bp_sel_cnt),
 
         // Prediction for the instruction that may be stored in inst_buf.
-        .buf_pc           (buf_bp_pc),
+        .buf_pc           (pc + 32'd4),
         .buf_bp_taken     (buf_bp_taken),
         .buf_bp_target    (buf_bp_target),
         .buf_bp_even_addr (buf_bp_even_addr),
@@ -667,7 +665,6 @@ module cpu_top (
 
     // ==================== Pre-IF ====================
 
-    (* max_fanout = 16 *) wire        if_allowin_w = id_allowin;   // for irom_addr mux
     wire        can_dual_issue;
     wire        can_dual_fetch;
     wire        raw_pair_raw;
@@ -686,199 +683,64 @@ module cpu_top (
     wire [ 1:0] if_bp_btb_bht_out;
     wire [ 1:0] if_bp_pht_cnt_out;
     wire [ 1:0] if_bp_sel_cnt_out;
+    wire        if_bp_verified_out;
     wire        if_skip_out;
     wire        if_s1_valid;
     wire        if_sequential_fetch;
     wire        inst_buf_valid_next;
-    wire        bp_taken_for_if;
-    wire [31:0] bp_target_for_if;
-    wire [11:0] bp_even_addr;
-    wire [11:0] bp_odd_addr;
-    wire        bp_fetch_odd;
-    wire [11:0] bp_plus4_even_addr;
-    wire [11:0] bp_plus4_odd_addr;
-    wire        bp_plus4_fetch_odd;
-    wire [11:0] bp_plus8_even_addr;
-    wire [11:0] bp_plus8_odd_addr;
-    wire        bp_plus8_fetch_odd;
-    wire [11:0] bp_plus12_even_addr;
-    wire [11:0] bp_plus12_odd_addr;
-    wire        bp_plus12_fetch_odd;
 
     assign irom_inst0 = irom_data[31:0];
     assign irom_inst1 = irom_data[63:32];
 
-    dual_issue_decider u_dual_issue_decider (
-        .clk                 (clk),
-        .rst_n               (rst_n),
-        .if_valid            (if_valid),
-        .id_flush            (id_flush),
-        .id_allowin          (id_allowin),
-        .irom_held_valid     (irom_held_valid),
-        .if_skip_inst0       (if_skip_inst0),
-        .if_skip_out         (if_skip_out),
-        .if_buf_before_window(if_buf_before_window),
-        .if_sequential_fetch (if_sequential_fetch),
-        .pc                  (pc),
-        .inst_buf            (inst_buf),
-        .inst_buf_pc         (inst_buf_pc),
-        .if_pc_out           (if_pc_out),
-        .irom_inst0          (irom_inst0),
-        .irom_inst1          (irom_inst1),
-        .can_dual_fetch      (can_dual_fetch),
-        .can_dual_issue      (can_dual_issue),
-        .inst_buf_valid_next (inst_buf_valid_next),
-        .raw_pair_raw        (raw_pair_raw),
-        .raw_inst1_is_alu_type(raw_inst1_is_alu_type),
-        .raw_inst0_is_jump   (raw_inst0_is_jump)
-    );
+    assign can_dual_fetch = can_dual_issue;
+    assign raw_inst1_is_alu_type = 1'b0;
+    assign raw_inst0_is_jump = 1'b0;
+    assign if_sequential_fetch = ~if_bp_taken_out;
+    assign inst_buf_valid_next = 1'b0;
+    assign inst_buf = 32'd0;
+    assign inst_buf_pc = 32'd0;
+    assign inst_buf_valid = 1'b0;
+    assign skip_inst0_valid = 1'b0;
+    assign if_buf_before_window = 1'b0;
 
-    if_stage_buffer u_if_stage_buffer (
-        .clk                         (clk),
-        .rst_n                       (rst_n),
-        .if_valid                    (if_valid),
-        .if_ready_go                 (if_ready_go_w),
-        .id_allowin                  (id_allowin),
-        .id_flush                    (id_flush),
-        .frontend_branch_flush       (frontend_branch_flush),
-        .id_bp_redirect_raw          (id_bp_redirect_raw),
-        .can_dual_issue              (can_dual_issue),
-        .inst_buf_valid_next         (inst_buf_valid_next),
-        .pc                          (pc),
-        .pc_plus4                    (pc_plus4),
-        .irom_inst0                  (irom_inst0),
-        .irom_inst1                  (irom_inst1),
-        .bp_taken                    (bp_taken),
-        .bp_target                   (bp_target),
-        .bp_ghr_snap                 (bp_ghr_snap),
-        .bp_btb_hit                  (bp_btb_hit),
-        .bp_btb_type                 (bp_btb_type),
-        .bp_btb_bht                  (bp_btb_bht),
-        .bp_pht_cnt                  (bp_pht_cnt),
-        .bp_sel_cnt                  (bp_sel_cnt),
-        .bp_target_even_addr         (bp_target_even_addr),
-        .bp_target_odd_addr          (bp_target_odd_addr),
-        .bp_target_fetch_odd         (bp_target_fetch_odd),
-        .bp_target_plus4_even_addr   (bp_target_plus4_even_addr),
-        .bp_target_plus4_odd_addr    (bp_target_plus4_odd_addr),
-        .bp_target_plus4_fetch_odd   (bp_target_plus4_fetch_odd),
-        .bp_target_plus8_even_addr   (bp_target_plus8_even_addr),
-        .bp_target_plus8_odd_addr    (bp_target_plus8_odd_addr),
-        .bp_target_plus8_fetch_odd   (bp_target_plus8_fetch_odd),
-        .bp_target_plus12_even_addr  (bp_target_plus12_even_addr),
-        .bp_target_plus12_odd_addr   (bp_target_plus12_odd_addr),
-        .bp_target_plus12_fetch_odd  (bp_target_plus12_fetch_odd),
-        .la_bp_taken                 (la_bp_taken),
-        .la_bp_target                (la_bp_target),
-        .la_bp_ghr_snap              (la_bp_ghr_snap),
-        .la_bp_btb_hit               (la_bp_btb_hit),
-        .la_bp_btb_type              (la_bp_btb_type),
-        .la_bp_btb_bht               (la_bp_btb_bht),
-        .la_bp_pht_cnt               (la_bp_pht_cnt),
-        .la_bp_sel_cnt               (la_bp_sel_cnt),
-        .la_bp_even_addr             (la_bp_even_addr),
-        .la_bp_odd_addr              (la_bp_odd_addr),
-        .la_bp_fetch_odd             (la_bp_fetch_odd),
-        .buf_bp_taken                (buf_bp_taken),
-        .buf_bp_target               (buf_bp_target),
-        .buf_bp_ghr_snap             (buf_bp_ghr_snap),
-        .buf_bp_btb_hit              (buf_bp_btb_hit),
-        .buf_bp_btb_type             (buf_bp_btb_type),
-        .buf_bp_btb_bht              (buf_bp_btb_bht),
-        .buf_bp_pht_cnt              (buf_bp_pht_cnt),
-        .buf_bp_sel_cnt              (buf_bp_sel_cnt),
-        .buf_bp_even_addr            (buf_bp_even_addr),
-        .buf_bp_odd_addr             (buf_bp_odd_addr),
-        .buf_bp_fetch_odd            (buf_bp_fetch_odd),
-        .inst_buf                    (inst_buf),
-        .inst_buf_pc                 (inst_buf_pc),
-        .inst_buf_valid              (inst_buf_valid),
-        .if_skip_inst0               (skip_inst0_valid),
-        .if_buf_before_window        (if_buf_before_window),
-        .irom_held_valid             (irom_held_valid),
-        .predict_dual                (predict_dual),
-        .if_inst0_out                (if_inst0_out),
-        .if_inst1_out                (if_inst1_out),
-        .if_pc_out                   (if_pc_out),
-        .if_bp_taken_out             (if_bp_taken_out),
-        .if_bp_target_out            (if_bp_target_out),
-        .if_bp_ghr_snap_out          (if_bp_ghr_snap_out),
-        .if_bp_btb_hit_out           (if_bp_btb_hit_out),
-        .if_bp_btb_type_out          (if_bp_btb_type_out),
-        .if_bp_btb_bht_out           (if_bp_btb_bht_out),
-        .if_bp_pht_cnt_out           (if_bp_pht_cnt_out),
-        .if_bp_sel_cnt_out           (if_bp_sel_cnt_out),
-        .if_skip_out                 (if_skip_out),
-        .if_s1_valid                 (if_s1_valid),
-        .if_sequential_fetch         (if_sequential_fetch),
-        .buf_bp_pc                   (buf_bp_pc),
-        .bp_taken_for_if             (bp_taken_for_if),
-        .bp_target_for_if            (bp_target_for_if),
-        .bp_even_addr                (bp_even_addr),
-        .bp_odd_addr                 (bp_odd_addr),
-        .bp_fetch_odd                (bp_fetch_odd),
-        .bp_plus4_even_addr          (bp_plus4_even_addr),
-        .bp_plus4_odd_addr           (bp_plus4_odd_addr),
-        .bp_plus4_fetch_odd          (bp_plus4_fetch_odd),
-        .bp_plus8_even_addr          (bp_plus8_even_addr),
-        .bp_plus8_odd_addr           (bp_plus8_odd_addr),
-        .bp_plus8_fetch_odd          (bp_plus8_fetch_odd),
-        .bp_plus12_even_addr         (bp_plus12_even_addr),
-        .bp_plus12_odd_addr          (bp_plus12_odd_addr),
-        .bp_plus12_fetch_odd         (bp_plus12_fetch_odd)
-    );
-
-    irom_addr_ctrl u_irom_addr_ctrl (
-        .clk                       (clk),
-        .rst_n                     (rst_n),
-        .if_allowin                (if_allowin_w),
-        .predict_dual              (predict_dual),
-        .if_buf_before_window      (if_buf_before_window),
-        .mem_branch_replay         (mem_branch_replay),
-        .mem_branch_target         (mem_branch_target),
-        .ex_fast_redirect          (ex_fast_redirect),
-        .ex_fast_redirect_target   (ex_fast_redirect_target),
-        .ex_branch_redirect        (ex_branch_registered_flush),
-        .ex_branch_registered_to_target(actual_taken),
-        .ex_branch_target_pre      (ex_branch_target_pre),
-        .ex_fallthrough_pc         (ex_fallthrough_pc),
-        .ex_system_redirect        (ex_system_redirect),
-        .ex_system_target          (ex_system_target),
-        .ex_s1_branch_target       (ex_s1_branch_target),
-        .id_bp_redirect_raw        (id_bp_redirect_raw),
-        .id_redirect_target        (id_redirect_target),
-        .bp_taken_for_if           (bp_taken_for_if),
-        .bp_target_for_if          (bp_target_for_if),
-        .bp_even_addr              (bp_even_addr),
-        .bp_odd_addr               (bp_odd_addr),
-        .bp_fetch_odd              (bp_fetch_odd),
-        .bp_plus4_even_addr        (bp_plus4_even_addr),
-        .bp_plus4_odd_addr         (bp_plus4_odd_addr),
-        .bp_plus4_fetch_odd        (bp_plus4_fetch_odd),
-        .bp_plus8_even_addr        (bp_plus8_even_addr),
-        .bp_plus8_odd_addr         (bp_plus8_odd_addr),
-        .bp_plus8_fetch_odd        (bp_plus8_fetch_odd),
-        .bp_plus12_even_addr       (bp_plus12_even_addr),
-        .bp_plus12_odd_addr        (bp_plus12_odd_addr),
-        .bp_plus12_fetch_odd       (bp_plus12_fetch_odd),
-        .pc_plus4                  (pc_plus4),
-        .pc_plus8                  (pc_plus8),
-        .pc_plus12                 (pc_plus12),
-        .irom_addr                 (irom_addr),
-        .irom_even_addr            (irom_even_addr),
-        .irom_odd_addr             (irom_odd_addr),
-        .irom_fetch_odd            (irom_fetch_odd)
-    );
-
-    pc_reg u_pc_reg (
-        .clk           (clk),
-        .rst_n         (rst_n),
-        .if_allowin    (id_allowin),
-        .if_valid      (if_valid),
-        .branch_flush  (frontend_branch_flush),
-        .branch_target (frontend_branch_target),
-        .next_pc       (irom_addr),
-        .pc            (pc)
+    frontend_ftq u_frontend_ftq (
+        .clk              (clk),
+        .rst_n            (rst_n),
+        .id_allowin       (id_allowin),
+        .ex_redirect_valid(frontend_branch_flush),
+        .ex_redirect_target(frontend_branch_target),
+        .irom_addr        (irom_addr),
+        .irom_data        (irom_data),
+        .bp_lookup_pc     (),
+        .bp_taken         (bp_taken),
+        .bp_target        (bp_target),
+        .bp_ghr_snap      (bp_ghr_snap),
+        .bp_btb_hit       (bp_btb_hit),
+        .bp_btb_type      (bp_btb_type),
+        .bp_btb_bht       (bp_btb_bht),
+        .bp_pht_cnt       (bp_pht_cnt),
+        .bp_sel_cnt       (bp_sel_cnt),
+        .if_valid         (if_valid),
+        .if_ready_go      (if_ready_go_w),
+        .if_pc            (if_pc_out),
+        .if_inst0         (if_inst0_out),
+        .if_inst1         (if_inst1_out),
+        .if_s1_valid      (if_s1_valid),
+        .if_bp_taken      (if_bp_taken_out),
+        .if_bp_target     (if_bp_target_out),
+        .if_bp_ghr_snap   (if_bp_ghr_snap_out),
+        .if_bp_btb_hit    (if_bp_btb_hit_out),
+        .if_bp_btb_type   (if_bp_btb_type_out),
+        .if_bp_btb_bht    (if_bp_btb_bht_out),
+        .if_bp_pht_cnt    (if_bp_pht_cnt_out),
+        .if_bp_sel_cnt    (if_bp_sel_cnt_out),
+        .if_bp_verified   (if_bp_verified_out),
+        .current_pc       (pc),
+        .can_dual_issue   (can_dual_issue),
+        .raw_pair_raw     (raw_pair_raw),
+        .predict_dual     (predict_dual),
+        .irom_held_valid  (irom_held_valid),
+        .if_skip_out      (if_skip_out)
     );
 
     dual_issue_counter u_dual_issue_counter (
@@ -917,6 +779,7 @@ module cpu_top (
         .if_bp_btb_bht  (if_bp_btb_bht_out),
         .if_bp_pht_cnt  (if_bp_pht_cnt_out),
         .if_bp_sel_cnt  (if_bp_sel_cnt_out),
+        .if_bp_verified (if_bp_verified_out),
         .id_bp_taken    (id_bp_taken),
         .id_bp_target   (id_bp_target),
         .id_bp_ghr_snap (id_bp_ghr_snap),
@@ -924,7 +787,8 @@ module cpu_top (
         .id_bp_btb_type (id_bp_btb_type),  // NLP: type for ID verification
         .id_bp_btb_bht  (id_bp_btb_bht),
         .id_bp_pht_cnt  (id_bp_pht_cnt),
-        .id_bp_sel_cnt  (id_bp_sel_cnt)
+        .id_bp_sel_cnt  (id_bp_sel_cnt),
+        .id_bp_verified (id_bp_verified)
     );
 
     decoder u_decoder (

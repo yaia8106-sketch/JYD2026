@@ -40,6 +40,7 @@ module if_id_reg (
     input  logic [ 1:0] if_bp_btb_bht,
     input  logic [ 1:0] if_bp_pht_cnt,
     input  logic [ 1:0] if_bp_sel_cnt,
+    input  logic        if_bp_verified,
     output logic        id_bp_taken,
     output logic [31:0] id_bp_target,
     output logic [ 7:0] id_bp_ghr_snap,
@@ -47,7 +48,8 @@ module if_id_reg (
     output logic [ 1:0] id_bp_btb_type,    // NLP: entry type for ID verification
     output logic [ 1:0] id_bp_btb_bht,
     output logic [ 1:0] id_bp_pht_cnt,
-    output logic [ 1:0] id_bp_sel_cnt
+    output logic [ 1:0] id_bp_sel_cnt,
+    output logic        id_bp_verified
 );
 
     // ---- Handshake ----
@@ -69,9 +71,11 @@ module if_id_reg (
             id_bp_btb_bht   <= 2'd0;
             id_bp_pht_cnt   <= 2'd0;
             id_bp_sel_cnt   <= 2'd0;
+            id_bp_verified  <= 1'b0;
         end else if (id_flush) begin
             id_valid        <= 1'b0;
             id_s1_valid     <= 1'b0;
+            id_bp_verified  <= 1'b0;
         end else if (id_allowin) begin
             id_valid        <= if_valid & if_ready_go;
             id_pc           <= if_pc;
@@ -86,6 +90,7 @@ module if_id_reg (
             id_bp_btb_bht   <= if_bp_btb_bht;
             id_bp_pht_cnt   <= if_bp_pht_cnt;
             id_bp_sel_cnt   <= if_bp_sel_cnt;
+            id_bp_verified  <= if_bp_verified;
         end
     end
 
