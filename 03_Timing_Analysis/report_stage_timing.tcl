@@ -36,12 +36,29 @@ set GLOBAL_MAX_PATHS 25
 set CLK_PORT   "w_cpu_clk"
 set CLK_PERIOD 5.0
 
+# ---- 前置检查：必须已经 open_run synth_1/impl_1 或打开综合/实现设计 ----
+if {[catch {current_design} _current_design_name] || $_current_design_name eq ""} {
+    puts "================================================================"
+    puts " report_stage_timing.tcl — 流水线级间组合路径延迟分析"
+    puts "================================================================"
+    puts "\n✘ 错误：当前没有 open design。"
+    puts "  你现在可能只是 open_project 了工程，还没有打开 synth_1/impl_1。"
+    puts "  请在 Vivado Tcl Console 中执行："
+    puts "    open_project /home/anokyai/Desktop/CPU_Workspace/JYD2025_Contest-rv32i/digital_twin.xpr"
+    puts "    open_run impl_1"
+    puts "    source /home/anokyai/Desktop/CPU_Workspace/03_Timing_Analysis/report_stage_timing.tcl"
+    puts "\n  如果实现结果还没生成，先运行："
+    puts "    在 Vivado 工程中完成 synth_1/impl_1 后再运行本脚本。"
+    return
+}
+puts "  当前设计: $_current_design_name"
+
 # 设计层级前缀（自动检测）
 # 支持两种顶层配置：
 #   1. student_top 作为顶层 → TOP_HIER = ""
 #   2. top.sv 作为顶层，例化名 student_top_inst → TOP_HIER = "student_top_inst"
 #
-# 检测方法：查找 u_cpu/u_pc_reg 在哪个层次下
+# 检测方法：查找当前前端 u_cpu/u_frontend_ftq 在哪个层次下
 set TOP_HIER ""
 set _probe_patterns [list \
     ""                    \
@@ -50,9 +67,9 @@ set _probe_patterns [list \
 ]
 foreach _pat $_probe_patterns {
     if {$_pat eq ""} {
-        set _test_filter "IS_SEQUENTIAL == 1 && NAME =~ u_cpu/u_pc_reg/*"
+        set _test_filter "IS_SEQUENTIAL == 1 && NAME =~ u_cpu/u_frontend_ftq/*"
     } else {
-        set _test_filter "IS_SEQUENTIAL == 1 && NAME =~ ${_pat}/u_cpu/u_pc_reg/*"
+        set _test_filter "IS_SEQUENTIAL == 1 && NAME =~ ${_pat}/u_cpu/u_frontend_ftq/*"
     }
     set _test_cells [get_cells -quiet -hierarchical -filter $_test_filter]
     if {[llength $_test_cells] > 0} {
@@ -70,7 +87,7 @@ if {$TOP_HIER eq ""} {
 # 格式: {显示名称  层级通配模式（相对于 TOP_HIER）}
 # 脚本会在该层级下搜索所有 IS_SEQUENTIAL=1 的 cell
 set PIPELINE_GROUPS [list \
-    [list "Pre_IF(PC)"     "u_cpu/u_pc_reg"             ] \
+    [list "Frontend"       "u_cpu/u_frontend_ftq"       ] \
     [list "IF/ID"          "u_cpu/u_if_id_reg"           ] \
     [list "ID/EX.S0"       "u_cpu/u_id_ex_reg"           ] \
     [list "ID/EX.S1"       "u_cpu/u_id_ex_reg_s1"        ] \
@@ -80,10 +97,7 @@ set PIPELINE_GROUPS [list \
     [list "MEM/WB.S1"      "u_cpu/u_mem_wb_reg_s1"       ] \
     [list "RegFile"        "u_cpu/u_regfile"             ] \
     [list "BP(pred)"       "u_cpu/u_bp"                  ] \
-    [list "IF_Buffer"      "u_cpu/u_if_stage_buffer"     ] \
-    [list "IROM_Addr"      "u_cpu/u_irom_addr_ctrl"      ] \
-    [list "IROM_Data"      "u_irom_slot*"                ] \
-    [list "IssueCtl"       "u_cpu/u_dual_issue_decider"  ] \
+    [list "IROM_Data"      "u_irom"                      ] \
     [list "RedirectCtl"    "u_cpu/u_redirect_ctrl"       ] \
     [list "CSR/Trap"       "u_cpu/u_csr_trap_unit"       ] \
     [list "MulDiv"         "u_cpu/u_muldiv_unit"         ] \
@@ -95,7 +109,6 @@ set PIPELINE_GROUPS [list \
 # ---- 顶层零散寄存器组 ----
 # 格式: {显示名称  cell 名称通配模式（相对于 TOP_HIER，不自动追加 /*）}
 set EXTRA_SEQ_GROUPS [list \
-    [list "FetchWindow" "irom_fetch_odd_q_reg" ] \
 ]
 
 # ---- BRAM 组（特殊时序端点）----
@@ -249,7 +262,7 @@ if {[llength $existing_clocks] == 0} {
     if {[llength $clk_port] == 0} {
         log_msg "  ✘ 端口 $CLK_PORT 不存在！请检查 CLK_PORT 配置。"
         log_msg "    当前设计端口列表："
-        foreach p [get_ports *] { log_msg "      $p" }
+        foreach p [get_ports -quiet *] { log_msg "      $p" }
         close $report_file
         return
     }
@@ -330,7 +343,7 @@ log_msg "\n  共 $num_groups 个有效组\n"
 if {$num_groups == 0} {
     log_msg "\n✘ 未找到任何寄存器组，脚本退出。"
     log_msg "  请检查 TOP_HIER 和层级路径配置是否与综合后的设计匹配。"
-    log_msg "  提示：使用 get_cells -hierarchical *pc_reg* 手动验证。"
+    log_msg "  提示：使用 get_cells -hierarchical *frontend_ftq* 手动验证。"
     close $report_file
     return
 }

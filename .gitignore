@@ -11,12 +11,9 @@ rt-thread/
 Nutshell/
 NutShell/
 
-# --- Analysis Reports (regenerable) ---
-03_Analysis/reports/
-03_Analysis/stage_timing_report.txt
-03_Analysis/profile_report.*
-03_Analysis/vivado_work/
-03_Analysis/profiling/output/
+# --- Timing Analysis Reports (regenerable) ---
+03_Timing_Analysis/stage_timing_report.txt
+03_Timing_Analysis/vivado_work/
 
 # --- Simulation Artifacts ---
 02_Design/riscv_tests/work/*
