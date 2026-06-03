@@ -94,6 +94,16 @@ module frontend_ftq
         logic        is_fence;
         logic        is_illegal;
         logic        is_muldiv;
+        logic        is_load;
+        logic        is_store;
+        logic        is_alu_type;
+        logic        writes_rd;
+        logic        uses_rs1;
+        logic        uses_rs2;
+        logic        is_jump;
+        logic        is_control;
+        logic        is_lsu;
+        logic        force_single;
     } fq_entry_t;
 
     // ================================================================
@@ -238,6 +248,22 @@ module frontend_ftq
     wire f0_slot0_system = inst_is_system(f0_slot0_inst);
     wire f0_slot0_fence  = inst_is_fence(f0_slot0_inst);
     wire f0_slot0_illegal = inst_is_illegal(f0_slot0_inst);
+    wire f0_slot0_muldiv = inst_is_muldiv(f0_slot0_inst);
+    wire f0_slot0_load = inst_is_load(f0_slot0_inst);
+    wire f0_slot0_store = inst_is_store(f0_slot0_inst);
+    wire f0_slot0_alu_type = inst_is_alu_type(f0_slot0_inst);
+    wire f0_slot0_writes_rd = inst_writes_rd(f0_slot0_inst);
+    wire f0_slot0_uses_rs1 = inst_uses_rs1(f0_slot0_inst);
+    wire f0_slot0_uses_rs2 = inst_uses_rs2(f0_slot0_inst);
+    wire f0_slot0_jump = f0_slot0_jal || f0_slot0_jalr || f0_slot0_system;
+    wire f0_slot0_control = f0_slot0_branch || f0_slot0_jal
+                           || f0_slot0_jalr || f0_slot0_system;
+    wire f0_slot0_lsu = f0_slot0_load || f0_slot0_store;
+    wire f0_slot0_force_single = f0_slot0_jalr
+                                || f0_slot0_system
+                                || f0_slot0_fence
+                                || f0_slot0_illegal
+                                || f0_slot0_muldiv;
     wire f0_slot0_system_redirect = f0_slot0_system && (f0_slot0_inst[14:12] == 3'b000);
 
     wire f0_slot1_branch = inst_is_branch(f0_slot1_inst);
@@ -246,6 +272,22 @@ module frontend_ftq
     wire f0_slot1_system = inst_is_system(f0_slot1_inst);
     wire f0_slot1_fence  = inst_is_fence(f0_slot1_inst);
     wire f0_slot1_illegal = inst_is_illegal(f0_slot1_inst);
+    wire f0_slot1_muldiv = inst_is_muldiv(f0_slot1_inst);
+    wire f0_slot1_load = inst_is_load(f0_slot1_inst);
+    wire f0_slot1_store = inst_is_store(f0_slot1_inst);
+    wire f0_slot1_alu_type = inst_is_alu_type(f0_slot1_inst);
+    wire f0_slot1_writes_rd = inst_writes_rd(f0_slot1_inst);
+    wire f0_slot1_uses_rs1 = inst_uses_rs1(f0_slot1_inst);
+    wire f0_slot1_uses_rs2 = inst_uses_rs2(f0_slot1_inst);
+    wire f0_slot1_jump = f0_slot1_jal || f0_slot1_jalr || f0_slot1_system;
+    wire f0_slot1_control = f0_slot1_branch || f0_slot1_jal
+                           || f0_slot1_jalr || f0_slot1_system;
+    wire f0_slot1_lsu = f0_slot1_load || f0_slot1_store;
+    wire f0_slot1_force_single = f0_slot1_jalr
+                                || f0_slot1_system
+                                || f0_slot1_fence
+                                || f0_slot1_illegal
+                                || f0_slot1_muldiv;
 
     wire bp1_applicable = f0_accept_base
                         && f0_bp_btb_hit_r
@@ -307,7 +349,17 @@ module frontend_ftq
         f0_entry0.is_system = f0_slot0_system;
         f0_entry0.is_fence = f0_slot0_fence;
         f0_entry0.is_illegal = f0_slot0_illegal;
-        f0_entry0.is_muldiv = inst_is_muldiv(f0_slot0_inst);
+        f0_entry0.is_muldiv = f0_slot0_muldiv;
+        f0_entry0.is_load = f0_slot0_load;
+        f0_entry0.is_store = f0_slot0_store;
+        f0_entry0.is_alu_type = f0_slot0_alu_type;
+        f0_entry0.writes_rd = f0_slot0_writes_rd;
+        f0_entry0.uses_rs1 = f0_slot0_uses_rs1;
+        f0_entry0.uses_rs2 = f0_slot0_uses_rs2;
+        f0_entry0.is_jump = f0_slot0_jump;
+        f0_entry0.is_control = f0_slot0_control;
+        f0_entry0.is_lsu = f0_slot0_lsu;
+        f0_entry0.force_single = f0_slot0_force_single;
 
         f0_entry1 = '0;
         f0_entry1.valid = f0_enq1_valid;
@@ -321,13 +373,24 @@ module frontend_ftq
         f0_entry1.is_system = f0_slot1_system;
         f0_entry1.is_fence = f0_slot1_fence;
         f0_entry1.is_illegal = f0_slot1_illegal;
-        f0_entry1.is_muldiv = inst_is_muldiv(f0_slot1_inst);
+        f0_entry1.is_muldiv = f0_slot1_muldiv;
+        f0_entry1.is_load = f0_slot1_load;
+        f0_entry1.is_store = f0_slot1_store;
+        f0_entry1.is_alu_type = f0_slot1_alu_type;
+        f0_entry1.writes_rd = f0_slot1_writes_rd;
+        f0_entry1.uses_rs1 = f0_slot1_uses_rs1;
+        f0_entry1.uses_rs2 = f0_slot1_uses_rs2;
+        f0_entry1.is_jump = f0_slot1_jump;
+        f0_entry1.is_control = f0_slot1_control;
+        f0_entry1.is_lsu = f0_slot1_lsu;
+        f0_entry1.force_single = f0_slot1_force_single;
     end
 
     // ================================================================
     //  Instruction-granular fetch queue
     // ================================================================
     fq_entry_t fq_mem [0:FQ_DEPTH-1];
+    logic      fq_next_contiguous [0:FQ_DEPTH-1];
     logic [FQ_PTR_W-1:0] fq_head;
     logic [FQ_PTR_W-1:0] fq_tail;
     logic [FQ_PTR_W:0]   fq_count;
@@ -336,28 +399,34 @@ module frontend_ftq
     wire [FQ_PTR_W-1:0] fq_head_p2 = fq_head + {{(FQ_PTR_W-2){1'b0}}, 2'd2};
     wire [FQ_PTR_W-1:0] fq_tail_p1 = fq_tail + {{(FQ_PTR_W-1){1'b0}}, 1'b1};
     wire [FQ_PTR_W-1:0] fq_tail_p2 = fq_tail + {{(FQ_PTR_W-2){1'b0}}, 2'd2};
+    wire [FQ_PTR_W-1:0] fq_tail_m1 = fq_tail - {{(FQ_PTR_W-1){1'b0}}, 1'b1};
 
     fq_entry_t fq_head0;
     fq_entry_t fq_head1;
+    fq_entry_t fq_tail_prev;
 
     assign fq_head0 = fq_mem[fq_head];
     assign fq_head1 = fq_mem[fq_head_p1];
+    assign fq_tail_prev = fq_mem[fq_tail_m1];
 
     wire fq_has_slot0 = (fq_count != 0);
     wire fq_has_slot1 = (fq_count >= 2);
+    wire fq_head_next_contiguous = fq_next_contiguous[fq_head];
+    wire fq_tail_has_prev = (fq_count != 0);
+    wire fq_prev_tail_next_contiguous =
+        fq_tail_has_prev && ((fq_tail_prev.pc + 32'd4) == f0_slot0_pc);
 
     wire head_pair_contiguous = fq_has_slot1
                               && fq_head0.valid
                               && fq_head1.valid
-                              && (fq_head1.pc == (fq_head0.pc + 32'd4));
-    wire head0_is_jump = fq_head0.is_jal || fq_head0.is_jalr || fq_head0.is_system;
-    wire head0_is_control = fq_head0.is_branch || fq_head0.is_jal
-                           || fq_head0.is_jalr || fq_head0.is_system;
-    wire head0_is_lsu = inst_is_load(fq_head0.inst) || inst_is_store(fq_head0.inst);
-    wire head0_is_alu_type = inst_is_alu_type(fq_head0.inst);
-    wire head1_is_alu_type = inst_is_alu_type(fq_head1.inst);
-    wire head1_is_load = inst_is_load(fq_head1.inst);
-    wire head1_is_store = inst_is_store(fq_head1.inst);
+                              && fq_head_next_contiguous;
+    wire head0_is_jump = fq_head0.is_jump;
+    wire head0_is_control = fq_head0.is_control;
+    wire head0_is_lsu = fq_head0.is_lsu;
+    wire head0_is_alu_type = fq_head0.is_alu_type;
+    wire head1_is_alu_type = fq_head1.is_alu_type;
+    wire head1_is_load = fq_head1.is_load;
+    wire head1_is_store = fq_head1.is_store;
     wire head1_is_branch = fq_head1.is_branch;
     wire head1_is_jal = fq_head1.is_jal;
     wire head1_supported = (head1_is_alu_type && !head0_is_jump)
@@ -366,10 +435,10 @@ module frontend_ftq
                          || (head1_is_jal && head0_is_alu_type)
                          || (head1_is_branch && !head0_is_control && !head0_is_lsu);
 
-    wire head0_writes_rd = inst_writes_rd(fq_head0.inst);
+    wire head0_writes_rd = fq_head0.writes_rd;
     wire [4:0] head0_rd  = fq_head0.inst[11:7];
-    wire head1_uses_rs1 = inst_uses_rs1(fq_head1.inst);
-    wire head1_uses_rs2 = inst_uses_rs2(fq_head1.inst);
+    wire head1_uses_rs1 = fq_head1.uses_rs1;
+    wire head1_uses_rs2 = fq_head1.uses_rs2;
     wire [4:0] head1_rs1 = fq_head1.inst[19:15];
     wire [4:0] head1_rs2 = fq_head1.inst[24:20];
 
@@ -377,26 +446,21 @@ module frontend_ftq
                         && ((head1_uses_rs1 && (head1_rs1 == head0_rd))
                          || (head1_uses_rs2 && (head1_rs2 == head0_rd)));
 
-    wire head0_force_single = fq_head0.is_jalr
-                            || fq_head0.is_system
-                            || fq_head0.is_fence
-                            || fq_head0.is_illegal
-                            || fq_head0.is_muldiv;
-    wire head1_force_single = fq_head1.is_jalr
-                            || fq_head1.is_system
-                            || fq_head1.is_fence
-                            || fq_head1.is_illegal
-                            || fq_head1.is_muldiv;
+    wire head0_force_single = fq_head0.force_single;
+    wire head1_force_single = fq_head1.force_single;
 
-    assign can_dual_issue = head_pair_contiguous
-                          && !fq_head0.pred_taken
-                          && !head0_force_single
-                          && !head1_force_single
-                          && !fq_head0.is_muldiv
-                          && !raw_pair_raw
-                          && head1_supported;
-    assign predict_dual = can_dual_issue;
-    assign if_s1_valid = can_dual_issue;
+    wire pair_shape_ok = head_pair_contiguous
+                       && !fq_head0.pred_taken
+                       && !head0_force_single
+                       && !head1_force_single;
+    wire pair_dependency_ok = !raw_pair_raw;
+    wire pair_policy_ok = pair_shape_ok
+                        && pair_dependency_ok
+                        && head1_supported;
+
+    assign can_dual_issue = pair_policy_ok;
+    assign predict_dual = pair_policy_ok;
+    assign if_s1_valid = pair_policy_ok;
     assign if_valid = fq_has_slot0 && fq_head0.valid;
     assign if_ready_go = 1'b1;
 
@@ -414,13 +478,27 @@ module frontend_ftq
     assign if_bp_verified = fq_head0.bp_verified;
 
     wire if_accept = if_valid && if_ready_go && id_allowin;
-    wire [1:0] fq_deq_count = if_accept ? (can_dual_issue ? 2'd2 : 2'd1)
-                                        : 2'd0;
 
     wire [FQ_PTR_W:0] fq_count_p2 = fq_count + {{(FQ_PTR_W-1){1'b0}}, 2'd2};
     wire [FQ_PTR_W:0] fq_count_p1 = fq_count + {{FQ_PTR_W{1'b0}}, 1'b1};
     wire [FQ_PTR_W:0] fq_count_m1 = fq_count - {{FQ_PTR_W{1'b0}}, 1'b1};
     wire [FQ_PTR_W:0] fq_count_m2 = fq_count - {{(FQ_PTR_W-1){1'b0}}, 2'd2};
+
+    wire f0_enq_one  = (f0_enq_count == 2'd1);
+    wire f0_enq_two  = (f0_enq_count == 2'd2);
+
+    wire [FQ_PTR_W:0] fq_count_deq0_candidate =
+        f0_enq_two ? fq_count_p2 :
+        f0_enq_one ? fq_count_p1 :
+                     fq_count;
+    wire [FQ_PTR_W:0] fq_count_deq1_candidate =
+        f0_enq_two ? fq_count_p1 :
+        f0_enq_one ? fq_count :
+                     fq_count_m1;
+    wire [FQ_PTR_W:0] fq_count_deq2_candidate =
+        f0_enq_two ? fq_count :
+        f0_enq_one ? fq_count_m1 :
+                     fq_count_m2;
 
     logic [FQ_PTR_W-1:0] fq_head_next;
     logic [FQ_PTR_W-1:0] fq_tail_next;
@@ -437,18 +515,10 @@ module frontend_ftq
         else if (f0_enq_count == 2'd1)
             fq_tail_next = fq_tail_p1;
 
-        case ({f0_enq_count, fq_deq_count})
-            4'b00_00,
-            4'b01_01,
-            4'b10_10: fq_count_next = fq_count;
-            4'b01_00,
-            4'b10_01: fq_count_next = fq_count_p1;
-            4'b10_00: fq_count_next = fq_count_p2;
-            4'b00_01,
-            4'b01_10: fq_count_next = fq_count_m1;
-            4'b00_10: fq_count_next = fq_count_m2;
-            default:  fq_count_next = fq_count;
-        endcase
+        fq_count_next = if_accept
+                      ? (can_dual_issue ? fq_count_deq2_candidate
+                                        : fq_count_deq1_candidate)
+                      : fq_count_deq0_candidate;
     end
 
     wire ftq_alloc_ready = (ftq_count < FTQ_DEPTH_COUNT);
@@ -563,17 +633,27 @@ module frontend_ftq
             fq_head <= '0;
             fq_tail <= '0;
             fq_count <= '0;
-            for (i = 0; i < FQ_DEPTH; i = i + 1)
+            for (i = 0; i < FQ_DEPTH; i = i + 1) begin
                 fq_mem[i] <= '0;
+                fq_next_contiguous[i] <= 1'b0;
+            end
         end else if (ex_redirect_valid) begin
             fq_head <= '0;
             fq_tail <= '0;
             fq_count <= '0;
+            for (i = 0; i < FQ_DEPTH; i = i + 1)
+                fq_next_contiguous[i] <= 1'b0;
         end else begin
-            if (f0_enq0_payload)
+            if (f0_enq0_payload && fq_tail_has_prev)
+                fq_next_contiguous[fq_tail_m1] <= fq_prev_tail_next_contiguous;
+            if (f0_enq0_payload) begin
                 fq_mem[fq_tail] <= f0_entry0;
-            if (f0_enq1_payload)
+                fq_next_contiguous[fq_tail] <= f0_enq1_valid;
+            end
+            if (f0_enq1_payload) begin
                 fq_mem[fq_tail_p1] <= f0_entry1;
+                fq_next_contiguous[fq_tail_p1] <= 1'b0;
+            end
 
             fq_head <= fq_head_next;
             fq_tail <= fq_tail_next;

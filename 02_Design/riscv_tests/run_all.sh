@@ -24,8 +24,6 @@ SIMULATOR="${1:-iverilog}"
 # RTL 源文件 (cpu_top + dcache + 子模块)
 RTL_FILES="
     $RTL_DIR/cpu_defs.sv
-    $RTL_DIR/pc_reg.sv
-    $RTL_DIR/next_pc_mux.sv
     $RTL_DIR/if_id_reg.sv
     $RTL_DIR/decoder.sv
     $RTL_DIR/imm_gen.sv
@@ -47,9 +45,6 @@ RTL_FILES="
     $RTL_DIR/memory_access_unit.sv
     $RTL_DIR/muldiv_unit.sv
     $RTL_DIR/dual_issue_counter.sv
-    $RTL_DIR/dual_issue_decider.sv
-    $RTL_DIR/if_stage_buffer.sv
-    $RTL_DIR/irom_addr_ctrl.sv
     $RTL_DIR/ex_mem_reg.sv
     $RTL_DIR/ex_mem_reg_s1.sv
     $RTL_DIR/mem_wb_reg.sv
