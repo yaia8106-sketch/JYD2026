@@ -12,8 +12,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 WORKSPACE="$(cd "$SCRIPT_DIR/../.." && pwd)"
 RTL_DIR="$WORKSPACE/02_Design/rtl"
 CONTEST_RTL_DIR="$WORKSPACE/02_Design/contest_readonly/rtl"
-HEX_DIR="$WORKSPACE/03_Analysis/profiling/output/hex"
 WORK_DIR="$SCRIPT_DIR/work"
+HEX_DIR="${HEX_DIR:-$WORK_DIR/hex}"
 SIM_BIN="$WORK_DIR/student_top_coe_sim"
 
 TEST_NAME="${1:-new_with_Mext}"
@@ -44,7 +44,7 @@ DRAM_HEX="$HEX_DIR/${TEST_NAME}.dram.hex"
 for f in "$IROM_SLOT0" "$IROM_SLOT1" "$DRAM_HEX"; do
     if [ ! -f "$f" ]; then
         echo "ERROR: missing hex input: $f"
-        echo "       Generate profiling hex files first, or keep 03_Analysis/profiling/output/hex intact."
+        echo "       Set HEX_DIR=<dir> or generate the required student_top hex files under $HEX_DIR."
         exit 1
     fi
 done
@@ -69,6 +69,7 @@ RTL_FILES="
     $RTL_DIR/ex_stage_ctrl.sv
     $RTL_DIR/branch_unit.sv
     $RTL_DIR/branch_predictor.sv
+    $RTL_DIR/frontend_ftq.sv
     $RTL_DIR/mem_interface.sv
     $RTL_DIR/redirect_ctrl.sv
     $RTL_DIR/csr_trap_unit.sv

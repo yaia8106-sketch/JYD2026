@@ -2,7 +2,8 @@
 // ============================================================
 // Lightweight behavioral IP models for student_top COE simulation.
 // These models match the ports and latency assumptions used by student_top:
-// - IROMEven32/IROMOdd32: 4096x32 synchronous ROM, 1-cycle read.
+// - IROM64: 2048x64 synchronous ROM, 1-cycle read.
+// - IROMEven32/IROMOdd32: legacy 4096x32 synchronous ROMs.
 // - DRAM4MyOwn: 65536x32 SDP RAM with byte writes and 2-cycle read latency.
 // ============================================================
 
@@ -55,6 +56,58 @@ module IROMOdd32 (
 
     always @(posedge clka) begin
         douta <= mem[addra];
+    end
+endmodule
+
+module IROM64 (
+    input  wire        clka,
+    input  wire [11:0] addra,
+    output reg  [63:0] douta
+);
+    reg [31:0] flat_words [0:4095];
+    reg [31:0] slot0_words [0:4095];
+    reg [31:0] slot1_words [0:4095];
+    reg [1023:0] flat_file;
+    reg [1023:0] slot0_file;
+    reg [1023:0] slot1_file;
+    integer i;
+    integer banked_enable;
+    wire [12:0] flat_word0_addr = {addra, 1'b0};
+    wire [12:0] flat_word1_addr = {addra, 1'b1};
+
+    initial begin
+        for (i = 0; i < 4096; i = i + 1) begin
+            flat_words[i] = 32'h0000_0013;
+            slot0_words[i] = 32'h0000_0013;
+            slot1_words[i] = 32'h0000_0013;
+        end
+
+        banked_enable = 0;
+        if ($value$plusargs("irom_slot0=%s", slot0_file)) begin
+            if (!$value$plusargs("irom_slot1=%s", slot1_file)) begin
+                $display("ERROR: specify both +irom_slot0=<hex> and +irom_slot1=<hex> for IROM64");
+                $finish;
+            end
+            banked_enable = 1;
+            $readmemh(slot0_file, slot0_words);
+            $readmemh(slot1_file, slot1_words);
+        end else begin
+            if (!$value$plusargs("irom=%s", flat_file)) begin
+                $display("ERROR: specify +irom=<hex> or +irom_slot0=<hex> +irom_slot1=<hex> for IROM64");
+                $finish;
+            end
+            $readmemh(flat_file, flat_words);
+        end
+    end
+
+    always @(posedge clka) begin
+        if (banked_enable)
+            douta <= {slot1_words[addra], slot0_words[addra]};
+        else
+            douta <= {
+                (flat_word1_addr < 13'd4096) ? flat_words[flat_word1_addr[11:0]] : 32'h0000_0013,
+                (flat_word0_addr < 13'd4096) ? flat_words[flat_word0_addr[11:0]] : 32'h0000_0013
+            };
     end
 endmodule
 

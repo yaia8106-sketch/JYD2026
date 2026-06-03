@@ -37,6 +37,7 @@ RTL_FILES="
     $RTL_DIR/ex_stage_ctrl.sv
     $RTL_DIR/branch_unit.sv
     $RTL_DIR/branch_predictor.sv
+    $RTL_DIR/frontend_ftq.sv
     $RTL_DIR/mem_interface.sv
     $RTL_DIR/redirect_ctrl.sv
     $RTL_DIR/csr_trap_unit.sv
@@ -74,8 +75,14 @@ fi
 # Compile
 echo "[INFO] Compiling with iverilog..."
 SIM_BIN="$WORK_DIR/riscv_perf_sim"
+COMPILE_LOG="$WORK_DIR/riscv_perf_iverilog.log"
 # shellcheck disable=SC2086
-iverilog -g2012 -o "$SIM_BIN" $RTL_FILES 2>&1 | head -20
+if ! iverilog -g2012 -o "$SIM_BIN" $RTL_FILES >"$COMPILE_LOG" 2>&1; then
+    echo "ERROR: iverilog compilation failed"
+    head -80 "$COMPILE_LOG"
+    exit 1
+fi
+head -20 "$COMPILE_LOG"
 echo "[INFO] Compilation OK"
 echo ""
 
