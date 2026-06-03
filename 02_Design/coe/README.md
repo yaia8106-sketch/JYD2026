@@ -8,6 +8,16 @@
 
 ```
 coe/
+├── irom64/              ← 64-bit IROM COE（当前前端上板 IP 直接使用）
+│   ├── current/
+│   │   ├── irom64.coe       4096 个 64-bit entry，NOP padding
+│   │   └── dram.coe
+│   ├── src0/
+│   ├── src1/
+│   ├── src2/
+│   ├── new_without_Mext/
+│   └── new_with_Mext/
+│
 ├── single_issue/         ← 单发射（32-bit 顺序 IROM）
 │   ├── current/          ← 当前使用的 COE
 │   │   ├── irom.coe          1271 条指令
@@ -25,6 +35,7 @@ coe/
 │   ├── src1/
 │   └── src2/
 │
+├── convert_irom64_coe.py ← 32-bit 顺序 IROM → 64-bit IROM 转换工具
 ├── split_coe.py          ← 单发射 → 双发射转换工具
 ├── analyze_coe.py        ← 指令分布统计
 └── disasm_coe.py         ← COE 反汇编
@@ -32,14 +43,25 @@ coe/
 
 ## 使用说明
 
-- **Vivado 双发射工程**使用 `dual_issue/` 下的 `irom_slot0.coe` + `irom_slot1.coe`
+- **当前 FTQ/IROM64 Vivado 工程**使用 `irom64/` 下的 `irom64.coe`
+- `run_vivado_flow.tcl` 的 COE 参数默认仍是 `current`，但会优先解析到 `02_Design/coe/irom64/current`
 - **软件模型与 Iverilog COE 回归**使用 `single_issue/` 下的 `irom.coe`，testbench 内部再模拟双 bank 取指
+- **旧双 bank 结构**保留在 `dual_issue/` 下，用于兼容、对照和回归
 - DRAM coe 两种架构通用
+
+`irom64.coe` 的每个 entry 是两条顺序 32-bit 指令拼接而成：
+
+```
+entry[n] = { inst[2*n + 1], inst[2*n] }
+```
+
+其中低 32 位对应较低 PC，高 32 位对应 `PC+4`。不足 4096 个 64-bit entry 的部分用 `00000013`（RISC-V NOP）填充。
 
 ## COE 工具
 
 | 脚本 | 功能 | 用法 |
 |------|------|------|
+| `convert_irom64_coe.py` | 单发射 coe → 64-bit IROM coe | `python3 convert_irom64_coe.py` |
 | `split_coe.py` | 单发射 coe → 双发射 slot0/slot1 | `python3 split_coe.py single_issue/current/irom.coe dual_issue/current/` |
 | `analyze_coe.py` | 静态指令分布统计 | `python3 analyze_coe.py` |
 | `disasm_coe.py` | COE 反汇编为 RISC-V 汇编 | `python3 disasm_coe.py [dir...]` |
