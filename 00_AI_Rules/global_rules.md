@@ -180,12 +180,11 @@ COMMITS=50000 MAX_CYCLES=1500000 WATCHDOG_CYCLES=150000 bash run_coe_diff.sh cur
 ### Vivado 时序流
 
 ```bash
-open_project /home/anokyai/Desktop/CPU_Workspace/JYD2025_Contest-rv32i/digital_twin.xpr
-open_run impl_1
-source /home/anokyai/Desktop/CPU_Workspace/03_Timing_Analysis/report_stage_timing.tcl
+sta
 ```
 
 - 前提：Vivado 工程已经完成 `synth_1` / `impl_1`。
+- `sta` 只分析已有 `impl_1`，不会自动生成 implementation；若实现未完成会直接报错。
 - 报告输出：`03_Timing_Analysis/stage_timing_report.txt`。
 - Vivado 工作目录：`03_Timing_Analysis/vivado_work/`，已 gitignore。
 
@@ -227,6 +226,5 @@ source /home/anokyai/Desktop/CPU_Workspace/03_Timing_Analysis/report_stage_timin
 
 ## 9. 文档维护
 
-- 当前有效文档包括：`README.md`、`00_AI_Rules/global_rules.md`、`00_AI_Rules/architecture.md`、`02_Design/coe/README.md`、`02_Design/riscv_tests/test_coverage.md`。
-- RTL 改动通过回归后，同步更新 `architecture.md`。
-- 信号名必须与 RTL 一致；当前架构文档只写当前状态，不保存长实验档案。
+- 当前有效文档包括：`README.md`、`00_AI_Rules/global_rules.md`、`02_Design/coe/README.md`、`02_Design/riscv_tests/test_coverage.md`。
+- 信号名必须与 RTL 一致；工程文档只写当前状态，不保存长实验档案。
