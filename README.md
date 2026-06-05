@@ -10,6 +10,7 @@ AI 或人工接手工程时，先看本文件，再按需进入对应目录。
 
 按需阅读：
 
+- **`PERFORMANCE_OPTIMIZATION_PLAN.md`** — 性能优化总目标、profiling 计划和长短测试边界
 - **`02_Design/riscv_tests/test_coverage.md`** — 回归测试覆盖范围
 - **`02_Design/coe/README.md`** — COE 文件、转换脚本和静态分布
 - **`03_Timing_Analysis/sta.sh`** — 对已有 implementation 运行 timing 分组报告
