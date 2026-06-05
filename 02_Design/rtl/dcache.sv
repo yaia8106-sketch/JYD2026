@@ -115,7 +115,8 @@ module dcache (
         S_SB_DRAIN
     } state_t;
 
-    state_t state, state_nxt;
+    (* fsm_encoding = "one_hot" *) state_t state;
+    state_t state_nxt;
     logic [WORD_W-1:0]  rf_addr_cnt;  // counts addresses sent (0..LINE_WORDS-1)
     logic [WORD_W-1:0]  rf_data_cnt;  // counts data words received (0..LINE_WORDS-1)
     logic               rf_addr_done; // all addresses sent
@@ -365,9 +366,12 @@ module dcache (
     end
 
     // MEM-stage control signals
-    wire idle_miss      = mem_req & ~cache_hit & (state == S_IDLE);
-    wire idle_store_hit = mem_req & cache_hit & mem_wr & (state == S_IDLE);
-    wire idle_load_hit  = mem_req & cache_hit & ~mem_wr & (state == S_IDLE);
+    wire state_idle = (state == S_IDLE);
+    wire state_done = (state == S_DONE);
+
+    wire idle_miss      = mem_req & ~cache_hit & state_idle;
+    wire idle_store_hit = mem_req & cache_hit & mem_wr & state_idle;
+    wire idle_load_hit  = mem_req & cache_hit & ~mem_wr & state_idle;
     wire sb_conflict    = idle_store_hit & sb_valid;
 
 
@@ -656,20 +660,9 @@ module dcache (
     // ================================================================
     //  CPU ready
     // ================================================================
-    always_comb begin
-        if (!mem_req)
-            cpu_ready = 1'b1;
-        else begin
-            case (state)
-                S_IDLE:
-                    cpu_ready = cache_hit & ~sb_conflict;
-                S_DONE:
-                    cpu_ready = 1'b1;
-                default:
-                    cpu_ready = 1'b0;
-            endcase
-        end
-    end
+    assign cpu_ready = ~mem_req
+                     | state_done
+                     | (state_idle & cache_hit & ~sb_conflict);
 
     // ================================================================
     //  Background SB drain: when idle, no miss, SB valid → drain

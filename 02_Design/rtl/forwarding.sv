@@ -115,13 +115,20 @@ module forwarding (
     wire TAG``_s0_mem_hit = mem_valid    && mem_reg_write    && !mem_is_load    && (mem_rd    != 5'd0) && (mem_rd    == SRC_ADDR); \
     wire TAG``_s1_wb_hit  = wb_s1_valid  && wb_s1_reg_write  && (wb_s1_rd != 5'd0) && (wb_s1_rd == SRC_ADDR); \
     wire TAG``_s0_wb_hit  = wb_valid     && wb_reg_write     && (wb_rd    != 5'd0) && (wb_rd    == SRC_ADDR); \
-    assign OUT_DATA = TAG``_s1_ex_hit  ? ex_s1_fwd_val    : \
-                      TAG``_s0_ex_hit  ? ex_fwd_val       : \
-                      TAG``_s1_mem_hit ? mem_s1_fwd_val   : \
-                      TAG``_s0_mem_hit ? mem_fwd_val      : \
-                      TAG``_s1_wb_hit  ? wb_s1_write_data : \
-                      TAG``_s0_wb_hit  ? wb_write_data    : \
-                                          RF_DATA
+    wire TAG``_s1_ex_oh   = TAG``_s1_ex_hit; \
+    wire TAG``_s0_ex_oh   = ~TAG``_s1_ex_hit & TAG``_s0_ex_hit; \
+    wire TAG``_s1_mem_oh  = ~TAG``_s1_ex_hit & ~TAG``_s0_ex_hit & TAG``_s1_mem_hit; \
+    wire TAG``_s0_mem_oh  = ~TAG``_s1_ex_hit & ~TAG``_s0_ex_hit & ~TAG``_s1_mem_hit & TAG``_s0_mem_hit; \
+    wire TAG``_s1_wb_oh   = ~TAG``_s1_ex_hit & ~TAG``_s0_ex_hit & ~TAG``_s1_mem_hit & ~TAG``_s0_mem_hit & TAG``_s1_wb_hit; \
+    wire TAG``_s0_wb_oh   = ~TAG``_s1_ex_hit & ~TAG``_s0_ex_hit & ~TAG``_s1_mem_hit & ~TAG``_s0_mem_hit & ~TAG``_s1_wb_hit & TAG``_s0_wb_hit; \
+    wire TAG``_rf_oh      = ~TAG``_s1_ex_hit & ~TAG``_s0_ex_hit & ~TAG``_s1_mem_hit & ~TAG``_s0_mem_hit & ~TAG``_s1_wb_hit & ~TAG``_s0_wb_hit; \
+    assign OUT_DATA = ({32{TAG``_s1_ex_oh}}  & ex_s1_fwd_val)    | \
+                      ({32{TAG``_s0_ex_oh}}  & ex_fwd_val)       | \
+                      ({32{TAG``_s1_mem_oh}} & mem_s1_fwd_val)   | \
+                      ({32{TAG``_s0_mem_oh}} & mem_fwd_val)      | \
+                      ({32{TAG``_s1_wb_oh}}  & wb_s1_write_data) | \
+                      ({32{TAG``_s0_wb_oh}}  & wb_write_data)    | \
+                      ({32{TAG``_rf_oh}}     & RF_DATA)
 
     `FWD_MUX(s0_rs1, id_rs1_addr,    rf_rs1_data,    id_rs1_data);
     `FWD_MUX(s0_rs2, id_rs2_addr,    rf_rs2_data,    id_rs2_data);
@@ -152,11 +159,16 @@ module forwarding (
 
 `undef FWD_BRANCH_MUX
 
-    assign id_rs1_jalr_data = s0_rs1_s1_mem_hit ? mem_s1_fwd_val   :
-                              s0_rs1_s0_mem_hit ? mem_fwd_val      :
-                              s0_rs1_s1_wb_hit  ? wb_s1_write_data :
-                              s0_rs1_s0_wb_hit  ? wb_write_data    :
-                                                   rf_rs1_data;
+    wire s0_rs1_jalr_s1_mem_oh = s0_rs1_s1_mem_hit;
+    wire s0_rs1_jalr_s0_mem_oh = ~s0_rs1_s1_mem_hit & s0_rs1_s0_mem_hit;
+    wire s0_rs1_jalr_s1_wb_oh  = ~s0_rs1_s1_mem_hit & ~s0_rs1_s0_mem_hit & s0_rs1_s1_wb_hit;
+    wire s0_rs1_jalr_s0_wb_oh  = ~s0_rs1_s1_mem_hit & ~s0_rs1_s0_mem_hit & ~s0_rs1_s1_wb_hit & s0_rs1_s0_wb_hit;
+    wire s0_rs1_jalr_rf_oh     = ~s0_rs1_s1_mem_hit & ~s0_rs1_s0_mem_hit & ~s0_rs1_s1_wb_hit & ~s0_rs1_s0_wb_hit;
+    assign id_rs1_jalr_data = ({32{s0_rs1_jalr_s1_mem_oh}} & mem_s1_fwd_val)   |
+                              ({32{s0_rs1_jalr_s0_mem_oh}} & mem_fwd_val)      |
+                              ({32{s0_rs1_jalr_s1_wb_oh}}  & wb_s1_write_data) |
+                              ({32{s0_rs1_jalr_s0_wb_oh}}  & wb_write_data)    |
+                              ({32{s0_rs1_jalr_rf_oh}}     & rf_rs1_data);
 
     wire mem_load_ready_base = mem_valid & mem_reg_write & mem_is_load
                              & mem_load_ready & (mem_rd != 5'd0) & id_s0_alu_only;
