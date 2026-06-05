@@ -38,6 +38,14 @@ module frontend_ftq
     input  logic [ 1:0] bp_btb_bht,
     input  logic [ 1:0] bp_pht_cnt,
     input  logic [ 1:0] bp_sel_cnt,
+    input  logic        bp_s1_taken,
+    input  logic [31:0] bp_s1_target,
+    input  logic [ 7:0] bp_s1_ghr_snap,
+    input  logic        bp_s1_btb_hit,
+    input  logic [ 1:0] bp_s1_btb_type,
+    input  logic [ 1:0] bp_s1_btb_bht,
+    input  logic [ 1:0] bp_s1_pht_cnt,
+    input  logic [ 1:0] bp_s1_sel_cnt,
 
     // F1 output to IF/ID.
     output logic        if_valid,
@@ -55,6 +63,14 @@ module frontend_ftq
     output logic [ 1:0] if_bp_pht_cnt,
     output logic [ 1:0] if_bp_sel_cnt,
     output logic        if_bp_verified,
+    output logic        if_s1_bp_taken,
+    output logic [31:0] if_s1_bp_target,
+    output logic [ 7:0] if_s1_bp_ghr_snap,
+    output logic        if_s1_bp_btb_hit,
+    output logic [ 1:0] if_s1_bp_btb_type,
+    output logic [ 1:0] if_s1_bp_btb_bht,
+    output logic [ 1:0] if_s1_bp_pht_cnt,
+    output logic [ 1:0] if_s1_bp_sel_cnt,
 
     // Compatibility/debug signals used by existing performance monitors.
     output logic [31:0] current_pc,
@@ -75,10 +91,13 @@ module frontend_ftq
     typedef struct packed {
         logic        valid;
         logic [31:0] pc;
+        logic [31:0] pc_plus4;
         logic [31:0] inst;
 
         logic        pred_taken;
         logic [31:0] pred_target;
+        logic        bp_lookup_taken;
+        logic [31:0] bp_lookup_target;
         logic [ 7:0] bp_ghr_snap;
         logic        bp_btb_hit;
         logic [ 1:0] bp_btb_type;
@@ -105,6 +124,47 @@ module frontend_ftq
         logic        is_lsu;
         logic        force_single;
     } fq_entry_t;
+
+    function automatic logic fq_raw_dep(input fq_entry_t head0, input fq_entry_t head1);
+        logic [4:0] head0_rd;
+        logic [4:0] head1_rs1;
+        logic [4:0] head1_rs2;
+        begin
+            head0_rd = head0.inst[11:7];
+            head1_rs1 = head1.inst[19:15];
+            head1_rs2 = head1.inst[24:20];
+            fq_raw_dep = head0.writes_rd && (head0_rd != 5'd0)
+                       && ((head1.uses_rs1 && (head1_rs1 == head0_rd))
+                        || (head1.uses_rs2 && (head1_rs2 == head0_rd)));
+        end
+    endfunction
+
+    function automatic logic fq_pair_supported(input fq_entry_t head0, input fq_entry_t head1);
+        begin
+            fq_pair_supported = (head1.is_alu_type && !head0.is_jump)
+                              || (head1.is_load && head0.is_alu_type)
+                              || (head1.is_store && head0.is_alu_type)
+                              || (head1.is_jal && head0.is_alu_type)
+                              || (head1.is_branch && !head0.is_control && !head0.is_lsu);
+        end
+    endfunction
+
+    function automatic logic fq_pair_policy_ok(
+        input logic      contiguous,
+        input fq_entry_t head0,
+        input fq_entry_t head1
+    );
+        begin
+            fq_pair_policy_ok = contiguous
+                              && head0.valid
+                              && head1.valid
+                              && !head0.pred_taken
+                              && !head0.force_single
+                              && !head1.force_single
+                              && !fq_raw_dep(head0, head1)
+                              && fq_pair_supported(head0, head1);
+        end
+    endfunction
 
     // ================================================================
     //  Small predecode helpers
@@ -212,6 +272,14 @@ module frontend_ftq
     logic [ 1:0] f0_bp_btb_bht_r;
     logic [ 1:0] f0_bp_pht_cnt_r;
     logic [ 1:0] f0_bp_sel_cnt_r;
+    logic        f0_s1_bp_taken_r;
+    logic [31:0] f0_s1_bp_target_r;
+    logic [ 7:0] f0_s1_bp_ghr_snap_r;
+    logic        f0_s1_bp_btb_hit_r;
+    logic [ 1:0] f0_s1_bp_btb_type_r;
+    logic [ 1:0] f0_s1_bp_btb_bht_r;
+    logic [ 1:0] f0_s1_bp_pht_cnt_r;
+    logic [ 1:0] f0_s1_bp_sel_cnt_r;
 
     logic [FTQ_PTR_W-1:0] ftq_tail;
     logic [FTQ_PTR_W:0]   ftq_count;
@@ -333,9 +401,12 @@ module frontend_ftq
         f0_entry0 = '0;
         f0_entry0.valid = f0_enq0_valid;
         f0_entry0.pc = f0_slot0_pc;
+        f0_entry0.pc_plus4 = f0_slot0_pc + 32'd4;
         f0_entry0.inst = f0_slot0_inst;
         f0_entry0.pred_taken = bp1_final_taken;
         f0_entry0.pred_target = bp1_final_target;
+        f0_entry0.bp_lookup_taken = bp1_final_taken;
+        f0_entry0.bp_lookup_target = bp1_final_target;
         f0_entry0.bp_ghr_snap = f0_bp_ghr_snap_r;
         f0_entry0.bp_btb_hit = f0_bp_btb_hit_r;
         f0_entry0.bp_btb_type = f0_bp_btb_type_r;
@@ -364,9 +435,25 @@ module frontend_ftq
         f0_entry1 = '0;
         f0_entry1.valid = f0_enq1_valid;
         f0_entry1.pc = f0_slot1_pc;
+        f0_entry1.pc_plus4 = f0_slot1_pc + 32'd4;
         f0_entry1.inst = f0_slot1_inst;
+        // Slot1 prediction is not used to steer fetch in this design.  Keep
+        // the branch-unit prediction false so a taken slot1 control flow still
+        // redirects correctly, but retain the lookup result for training meta.
         f0_entry1.pred_taken = 1'b0;
         f0_entry1.pred_target = 32'd0;
+        f0_entry1.bp_lookup_taken = f0_s1_bp_taken_r;
+        f0_entry1.bp_lookup_target = f0_s1_bp_target_r;
+        f0_entry1.bp_ghr_snap = f0_s1_bp_ghr_snap_r;
+        f0_entry1.bp_btb_hit = f0_s1_bp_btb_hit_r;
+        f0_entry1.bp_btb_type = f0_s1_bp_btb_type_r;
+        f0_entry1.bp_btb_bht = f0_s1_bp_btb_bht_r;
+        f0_entry1.bp_pht_cnt = f0_s1_bp_pht_cnt_r;
+        f0_entry1.bp_sel_cnt = f0_s1_bp_sel_cnt_r;
+        // ID-stage tournament redirect only works for slot0 predictions that
+        // the frontend has already used for fetch steering.  Slot1 metadata is
+        // carried for training only, so suppress ID correction for it.
+        f0_entry1.bp_verified = 1'b1;
         f0_entry1.is_branch = f0_slot1_branch;
         f0_entry1.is_jal = f0_slot1_jal;
         f0_entry1.is_jalr = f0_slot1_jalr;
@@ -390,7 +477,7 @@ module frontend_ftq
     //  Instruction-granular fetch queue
     // ================================================================
     fq_entry_t fq_mem [0:FQ_DEPTH-1];
-    logic      fq_next_contiguous [0:FQ_DEPTH-1];
+    logic      fq_pair_ok [0:FQ_DEPTH-1];
     logic [FQ_PTR_W-1:0] fq_head;
     logic [FQ_PTR_W-1:0] fq_tail;
     logic [FQ_PTR_W:0]   fq_count;
@@ -411,52 +498,18 @@ module frontend_ftq
 
     wire fq_has_slot0 = (fq_count != 0);
     wire fq_has_slot1 = (fq_count >= 2);
-    wire fq_head_next_contiguous = fq_next_contiguous[fq_head];
     wire fq_tail_has_prev = (fq_count != 0);
     wire fq_prev_tail_next_contiguous =
-        fq_tail_has_prev && ((fq_tail_prev.pc + 32'd4) == f0_slot0_pc);
+        fq_tail_has_prev && (fq_tail_prev.pc_plus4 == f0_slot0_pc);
 
-    wire head_pair_contiguous = fq_has_slot1
-                              && fq_head0.valid
-                              && fq_head1.valid
-                              && fq_head_next_contiguous;
-    wire head0_is_jump = fq_head0.is_jump;
-    wire head0_is_control = fq_head0.is_control;
-    wire head0_is_lsu = fq_head0.is_lsu;
-    wire head0_is_alu_type = fq_head0.is_alu_type;
-    wire head1_is_alu_type = fq_head1.is_alu_type;
-    wire head1_is_load = fq_head1.is_load;
-    wire head1_is_store = fq_head1.is_store;
-    wire head1_is_branch = fq_head1.is_branch;
-    wire head1_is_jal = fq_head1.is_jal;
-    wire head1_supported = (head1_is_alu_type && !head0_is_jump)
-                         || (head1_is_load && head0_is_alu_type)
-                         || (head1_is_store && head0_is_alu_type)
-                         || (head1_is_jal && head0_is_alu_type)
-                         || (head1_is_branch && !head0_is_control && !head0_is_lsu);
+    wire fq_prev_tail_pair_ok =
+        fq_pair_policy_ok(fq_prev_tail_next_contiguous, fq_tail_prev, f0_entry0);
+    wire f0_entry0_pair_ok =
+        fq_pair_policy_ok(f0_enq1_valid, f0_entry0, f0_entry1);
 
-    wire head0_writes_rd = fq_head0.writes_rd;
-    wire [4:0] head0_rd  = fq_head0.inst[11:7];
-    wire head1_uses_rs1 = fq_head1.uses_rs1;
-    wire head1_uses_rs2 = fq_head1.uses_rs2;
-    wire [4:0] head1_rs1 = fq_head1.inst[19:15];
-    wire [4:0] head1_rs2 = fq_head1.inst[24:20];
+    assign raw_pair_raw = fq_raw_dep(fq_head0, fq_head1);
 
-    assign raw_pair_raw = head0_writes_rd && (head0_rd != 5'd0)
-                        && ((head1_uses_rs1 && (head1_rs1 == head0_rd))
-                         || (head1_uses_rs2 && (head1_rs2 == head0_rd)));
-
-    wire head0_force_single = fq_head0.force_single;
-    wire head1_force_single = fq_head1.force_single;
-
-    wire pair_shape_ok = head_pair_contiguous
-                       && !fq_head0.pred_taken
-                       && !head0_force_single
-                       && !head1_force_single;
-    wire pair_dependency_ok = !raw_pair_raw;
-    wire pair_policy_ok = pair_shape_ok
-                        && pair_dependency_ok
-                        && head1_supported;
+    wire pair_policy_ok = fq_has_slot1 && fq_pair_ok[fq_head];
 
     assign can_dual_issue = pair_policy_ok;
     assign predict_dual = pair_policy_ok;
@@ -476,6 +529,14 @@ module frontend_ftq
     assign if_bp_pht_cnt  = fq_head0.bp_pht_cnt;
     assign if_bp_sel_cnt  = fq_head0.bp_sel_cnt;
     assign if_bp_verified = fq_head0.bp_verified;
+    assign if_s1_bp_taken    = fq_head1.bp_lookup_taken;
+    assign if_s1_bp_target   = fq_head1.bp_lookup_target;
+    assign if_s1_bp_ghr_snap = fq_head1.bp_ghr_snap;
+    assign if_s1_bp_btb_hit  = fq_head1.bp_btb_hit;
+    assign if_s1_bp_btb_type = fq_head1.bp_btb_type;
+    assign if_s1_bp_btb_bht  = fq_head1.bp_btb_bht;
+    assign if_s1_bp_pht_cnt  = fq_head1.bp_pht_cnt;
+    assign if_s1_bp_sel_cnt  = fq_head1.bp_sel_cnt;
 
     wire if_accept = if_valid && if_ready_go && id_allowin;
 
@@ -500,26 +561,24 @@ module frontend_ftq
         f0_enq_one ? fq_count_m1 :
                      fq_count_m2;
 
-    logic [FQ_PTR_W-1:0] fq_head_next;
-    logic [FQ_PTR_W-1:0] fq_tail_next;
-    logic [FQ_PTR_W:0]   fq_count_next;
+    wire if_accept_dual = if_accept & can_dual_issue;
+    wire if_accept_single = if_accept & ~can_dual_issue;
+    wire f0_enq_none = ~f0_enq_two & ~f0_enq_one;
 
-    always @* begin
-        fq_head_next = fq_head;
-        if (if_accept)
-            fq_head_next = can_dual_issue ? fq_head_p2 : fq_head_p1;
+    wire [FQ_PTR_W-1:0] fq_head_next =
+        ({FQ_PTR_W{if_accept_dual}}   & fq_head_p2) |
+        ({FQ_PTR_W{if_accept_single}} & fq_head_p1) |
+        ({FQ_PTR_W{~if_accept}}       & fq_head);
 
-        fq_tail_next = fq_tail;
-        if (f0_enq_count == 2'd2)
-            fq_tail_next = fq_tail_p2;
-        else if (f0_enq_count == 2'd1)
-            fq_tail_next = fq_tail_p1;
+    wire [FQ_PTR_W-1:0] fq_tail_next =
+        ({FQ_PTR_W{f0_enq_two}}  & fq_tail_p2) |
+        ({FQ_PTR_W{f0_enq_one}}  & fq_tail_p1) |
+        ({FQ_PTR_W{f0_enq_none}} & fq_tail);
 
-        fq_count_next = if_accept
-                      ? (can_dual_issue ? fq_count_deq2_candidate
-                                        : fq_count_deq1_candidate)
-                      : fq_count_deq0_candidate;
-    end
+    wire [FQ_PTR_W:0] fq_count_next =
+        ({(FQ_PTR_W+1){if_accept_dual}}   & fq_count_deq2_candidate) |
+        ({(FQ_PTR_W+1){if_accept_single}} & fq_count_deq1_candidate) |
+        ({(FQ_PTR_W+1){~if_accept}}       & fq_count_deq0_candidate);
 
     wire ftq_alloc_ready = (ftq_count < FTQ_DEPTH_COUNT);
     wire fq_credit_for_bp0 = f0_valid_r ? (fq_count <= FQ_DEPTH_MINUS_4)
@@ -563,6 +622,14 @@ module frontend_ftq
             f0_bp_btb_bht_r <= 2'd0;
             f0_bp_pht_cnt_r <= 2'd0;
             f0_bp_sel_cnt_r <= 2'd0;
+            f0_s1_bp_taken_r <= 1'b0;
+            f0_s1_bp_target_r <= 32'd0;
+            f0_s1_bp_ghr_snap_r <= 8'd0;
+            f0_s1_bp_btb_hit_r <= 1'b0;
+            f0_s1_bp_btb_type_r <= 2'd0;
+            f0_s1_bp_btb_bht_r <= 2'd0;
+            f0_s1_bp_pht_cnt_r <= 2'd0;
+            f0_s1_bp_sel_cnt_r <= 2'd0;
         end else if (redirect_valid) begin
             f0_valid_r <= 1'b0;
         end else begin
@@ -580,6 +647,14 @@ module frontend_ftq
                 f0_bp_btb_bht_r <= bp_btb_bht;
                 f0_bp_pht_cnt_r <= bp_pht_cnt;
                 f0_bp_sel_cnt_r <= bp_sel_cnt;
+                f0_s1_bp_taken_r <= bp_s1_taken;
+                f0_s1_bp_target_r <= bp_s1_target;
+                f0_s1_bp_ghr_snap_r <= bp_s1_ghr_snap;
+                f0_s1_bp_btb_hit_r <= bp_s1_btb_hit;
+                f0_s1_bp_btb_type_r <= bp_s1_btb_type;
+                f0_s1_bp_btb_bht_r <= bp_s1_btb_bht;
+                f0_s1_bp_pht_cnt_r <= bp_s1_pht_cnt;
+                f0_s1_bp_sel_cnt_r <= bp_s1_sel_cnt;
             end
         end
     end
@@ -635,24 +710,24 @@ module frontend_ftq
             fq_count <= '0;
             for (i = 0; i < FQ_DEPTH; i = i + 1) begin
                 fq_mem[i] <= '0;
-                fq_next_contiguous[i] <= 1'b0;
+                fq_pair_ok[i] <= 1'b0;
             end
         end else if (ex_redirect_valid) begin
             fq_head <= '0;
             fq_tail <= '0;
             fq_count <= '0;
             for (i = 0; i < FQ_DEPTH; i = i + 1)
-                fq_next_contiguous[i] <= 1'b0;
+                fq_pair_ok[i] <= 1'b0;
         end else begin
             if (f0_enq0_payload && fq_tail_has_prev)
-                fq_next_contiguous[fq_tail_m1] <= fq_prev_tail_next_contiguous;
+                fq_pair_ok[fq_tail_m1] <= fq_prev_tail_pair_ok;
             if (f0_enq0_payload) begin
                 fq_mem[fq_tail] <= f0_entry0;
-                fq_next_contiguous[fq_tail] <= f0_enq1_valid;
+                fq_pair_ok[fq_tail] <= f0_entry0_pair_ok;
             end
             if (f0_enq1_payload) begin
                 fq_mem[fq_tail_p1] <= f0_entry1;
-                fq_next_contiguous[fq_tail_p1] <= 1'b0;
+                fq_pair_ok[fq_tail_p1] <= 1'b0;
             end
 
             fq_head <= fq_head_next;

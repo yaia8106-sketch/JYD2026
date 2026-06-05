@@ -17,6 +17,7 @@ module id_ex_reg_s1 (
     input  logic [31:0] id_inst,
     input  logic [31:0] id_alu_src1,
     input  logic [31:0] id_alu_src2,
+    input  logic [31:0] id_control_target,
     input  logic [31:0] id_rs1_data,
     input  logic [31:0] id_rs2_data,
     input  logic [ 4:0] id_rd,
@@ -33,12 +34,20 @@ module id_ex_reg_s1 (
     input  logic [ 2:0] id_branch_cond,
     input  logic        id_is_jal,
     input  logic        id_is_jalr,
+    input  logic        id_bp_taken,
+    input  logic [31:0] id_bp_target,
+    input  logic [ 7:0] id_bp_ghr_snap,
+    input  logic        id_bp_btb_hit,
+    input  logic [ 1:0] id_bp_btb_bht,
+    input  logic [ 1:0] id_bp_pht_cnt,
+    input  logic [ 1:0] id_bp_sel_cnt,
 
     output logic        ex_s1_valid,
     output logic [31:0] ex_s1_pc,
     output logic [31:0] ex_s1_inst,
     output logic [31:0] ex_s1_alu_src1,
     output logic [31:0] ex_s1_alu_src2,
+    output logic [31:0] ex_s1_control_target,
     output logic [31:0] ex_s1_rs1_data,
     output logic [31:0] ex_s1_rs2_data,
     output logic [ 4:0] ex_s1_rd,
@@ -54,7 +63,14 @@ module id_ex_reg_s1 (
     output logic        ex_s1_is_branch,
     output logic [ 2:0] ex_s1_branch_cond,
     output logic        ex_s1_is_jal,
-    output logic        ex_s1_is_jalr
+    output logic        ex_s1_is_jalr,
+    output logic        ex_s1_bp_taken,
+    output logic [31:0] ex_s1_bp_target,
+    output logic [ 7:0] ex_s1_bp_ghr_snap,
+    output logic        ex_s1_bp_btb_hit,
+    output logic [ 1:0] ex_s1_bp_btb_bht,
+    output logic [ 1:0] ex_s1_bp_pht_cnt,
+    output logic [ 1:0] ex_s1_bp_sel_cnt
 );
 
     always_ff @(posedge clk or negedge rst_n) begin
@@ -64,6 +80,7 @@ module id_ex_reg_s1 (
             ex_s1_inst         <= 32'd0;
             ex_s1_alu_src1     <= 32'd0;
             ex_s1_alu_src2     <= 32'd0;
+            ex_s1_control_target <= 32'd0;
             ex_s1_rs1_data     <= 32'd0;
             ex_s1_rs2_data     <= 32'd0;
             ex_s1_rd           <= 5'd0;
@@ -80,14 +97,23 @@ module id_ex_reg_s1 (
             ex_s1_branch_cond  <= 3'd0;
             ex_s1_is_jal       <= 1'b0;
             ex_s1_is_jalr      <= 1'b0;
+            ex_s1_bp_taken     <= 1'b0;
+            ex_s1_bp_target    <= 32'd0;
+            ex_s1_bp_ghr_snap  <= 8'd0;
+            ex_s1_bp_btb_hit   <= 1'b0;
+            ex_s1_bp_btb_bht   <= 2'd0;
+            ex_s1_bp_pht_cnt   <= 2'd0;
+            ex_s1_bp_sel_cnt   <= 2'd0;
         end else if (ex_flush) begin
             ex_s1_valid        <= 1'b0;
+            ex_s1_bp_taken     <= 1'b0;
         end else if (ex_allowin) begin
             ex_s1_valid        <= id_s1_valid & id_ready_go;
             ex_s1_pc           <= id_pc;
             ex_s1_inst         <= id_inst;
             ex_s1_alu_src1     <= id_alu_src1;
             ex_s1_alu_src2     <= id_alu_src2;
+            ex_s1_control_target <= id_control_target;
             ex_s1_rs1_data     <= id_rs1_data;
             ex_s1_rs2_data     <= id_rs2_data;
             ex_s1_rd           <= id_rd;
@@ -104,6 +130,13 @@ module id_ex_reg_s1 (
             ex_s1_branch_cond  <= id_branch_cond;
             ex_s1_is_jal       <= id_is_jal & id_s1_valid;
             ex_s1_is_jalr      <= id_is_jalr & id_s1_valid;
+            ex_s1_bp_taken     <= id_bp_taken;
+            ex_s1_bp_target    <= id_bp_target;
+            ex_s1_bp_ghr_snap  <= id_bp_ghr_snap;
+            ex_s1_bp_btb_hit   <= id_bp_btb_hit;
+            ex_s1_bp_btb_bht   <= id_bp_btb_bht;
+            ex_s1_bp_pht_cnt   <= id_bp_pht_cnt;
+            ex_s1_bp_sel_cnt   <= id_bp_sel_cnt;
         end
     end
 

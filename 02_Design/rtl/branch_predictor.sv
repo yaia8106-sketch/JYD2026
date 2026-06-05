@@ -47,6 +47,20 @@ module branch_predictor (
     output logic [ 1:0] bp_pht_cnt,     // GShare PHT counter
     output logic [ 1:0] bp_sel_cnt,     // Selector counter
 
+    // ==== Slot1 candidate snapshot ====
+    // Read-only metadata for the instruction at if_pc + 4.  This port uses the
+    // same non-bypassed history snapshot as BP0 so the value carried to EX is
+    // the state observed by this fetch packet, not a same-edge EX update.
+    input  logic [31:0] s1_pc,
+    output logic        s1_bp_taken,
+    output logic [31:0] s1_bp_target,
+    output logic [ 7:0] s1_bp_ghr_snap,
+    output logic        s1_bp_btb_hit,
+    output logic [ 1:0] s1_bp_btb_type,
+    output logic [ 1:0] s1_bp_btb_bht,
+    output logic [ 1:0] s1_bp_pht_cnt,
+    output logic [ 1:0] s1_bp_sel_cnt,
+
     // ==== Lookahead L0 prediction ====
     // Used by cpu_top to pre-budget the next-cycle skip_inst0 fetch.  History
     // counters use lightweight same-edge bypassing, while target tables are
@@ -90,6 +104,7 @@ module branch_predictor (
     input  logic [ 4:0] ex_rs1_addr,
     input  logic        ex_actual_taken,    // actual outcome (from branch_unit)
     input  logic [31:0] ex_actual_target,   // actual target  (from branch_unit)
+    input  logic        ex_btb_allocate,    // allow allocating a new branch BTB entry
 
     // Snapshot inputs (from pipeline, originally produced in IF)
     input  logic [ 7:0] ex_ghr_snap,
@@ -316,6 +331,55 @@ module branch_predictor (
     assign bp_sel_cnt  = if_sel_val;
 
     // ================================================================
+    //  Slot1 candidate snapshot
+    // ================================================================
+
+    wire [BTB_IDX_W-1:0] s1_idx = s1_pc[8:2];
+    wire [BTB_TAG_W-1:0] s1_tag = s1_pc[13:9];
+    wire [JALR_IDX_W-1:0] s1_jalr_idx = s1_pc[4:2];
+    wire [JALR_TAG_W-1:0] s1_jalr_tag = s1_pc[13:5];
+
+    wire                 s1_r_valid = btb_valid[s1_idx];
+    wire [BTB_TAG_W-1:0] s1_r_tag   = btb_tag  [s1_idx];
+    wire [BTB_TGT_W-1:0] s1_r_tgt   = btb_tgt  [s1_idx];
+    wire [1:0]           s1_r_type  = btb_type [s1_idx];
+    wire [1:0]           s1_r_bht   = btb_bht  [s1_idx];
+    wire                 s1_r_l0_taken = btb_l0_taken[s1_idx];
+    wire                 s1_r_needs_ras = btb_needs_ras[s1_idx];
+
+    wire                  s1_jr_valid = jalr_valid[s1_jalr_idx];
+    wire [JALR_TAG_W-1:0] s1_jr_tag   = jalr_tag  [s1_jalr_idx];
+    wire [BTB_TGT_W-1:0]  s1_jr_tgt   = jalr_tgt  [s1_jalr_idx];
+    wire                  s1_jr_needs_ras = jalr_needs_ras[s1_jalr_idx];
+
+    wire s1_tag_match = (s1_r_tag == s1_tag);
+    wire s1_btb_hit_w = s1_r_valid & s1_tag_match;
+    wire s1_jr_hit    = s1_jr_valid & (s1_jr_tag == s1_jalr_tag);
+    wire s1_jr_taken  = s1_jr_hit & (~s1_jr_needs_ras | ras_valid);
+    wire s1_btb_taken = s1_r_valid & s1_r_l0_taken
+                      & (~s1_r_needs_ras | ras_valid)
+                      & s1_tag_match;
+
+    wire [GHR_W-1:0] s1_pht_idx = ghr ^ s1_pc[9:2];
+    wire [1:0]       s1_pht_val = pht[s1_pht_idx];
+    wire [GHR_W-1:0] s1_sel_idx = ghr;
+    wire [1:0]       s1_sel_val = sel_table[s1_sel_idx];
+
+    wire [31:0] s1_main_target = s1_r_needs_ras ? ras_top
+                                                 : {s1_r_tgt, 2'b00};
+    wire [31:0] s1_jr_target = s1_jr_needs_ras ? ras_top
+                                                : {s1_jr_tgt, 2'b00};
+
+    assign s1_bp_taken = s1_jr_taken | s1_btb_taken;
+    assign s1_bp_target = s1_jr_taken ? s1_jr_target : s1_main_target;
+    assign s1_bp_ghr_snap = ghr;
+    assign s1_bp_btb_hit  = s1_btb_hit_w;
+    assign s1_bp_btb_type = s1_btb_hit_w ? s1_r_type : 2'b00;
+    assign s1_bp_btb_bht  = s1_r_bht;
+    assign s1_bp_pht_cnt  = s1_pht_val;
+    assign s1_bp_sel_cnt  = s1_sel_val;
+
+    // ================================================================
     //  EX stage — Update logic (combinational signals for sequential)
     // ================================================================
 
@@ -342,12 +406,13 @@ module branch_predictor (
     // Any update-worthy instruction in EX
     wire ex_update = ex_valid & (ex_is_branch | ex_is_jal | ex_is_jalr);
 
-    // ---- BTB write decision (parallelized: actual_taken as late MUX select) ----
-    wire ex_btb_write_if_taken     = ex_update &
-                                     (ex_is_jal | ex_main_jalr | ex_is_branch);
-    wire ex_btb_write_if_not_taken = ex_update &
-                                     (ex_is_jal | ex_main_jalr | (ex_is_branch & ex_btb_hit));
-    wire ex_btb_write = ex_actual_taken ? ex_btb_write_if_taken : ex_btb_write_if_not_taken;
+    // BTB hit updates and direct jumps write regardless of actual direction.
+    // Only a taken branch miss with allocation enabled needs actual_taken.
+    wire ex_btb_write_always = ex_update &
+                               (ex_is_jal | ex_main_jalr | (ex_is_branch & ex_btb_hit));
+    wire ex_btb_write_alloc_taken = ex_update & ex_is_branch
+                                  & ex_btb_allocate & ex_actual_taken;
+    wire ex_btb_write = ex_btb_write_always | ex_btb_write_alloc_taken;
 
     wire ex_jalr_side_write = ex_update & ex_sidecar_jalr;
 

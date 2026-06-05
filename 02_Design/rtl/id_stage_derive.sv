@@ -118,13 +118,20 @@ module id_stage_derive (
     wire id_use_bimodal    = (id_bp_sel_cnt >= 2'd2);
     assign id_tournament_taken = id_use_bimodal ? id_bimodal_taken : id_gshare_taken;
 
-    assign id_bp_redirect_raw = id_valid & ~mem_branch_flush
-                              & ~id_bp_verified
-                              & id_bp_btb_hit
-                              & (id_bp_btb_type == 2'b10)
-                              & (id_bp_btb_bht[1] != id_tournament_taken);
+    wire id_bp_branch_candidate = id_valid & ~mem_branch_flush
+                                 & ~id_bp_verified
+                                 & id_bp_btb_hit
+                                 & (id_bp_btb_type == 2'b10);
+    wire id_bp_redirect_taken_raw = id_bp_branch_candidate
+                                  & id_tournament_taken
+                                  & ~id_bp_btb_bht[1];
+    wire id_bp_redirect_nt_raw = id_bp_branch_candidate
+                               & ~id_tournament_taken
+                               & id_bp_btb_bht[1];
+
+    assign id_bp_redirect_raw = id_bp_redirect_taken_raw | id_bp_redirect_nt_raw;
     assign id_bp_redirect = id_bp_redirect_raw & id_ready_go & ex_allowin;
-    assign id_s1_squash_raw = id_bp_redirect_raw & id_tournament_taken;
+    assign id_s1_squash_raw = id_bp_redirect_taken_raw;
     assign id_redirect_target = id_tournament_taken ? id_bp_target
                                                     : id_pc_plus_4;
 

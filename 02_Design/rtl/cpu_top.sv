@@ -145,6 +145,7 @@ module cpu_top (
     wire [31:0] id_alu_src2;
     wire [31:0] id_s1_alu_src1;
     wire [31:0] id_s1_alu_src2;
+    wire [31:0] id_s1_control_target;
 
     // ---- ID/EX ----
     wire        ex_valid;
@@ -195,6 +196,7 @@ module cpu_top (
     wire        ex_s1_is_jal;
     wire        ex_s1_is_jalr;
     wire [31:0] ex_s1_alu_src1, ex_s1_alu_src2;
+    wire [31:0] ex_s1_control_target;
     wire [31:0] ex_s1_rs1_data, ex_s1_rs2_data;
 
     // ---- ALU ----
@@ -220,6 +222,7 @@ module cpu_top (
     wire        ex_branch_registered_flush;
     wire        ex_s1_branch_redirect; // Slot1 branch delayed frontend redirect
     wire [31:0] ex_s1_branch_target;
+    wire        ex_s1_actual_taken;
     wire        ex_redirect_fire;
     wire        ex_system_inst;
     wire        ex_system_redirect;
@@ -381,7 +384,9 @@ module cpu_top (
         .ex_valid            (ex_valid),
         .ex_mem_read_en      (ex_mem_read_en),
         .ex_mem_write_en     (ex_mem_write_en),
-        .ex_alu_addr         (alu_addr),
+        // LSU consumers are stalled until their operands are available in ID, so
+        // the DCache/MMIO address path does not need the late WB repair mux.
+        .ex_alu_addr         (alu_forward_addr),
         .ex_store_wea        (dram_wea),
         .ex_store_data       (store_data_shifted),
         .ex_s1_valid         (ex_s1_valid),
@@ -470,6 +475,16 @@ module cpu_top (
     wire [ 1:0] bp_pht_cnt;
     wire [ 1:0] bp_sel_cnt;
 
+    // Slot1 candidate prediction snapshot for FQ metadata.
+    wire        bp_s1_taken;
+    wire [31:0] bp_s1_target;
+    wire [ 7:0] bp_s1_ghr_snap;
+    wire        bp_s1_btb_hit;
+    wire [ 1:0] bp_s1_btb_type;
+    wire [ 1:0] bp_s1_btb_bht;
+    wire [ 1:0] bp_s1_pht_cnt;
+    wire [ 1:0] bp_s1_sel_cnt;
+
     // Skip-inst0 lookahead prediction (for next-cycle buffered slot1 fetch)
     wire        la_bp_taken;
     wire [31:0] la_bp_target;
@@ -507,6 +522,14 @@ module cpu_top (
     wire [ 1:0] id_bp_pht_cnt;
     wire [ 1:0] id_bp_sel_cnt;
     wire        id_bp_verified;
+    wire        id_s1_bp_taken;
+    wire [31:0] id_s1_bp_target;
+    wire [ 7:0] id_s1_bp_ghr_snap;
+    wire        id_s1_bp_btb_hit;
+    wire [ 1:0] id_s1_bp_btb_type;
+    wire [ 1:0] id_s1_bp_btb_bht;
+    wire [ 1:0] id_s1_bp_pht_cnt;
+    wire [ 1:0] id_s1_bp_sel_cnt;
 
     // EX stage prediction (from ID/EX reg)
     wire        ex_bp_taken;
@@ -516,6 +539,32 @@ module cpu_top (
     wire [ 1:0] ex_bp_btb_bht;
     wire [ 1:0] ex_bp_pht_cnt;
     wire [ 1:0] ex_bp_sel_cnt;
+    wire        ex_s1_bp_taken;
+    wire [31:0] ex_s1_bp_target;
+    wire [ 7:0] ex_s1_bp_ghr_snap;
+    wire        ex_s1_bp_btb_hit;
+    wire [ 1:0] ex_s1_bp_btb_bht;
+    wire [ 1:0] ex_s1_bp_pht_cnt;
+    wire [ 1:0] ex_s1_bp_sel_cnt;
+
+    wire        s0_bp_update_valid_raw;
+    wire        s1_bp_update_valid_raw;
+    wire        bp_train_from_s1;
+    wire        bp_train_valid;
+    wire [31:0] bp_train_pc;
+    wire        bp_train_is_branch;
+    wire        bp_train_is_jal;
+    wire        bp_train_is_jalr;
+    wire [ 4:0] bp_train_rd;
+    wire [ 4:0] bp_train_rs1_addr;
+    wire        bp_train_actual_taken;
+    wire [31:0] bp_train_actual_target;
+    wire        bp_train_btb_allocate;
+    wire [ 7:0] bp_train_ghr_snap;
+    wire        bp_train_btb_hit;
+    wire [ 1:0] bp_train_btb_bht;
+    wire [ 1:0] bp_train_pht_cnt;
+    wire [ 1:0] bp_train_sel_cnt;
 
     // ================================================================
     //  Module instantiations
@@ -586,6 +635,62 @@ module cpu_top (
 
     // ==================== Branch Predictor ====================
 
+    assign s0_bp_update_valid_raw = ex_valid
+                                  & (ex_is_branch | ex_is_jal | ex_is_jalr);
+    assign s1_bp_update_valid_raw = ex_s1_valid
+                                  & (ex_s1_is_branch | ex_s1_is_jal)
+                                  & ex_ready_go_w & mem_allowin;
+    assign bp_train_from_s1 = ~s0_bp_update_valid_raw
+                            & s1_bp_update_valid_raw;
+    assign bp_train_valid = (s0_bp_update_valid_raw | s1_bp_update_valid_raw)
+                          & ~mem_branch_flush;
+
+    assign bp_train_pc            = bp_train_from_s1 ? ex_s1_pc
+                                                     : ex_pc;
+    assign bp_train_is_branch     = bp_train_from_s1 ? ex_s1_is_branch
+                                                     : ex_is_branch;
+    assign bp_train_is_jal        = bp_train_from_s1 ? ex_s1_is_jal
+                                                     : ex_is_jal;
+    assign bp_train_is_jalr       = bp_train_from_s1 ? 1'b0
+                                                     : ex_is_jalr;
+    assign bp_train_rd            = bp_train_from_s1 ? ex_s1_rd
+                                                     : ex_rd;
+    assign bp_train_rs1_addr      = bp_train_from_s1 ? ex_s1_rs1_addr
+                                                     : ex_rs1_addr;
+    assign bp_train_actual_taken  = bp_train_from_s1 ? ex_s1_actual_taken
+                                                     : actual_taken;
+    assign bp_train_actual_target = bp_train_from_s1 ? ex_s1_branch_target
+                                                     : actual_target;
+    // Slot1 conditional branches train PHT/GHR/selector only.  Allocating a
+    // taken-branch BTB entry would create frontend steering that this design
+    // does not yet resolve for slot1 predicted-taken/not-taken mismatches.
+    // Slot1 JAL still allocates BTB/RAS target state.
+    assign bp_train_btb_allocate  = ~bp_train_from_s1
+                                  | bp_train_is_jal
+                                  | bp_train_is_jalr;
+    assign bp_train_ghr_snap      = bp_train_from_s1 ? ex_s1_bp_ghr_snap
+                                                     : ex_bp_ghr_snap;
+    assign bp_train_btb_hit       = bp_train_from_s1 ? ex_s1_bp_btb_hit
+                                                     : ex_bp_btb_hit;
+    assign bp_train_btb_bht       = bp_train_from_s1 ? ex_s1_bp_btb_bht
+                                                     : ex_bp_btb_bht;
+    assign bp_train_pht_cnt       = bp_train_from_s1 ? ex_s1_bp_pht_cnt
+                                                     : ex_bp_pht_cnt;
+    assign bp_train_sel_cnt       = bp_train_from_s1 ? ex_s1_bp_sel_cnt
+                                                     : ex_bp_sel_cnt;
+
+`ifndef SYNTHESIS
+	    always @(posedge clk) begin
+	        if (rst_n && ex_s1_valid && ex_s1_is_jalr)
+	            $error("Slot1 JALR reached EX, but slot1 predictor training does not support JALR");
+	        if (rst_n && s0_bp_update_valid_raw && s1_bp_update_valid_raw)
+	            $error("Single predictor update port saw simultaneous slot0 and slot1 control flow");
+	        if (rst_n && ex_valid && (ex_mem_read_en | ex_mem_write_en)
+	            && (ex_rs1_wb_repair | ex_rs2_wb_repair))
+	            $error("LSU reached EX with late WB repair; DCache address uses unrepaired LSU address");
+	    end
+	`endif
+
     branch_predictor u_bp (
         .clk             (clk),
         .rst_n           (rst_n),
@@ -612,6 +717,17 @@ module cpu_top (
         .bp_btb_bht      (bp_btb_bht),
         .bp_pht_cnt      (bp_pht_cnt),
         .bp_sel_cnt      (bp_sel_cnt),
+
+        // Slot1 candidate prediction snapshot for current fetch packet.
+        .s1_pc           (pc + 32'd4),
+        .s1_bp_taken     (bp_s1_taken),
+        .s1_bp_target    (bp_s1_target),
+        .s1_bp_ghr_snap  (bp_s1_ghr_snap),
+        .s1_bp_btb_hit   (bp_s1_btb_hit),
+        .s1_bp_btb_type  (bp_s1_btb_type),
+        .s1_bp_btb_bht   (bp_s1_btb_bht),
+        .s1_bp_pht_cnt   (bp_s1_pht_cnt),
+        .s1_bp_sel_cnt   (bp_s1_sel_cnt),
 
         // Lookahead prediction for possible next-cycle skip_inst0 fetch.
         // When current PC P was predicted single but actually dual-issues,
@@ -647,20 +763,21 @@ module cpu_top (
         // 250MHz: gate ex_valid with ~mem_branch_flush to prevent wrong-path
         // instructions (that entered EX before registered flush) from corrupting
         // predictor state (GHR, PHT, BTB, selector)
-        .ex_valid        (ex_valid & ~mem_branch_flush),
-        .ex_pc           (ex_pc),
-        .ex_is_branch    (ex_is_branch),
-        .ex_is_jal       (ex_is_jal),
-        .ex_is_jalr      (ex_is_jalr),
-        .ex_rd           (ex_rd),
-        .ex_rs1_addr     (ex_rs1_addr),
-        .ex_actual_taken (actual_taken),
-        .ex_actual_target(actual_target),
-        .ex_ghr_snap     (ex_bp_ghr_snap),
-        .ex_btb_hit      (ex_bp_btb_hit),
-        .ex_btb_bht      (ex_bp_btb_bht),
-        .ex_pht_cnt      (ex_bp_pht_cnt),
-        .ex_sel_cnt      (ex_bp_sel_cnt)
+        .ex_valid        (bp_train_valid),
+        .ex_pc           (bp_train_pc),
+        .ex_is_branch    (bp_train_is_branch),
+        .ex_is_jal       (bp_train_is_jal),
+        .ex_is_jalr      (bp_train_is_jalr),
+        .ex_rd           (bp_train_rd),
+        .ex_rs1_addr     (bp_train_rs1_addr),
+        .ex_actual_taken (bp_train_actual_taken),
+        .ex_actual_target(bp_train_actual_target),
+        .ex_btb_allocate (bp_train_btb_allocate),
+        .ex_ghr_snap     (bp_train_ghr_snap),
+        .ex_btb_hit      (bp_train_btb_hit),
+        .ex_btb_bht      (bp_train_btb_bht),
+        .ex_pht_cnt      (bp_train_pht_cnt),
+        .ex_sel_cnt      (bp_train_sel_cnt)
     );
 
     // ==================== Pre-IF ====================
@@ -684,6 +801,14 @@ module cpu_top (
     wire [ 1:0] if_bp_pht_cnt_out;
     wire [ 1:0] if_bp_sel_cnt_out;
     wire        if_bp_verified_out;
+    wire        if_s1_bp_taken_out;
+    wire [31:0] if_s1_bp_target_out;
+    wire [ 7:0] if_s1_bp_ghr_snap_out;
+    wire        if_s1_bp_btb_hit_out;
+    wire [ 1:0] if_s1_bp_btb_type_out;
+    wire [ 1:0] if_s1_bp_btb_bht_out;
+    wire [ 1:0] if_s1_bp_pht_cnt_out;
+    wire [ 1:0] if_s1_bp_sel_cnt_out;
     wire        if_skip_out;
     wire        if_s1_valid;
     wire        if_sequential_fetch;
@@ -720,6 +845,14 @@ module cpu_top (
         .bp_btb_bht       (bp_btb_bht),
         .bp_pht_cnt       (bp_pht_cnt),
         .bp_sel_cnt       (bp_sel_cnt),
+        .bp_s1_taken      (bp_s1_taken),
+        .bp_s1_target     (bp_s1_target),
+        .bp_s1_ghr_snap   (bp_s1_ghr_snap),
+        .bp_s1_btb_hit    (bp_s1_btb_hit),
+        .bp_s1_btb_type   (bp_s1_btb_type),
+        .bp_s1_btb_bht    (bp_s1_btb_bht),
+        .bp_s1_pht_cnt    (bp_s1_pht_cnt),
+        .bp_s1_sel_cnt    (bp_s1_sel_cnt),
         .if_valid         (if_valid),
         .if_ready_go      (if_ready_go_w),
         .if_pc            (if_pc_out),
@@ -735,6 +868,14 @@ module cpu_top (
         .if_bp_pht_cnt    (if_bp_pht_cnt_out),
         .if_bp_sel_cnt    (if_bp_sel_cnt_out),
         .if_bp_verified   (if_bp_verified_out),
+        .if_s1_bp_taken   (if_s1_bp_taken_out),
+        .if_s1_bp_target  (if_s1_bp_target_out),
+        .if_s1_bp_ghr_snap(if_s1_bp_ghr_snap_out),
+        .if_s1_bp_btb_hit (if_s1_bp_btb_hit_out),
+        .if_s1_bp_btb_type(if_s1_bp_btb_type_out),
+        .if_s1_bp_btb_bht (if_s1_bp_btb_bht_out),
+        .if_s1_bp_pht_cnt (if_s1_bp_pht_cnt_out),
+        .if_s1_bp_sel_cnt (if_s1_bp_sel_cnt_out),
         .current_pc       (pc),
         .can_dual_issue   (can_dual_issue),
         .raw_pair_raw     (raw_pair_raw),
@@ -780,6 +921,14 @@ module cpu_top (
         .if_bp_pht_cnt  (if_bp_pht_cnt_out),
         .if_bp_sel_cnt  (if_bp_sel_cnt_out),
         .if_bp_verified (if_bp_verified_out),
+        .if_s1_bp_taken    (if_s1_bp_taken_out),
+        .if_s1_bp_target   (if_s1_bp_target_out),
+        .if_s1_bp_ghr_snap (if_s1_bp_ghr_snap_out),
+        .if_s1_bp_btb_hit  (if_s1_bp_btb_hit_out),
+        .if_s1_bp_btb_type (if_s1_bp_btb_type_out),
+        .if_s1_bp_btb_bht  (if_s1_bp_btb_bht_out),
+        .if_s1_bp_pht_cnt  (if_s1_bp_pht_cnt_out),
+        .if_s1_bp_sel_cnt  (if_s1_bp_sel_cnt_out),
         .id_bp_taken    (id_bp_taken),
         .id_bp_target   (id_bp_target),
         .id_bp_ghr_snap (id_bp_ghr_snap),
@@ -788,7 +937,15 @@ module cpu_top (
         .id_bp_btb_bht  (id_bp_btb_bht),
         .id_bp_pht_cnt  (id_bp_pht_cnt),
         .id_bp_sel_cnt  (id_bp_sel_cnt),
-        .id_bp_verified (id_bp_verified)
+        .id_bp_verified (id_bp_verified),
+        .id_s1_bp_taken    (id_s1_bp_taken),
+        .id_s1_bp_target   (id_s1_bp_target),
+        .id_s1_bp_ghr_snap (id_s1_bp_ghr_snap),
+        .id_s1_bp_btb_hit  (id_s1_bp_btb_hit),
+        .id_s1_bp_btb_type (id_s1_bp_btb_type),
+        .id_s1_bp_btb_bht  (id_s1_bp_btb_bht),
+        .id_s1_bp_pht_cnt  (id_s1_bp_pht_cnt),
+        .id_s1_bp_sel_cnt  (id_s1_bp_sel_cnt)
     );
 
     decoder u_decoder (
@@ -962,6 +1119,8 @@ module cpu_top (
         .alu_src2      (id_s1_alu_src2)
     );
 
+    assign id_s1_control_target = id_s1_pc + id_s1_imm;
+
     // ==================== ID/EX ====================
 
     id_ex_reg u_id_ex_reg (
@@ -1073,6 +1232,7 @@ module cpu_top (
         .id_inst             (id_inst1),
         .id_alu_src1         (id_s1_alu_src1),
         .id_alu_src2         (id_s1_alu_src2),
+        .id_control_target   (id_s1_control_target),
         .id_rs1_data         (fwd_s1_rs1_data),
         .id_rs2_data         (fwd_s1_rs2_data),
         .id_rd               (id_s1_rd_addr),
@@ -1089,11 +1249,19 @@ module cpu_top (
         .id_branch_cond      (dec1_branch_cond),
         .id_is_jal           (dec1_is_jal),
         .id_is_jalr          (dec1_is_jalr),
+        .id_bp_taken         (id_s1_bp_taken),
+        .id_bp_target        (id_s1_bp_target),
+        .id_bp_ghr_snap      (id_s1_bp_ghr_snap),
+        .id_bp_btb_hit       (id_s1_bp_btb_hit),
+        .id_bp_btb_bht       (id_s1_bp_btb_bht),
+        .id_bp_pht_cnt       (id_s1_bp_pht_cnt),
+        .id_bp_sel_cnt       (id_s1_bp_sel_cnt),
         .ex_s1_valid         (ex_s1_valid),
         .ex_s1_pc            (ex_s1_pc),
         .ex_s1_inst          (ex_s1_inst),
         .ex_s1_alu_src1      (ex_s1_alu_src1),
         .ex_s1_alu_src2      (ex_s1_alu_src2),
+        .ex_s1_control_target(ex_s1_control_target),
         .ex_s1_rs1_data      (ex_s1_rs1_data),
         .ex_s1_rs2_data      (ex_s1_rs2_data),
         .ex_s1_rd            (ex_s1_rd),
@@ -1109,7 +1277,14 @@ module cpu_top (
         .ex_s1_is_branch     (ex_s1_is_branch),
         .ex_s1_branch_cond   (ex_s1_branch_cond),
         .ex_s1_is_jal        (ex_s1_is_jal),
-        .ex_s1_is_jalr       (ex_s1_is_jalr)
+        .ex_s1_is_jalr       (ex_s1_is_jalr),
+        .ex_s1_bp_taken      (ex_s1_bp_taken),
+        .ex_s1_bp_target     (ex_s1_bp_target),
+        .ex_s1_bp_ghr_snap   (ex_s1_bp_ghr_snap),
+        .ex_s1_bp_btb_hit    (ex_s1_bp_btb_hit),
+        .ex_s1_bp_btb_bht    (ex_s1_bp_btb_bht),
+        .ex_s1_bp_pht_cnt    (ex_s1_bp_pht_cnt),
+        .ex_s1_bp_sel_cnt    (ex_s1_bp_sel_cnt)
     );
 
     // ==================== EX stage ====================
@@ -1136,7 +1311,7 @@ module cpu_top (
         .ex_s1_branch_cond          (ex_s1_branch_cond),
         .ex_s1_rs1_data             (ex_s1_rs1_data),
         .ex_s1_rs2_data             (ex_s1_rs2_data),
-        .alu_s1_result              (alu_s1_result),
+        .ex_s1_control_target       (ex_s1_control_target),
         .mem_branch_flush           (mem_branch_flush),
         .ex_ready_go                (ex_ready_go_w),
         .mem_allowin                (mem_allowin),
@@ -1152,6 +1327,7 @@ module cpu_top (
         .ex_pipe_alu_result         (ex_pipe_alu_result),
         .ex_result_late             (ex_result_late),
         .ex_s1_branch_target        (ex_s1_branch_target),
+        .ex_s1_actual_taken         (ex_s1_actual_taken),
         .ex_s1_branch_redirect      (ex_s1_branch_redirect),
         .ex_registered_branch_flush (ex_registered_branch_flush),
         .ex_registered_branch_target(ex_registered_branch_target)
@@ -1245,7 +1421,7 @@ module cpu_top (
         // Store side (EX stage)
         .store_valid     (ex_valid),
         .store_en        (ex_mem_write_en),
-        .store_addr_low  (alu_addr[1:0]),
+        .store_addr_low  (alu_forward_addr[1:0]),
         .store_mem_size  (ex_mem_size),
         .store_data_in   (ex_rs2_data),
         .store_wea       (dram_wea),

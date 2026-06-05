@@ -26,7 +26,7 @@ module ex_stage_ctrl (
     input  logic [ 2:0] ex_s1_branch_cond,
     input  logic [31:0] ex_s1_rs1_data,
     input  logic [31:0] ex_s1_rs2_data,
-    input  logic [31:0] alu_s1_result,
+    input  logic [31:0] ex_s1_control_target,
 
     input  logic        mem_branch_flush,
     input  logic        ex_ready_go,
@@ -44,6 +44,7 @@ module ex_stage_ctrl (
     output logic [31:0] ex_pipe_alu_result,
     output logic        ex_result_late,
     output logic [31:0] ex_s1_branch_target,
+    output logic        ex_s1_actual_taken,
     output logic        ex_s1_branch_redirect,
     output logic        ex_registered_branch_flush,
     output logic [31:0] ex_registered_branch_target
@@ -79,7 +80,8 @@ module ex_stage_ctrl (
     wire ex_s1_control_redirect_raw = ex_s1_is_jal
                                     | (ex_s1_is_branch & ex_s1_branch_taken);
 
-    assign ex_s1_branch_target = alu_s1_result;
+    assign ex_s1_branch_target = ex_s1_control_target;
+    assign ex_s1_actual_taken = ex_s1_control_redirect_raw;
     assign ex_s1_branch_redirect = ex_s1_valid
                                  & ex_s1_control_redirect_raw
                                  & ~mem_branch_flush
