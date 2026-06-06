@@ -58,6 +58,7 @@ module student_top #(
     logic [ 3:0] mmio_wea;
     logic [31:0] mmio_wdata;
     logic [31:0] mmio_rdata;
+    logic        timer_irq_pending;
 
     // DCache ↔ DRAM BRAM
     logic [15:0] dram_rd_addr;
@@ -119,7 +120,8 @@ module student_top #(
         .mmio_wr_addr (mmio_wr_addr),
         .mmio_wea     (mmio_wea),
         .mmio_wdata   (mmio_wdata),
-        .mmio_rdata   (mmio_rdata)
+        .mmio_rdata   (mmio_rdata),
+        .timer_irq_pending (timer_irq_pending)
     );
 
     // ================================================================
@@ -198,6 +200,7 @@ module student_top #(
         .wea      (mmio_wea),
         .wdata    (mmio_wdata),
         .rdata    (mmio_rdata),
+        .timer_irq_pending (timer_irq_pending),
 
         // 平台 I/O
         .sw      (virtual_sw),

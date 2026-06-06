@@ -31,7 +31,8 @@ module cpu_top (
     output logic [31:0] mmio_wr_addr,    // MEM stage: 写地址
     output logic [ 3:0] mmio_wea,        // MEM stage: 写使能
     output logic [31:0] mmio_wdata,      // MEM stage: 写数据
-    input  logic [31:0] mmio_rdata       // MEM stage: 读数据
+    input  logic [31:0] mmio_rdata,      // MEM stage: 读数据
+    input  logic        timer_irq_pending
 );
 
     // ================================================================
@@ -52,6 +53,7 @@ module cpu_top (
     wire        id_valid;
     (* max_fanout = 16 *) wire        id_allowin;
     wire        id_ready_go;
+    wire        id_ready_go_raw;
     wire [31:0] id_pc;
     wire [31:0] id_inst;           // registered instruction from IF/ID
     wire [31:0] id_inst1;          // registered slot1 candidate instruction
@@ -227,6 +229,12 @@ module cpu_top (
     wire        ex_system_inst;
     wire        ex_system_redirect;
     wire [31:0] ex_system_target;
+    wire        timer_irq_request;
+    wire        timer_irq_redirect;
+    wire [31:0] timer_irq_target;
+    logic       timer_irq_hold;
+    wire        timer_irq_pipe_empty;
+    wire        timer_irq_take;
     wire        ex_fast_redirect;
     wire [31:0] ex_fast_redirect_target;
     wire        ex_registered_branch_flush;
@@ -350,6 +358,21 @@ module cpu_top (
     wire ex_muldiv_ready = mem_branch_flush | ~ex_muldiv_req | muldiv_done;
     wire ex_ready_go_w  = ~mmio_st_ld_hazard & ex_muldiv_ready;
     wire mem_ready_go_w = cache_ready; // DCache controls MEM stage flow
+    assign id_ready_go = id_ready_go_raw & ~timer_irq_hold;
+    assign timer_irq_pipe_empty = ~ex_valid & ~mem_valid & ~wb_valid
+                                & ~ex_s1_valid & ~mem_s1_valid & ~wb_s1_valid;
+    assign timer_irq_take = timer_irq_hold & id_valid & timer_irq_pipe_empty;
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n)
+            timer_irq_hold <= 1'b0;
+        else if (timer_irq_take)
+            timer_irq_hold <= 1'b0;
+        else if (frontend_branch_flush | id_bp_redirect)
+            timer_irq_hold <= 1'b0;
+        else if (timer_irq_request & id_valid)
+            timer_irq_hold <= 1'b1;
+    end
 
     // ---- Flush / redirect ----
     wire id_bp_redirect;            // NLP: ID-stage Tournament redirect
@@ -441,6 +464,8 @@ module cpu_top (
         .mem_branch_target           (mem_branch_target),
         .ex_system_redirect          (ex_system_redirect),
         .ex_system_target            (ex_system_target),
+        .timer_irq_redirect          (timer_irq_redirect),
+        .timer_irq_target            (timer_irq_target),
         .ex_redirect_fire            (ex_redirect_fire),
         .ex_fast_redirect            (ex_fast_redirect),
         .ex_fast_redirect_target     (ex_fast_redirect_target),
@@ -1093,7 +1118,7 @@ module cpu_top (
         .id_s1_rs2_data (fwd_s1_rs2_data),
         .id_rs1_wb_repair(fwd_rs1_wb_repair),
         .id_rs2_wb_repair(fwd_rs2_wb_repair),
-        .id_ready_go    (id_ready_go)
+        .id_ready_go    (id_ready_go_raw)
     );
 
     // ALU operand selection (in ID stage to reduce EX critical path)
@@ -1394,9 +1419,15 @@ module cpu_top (
         .ex_csr_addr       (ex_csr_addr),
         .ex_is_ecall       (ex_is_ecall),
         .ex_is_mret        (ex_is_mret),
+        .timer_irq_pending (timer_irq_pending),
+        .timer_irq_take    (timer_irq_take),
+        .timer_irq_mepc    (id_pc),
         .ex_system_inst    (ex_system_inst),
         .ex_system_redirect(ex_system_redirect),
         .ex_system_target  (ex_system_target),
+        .timer_irq_request (timer_irq_request),
+        .timer_irq_redirect(timer_irq_redirect),
+        .timer_irq_target  (timer_irq_target),
         .ex_csr_rdata      (ex_csr_rdata)
     );
 

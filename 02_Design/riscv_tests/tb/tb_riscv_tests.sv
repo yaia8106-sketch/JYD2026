@@ -47,6 +47,7 @@ module tb_riscv_tests;
     wire [ 3:0] mmio_wea;
     wire [31:0] mmio_wdata;
     reg  [31:0] mmio_rdata;
+    wire        timer_irq_pending;
 
     // DCache ↔ DRAM
     wire [15:0] dram_rd_addr;
@@ -79,7 +80,8 @@ module tb_riscv_tests;
         .mmio_wr_addr   (mmio_wr_addr),
         .mmio_wea       (mmio_wea),
         .mmio_wdata     (mmio_wdata),
-        .mmio_rdata     (mmio_rdata)
+        .mmio_rdata     (mmio_rdata),
+        .timer_irq_pending (timer_irq_pending)
     );
 
     // ================================================================
@@ -160,15 +162,66 @@ module tb_riscv_tests;
     wire [15:0] mmio_rd_word_addr = mmio_addr[17:2];
     wire [15:0] mmio_wr_word_addr = mmio_wr_addr[17:2];
     reg  [31:0] mmio_rd_reg;
+    reg  [63:0] tb_mtime;
+    reg  [63:0] tb_mtimecmp;
+
+    localparam MTIME_LO_ADDR    = 32'h8020_0070;
+    localparam MTIME_HI_ADDR    = 32'h8020_0074;
+    localparam MTIMECMP_LO_ADDR = 32'h8020_0078;
+    localparam MTIMECMP_HI_ADDR = 32'h8020_007C;
+
+    assign timer_irq_pending = (tb_mtime >= tb_mtimecmp);
 
     always @(posedge clk) begin
-        // MMIO read: map to DRAM
-        mmio_rd_reg <= dram[mmio_rd_word_addr];
+        if (!rst_n) begin
+            tb_mtime    <= 64'd0;
+            tb_mtimecmp <= 64'hFFFF_FFFF_FFFF_FFFF;
+            mmio_rd_reg <= 32'd0;
+        end else begin
+            tb_mtime <= tb_mtime + 64'd1;
+
+            // MMIO read: timer registers or fallback DRAM mirror.
+            case (mmio_addr)
+                MTIME_LO_ADDR:    mmio_rd_reg <= tb_mtime[31:0];
+                MTIME_HI_ADDR:    mmio_rd_reg <= tb_mtime[63:32];
+                MTIMECMP_LO_ADDR: mmio_rd_reg <= tb_mtimecmp[31:0];
+                MTIMECMP_HI_ADDR: mmio_rd_reg <= tb_mtimecmp[63:32];
+                default:          mmio_rd_reg <= dram[mmio_rd_word_addr];
+            endcase
+        end
+
         // MMIO write: map to DRAM
         if (mmio_wea[0]) dram[mmio_wr_word_addr][ 7: 0] <= mmio_wdata[ 7: 0];
         if (mmio_wea[1]) dram[mmio_wr_word_addr][15: 8] <= mmio_wdata[15: 8];
         if (mmio_wea[2]) dram[mmio_wr_word_addr][23:16] <= mmio_wdata[23:16];
         if (mmio_wea[3]) dram[mmio_wr_word_addr][31:24] <= mmio_wdata[31:24];
+
+        if (rst_n) begin
+            if (mmio_wr_addr == MTIME_LO_ADDR) begin
+                if (mmio_wea[0]) tb_mtime[ 7: 0] <= mmio_wdata[ 7: 0];
+                if (mmio_wea[1]) tb_mtime[15: 8] <= mmio_wdata[15: 8];
+                if (mmio_wea[2]) tb_mtime[23:16] <= mmio_wdata[23:16];
+                if (mmio_wea[3]) tb_mtime[31:24] <= mmio_wdata[31:24];
+            end
+            if (mmio_wr_addr == MTIME_HI_ADDR) begin
+                if (mmio_wea[0]) tb_mtime[39:32] <= mmio_wdata[ 7: 0];
+                if (mmio_wea[1]) tb_mtime[47:40] <= mmio_wdata[15: 8];
+                if (mmio_wea[2]) tb_mtime[55:48] <= mmio_wdata[23:16];
+                if (mmio_wea[3]) tb_mtime[63:56] <= mmio_wdata[31:24];
+            end
+            if (mmio_wr_addr == MTIMECMP_LO_ADDR) begin
+                if (mmio_wea[0]) tb_mtimecmp[ 7: 0] <= mmio_wdata[ 7: 0];
+                if (mmio_wea[1]) tb_mtimecmp[15: 8] <= mmio_wdata[15: 8];
+                if (mmio_wea[2]) tb_mtimecmp[23:16] <= mmio_wdata[23:16];
+                if (mmio_wea[3]) tb_mtimecmp[31:24] <= mmio_wdata[31:24];
+            end
+            if (mmio_wr_addr == MTIMECMP_HI_ADDR) begin
+                if (mmio_wea[0]) tb_mtimecmp[39:32] <= mmio_wdata[ 7: 0];
+                if (mmio_wea[1]) tb_mtimecmp[47:40] <= mmio_wdata[15: 8];
+                if (mmio_wea[2]) tb_mtimecmp[55:48] <= mmio_wdata[23:16];
+                if (mmio_wea[3]) tb_mtimecmp[63:56] <= mmio_wdata[31:24];
+            end
+        end
     end
 
     assign mmio_rdata = mmio_rd_reg;

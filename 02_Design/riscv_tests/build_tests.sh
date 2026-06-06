@@ -36,7 +36,7 @@ TESTS="simple \
        dcache_dual instbuf_stall bp_dual slot1_bp_update \
        sb_stress ras_overflow \
        m_ext \
-       zicsr_basic zicsr_edge csr_forwarding csr_trap_stall trap_mret trap_slot1 trap_flush trap_nested"
+       zicsr_basic zicsr_edge csr_forwarding csr_trap_stall trap_mret trap_slot1 trap_flush trap_nested timer_irq_basic"
 
 mkdir -p "$HEX_DIR"
 mkdir -p "$BUILD_DIR"

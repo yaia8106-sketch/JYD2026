@@ -3,7 +3,7 @@
 // Module: mmio_bridge (formerly perip_bridge)
 // Description: MMIO-only bridge for JYD2025 数字孪生平台
 //   DRAM has been moved to DCache module.
-//   This module handles only LED/SEG/SW/KEY/CNT.
+//   This module handles only LED/SEG/SW/KEY/CNT/MTIMER.
 //
 // 依赖的模板模块 (不可修改):
 //   - counter.sv (含 CDC gray 码同步)
@@ -21,6 +21,7 @@ module mmio_bridge (
     input  logic [3:0]   wea,             // MEM stage: 字节写使能（已打拍）
     input  logic [31:0]  wdata,           // MEM stage: 写数据（已打拍）
     output logic [31:0]  rdata,           // MEM stage: 读数据
+    output logic         timer_irq_pending,
 
     // 平台 I/O
     input  logic [63:0]  sw,              // 虚拟拨码开关
@@ -38,6 +39,10 @@ module mmio_bridge (
     localparam SEG_ADDR  = 32'h8020_0020;
     localparam LED_ADDR  = 32'h8020_0040;
     localparam CNT_ADDR  = 32'h8020_0050;
+    localparam MTIME_LO_ADDR    = 32'h8020_0070;
+    localparam MTIME_HI_ADDR    = 32'h8020_0074;
+    localparam MTIMECMP_LO_ADDR = 32'h8020_0078;
+    localparam MTIMECMP_HI_ADDR = 32'h8020_007C;
 
     localparam CNT_START_CMD = 32'h8000_0000;
     localparam CNT_STOP_CMD  = 32'hFFFF_FFFF;
@@ -63,6 +68,10 @@ module mmio_bridge (
     wire wr_led  = mmio_wr & (wr_addr[6:4] == 3'b100);   // LED  0x8020_0040
     wire wr_seg  = mmio_wr & (wr_addr[6:4] == 3'b010);   // SEG  0x8020_0020
     wire wr_cnt  = mmio_wr & (wr_addr[6:4] == 3'b101);   // CNT  0x8020_0050
+    wire wr_mtime_lo    = mmio_wr & (wr_addr == MTIME_LO_ADDR);
+    wire wr_mtime_hi    = mmio_wr & (wr_addr == MTIME_HI_ADDR);
+    wire wr_mtimecmp_lo = mmio_wr & (wr_addr == MTIMECMP_LO_ADDR);
+    wire wr_mtimecmp_hi = mmio_wr & (wr_addr == MTIMECMP_HI_ADDR);
 
     // ---- LED 寄存器 ----
     always_ff @(posedge clk) begin
@@ -107,6 +116,49 @@ module mmio_bridge (
     );
 
     // ================================================================
+    //  Machine timer (CPU clock domain)
+    //  RT-Thread only needs a monotonic timer plus compare interrupt.
+    // ================================================================
+    logic [63:0] mtime;
+    logic [63:0] mtimecmp;
+
+    always_ff @(posedge clk) begin
+        if (rst) begin
+            mtime    <= 64'd0;
+            mtimecmp <= 64'hFFFF_FFFF_FFFF_FFFF;
+        end else begin
+            mtime <= mtime + 64'd1;
+
+            if (wr_mtime_lo) begin
+                if (wea[0]) mtime[ 7: 0] <= wdata[ 7: 0];
+                if (wea[1]) mtime[15: 8] <= wdata[15: 8];
+                if (wea[2]) mtime[23:16] <= wdata[23:16];
+                if (wea[3]) mtime[31:24] <= wdata[31:24];
+            end
+            if (wr_mtime_hi) begin
+                if (wea[0]) mtime[39:32] <= wdata[ 7: 0];
+                if (wea[1]) mtime[47:40] <= wdata[15: 8];
+                if (wea[2]) mtime[55:48] <= wdata[23:16];
+                if (wea[3]) mtime[63:56] <= wdata[31:24];
+            end
+            if (wr_mtimecmp_lo) begin
+                if (wea[0]) mtimecmp[ 7: 0] <= wdata[ 7: 0];
+                if (wea[1]) mtimecmp[15: 8] <= wdata[15: 8];
+                if (wea[2]) mtimecmp[23:16] <= wdata[23:16];
+                if (wea[3]) mtimecmp[31:24] <= wdata[31:24];
+            end
+            if (wr_mtimecmp_hi) begin
+                if (wea[0]) mtimecmp[39:32] <= wdata[ 7: 0];
+                if (wea[1]) mtimecmp[47:40] <= wdata[15: 8];
+                if (wea[2]) mtimecmp[55:48] <= wdata[23:16];
+                if (wea[3]) mtimecmp[63:56] <= wdata[31:24];
+            end
+        end
+    end
+
+    assign timer_irq_pending = (mtime >= mtimecmp);
+
+    // ================================================================
     //  Display Segment (模板模块)
     // ================================================================
     logic [39:0] seg_output;
@@ -135,7 +187,11 @@ module mmio_bridge (
                  | ({32{mem_addr == SW1_ADDR}} & sw[63:32])
                  | ({32{mem_addr == KEY_ADDR}} & {24'd0, key})
                  | ({32{mem_addr == SEG_ADDR}} & seg_wdata)
-                 | ({32{mem_addr == CNT_ADDR}} & cnt_rdata);
+                 | ({32{mem_addr == CNT_ADDR}} & cnt_rdata)
+                 | ({32{mem_addr == MTIME_LO_ADDR}} & mtime[31:0])
+                 | ({32{mem_addr == MTIME_HI_ADDR}} & mtime[63:32])
+                 | ({32{mem_addr == MTIMECMP_LO_ADDR}} & mtimecmp[31:0])
+                 | ({32{mem_addr == MTIMECMP_HI_ADDR}} & mtimecmp[63:32]);
 
     // ================================================================
     //  平台输出

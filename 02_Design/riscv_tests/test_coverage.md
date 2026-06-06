@@ -4,14 +4,14 @@
 
 ## 默认回归规模
 
-`run_all.sh` 默认运行 76 个测试：
+`run_all.sh` 默认运行 79 个测试：
 
 - 38 个基础 RV32I/smoke 测试：`simple` + 官方 `rv32ui` 指令测试（不包含 `fence_i`）。
 - 2 个综合访存测试：`ld_st`、`st_ld`。
 - 3 个压力测试：`dcache_stress`、`counter_stress`、`bp_stress`。
-- 24 个双发射、分支预测、DCache、RAS 相关测试。
+- 26 个双发射、分支预测、DCache、RAS 相关测试。
 - 1 个 RV32M 覆盖测试：`m_ext`。
-- 8 个 Zicsr / Trap 测试：`zicsr_basic`、`zicsr_edge`、`csr_forwarding`、`csr_trap_stall`、`trap_mret`、`trap_slot1`、`trap_flush`、`trap_nested`。
+- 9 个 Zicsr / Trap / Timer 测试：`zicsr_basic`、`zicsr_edge`、`csr_forwarding`、`csr_trap_stall`、`trap_mret`、`trap_slot1`、`trap_flush`、`trap_nested`、`timer_irq_basic`。
 
 ## 基础 RV32I 指令测试
 
@@ -128,19 +128,21 @@
 
 ### 覆盖范围
 
-Zicsr / Trap 测试覆盖 M 模式下的最小 CSR 与同步异常行为：
+Zicsr / Trap 测试覆盖 M 模式下的最小 CSR、同步异常与机器定时器中断行为：
 
 - 六类 Zicsr 指令语义：CSRRW、CSRRS、CSRRC、CSRRWI、CSRRSI、CSRRCI。
 - `mstatus`：`MIE(bit3)`、`MPIE(bit7)` 的读写和 Trap/MRET 更新。
 - `mtvec`：写入值读回保留，Trap 入口按 Direct 基址使用。
 - `mscratch`：普通 32-bit 可读写暂存 CSR，支持完整读写和读改写。
 - `mepc`：普通读写，以及 ECALL 时保存触发异常的指令地址。
-- `mcause`：普通读写，以及 ECALL 时写入 M-mode environment call 原因 `11`。
+- `mcause`：普通读写，ECALL 时写入 M-mode environment call 原因 `11`，机器定时器中断时写入 `0x80000007`。
+- `mie/mip`：`mie.MTIE(bit7)` 读写，`mip.MTIP(bit7)` 反映 timer pending 状态。
+- 机器定时器：`mtime/mtimecmp` MMIO pending、`mstatus.MIE`/`mie.MTIE` 屏蔽、精确中断入口和 MRET 返回。
 - 未实现 CSR：读零，写忽略，不触发非法指令异常。
 - 系统类指令顺序化：CSR、ECALL、MRET 只作为 Slot0 执行；位于 Slot1 位置时进入后续周期执行。
 - 错误路径清除：被更老跳转/分支清除的 CSR、ECALL、MRET 不产生可见副作用。
 
-这些测试不覆盖异步中断、Vectored Trap、多特权级切换、完整 `mstatus` 字段、计数类 CSR、非法指令异常和 `ebreak` Trap。
+这些测试不覆盖 Vectored Trap、多特权级切换、完整 `mstatus` 字段、除 MTIE/MTIP 之外的中断源、计数类 CSR、非法指令异常和 `ebreak` Trap。
 
 ### 测试程序
 
@@ -154,6 +156,7 @@ Zicsr / Trap 测试覆盖 M 模式下的最小 CSR 与同步异常行为：
 | `trap_slot1` | ECALL 位于 Slot1 位置时顺序化后精确 Trap；handler 内 MRET 位于 Slot1 位置时顺序化后返回 |
 | `trap_flush` | taken branch / JAL 后 wrong-path ECALL、MRET、`mtvec/mepc/mscratch` 写入被清除 |
 | `trap_nested` | handler 内再次 ECALL，内层 Trap 覆盖 `mepc/mcause`，`mstatus.MIE/MPIE` 二次堆叠，两次 MRET 后返回外层指定目标 |
+| `timer_irq_basic` | `mtime/mtimecmp` 产生 MTIP，`mstatus.MIE`/`mie.MTIE` 屏蔽与使能，机器定时器中断写入 `mcause=0x80000007`，`mepc` 指向等待循环内未执行指令，handler 清 `mie` 后 MRET 返回 |
 
 ## 覆盖索引
 
@@ -184,3 +187,4 @@ Zicsr / Trap 测试覆盖 M 模式下的最小 CSR 与同步异常行为：
 | ECALL/MRET 位于 Slot1 / 指令缓冲 | `trap_slot1` |
 | wrong-path ECALL/MRET/关键 CSR 写入清除 | `trap_flush` |
 | handler 内嵌套同步 Trap / `mstatus` 二次堆叠 | `trap_nested` |
+| 机器定时器 pending、屏蔽、精确中断和返回 | `timer_irq_basic` |

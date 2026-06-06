@@ -14,6 +14,8 @@ module redirect_ctrl (
 
     input  logic        ex_system_redirect,
     input  logic [31:0] ex_system_target,
+    input  logic        timer_irq_redirect,
+    input  logic [31:0] timer_irq_target,
 
     output logic        ex_redirect_fire,
     output logic        ex_fast_redirect,
@@ -26,8 +28,9 @@ module redirect_ctrl (
     logic fast_branch_redirect_r;
 
     assign ex_redirect_fire = ~mem_branch_flush & ex_ready_go & mem_allowin;
-    assign ex_fast_redirect = ex_system_redirect;
-    assign ex_fast_redirect_target = ex_system_target;
+    assign ex_fast_redirect = ex_system_redirect | timer_irq_redirect;
+    assign ex_fast_redirect_target = timer_irq_redirect ? timer_irq_target
+                                                        : ex_system_target;
     assign mem_branch_replay = mem_branch_flush & ~fast_branch_redirect_r;
     assign frontend_branch_flush = mem_branch_replay | ex_fast_redirect;
     assign frontend_branch_target = mem_branch_replay ? mem_branch_target
