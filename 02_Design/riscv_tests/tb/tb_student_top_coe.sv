@@ -34,6 +34,7 @@ module tb_student_top_coe;
 
     integer cycle_cnt = 0;
     integer max_cycles = 5_000_000;
+    integer cycle_timeout_enable = 1;
     integer max_commits = 0;
     integer commit_cnt = 0;
     integer watchdog_cycles = 0;
@@ -71,6 +72,8 @@ module tb_student_top_coe;
             test_name_r = "student_top_coe";
         if ($value$plusargs("cycles=%d", max_cycles))
             ;
+        if ($test$plusargs("no_cycle_timeout"))
+            cycle_timeout_enable = 0;
         if ($value$plusargs("commits=%d", max_commits))
             ;
         if ($value$plusargs("stop_pc=%h", stop_pc))
@@ -104,7 +107,7 @@ module tb_student_top_coe;
 
         fork
             begin : wait_timeout
-                wait (cycle_cnt >= max_cycles);
+                wait (cycle_timeout_enable && (cycle_cnt >= max_cycles));
             end
             begin : wait_stop_pc
                 wait (stop_pc_hit);

@@ -219,6 +219,7 @@ module tb_riscv_tests;
     // ================================================================
     integer cycle_cnt = 0;
     integer max_cycles = 50000;
+    integer cycle_timeout_enable = 1;
     integer max_commits = 0;
     integer commit_cnt = 0;
     integer watchdog_cycles = 0;
@@ -273,6 +274,8 @@ module tb_riscv_tests;
             test_name_r = "unknown";
         if ($value$plusargs("cycles=%d", max_cycles))
             ; // optional override
+        if ($test$plusargs("no_cycle_timeout"))
+            cycle_timeout_enable = 0;
         if ($value$plusargs("commits=%d", max_commits))
             ; // optional commit-count stop for differential trace
         if ($value$plusargs("stop_pc=%h", stop_pc))
@@ -326,7 +329,7 @@ module tb_riscv_tests;
                 wait (!stop_pc_enable && tohost_detected);
             end
             begin : wait_timeout
-                wait (cycle_cnt >= max_cycles);
+                wait (cycle_timeout_enable && (cycle_cnt >= max_cycles));
             end
             begin : wait_stop_pc
                 wait (stop_pc_hit);
