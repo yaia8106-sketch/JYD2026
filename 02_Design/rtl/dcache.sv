@@ -102,7 +102,7 @@ module dcache (
     wire [15:0] mem_word_addr = {mem_tag, mem_index, mem_word};
 
     // ================================================================
-    //  FSM types & signals (declared early for iverilog compatibility)
+    //  FSM types & signals (declared early for simulator compatibility)
     // ================================================================
     localparam DRAM_LATENCY = 4;  // registered addr(1) + BRAM read(1) + DOB_REG(1) + dram_rdata_r(1)
 
@@ -419,7 +419,7 @@ module dcache (
     //   burst_cycle=4: (DRAIN)                  DRAM sees addr[3], dram_rdata=data[2] → write
     //   burst_cycle=5: (DRAIN)                                     dram_rdata=data[3] → write
     //
-    // rf_burst_cycle declared early (iverilog compat)
+    // rf_burst_cycle declared early for simulator compatibility.
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin

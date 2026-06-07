@@ -670,7 +670,7 @@ module branch_predictor (
             btb_needs_ras[i] = 1'b0;
         end
     end
-    always_ff @(posedge clk) begin
+    always @(posedge clk) begin
         if (ex_btb_write) begin
             btb_valid[ex_idx] <= 1'b1;
             btb_tag  [ex_idx] <= ex_tag;
@@ -693,7 +693,7 @@ module branch_predictor (
             jalr_needs_ras[i] = 1'b0;
         end
     end
-    always_ff @(posedge clk) begin
+    always @(posedge clk) begin
         if (ex_jalr_side_write) begin
             jalr_valid[ex_jalr_idx] <= 1'b1;
             jalr_tag  [ex_jalr_idx] <= ex_jalr_tag;
@@ -720,7 +720,7 @@ module branch_predictor (
     initial begin
         for (int i = 0; i < PHT_SIZE; i++) pht[i] = 2'b01;
     end
-    always_ff @(posedge clk) begin
+    always @(posedge clk) begin
         if (ex_pht_write)
             pht[ex_pht_idx] <= ex_new_pht;
     end
@@ -729,7 +729,7 @@ module branch_predictor (
     initial begin
         for (int i = 0; i < SEL_SIZE; i++) sel_table[i] = 2'b01;
     end
-    always_ff @(posedge clk) begin
+    always @(posedge clk) begin
         if (ex_sel_write)
             sel_table[ex_sel_idx] <= ex_new_sel;
     end

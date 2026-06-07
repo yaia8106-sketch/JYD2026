@@ -355,6 +355,7 @@ module cpu_top (
     // ---- Handshake ----
     wire if_ready_go_w;             // driven by frontend_ftq
     wire mmio_st_ld_hazard;
+    wire id_bp_redirect;            // NLP: ID-stage Tournament redirect
     wire ex_muldiv_ready = mem_branch_flush | ~ex_muldiv_req | muldiv_done;
     wire ex_ready_go_w  = ~mmio_st_ld_hazard & ex_muldiv_ready;
     wire mem_ready_go_w = cache_ready; // DCache controls MEM stage flow
@@ -375,8 +376,6 @@ module cpu_top (
     end
 
     // ---- Flush / redirect ----
-    wire id_bp_redirect;            // NLP: ID-stage Tournament redirect
-
     wire id_flush = frontend_branch_flush | id_bp_redirect;
     wire ex_flush = frontend_branch_flush;
 

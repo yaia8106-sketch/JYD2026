@@ -593,7 +593,8 @@ module frontend_ftq
     // ================================================================
     //  Sequential state
     // ================================================================
-    integer i;
+    integer ftq_i;
+    integer fq_i;
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -663,19 +664,19 @@ module frontend_ftq
         if (!rst_n) begin
             ftq_tail <= '0;
             ftq_count <= '0;
-            for (i = 0; i < FTQ_DEPTH; i = i + 1) begin
-                ftq_valid[i] <= 1'b0;
-                ftq_pc[i] <= 32'd0;
-                ftq_bp0_target[i] <= 32'd0;
-                ftq_bp0_taken[i] <= 1'b0;
-                ftq_final_target[i] <= 32'd0;
-                ftq_final_taken[i] <= 1'b0;
+            for (ftq_i = 0; ftq_i < FTQ_DEPTH; ftq_i = ftq_i + 1) begin
+                ftq_valid[ftq_i] <= 1'b0;
+                ftq_pc[ftq_i] <= 32'd0;
+                ftq_bp0_target[ftq_i] <= 32'd0;
+                ftq_bp0_taken[ftq_i] <= 1'b0;
+                ftq_final_target[ftq_i] <= 32'd0;
+                ftq_final_taken[ftq_i] <= 1'b0;
             end
         end else if (ex_redirect_valid) begin
             ftq_tail <= '0;
             ftq_count <= '0;
-            for (i = 0; i < FTQ_DEPTH; i = i + 1)
-                ftq_valid[i] <= 1'b0;
+            for (ftq_i = 0; ftq_i < FTQ_DEPTH; ftq_i = ftq_i + 1)
+                ftq_valid[ftq_i] <= 1'b0;
         end else begin
             if (f0_valid_r) begin
                 ftq_valid[f0_ftq_idx_r] <= 1'b0;
@@ -708,16 +709,16 @@ module frontend_ftq
             fq_head <= '0;
             fq_tail <= '0;
             fq_count <= '0;
-            for (i = 0; i < FQ_DEPTH; i = i + 1) begin
-                fq_mem[i] <= '0;
-                fq_pair_ok[i] <= 1'b0;
+            for (fq_i = 0; fq_i < FQ_DEPTH; fq_i = fq_i + 1) begin
+                fq_mem[fq_i] <= '0;
+                fq_pair_ok[fq_i] <= 1'b0;
             end
         end else if (ex_redirect_valid) begin
             fq_head <= '0;
             fq_tail <= '0;
             fq_count <= '0;
-            for (i = 0; i < FQ_DEPTH; i = i + 1)
-                fq_pair_ok[i] <= 1'b0;
+            for (fq_i = 0; fq_i < FQ_DEPTH; fq_i = fq_i + 1)
+                fq_pair_ok[fq_i] <= 1'b0;
         end else begin
             if (f0_enq0_payload && fq_tail_has_prev)
                 fq_pair_ok[fq_tail_m1] <= fq_prev_tail_pair_ok;
