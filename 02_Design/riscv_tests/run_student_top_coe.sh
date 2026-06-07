@@ -148,6 +148,7 @@ RTL_FILES="
     $RTL_DIR/mem_wb_reg_s1.sv
     $RTL_DIR/wb_mux.sv
     $RTL_DIR/dcache.sv
+    $RTL_DIR/dcache_bram_backend.sv
     $RTL_DIR/cpu_top.sv
     $RTL_DIR/mmio_bridge.sv
     $RTL_DIR/student_top.sv

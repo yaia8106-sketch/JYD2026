@@ -491,8 +491,11 @@ module perf_monitor (
     wire dc_store_hit_w  = dc_hit_accept_w &  tb_riscv_tests.u_dcache.mem_wr;
     wire dc_load_miss_w  = dc_miss_start_w & ~tb_riscv_tests.u_dcache.mem_wr;
     wire dc_store_miss_w = dc_miss_start_w &  tb_riscv_tests.u_dcache.mem_wr;
-    wire dc_sb_drain_w   = |tb_riscv_tests.u_dcache.dram_wea;
-    wire dc_refill_cycle_w = ~tb_riscv_tests.u_dcache.state_idle & ~dc_sb_drain_w;
+    wire dc_sb_drain_w   = tb_riscv_tests.u_dcache.mem_req_valid
+                          & tb_riscv_tests.u_dcache.mem_req_write;
+    wire dc_refill_cycle_w = ~tb_riscv_tests.u_dcache.state_idle
+                           & ~tb_riscv_tests.u_dcache.mem_req_write
+                           & ~tb_riscv_tests.u_dcache.mem_wr_ready;
     wire dc_refill_abort_w = tb_riscv_tests.u_dcache.flush & dc_refill_cycle_w;
     wire dc_sb_block_w = tb_riscv_tests.u_dcache.state_idle
                        & tb_riscv_tests.u_dcache.mem_req

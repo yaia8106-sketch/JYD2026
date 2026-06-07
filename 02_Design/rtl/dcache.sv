@@ -8,8 +8,8 @@
 //   - Tag: LUTRAM async read, result latched EX→MEM
 //   - Data: BRAM sync read (addr in EX, data in MEM)
 //   - Hit detection: MEM stage (combinational)
-//   - Miss: FSM → refill line from DRAM → S_DONE
-//   - Store: WT to cache + store buffer → DRAM
+//   - Miss: FSM → refill line from memory backend → S_DONE
+//   - Store: WT to cache + store buffer → memory backend
 //   - Store-forward: when S_DONE writes store data to BRAM,
 //     the value is forwarded to bypass the 1-cycle BRAM read latency
 // ============================================================
@@ -35,12 +35,26 @@ module dcache (
     // Pipeline flush
     input  logic        flush,
 
-    // DRAM BRAM interface (SDP)
-    output logic [15:0] dram_rd_addr,
-    input  logic [31:0] dram_rdata,      // raw DRAM output (registered internally as dram_rdata_r)
-    output logic [15:0] dram_wr_addr,
-    output logic [ 3:0] dram_wea,
-    output logic [31:0] dram_wdata
+    // External memory backend interface.
+    // Read miss requests use a 4-beat line burst. Store buffer drains use a
+    // single write beat with byte strobes.
+    output logic        mem_req_valid,
+    input  logic        mem_req_ready,
+    output logic        mem_req_write,
+    output logic [31:0] mem_req_addr,
+    output logic [ 7:0] mem_req_len,
+    output logic [31:0] mem_req_wdata,
+    output logic [ 3:0] mem_req_wstrb,
+
+    input  logic        mem_rd_valid,
+    output logic        mem_rd_ready,
+    input  logic [31:0] mem_rd_data,
+    input  logic        mem_rd_last,
+    input  logic [ 1:0] mem_rd_resp,
+
+    input  logic        mem_wr_valid,
+    output logic        mem_wr_ready,
+    input  logic [ 1:0] mem_wr_resp
 );
 
     // ================================================================
@@ -67,6 +81,7 @@ module dcache (
     logic [TAG_W-1:0]   mem_tag;
     logic [INDEX_W-1:0] mem_index;
     logic [WORD_W-1:0]  mem_word;
+    logic [31:0]        mem_addr;
     logic               mem_req;
     logic               mem_wr;
     logic [ 3:0]        mem_wea;
@@ -85,6 +100,7 @@ module dcache (
             mem_tag   <= '0;
             mem_index <= '0;
             mem_word  <= '0;
+            mem_addr  <= 32'd0;
             mem_wr    <= 1'b0;
             mem_wea   <= 4'd0;
             mem_wdata <= 32'd0;
@@ -93,48 +109,37 @@ module dcache (
             mem_tag   <= ex_tag;
             mem_index <= ex_index;
             mem_word  <= ex_word;
+            mem_addr  <= cpu_addr;
             mem_wr    <= cpu_wr;
             mem_wea   <= cpu_wea;
             mem_wdata <= cpu_wdata;
         end
     end
 
-    wire [15:0] mem_word_addr = {mem_tag, mem_index, mem_word};
-
     // ================================================================
     //  FSM types & signals (declared early for simulator compatibility)
     // ================================================================
-    localparam DRAM_LATENCY = 4;  // registered addr(1) + BRAM read(1) + DOB_REG(1) + dram_rdata_r(1)
-
     typedef enum logic [2:0] {
         S_IDLE,
-        S_REFILL_BURST,   // sending addresses (may also receive data)
-        S_REFILL_DRAIN,   // receiving remaining data after all addrs sent
+        S_REFILL_REQ,     // issue line-read request to backend
+        S_REFILL_DATA,    // receive line data beats from backend
+        S_REFILL_DROP,    // drain an aborted refill after pipeline flush
         S_DONE_RD,        // DCache BRAM read cycle after refill
         S_DONE,
-        S_SB_DRAIN
+        S_SB_DRAIN_REQ,   // issue store-buffer write request to backend
+        S_SB_DRAIN_RESP   // wait for backend write response
     } state_t;
 
     (* fsm_encoding = "one_hot" *) state_t state;
     state_t state_nxt;
-    logic [WORD_W-1:0]  rf_addr_cnt;  // counts addresses sent (0..LINE_WORDS-1)
     logic [WORD_W-1:0]  rf_data_cnt;  // counts data words received (0..LINE_WORDS-1)
-    logic               rf_addr_done; // all addresses sent
-    wire                rf_data_valid; // current cycle has valid DRAM data
+    wire                rf_data_valid; // current cycle has accepted backend data
     logic               rf_way;
     logic [TAG_W-1:0]   rf_tag;
     logic [INDEX_W-1:0] rf_idx;
-    logic [3:0]         rf_burst_cycle;
+    logic [31:0]        rf_line_addr;
     wire [INDEX_W+WORD_W-1:0] rf_wr_data_addr;
     wire                refill_wr;
-
-    // ================================================================
-    //  DRAM read-data pipeline register (breaks DRAM output MUX → DCache BRAM path)
-    // ================================================================
-    logic [31:0] dram_rdata_r;
-    always_ff @(posedge clk) begin
-        dram_rdata_r <= dram_rdata;
-    end
 
     // ================================================================
     //  Tag RAM (LUTRAM, async read)
@@ -279,7 +284,7 @@ module dcache (
                 rf_last_fwd_valid <= 1'b1;
                 rf_last_fwd_way  <= rf_way;
                 rf_last_fwd_addr <= rf_wr_data_addr;
-                rf_last_fwd_data <= dram_rdata_r;
+                rf_last_fwd_data <= mem_rd_data;
             end else if (state == S_DONE) begin
                 rf_last_fwd_valid <= 1'b0;
             end
@@ -334,32 +339,15 @@ module dcache (
     //  Store Buffer (1 entry)
     // ================================================================
     logic        sb_valid;
-    logic [15:0] sb_addr;
+    logic [31:0] sb_addr;
     logic [ 3:0] sb_wea;
     logic [31:0] sb_data;
 
     // ================================================================
-    //  FSM — Pipelined refill for DRAM with output register
-    //  DRAM has 2-cycle read latency (1 BRAM + 1 output register).
-    //  Refill sends addresses in consecutive cycles (burst), and
-    //  receives data starting 2 cycles later.
-    //
-    //  Timeline (4 words, DRAM_LATENCY = 4 with dram_rdata_r):
-    //    Cycle 0: S_REFILL_BURST  send addr[0]
-    //    Cycle 1: S_REFILL_BURST  send addr[1]
-    //    Cycle 2: S_REFILL_BURST  send addr[2]
-    //    Cycle 3: S_REFILL_BURST  send addr[3],              dram_rdata_r=data[0] → write
-    //    Cycle 4: S_REFILL_DRAIN               dram_rdata_r=data[1] → write
-    //    Cycle 5: S_REFILL_DRAIN               dram_rdata_r=data[2] → write
-    //    Cycle 6: S_REFILL_DRAIN               dram_rdata_r=data[3] → write
-    //    Cycle 7: S_DONE_RD       DCache BRAM read for hit word
-    //    Cycle 8: S_DONE          output data, update tag, signal ready
-    //  Total: LINE_WORDS + DRAM_LATENCY + 1 = 9 cycles
+    //  FSM — variable-latency refill/store backend
     // ================================================================
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n)
-            state <= S_IDLE;
-        else if (flush && (state != S_IDLE && state != S_SB_DRAIN))
             state <= S_IDLE;
         else
             state <= state_nxt;
@@ -375,89 +363,85 @@ module dcache (
     wire sb_conflict    = idle_store_hit & sb_valid;
 
 
+    wire refill_req_fire = (state == S_REFILL_REQ) & mem_req_ready;
+    wire refill_data_last = rf_data_valid & (rf_data_cnt == WORD_W'(LINE_WORDS - 1));
+    wire refill_drop_done = (state == S_REFILL_DROP) & mem_rd_valid & mem_rd_ready & mem_rd_last;
+    wire sb_req_fire = (state == S_SB_DRAIN_REQ) & mem_req_ready;
+    wire sb_resp_fire = (state == S_SB_DRAIN_RESP) & mem_wr_valid & mem_wr_ready;
+
     always_comb begin
         state_nxt = state;
         case (state)
             S_IDLE: begin
                 if (sb_conflict)
-                    state_nxt = S_SB_DRAIN;
+                    state_nxt = S_SB_DRAIN_REQ;
                 else if (sb_valid)
                     // MUST drain SB before any refill — otherwise refill
-                    // reads stale DRAM data (SB hasn't written back yet).
+                    // reads stale memory data (SB hasn't written back yet).
                     // After drain, FSM returns to IDLE and re-evaluates
-                    // the miss, starting the refill with up-to-date DRAM.
-                    state_nxt = S_SB_DRAIN;
+                    // the miss, starting the refill with up-to-date memory.
+                    state_nxt = S_SB_DRAIN_REQ;
                 else if (idle_miss)
-                    state_nxt = S_REFILL_BURST;
+                    state_nxt = S_REFILL_REQ;
             end
-            S_REFILL_BURST: begin
-                if (rf_addr_done)
-                    state_nxt = S_REFILL_DRAIN;  // all addrs sent, wait for remaining data
+
+            S_REFILL_REQ: begin
+                if (refill_req_fire)
+                    state_nxt = flush ? S_REFILL_DROP : S_REFILL_DATA;
+                else if (flush)
+                    state_nxt = S_IDLE;
             end
-            S_REFILL_DRAIN: begin
-                if (rf_data_valid && rf_data_cnt == WORD_W'(LINE_WORDS - 1))
+
+            S_REFILL_DATA: begin
+                if (flush)
+                    state_nxt = S_REFILL_DROP;
+                else if (refill_data_last)
                     state_nxt = S_DONE_RD;
             end
+
+            S_REFILL_DROP: begin
+                if (refill_drop_done)
+                    state_nxt = S_IDLE;
+            end
+
             S_DONE_RD:
-                state_nxt = S_DONE;
+                state_nxt = flush ? S_IDLE : S_DONE;
             S_DONE:
                 state_nxt = S_IDLE;
-            S_SB_DRAIN:
-                state_nxt = S_IDLE;
+            S_SB_DRAIN_REQ: begin
+                if (sb_req_fire)
+                    state_nxt = S_SB_DRAIN_RESP;
+            end
+            S_SB_DRAIN_RESP: begin
+                if (sb_resp_fire)
+                    state_nxt = S_IDLE;
+            end
             default:
                 state_nxt = S_IDLE;
         endcase
     end
 
-    // Refill control — simple cycle-based approach
-    //
-    // Timeline for DRAM_LATENCY=2, LINE_WORDS=4 (dram_rd_addr is REGISTERED):
-    //   burst_cycle=0: dram_rd_addr_r<=addr[0] (registered from IDLE transition)
-    //   burst_cycle=1: dram_rd_addr_r<=addr[1], DRAM sees addr[0]
-    //   burst_cycle=2: dram_rd_addr_r<=addr[2], DRAM sees addr[1], dram_rdata=data[0] → write
-    //   burst_cycle=3: dram_rd_addr_r<=addr[3], DRAM sees addr[2], dram_rdata=data[1] → write
-    //   burst_cycle=4: (DRAIN)                  DRAM sees addr[3], dram_rdata=data[2] → write
-    //   burst_cycle=5: (DRAIN)                                     dram_rdata=data[3] → write
-    //
-    // rf_burst_cycle declared early for simulator compatibility.
-
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            rf_addr_cnt    <= '0;
-            rf_data_cnt    <= '0;
-            rf_addr_done   <= 1'b0;
-            rf_way         <= 1'b0;
-            rf_tag         <= '0;
-            rf_idx         <= '0;
-            rf_burst_cycle <= '0;
-        end else if (state == S_IDLE && state_nxt == S_REFILL_BURST) begin
-            // Start refill — addr[0] will be registered this cycle edge
-            rf_addr_cnt    <= WORD_W'(1);  // addr[0] being registered now
-            rf_data_cnt    <= '0;
-            rf_addr_done   <= (LINE_WORDS == 1);
-            rf_way         <= lru_victim;
-            rf_tag         <= mem_tag;
-            rf_idx         <= mem_index;
-            rf_burst_cycle <= 4'd1;  // cycle 0 is "now", next is cycle 1
-        end else if (state == S_REFILL_BURST || state == S_REFILL_DRAIN) begin
-            rf_burst_cycle <= rf_burst_cycle + 1'b1;
-            // Send next address (during BURST only)
-            if (state == S_REFILL_BURST && !rf_addr_done) begin
-                rf_addr_cnt  <= rf_addr_cnt + 1'b1;
-                rf_addr_done <= (rf_addr_cnt == WORD_W'(LINE_WORDS - 1));
-            end
-            // Count received data
-            if (rf_data_valid)
+            rf_data_cnt <= '0;
+            rf_way      <= 1'b0;
+            rf_tag      <= '0;
+            rf_idx      <= '0;
+            rf_line_addr <= 32'd0;
+        end else begin
+            if (state == S_IDLE && state_nxt == S_REFILL_REQ) begin
+                rf_data_cnt  <= '0;
+                rf_way       <= lru_victim;
+                rf_tag       <= mem_tag;
+                rf_idx       <= mem_index;
+                rf_line_addr <= {mem_addr[31:4], 4'b0000};
+            end else if (state == S_REFILL_DATA && rf_data_valid) begin
                 rf_data_cnt <= rf_data_cnt + 1'b1;
+            end
         end
     end
 
-    // Data valid: DRAM data is available after address pipeline latency
-    // dram_rd_addr registered(+1) + BRAM read(+1) + DOB_REG(+1) + dram_rdata_r(+1) = 4 cycles
-    // Total latency = 4 cycles from address computation to registered data = DRAM_LATENCY
-    // Note: cannot use WORD_W'(LINE_WORDS) since 2'd4 truncates to 0!
-    assign rf_data_valid = (rf_burst_cycle >= 4'(DRAM_LATENCY)) &
-                           (state == S_REFILL_BURST | state == S_REFILL_DRAIN);
+    assign rf_data_valid = (state == S_REFILL_DATA) & mem_rd_valid & mem_rd_ready;
 
     // ================================================================
     //  Data RAM write — unified write port MUX for BRAM IP
@@ -496,8 +480,8 @@ module dcache (
         end
     end
 
-    // Refill write: when DRAM data is valid during burst/drain
-    assign refill_wr = rf_data_valid & (state == S_REFILL_BURST || state == S_REFILL_DRAIN);
+    // Refill write: one cache data RAM write per accepted backend read beat.
+    assign refill_wr = rf_data_valid;
 
     // Unified BRAM write port MUX per way (unrolled, no for-loop w[0])
     // Priority: refill > store (they are mutually exclusive by FSM design)
@@ -507,14 +491,14 @@ module dcache (
     wire store_w0  = doing_store & ~doing_store_way;
     assign bram_wea[0]   = refill_w0 ? 4'b1111          : store_w0 ? doing_store_wea  : 4'b0000;
     assign bram_waddr[0] = refill_w0 ? rf_wr_data_addr   : store_w0 ? doing_store_addr : '0;
-    assign bram_wdata[0] = refill_w0 ? dram_rdata_r       : store_w0 ? doing_store_data : 32'd0;
+    assign bram_wdata[0] = refill_w0 ? mem_rd_data        : store_w0 ? doing_store_data : 32'd0;
 
     // Way 1
     wire refill_w1 = refill_wr &  rf_way;
     wire store_w1  = doing_store &  doing_store_way;
     assign bram_wea[1]   = refill_w1 ? 4'b1111          : store_w1 ? doing_store_wea  : 4'b0000;
     assign bram_waddr[1] = refill_w1 ? rf_wr_data_addr   : store_w1 ? doing_store_addr : '0;
-    assign bram_wdata[1] = refill_w1 ? dram_rdata_r       : store_w1 ? doing_store_data : 32'd0;
+    assign bram_wdata[1] = refill_w1 ? mem_rd_data        : store_w1 ? doing_store_data : 32'd0;
 
     // Store forward register: capture store info at clock edge
     always_ff @(posedge clk or negedge rst_n) begin
@@ -548,7 +532,7 @@ module dcache (
         end else begin
             // Invalidate victim at refill START so a mid-refill flush
             // leaves no valid-but-corrupted line (BRAM partially overwritten).
-            if (state == S_IDLE && state_nxt == S_REFILL_BURST)
+            if (state == S_IDLE && state_nxt == S_REFILL_REQ)
                 tag_vld[lru_victim][mem_index] <= 1'b0;
             // Validate and write tag in S_DONE_RD (one cycle before S_DONE).
             // By S_DONE, LUTRAM has the new value, so pipeline_advance can
@@ -577,22 +561,22 @@ module dcache (
     // ================================================================
     //  Store Buffer
     // ================================================================
-    // Drain SB to DRAM when S_SB_DRAIN or when IDLE and no miss
+    // Drain SB to memory backend when S_SB_DRAIN_REQ/RESP or when IDLE and no miss
     // Enqueue on store hit or store-miss-done
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             sb_valid <= 1'b0;
-            sb_addr  <= '0;
+            sb_addr  <= 32'd0;
             sb_wea   <= 4'd0;
             sb_data  <= 32'd0;
         end else begin
-            // Drain takes priority (clear valid)
-            if (state == S_SB_DRAIN)
+            // Drain takes priority (clear valid after backend write response)
+            if (sb_resp_fire)
                 sb_valid <= 1'b0;
             // Enqueue store (after drain priority, so enqueue wins if same cycle)
             if (doing_store) begin
                 sb_valid <= 1'b1;
-                sb_addr  <= mem_word_addr;
+                sb_addr  <= {mem_addr[31:2], 2'b00};
                 sb_wea   <= doing_store_wea;
                 sb_data  <= doing_store_data;
             end
@@ -600,40 +584,17 @@ module dcache (
     end
 
     // ================================================================
-    //  DRAM read address (REGISTERED for timing — breaks long routing to DRAM BRAMs)
+    //  External memory backend request/response
     // ================================================================
-    logic [15:0] dram_rd_addr_nxt;
-    always_comb begin
-        dram_rd_addr_nxt = 16'd0;
-        if (state == S_IDLE && state_nxt == S_REFILL_BURST)
-            // First address: registered during IDLE→BURST transition
-            dram_rd_addr_nxt = {mem_tag, mem_index, {WORD_W{1'b0}}};
-        else if (state == S_REFILL_BURST && !rf_addr_done)
-            // Subsequent addresses: burst
-            dram_rd_addr_nxt = {rf_tag, rf_idx, rf_addr_cnt};
-    end
+    assign mem_req_valid = (state == S_REFILL_REQ) | (state == S_SB_DRAIN_REQ);
+    assign mem_req_write = (state == S_SB_DRAIN_REQ);
+    assign mem_req_addr  = mem_req_write ? sb_addr : rf_line_addr;
+    assign mem_req_len   = mem_req_write ? 8'd0 : 8'(LINE_WORDS - 1);
+    assign mem_req_wdata = sb_data;
+    assign mem_req_wstrb = sb_wea;
 
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n)
-            dram_rd_addr <= 16'd0;
-        else
-            dram_rd_addr <= dram_rd_addr_nxt;
-    end
-
-    // ================================================================
-    //  DRAM write port (SB drain)
-    // ================================================================
-    always_comb begin
-        if (state == S_SB_DRAIN) begin
-            dram_wr_addr = sb_addr;
-            dram_wea     = sb_wea;
-            dram_wdata   = sb_data;
-        end else begin
-            dram_wr_addr = 16'd0;
-            dram_wea     = 4'd0;
-            dram_wdata   = 32'd0;
-        end
-    end
+    assign mem_rd_ready  = (state == S_REFILL_DATA) | (state == S_REFILL_DROP);
+    assign mem_wr_ready  = (state == S_SB_DRAIN_RESP);
 
     // ================================================================
     //  CPU read data MUX (MEM stage)
@@ -666,7 +627,7 @@ module dcache (
 
     // ================================================================
     //  Background SB drain: when idle, no miss, SB valid → drain
-    //  FSM: IDLE + sb_valid + no miss → S_SB_DRAIN
+    //  FSM: IDLE + sb_valid + no miss → S_SB_DRAIN_REQ
     //  Already handled in FSM next-state logic above.
     // ================================================================
 

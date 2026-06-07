@@ -167,6 +167,7 @@ RTL_FILES="
     $RTL_DIR/mem_wb_reg_s1.sv
     $RTL_DIR/wb_mux.sv
     $RTL_DIR/dcache.sv
+    $RTL_DIR/dcache_bram_backend.sv
     $RTL_DIR/cpu_top.sv
     $SCRIPT_DIR/work/dcache_data_ram.v
     $SCRIPT_DIR/tb/perf_monitor.sv

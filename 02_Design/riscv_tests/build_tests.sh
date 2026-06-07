@@ -28,7 +28,7 @@ TESTS="simple \
        lb lbu lh lhu lw \
        sb sh sw \
        ld_st st_ld \
-       dcache_stress \
+       dcache_stress axi_backend_stress \
        counter_stress \
        bp_stress \
        dual_alu raw_block branch_single branch_dual branch_dual_flush branch_fwd_matrix branch_dual_edge slot1_branch waw loaduse_dual inst_buffer \
