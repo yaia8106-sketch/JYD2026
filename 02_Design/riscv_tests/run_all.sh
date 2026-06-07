@@ -3,8 +3,8 @@
 # run_all.sh - 批量运行所有 riscv-tests 并汇总结果
 #
 # 用法:
-#   ./run_all.sh              # 使用 iverilog (默认)
-#   ./run_all.sh xsim         # 使用 Vivado xsim
+#   ./run_all.sh              # 使用 Synopsys VCS
+#   ./run_all.sh vcs          # 等价写法
 #
 # 前置条件:
 #   1. 先运行 build_tests.sh 生成 hex 文件
@@ -19,7 +19,7 @@ cd "$SCRIPT_DIR"
 RTL_DIR="$(cd "$SCRIPT_DIR/../rtl" && pwd)"
 HEX_DIR="work/hex"
 WORK_DIR="work"
-SIMULATOR="${1:-iverilog}"
+SIMULATOR="${1:-vcs}"
 
 # RTL 源文件 (cpu_top + dcache + 子模块)
 RTL_FILES="
@@ -80,6 +80,17 @@ TESTS="simple \
        zicsr_basic zicsr_edge csr_forwarding csr_trap_stall trap_mret trap_slot1 trap_flush trap_nested timer_irq_basic"
 
 SIM_GUARD_ARGS="${SIM_GUARD_ARGS:-+pc_guard +watchdog=5000}"
+VCS_OPTS="${VCS_OPTS:--full64 -sverilog -timescale=1ns/1ps}"
+VCS_EXTRA_OPTS="${VCS_EXTRA_OPTS:-}"
+VCS_ENV="${VCS_ENV:-/home/anokyai/synopsys/env.sh}"
+VCS_SHIM="$SCRIPT_DIR/tools/vcs_pthread_yield.c"
+SIM_BIN="$WORK_DIR/riscv_tests_simv"
+COMPILE_LOG="$WORK_DIR/riscv_tests_vcs.log"
+
+if [ "$SIMULATOR" != "vcs" ]; then
+    echo "ERROR: only Synopsys VCS is supported. Do not use iverilog/vvp/xsim for RTL regression."
+    exit 1
+fi
 
 mkdir -p "$WORK_DIR"
 
@@ -90,7 +101,7 @@ if [ ! -d "$HEX_DIR" ] || [ -z "$(ls $HEX_DIR/*.irom.hex 2>/dev/null)" ]; then
 fi
 
 echo "========================================================"
-echo " riscv-tests Runner ($SIMULATOR)"
+echo " riscv-tests Runner (VCS)"
 echo "========================================================"
 
 TOTAL=0
@@ -99,21 +110,30 @@ FAILED=0
 TIMEOUT=0
 ERRORS=""
 
-# ---- 编译 (仅 iverilog 需要预编译) ----
-if [ "$SIMULATOR" = "iverilog" ]; then
-    echo "[INFO] Compiling with iverilog..."
-    SIM_BIN="$WORK_DIR/riscv_tests_sim"
-    COMPILE_LOG="$WORK_DIR/riscv_tests_iverilog.log"
-    # shellcheck disable=SC2086
-    if ! iverilog -g2012 -o "$SIM_BIN" $RTL_FILES >"$COMPILE_LOG" 2>&1; then
-        echo "ERROR: iverilog compilation failed"
-        head -80 "$COMPILE_LOG"
-        exit 1
+# ---- 编译 ----
+if ! command -v vcs >/dev/null 2>&1; then
+    if [ -f "$VCS_ENV" ]; then
+        # shellcheck disable=SC1090
+        source "$VCS_ENV"
     fi
-    head -20 "$COMPILE_LOG"
-    echo "[INFO] Compilation OK"
-    echo ""
 fi
+if ! command -v vcs >/dev/null 2>&1; then
+    echo "ERROR: vcs not found in PATH. Source Synopsys env or set VCS_ENV=<setup.sh>."
+    exit 1
+fi
+
+echo "[INFO] Compiling with VCS..."
+# shellcheck disable=SC2086
+if ! vcs $VCS_OPTS $VCS_EXTRA_OPTS -top tb_riscv_tests -Mdir="$WORK_DIR/riscv_tests_vcs.csrc" -o "$SIM_BIN" $RTL_FILES "$VCS_SHIM" >"$COMPILE_LOG" 2>&1; then
+    echo "ERROR: VCS compilation failed"
+    head -80 "$COMPILE_LOG"
+    exit 1
+fi
+head -20 "$COMPILE_LOG"
+echo "[INFO] Compilation OK"
+echo ""
+
+read -r -a GUARD_ARGS <<< "$SIM_GUARD_ARGS"
 
 # ---- 逐个运行测试 ----
 for test_name in $TESTS; do
@@ -127,21 +147,9 @@ for test_name in $TESTS; do
 
     TOTAL=$((TOTAL + 1))
 
-    if [ "$SIMULATOR" = "iverilog" ]; then
-        result=$(vvp -N "$SIM_BIN" \
-            "+irom=$irom_hex" "+dram=$dram_hex" "+test=$test_name" \
-            "+cycles=50000" $SIM_GUARD_ARGS 2>&1 | grep -E "^\[(PASS|FAIL|TIMEOUT)\]" | head -1)
-    elif [ "$SIMULATOR" = "xsim" ]; then
-        # Vivado xsim flow (requires pre-elaborated snapshot)
-        result=$(xsim riscv_tests_sim \
-            -testplusarg "irom=$irom_hex" \
-            -testplusarg "dram=$dram_hex" \
-            -testplusarg "test=$test_name" \
-            -testplusarg "cycles=50000" \
-            -testplusarg "pc_guard" \
-            -testplusarg "watchdog=5000" \
-            -runall 2>&1 | grep -E "^\[(PASS|FAIL|TIMEOUT)\]" | head -1)
-    fi
+    result=$("$SIM_BIN" \
+        "+irom=$irom_hex" "+dram=$dram_hex" "+test=$test_name" \
+        "+cycles=50000" "${GUARD_ARGS[@]}" 2>&1 | grep -E "^\[(PASS|FAIL|TIMEOUT)\]" | head -1)
 
     if echo "$result" | grep -q "\[PASS\]"; then
         printf "  %-20s ✅ PASS\n" "$test_name"

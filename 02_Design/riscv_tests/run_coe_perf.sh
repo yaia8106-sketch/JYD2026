@@ -17,6 +17,10 @@ RTL_DIR="$WORKSPACE/02_Design/rtl"
 COE_ROOT="${COE_ROOT:-$WORKSPACE/02_Design/coe/dual_issue}"
 WORK_DIR="work"
 HEX_DIR="${HEX_DIR:-$WORK_DIR/coe_hex}"
+VCS_OPTS="${VCS_OPTS:--full64 -sverilog -timescale=1ns/1ps}"
+VCS_EXTRA_OPTS="${VCS_EXTRA_OPTS:-}"
+VCS_ENV="${VCS_ENV:-/home/anokyai/synopsys/env.sh}"
+VCS_SHIM="$SCRIPT_DIR/tools/vcs_pthread_yield.c"
 OUT_DIR=""
 NO_COMPILE=0
 VERBOSE=0
@@ -32,7 +36,7 @@ Usage:
 
 Options:
   --out <dir>       Output directory. Default: work/perf/coe_full_<timestamp>_<git>.
-  --no-compile      Reuse work/coe_perf_sim.
+  --no-compile      Reuse work/coe_perf_simv.
   --verbose         Print full [PERF] lines to the terminal.
   -h, --help        Show this help.
 
@@ -183,6 +187,10 @@ RTL_FILES="
     printf "cycle_timeout=disabled\n"
     printf "watchdog_cycles=%s\n" "$WATCHDOG_CYCLES"
     printf "sim_guard_args=%s\n" "$SIM_GUARD_ARGS"
+    printf "simulator=vcs\n"
+    printf "vcs_opts=%s\n" "$VCS_OPTS"
+    printf "vcs_extra_opts=%s\n" "$VCS_EXTRA_OPTS"
+    printf "vcs_env=%s\n" "$VCS_ENV"
     printf "verbose=%s\n" "$VERBOSE"
 } > "$OUT_DIR/run_meta.env"
 
@@ -201,13 +209,24 @@ echo "[INFO] Watchdog:       $WATCHDOG_CYCLES idle cycles"
 echo "[INFO] Output dir:     $OUT_DIR"
 echo ""
 
-SIM_BIN="$WORK_DIR/coe_perf_sim"
-COMPILE_LOG="$OUT_DIR/coe_perf_iverilog.log"
+SIM_BIN="$WORK_DIR/coe_perf_simv"
+COMPILE_LOG="$OUT_DIR/coe_perf_vcs.log"
 if [ "$NO_COMPILE" -eq 0 ]; then
-    echo "[INFO] Compiling with iverilog..."
+    if ! command -v vcs >/dev/null 2>&1; then
+        if [ -f "$VCS_ENV" ]; then
+            # shellcheck disable=SC1090
+            source "$VCS_ENV"
+        fi
+    fi
+    if ! command -v vcs >/dev/null 2>&1; then
+        echo "ERROR: vcs not found in PATH. Source Synopsys env or set VCS_ENV=<setup.sh>."
+        exit 1
+    fi
+
+    echo "[INFO] Compiling with VCS..."
     # shellcheck disable=SC2086
-    if ! iverilog -g2012 -o "$SIM_BIN" $RTL_FILES >"$COMPILE_LOG" 2>&1; then
-        echo "ERROR: iverilog compilation failed"
+    if ! vcs $VCS_OPTS $VCS_EXTRA_OPTS -top tb_riscv_tests -Mdir="$WORK_DIR/coe_perf_vcs.csrc" -o "$SIM_BIN" $RTL_FILES "$VCS_SHIM" >"$COMPILE_LOG" 2>&1; then
+        echo "ERROR: VCS compilation failed"
         head -80 "$COMPILE_LOG"
         exit 1
     fi
@@ -273,10 +292,10 @@ for test_name in "${TESTS[@]}"; do
     RUN_ARGS+=("${GUARD_ARGS[@]}")
 
     set +e
-    vvp -N "$SIM_BIN" "${RUN_ARGS[@]}" > "$log_file" 2>&1
-    vvp_status=$?
+    "$SIM_BIN" "${RUN_ARGS[@]}" > "$log_file" 2>&1
+    sim_status=$?
     set -e
-    printf "[INFO] vvp_exit=%s\n" "$vvp_status" >> "$log_file"
+    printf "[INFO] sim_exit=%s\n" "$sim_status" >> "$log_file"
 
     if [ "$VERBOSE" -eq 1 ]; then
         grep -E "^\[(PASS|FAIL|TIMEOUT|DONE|PERF)\]" "$log_file" || true
@@ -297,6 +316,6 @@ if grep -R -E "^\[(FAIL|TIMEOUT)\]" "$LOG_DIR" >/dev/null 2>&1; then
     exit 1
 fi
 
-if grep -R -E "^\[INFO\] vvp_exit=([1-9][0-9]*)" "$LOG_DIR" >/dev/null 2>&1; then
+if grep -R -E "^\[INFO\] sim_exit=([1-9][0-9]*)" "$LOG_DIR" >/dev/null 2>&1; then
     exit 1
 fi

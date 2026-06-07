@@ -17,7 +17,12 @@ CONTEST_RTL_DIR="$WORKSPACE/02_Design/contest_readonly/rtl"
 WORK_DIR="$SCRIPT_DIR/work"
 COE_ROOT="${COE_ROOT:-$WORKSPACE/02_Design/coe/dual_issue}"
 HEX_DIR="${HEX_DIR:-$WORK_DIR/coe_hex}"
-SIM_BIN="$WORK_DIR/student_top_coe_sim"
+SIM_BIN="$WORK_DIR/student_top_coe_simv"
+COMPILE_LOG="$WORK_DIR/student_top_coe_vcs.log"
+VCS_OPTS="${VCS_OPTS:--full64 -sverilog -timescale=1ns/1ps}"
+VCS_EXTRA_OPTS="${VCS_EXTRA_OPTS:-}"
+VCS_ENV="${VCS_ENV:-/home/anokyai/synopsys/env.sh}"
+VCS_SHIM="$SCRIPT_DIR/tools/vcs_pthread_yield.c"
 
 TEST_NAME="${1:-new_with_Mext}"
 MAX_CYCLES="${MAX_CYCLES:-5000000}"
@@ -155,8 +160,23 @@ RTL_FILES="
 "
 
 echo "[INFO] Compiling student_top COE simulator..."
+if ! command -v vcs >/dev/null 2>&1; then
+    if [ -f "$VCS_ENV" ]; then
+        # shellcheck disable=SC1090
+        source "$VCS_ENV"
+    fi
+fi
+if ! command -v vcs >/dev/null 2>&1; then
+    echo "ERROR: vcs not found in PATH. Source Synopsys env or set VCS_ENV=<setup.sh>."
+    exit 1
+fi
 # shellcheck disable=SC2086
-iverilog -g2012 -o "$SIM_BIN" $RTL_FILES
+if ! vcs $VCS_OPTS $VCS_EXTRA_OPTS -top tb_student_top_coe -Mdir="$WORK_DIR/student_top_coe_vcs.csrc" -o "$SIM_BIN" $RTL_FILES "$VCS_SHIM" >"$COMPILE_LOG" 2>&1; then
+    echo "ERROR: VCS compilation failed"
+    head -80 "$COMPILE_LOG"
+    exit 1
+fi
+head -20 "$COMPILE_LOG"
 
 echo "[INFO] Running $TEST_NAME through student_top..."
 echo "[INFO] stop_pc: 0x$STOP_PC"
@@ -188,4 +208,4 @@ if [ "$TRACE" != "0" ]; then
     RUN_ARGS+=(+trace "+trace_file=$TRACE_FILE")
 fi
 
-vvp -N "$SIM_BIN" "${RUN_ARGS[@]}"
+"$SIM_BIN" "${RUN_ARGS[@]}"
