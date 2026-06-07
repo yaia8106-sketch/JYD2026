@@ -112,7 +112,7 @@ runtime ~= cycles * clock_period
 1. 从干净 `master` 开实验分支，确认 `git status --short` 为空。
 2. 写清楚假设：要改善哪个 benchmark/热点、预期减少哪类 stall 或哪条关键路径、可能伤害哪条路径。
 3. 对性能 RTL 改动，用脚本或已有记录拿 baseline，而不是凭感觉：
-   - benchmark cycles：`run_perf.sh` 或 COE suite/diff。
+   - benchmark cycles：`run_perf.sh` 或 `run_coe_perf.sh`。
    - 更细的 CPI/热点归因：优先用临时 `/tmp/` 分析脚本，不把一次性评估脚本放进仓库。
    - 时序相关方案：先跑 Vivado timing，至少确认当前 top critical paths。
 4. 设定淘汰线。没有明确超过门槛的预期，不动 RTL。
@@ -125,7 +125,7 @@ runtime ~= cycles * clock_period
 
 - RTL 仿真统一使用 **Synopsys VCS**。禁止新增或继续使用 `iverilog`/`vvp`/`xsim` 作为 RTL 验证入口；旧 Icarus/Vivado 仿真结果不得作为当前验证依据。
 - 功能：改 RTL 后运行 `run_all.sh`，目标是全通过。
-- 长前缀正确性：涉及前端/分支/访存时，运行 `run_coe_diff.sh`。
+- 长程序检查：涉及前端/分支/访存时，运行 `run_coe_perf.sh` 或 `run_student_top_coe.sh`；当前仓库没有 commit trace diff 脚本。
 - 性能：性能相关改动需要和 baseline cycles/runtime 对比，不能只报”功能通过”。
 - 时序：任何影响 IF/IROM、redirect、DCache ready、forwarding/hazard 的改动需要跑 Vivado timing。
 
@@ -146,7 +146,7 @@ cd 02_Design/riscv_tests
 bash run_all.sh
 ```
 
-- 预期结果：**79/79 PASS**（`run_all.sh` 当前测试集：基础 RV32I、RV32M、综合/压力、自定义双发射/BP/DCache/RAS、Zicsr/Trap/Timer 测试）
+- 预期结果：**80/80 PASS**（`run_all.sh` 当前测试集：基础 RV32I、RV32M、综合/压力、自定义双发射/BP/DCache/RAS、AXI backend、Zicsr/Trap/Timer 测试）
 - 默认启用 PC 越界 guard 和流水线无进展 watchdog；PC 跑出 IROM 窗口会直接报错，避免只表现为长时间 timeout。
 - 依赖：Synopsys VCS、`work/hex/*.hex`（已预编译，无需重新 build）
 - 编译产物自动生成在 `work/`，已 gitignore
@@ -158,8 +158,18 @@ cd 02_Design/riscv_tests
 bash run_perf.sh [test_name...]
 ```
 
-- 不带参数时脚本会跑 `bp_stress dcache_stress counter_stress sb_stress`
+- 不带参数时脚本会跑 smoke 集：`simple dual_alu`
 - 输出 `[PERF]` 开头的性能报告（CPI、stall 分解、双发射率、BP 误预测率）
+
+### AXI 顶层 Smoke（处理器侧 AXI master 改动后运行）
+
+```bash
+cd 02_Design/riscv_tests
+bash run_student_top_axi.sh
+```
+
+- 预期结果：默认 4/4 PASS。
+- 覆盖：DCache miss/refill 经 AXI read burst、store buffer 经 AXI write、LED/SW/SEG/timer 等本地 MMIO 不产生 AXI 请求。
 
 ### 重新编译测试（仅在修改/新增测试用例时）
 
@@ -175,12 +185,13 @@ bash build_tests.sh
 
 ```bash
 cd 02_Design/riscv_tests
-MAX_CYCLES=1500000 WATCHDOG_CYCLES=150000 bash run_coe_suite.sh current src0 src1 src2
-COMMITS=50000 MAX_CYCLES=1500000 WATCHDOG_CYCLES=150000 bash run_coe_diff.sh current src0 src1 src2
+bash run_coe_perf.sh current src0 src1 src2
+bash run_student_top_coe.sh new_with_Mext
 ```
 
-- `run_coe_suite.sh`：跑完整 COE 程序到 LED 结果。
-- `run_coe_diff.sh`：对比软件参考模型和 RTL commit trace，适合 RTL 改动后做长前缀正确性检查。
+- `run_coe_perf.sh`：使用 `cpu_top + dcache` 仿真模型跑完整 dual-bank COE 程序，自动从首个 `0000006f` 自环推导 `stop_pc`，输出 `summary.csv/json` 性能指标。
+- `run_student_top_coe.sh`：使用 `student_top` 板级封装跑单个 COE 程序，适合检查 LED/MMIO 集成路径。
+- 当前仓库没有 `run_coe_suite.sh` / `run_coe_diff.sh`。需要软件参考模型或 commit trace diff 时，应先补齐对应脚本，再把入口写回本文档。
 
 ### Vivado 时序流
 

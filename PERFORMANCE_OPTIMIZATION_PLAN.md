@@ -143,7 +143,7 @@ new_time / old_time = (new_cycles / old_cycles) * (new_period / old_period)
 - `tools/parse_perf.py` 会生成 `summary.csv`、`summary.json`，并支持 baseline 对比。
 - 已用 `simple`、`dual_alu` 做过 smoke 验证。
 
-下一批工作转入 Phase 3：用短 focused 集合建立第一份可复现基线。在确认 focused 数据稳定前，不运行一小时级长测试。
+下一批工作转入 Phase 3：短 focused 集合已有历史基线样例，可作为脚本输出格式参考；若要评价当前 RTL，必须在当前 commit/dirty 状态下重新生成基线。在确认 focused 数据稳定前，不运行一小时级长测试。
 
 Phase 2 当前进度：
 
@@ -155,4 +155,4 @@ Phase 2 当前进度：
 - 已用 `lw`、`sw`、`beq`、`bne`、`jal`、`jalr`、`simple`、`dual_alu` 做短测试验证。
 - Frontend/FTQ 和 CPI stack 新增字段已用 `simple`、`dual_alu` 做短 smoke 验证；两个样本的 `cpi_stack_total` 均等于 `cycles`。
 
-下一步建议只跑短 focused 基线：先分别跑 `branch`、`cache`、`dual` 集合，确认各类计数器在对应场景下有区分度；再决定是否做 sampled COE。暂不跑 full COE。
+下一步建议：先在当前 RTL 上重跑 `branch`、`cache`、`dual` focused 集合，确认各类计数器在对应场景下仍有区分度；再决定是否做 COE profiling。暂不跑 full COE 作为默认动作。

@@ -46,6 +46,32 @@ cd 02_Design/riscv_tests
 bash run_all.sh
 ```
 
+性能 profiling：
+
+```bash
+cd 02_Design/riscv_tests
+bash run_perf.sh
+bash run_perf.sh --set branch
+bash run_perf.sh --set cache
+bash run_perf.sh --set dual
+```
+
+COE 程序检查：
+
+```bash
+cd 02_Design/riscv_tests
+bash run_coe_perf.sh current src0 src1 src2
+bash run_student_top_coe.sh new_with_Mext
+```
+
+AXI 集成 smoke：
+
+```bash
+cd 02_Design/riscv_tests
+bash run_student_top_axi.sh
+bash run_axi_adapter.sh
+```
+
 实现后 timing 报告：
 
 ```bash
