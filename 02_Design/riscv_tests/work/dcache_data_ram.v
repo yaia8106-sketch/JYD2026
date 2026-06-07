@@ -1,5 +1,5 @@
 // =============================================================
-// dcache_data_ram.v — Behavioral model for iverilog simulation
+// dcache_data_ram.v — Behavioral model for RTL simulation
 // Matches blk_mem_gen IP: SDP, 256x32, byte-write enable
 // Operating_Mode_B = READ_FIRST (read old value on collision)
 // =============================================================

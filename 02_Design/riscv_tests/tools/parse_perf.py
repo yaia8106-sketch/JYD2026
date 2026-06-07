@@ -15,6 +15,7 @@ from typing import Any
 SUMMARY_COLUMNS = [
     "test",
     "status",
+    "sim_exit",
     "cycles",
     "total_insts",
     "s0_commits",
@@ -554,9 +555,14 @@ def parse_log(path: Path) -> dict[str, Any]:
             if line.startswith("[PERF]"):
                 payload = line[len("[PERF]") :].strip()
                 parse_perf_payload(payload, metrics)
+            elif line.startswith("[INFO] sim_exit="):
+                try:
+                    metrics["sim_exit"] = int(line.rsplit("=", 1)[1])
+                except ValueError:
+                    pass
             elif line.startswith("[INFO] vvp_exit="):
                 try:
-                    metrics["vvp_exit"] = int(line.rsplit("=", 1)[1])
+                    metrics["sim_exit"] = int(line.rsplit("=", 1)[1])
                 except ValueError:
                     pass
 

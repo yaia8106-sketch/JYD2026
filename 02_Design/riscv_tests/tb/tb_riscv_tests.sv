@@ -6,13 +6,13 @@
 //   - 通过 $readmemh + plusarg 加载测试程序
 //   - 监控 tohost (DRAM[0]) 判定 pass/fail
 //
-// 用法 (iverilog):
-//   iverilog -g2012 -o sim tb_riscv_tests.sv <rtl_files>
-//   vvp sim +irom=hex/rv32ui-p-add.irom.hex \
-//           +dram=hex/rv32ui-p-add.dram.hex +test=add
-//   vvp sim +irom_slot0=hex/prog.irom_slot0.hex \
-//           +irom_slot1=hex/prog.irom_slot1.hex \
-//           +dram=hex/prog.dram.hex +test=prog
+// 用法 (VCS):
+//   vcs -full64 -sverilog -top tb_riscv_tests -o simv <rtl_files>
+//   ./simv +irom=hex/rv32ui-p-add.irom.hex \
+//          +dram=hex/rv32ui-p-add.dram.hex +test=add
+//   ./simv +irom_slot0=hex/prog.irom_slot0.hex \
+//          +irom_slot1=hex/prog.irom_slot1.hex \
+//          +dram=hex/prog.dram.hex +test=prog
 // ============================================================
 
 module tb_riscv_tests;
