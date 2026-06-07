@@ -123,6 +123,7 @@ runtime ~= cycles * clock_period
 
 ### RTL 修改后验证
 
+- RTL 仿真统一使用 **Synopsys VCS**。禁止新增或继续使用 `iverilog`/`vvp`/`xsim` 作为 RTL 验证入口；旧 Icarus/Vivado 仿真结果不得作为当前验证依据。
 - 功能：改 RTL 后运行 `run_all.sh`，目标是全通过。
 - 长前缀正确性：涉及前端/分支/访存时，运行 `run_coe_diff.sh`。
 - 性能：性能相关改动需要和 baseline cycles/runtime 对比，不能只报”功能通过”。
@@ -147,7 +148,7 @@ bash run_all.sh
 
 - 预期结果：**79/79 PASS**（`run_all.sh` 当前测试集：基础 RV32I、RV32M、综合/压力、自定义双发射/BP/DCache/RAS、Zicsr/Trap/Timer 测试）
 - 默认启用 PC 越界 guard 和流水线无进展 watchdog；PC 跑出 IROM 窗口会直接报错，避免只表现为长时间 timeout。
-- 依赖：iverilog、`work/hex/*.hex`（已预编译，无需重新 build）
+- 依赖：Synopsys VCS、`work/hex/*.hex`（已预编译，无需重新 build）
 - 编译产物自动生成在 `work/`，已 gitignore
 
 ### 性能 Profiling（按需运行）

@@ -45,7 +45,7 @@ coe/
 
 - **当前 FTQ/IROM64 Vivado 工程**使用 `irom64/` 下的 `irom64.coe`
 - `run_vivado_flow.tcl` 的 COE 参数默认仍是 `current`，但会优先解析到 `02_Design/coe/irom64/current`
-- **软件模型与 Iverilog COE 回归**使用 `single_issue/` 下的 `irom.coe`，testbench 内部再模拟双 bank 取指
+- **软件模型与 VCS COE 回归**使用 `single_issue/` 下的 `irom.coe`，testbench 内部再模拟双 bank 取指
 - **旧双 bank 结构**保留在 `dual_issue/` 下，用于兼容、对照和回归
 - DRAM coe 两种架构通用
 

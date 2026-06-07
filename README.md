@@ -33,7 +33,7 @@ CPU_Workspace/
 
 - `02_Design/rtl/`：自研 CPU RTL 源码。
 - `02_Design/coe/`：COE 文件和 COE 转换工具。
-- `02_Design/riscv_tests/`：Iverilog 回归测试脚本和 testbench。
+- `02_Design/riscv_tests/`：VCS 回归测试脚本和 testbench。
 - `03_Timing_Analysis/`：只放 timing 分析相关内容，目前保留 `sta.sh`、`report_stage_timing.tcl`、`stage_timing_report.txt` 和 `vivado_work/`。
 - `JYD2025_Contest-rv32i/`：赛方 Vivado 工程。
 

@@ -21,6 +21,13 @@ NutShell/
 !02_Design/riscv_tests/work/.gitignore
 !02_Design/riscv_tests/work/dcache_data_ram.v
 !02_Design/riscv_tests/work/hex/
+DVEfiles/
+verdiLog/
+csrc/
+*.daidir/
+simv*
+ucli.key
+vc_hdrs.h
 *.vcd
 *.wcfg
 
