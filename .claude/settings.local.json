@@ -21,7 +21,10 @@
       "Bash(snap list:*)",
       "Read(//opt/**)",
       "Bash(xclip:*)",
-      "Bash(echo $XDG_SESSION_TYPE)"
+      "Bash(echo $XDG_SESSION_TYPE)",
+      "Bash(git -C ~ diff .bashrc)",
+      "Bash(git -C ~ log --oneline .bashrc)",
+      "Bash(alias cx:*)"
     ]
   }
 }
