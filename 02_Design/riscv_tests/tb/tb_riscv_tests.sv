@@ -325,9 +325,11 @@ module tb_riscv_tests;
     integer cycle_cnt = 0;
     integer max_cycles = 50000;
     integer cycle_timeout_enable = 1;
+    integer cycle_limit_done = 0;
     integer max_commits = 0;
     integer commit_cnt = 0;
     integer watchdog_cycles = 0;
+    integer progress_cycles = 0;
     integer idle_cycles = 0;
     integer trace_fd = 0;
     integer trace_enable = 0;
@@ -381,12 +383,15 @@ module tb_riscv_tests;
             ; // optional override
         if ($test$plusargs("no_cycle_timeout"))
             cycle_timeout_enable = 0;
+        cycle_limit_done = $test$plusargs("cycle_limit_done");
         if ($value$plusargs("commits=%d", max_commits))
             ; // optional commit-count stop for differential trace
         if ($value$plusargs("stop_pc=%h", stop_pc))
             stop_pc_enable = 1;
         if ($value$plusargs("watchdog=%d", watchdog_cycles))
             ; // optional idle-cycle watchdog
+        if ($value$plusargs("progress_cycles=%d", progress_cycles))
+            ; // optional periodic status print interval
         led_trace_enable = $test$plusargs("led_trace");
         trace_enable = $test$plusargs("trace");
         if (!$value$plusargs("trace_file=%s", trace_file_r))
@@ -486,6 +491,11 @@ module tb_riscv_tests;
                      test_name_r, commit_cnt, tohost_value, last_tohost_value,
                      led_write_count, u_cpu.pc, last_wb0_pc, last_wb1_pc,
                      cycle_cnt);
+        end else if (cycle_limit_done && cycle_timeout_enable && cycle_cnt >= max_cycles) begin
+            $display("[DONE] %0s  reached cycle_limit=%0d commits=%0d first_led=0x%08x last_led=0x%08x led_writes=%0d pc=0x%08x last_wb0_pc=0x%08x last_wb1_pc=0x%08x  (%0d cycles)",
+                     test_name_r, max_cycles, commit_cnt, tohost_value,
+                     last_tohost_value, led_write_count, u_cpu.pc,
+                     last_wb0_pc, last_wb1_pc, cycle_cnt);
         end else begin
             $display("[TIMEOUT] %0s  commits=%0d first_led=0x%08x last_led=0x%08x led_writes=%0d pc=0x%08x last_wb0_pc=0x%08x last_wb1_pc=0x%08x  (>%0d cycles)",
                      test_name_r, commit_cnt, tohost_value, last_tohost_value,
@@ -505,6 +515,16 @@ module tb_riscv_tests;
 
     always @(posedge clk) begin
         if (rst_n) cycle_cnt <= cycle_cnt + 1;
+    end
+
+    always @(posedge clk) begin
+        if (rst_n && progress_cycles > 0 && cycle_cnt > 0 &&
+            ((cycle_cnt % progress_cycles) == 0)) begin
+            $display("[PROGRESS] %0s  cycle=%0d commits=%0d pc=0x%08x idle=%0d led_writes=%0d first_led=0x%08x last_led=0x%08x last_wb0_pc=0x%08x last_wb1_pc=0x%08x",
+                     test_name_r, cycle_cnt, commit_cnt, u_cpu.pc,
+                     idle_cycles, led_write_count, tohost_value,
+                     last_tohost_value, last_wb0_pc, last_wb1_pc);
+        end
     end
 
     // ================================================================

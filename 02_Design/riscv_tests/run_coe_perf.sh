@@ -4,7 +4,8 @@
 #
 # Full COE runs must end by each program's real stop_pc. This script derives
 # stop_pc from the first self-loop instruction (jal x0, 0 / 0000006f) in the
-# banked IROM stream and runs with +no_cycle_timeout.
+# banked IROM stream. By default it runs until stop_pc; --max-cycles can cap
+# each program for sampled profiling.
 # ============================================================
 
 set -e
@@ -23,8 +24,11 @@ VCS_ENV="${VCS_ENV:-/home/anokyai/synopsys/env.sh}"
 VCS_SHIM="$SCRIPT_DIR/tools/vcs_pthread_yield.c"
 OUT_DIR=""
 NO_COMPILE=0
+PARALLEL=0
 VERBOSE=0
+MAX_CYCLES="${MAX_CYCLES:-0}"
 WATCHDOG_CYCLES="${WATCHDOG_CYCLES:-150000}"
+PROGRESS_CYCLES="${PROGRESS_CYCLES:-0}"
 SIM_GUARD_ARGS="${SIM_GUARD_ARGS:-+pc_guard}"
 TESTS=()
 ORIGINAL_ARGS=("$@")
@@ -35,16 +39,21 @@ Usage:
   ./run_coe_perf.sh [options] [program ...]
 
 Options:
-  --out <dir>       Output directory. Default: work/perf/coe_full_<timestamp>_<git>.
-  --no-compile      Reuse work/coe_perf_simv.
-  --verbose         Print full [PERF] lines to the terminal.
-  -h, --help        Show this help.
+  --out <dir>             Output directory. Default: work/perf/coe_full_<timestamp>_<git>.
+  --max-cycles <n>        Stop each program after n simulated cycles. Default: 0
+                          means run until stop_pc / watchdog.
+  --progress-cycles <n>   Print [PROGRESS] every n simulated cycles. Default: 0 (disabled).
+                          Can also be set with PROGRESS_CYCLES=<n>.
+  --parallel              Run all selected programs concurrently, one simv process per program.
+  --no-compile            Reuse work/coe_perf_simv.
+  --verbose               Print full [PERF] lines to the terminal.
+  -h, --help              Show this help.
 
 Programs default to:
   current src0 src1 src2 new_without_Mext new_with_Mext
 
-Normal completion is stop_pc only. The script intentionally does not pass
-+cycles; watchdog is an idle-progress guard, not a duration limit.
+Normal completion is stop_pc unless --max-cycles is set. Watchdog is an
+idle-progress guard, not a duration limit.
 EOF
 }
 
@@ -58,6 +67,20 @@ while [ $# -gt 0 ]; do
         --no-compile)
             NO_COMPILE=1
             shift
+            ;;
+        --parallel)
+            PARALLEL=1
+            shift
+            ;;
+        --max-cycles)
+            [ $# -ge 2 ] || { echo "ERROR: --max-cycles needs a value"; exit 1; }
+            MAX_CYCLES="$2"
+            shift 2
+            ;;
+        --progress-cycles)
+            [ $# -ge 2 ] || { echo "ERROR: --progress-cycles needs a value"; exit 1; }
+            PROGRESS_CYCLES="$2"
+            shift 2
             ;;
         --verbose)
             VERBOSE=1
@@ -81,6 +104,15 @@ done
 
 if [ "${#TESTS[@]}" -eq 0 ]; then
     TESTS=(current src0 src1 src2 new_without_Mext new_with_Mext)
+fi
+
+if ! [[ "$PROGRESS_CYCLES" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: --progress-cycles / PROGRESS_CYCLES must be a non-negative integer"
+    exit 1
+fi
+if ! [[ "$MAX_CYCLES" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: --max-cycles / MAX_CYCLES must be a non-negative integer"
+    exit 1
 fi
 
 mkdir -p "$WORK_DIR" "$HEX_DIR"
@@ -185,8 +217,15 @@ RTL_FILES="
     printf "coe_root=%s\n" "$COE_ROOT"
     printf "tests=%s\n" "${TESTS[*]}"
     printf "stop_pc_source=first_self_jump_0000006f\n"
-    printf "cycle_timeout=disabled\n"
+    if [ "$MAX_CYCLES" -gt 0 ]; then
+        printf "cycle_timeout=%s\n" "$MAX_CYCLES"
+    else
+        printf "cycle_timeout=disabled\n"
+    fi
     printf "watchdog_cycles=%s\n" "$WATCHDOG_CYCLES"
+    printf "progress_cycles=%s\n" "$PROGRESS_CYCLES"
+    printf "parallel=%s\n" "$PARALLEL"
+    printf "parallel_jobs=%s\n" "${#TESTS[@]}"
     printf "sim_guard_args=%s\n" "$SIM_GUARD_ARGS"
     printf "simulator=vcs\n"
     printf "vcs_opts=%s\n" "$VCS_OPTS"
@@ -205,8 +244,22 @@ echo " full COE performance profiling"
 echo "========================================================"
 echo "[INFO] COE root:       $COE_ROOT"
 echo "[INFO] Tests:          ${TESTS[*]}"
-echo "[INFO] Cycle timeout:  disabled"
+if [ "$MAX_CYCLES" -gt 0 ]; then
+    echo "[INFO] Cycle timeout:  $MAX_CYCLES cycles"
+else
+    echo "[INFO] Cycle timeout:  disabled"
+fi
 echo "[INFO] Watchdog:       $WATCHDOG_CYCLES idle cycles"
+if [ "$PROGRESS_CYCLES" -gt 0 ]; then
+    echo "[INFO] Progress:       every $PROGRESS_CYCLES cycles"
+else
+    echo "[INFO] Progress:       disabled"
+fi
+if [ "$PARALLEL" -eq 1 ]; then
+    echo "[INFO] Parallel:       enabled (${#TESTS[@]} sim jobs)"
+else
+    echo "[INFO] Parallel:       disabled"
+fi
 echo "[INFO] Output dir:     $OUT_DIR"
 echo ""
 
@@ -244,8 +297,14 @@ else
 fi
 
 read -r -a GUARD_ARGS <<< "$SIM_GUARD_ARGS"
+: > "$OUT_DIR/stop_pc.txt"
 
-for test_name in "${TESTS[@]}"; do
+run_one_test() {
+    local test_name="$1"
+    local coe_dir slot0_coe slot1_coe dram_coe
+    local slot0_hex slot1_hex dram_hex log_file stop_pc
+    local live_pattern sim_status
+
     coe_dir="$COE_ROOT/$test_name"
     slot0_coe="$coe_dir/irom_slot0.coe"
     slot1_coe="$coe_dir/irom_slot1.coe"
@@ -262,7 +321,7 @@ for test_name in "${TESTS[@]}"; do
     if [ ! -f "$slot0_coe" ] || [ ! -f "$slot1_coe" ] || [ ! -f "$dram_coe" ]; then
         echo "[SKIP] $test_name COE not found" | tee "$log_file"
         echo ""
-        continue
+        return 0
     fi
 
     coe_to_hex "$slot0_coe" "$slot0_hex"
@@ -272,7 +331,7 @@ for test_name in "${TESTS[@]}"; do
     if ! stop_pc="$(derive_stop_pc "$slot0_hex" "$slot1_hex")"; then
         echo "[FAIL] $test_name stop_pc derivation failed" | tee "$log_file"
         echo ""
-        continue
+        return 0
     fi
 
     printf "%s stop_pc=0x%s\n" "$test_name" "$stop_pc" >> "$OUT_DIR/stop_pc.txt"
@@ -284,27 +343,69 @@ for test_name in "${TESTS[@]}"; do
         "+dram=$dram_hex"
         "+test=$test_name"
         "+stop_pc=$stop_pc"
-        +no_cycle_timeout
         +perf
     )
+    if [ "$MAX_CYCLES" -gt 0 ]; then
+        RUN_ARGS+=("+cycles=$MAX_CYCLES")
+        RUN_ARGS+=(+cycle_limit_done)
+    else
+        RUN_ARGS+=(+no_cycle_timeout)
+    fi
     if [ "$WATCHDOG_CYCLES" -gt 0 ]; then
         RUN_ARGS+=("+watchdog=$WATCHDOG_CYCLES")
+    fi
+    if [ "$PROGRESS_CYCLES" -gt 0 ]; then
+        RUN_ARGS+=("+progress_cycles=$PROGRESS_CYCLES")
     fi
     RUN_ARGS+=("${GUARD_ARGS[@]}")
 
     set +e
-    "$SIM_BIN" "${RUN_ARGS[@]}" > "$log_file" 2>&1
-    sim_status=$?
+    if [ "$PROGRESS_CYCLES" -gt 0 ]; then
+        if [ "$VERBOSE" -eq 1 ]; then
+            live_pattern="^\\[(PASS|FAIL|TIMEOUT|DONE|PROGRESS|PERF)\\]"
+        else
+            live_pattern="^\\[(PASS|FAIL|TIMEOUT|DONE|PROGRESS)\\]"
+        fi
+        "$SIM_BIN" "${RUN_ARGS[@]}" 2>&1 | tee "$log_file" | grep --line-buffered -E "$live_pattern"
+        pipe_status=("${PIPESTATUS[@]}")
+        sim_status=${pipe_status[0]}
+    else
+        "$SIM_BIN" "${RUN_ARGS[@]}" > "$log_file" 2>&1
+        sim_status=$?
+    fi
     set -e
     printf "[INFO] sim_exit=%s\n" "$sim_status" >> "$log_file"
 
-    if [ "$VERBOSE" -eq 1 ]; then
-        grep -E "^\[(PASS|FAIL|TIMEOUT|DONE|PERF)\]" "$log_file" || true
-    else
-        grep -E "^\[(PASS|FAIL|TIMEOUT|DONE)\]" "$log_file" || true
+    if [ "$PROGRESS_CYCLES" -eq 0 ]; then
+        if [ "$VERBOSE" -eq 1 ]; then
+            grep -E "^\[(PASS|FAIL|TIMEOUT|DONE|PERF)\]" "$log_file" || true
+        else
+            grep -E "^\[(PASS|FAIL|TIMEOUT|DONE)\]" "$log_file" || true
+        fi
     fi
     echo ""
-done
+    return "$sim_status"
+}
+
+RUN_FAILED=0
+if [ "$PARALLEL" -eq 1 ]; then
+    PIDS=()
+    for test_name in "${TESTS[@]}"; do
+        run_one_test "$test_name" &
+        PIDS+=("$!")
+    done
+    for pid in "${PIDS[@]}"; do
+        if ! wait "$pid"; then
+            RUN_FAILED=1
+        fi
+    done
+else
+    for test_name in "${TESTS[@]}"; do
+        if ! run_one_test "$test_name"; then
+            RUN_FAILED=1
+        fi
+    done
+fi
 
 python3 "$SCRIPT_DIR/tools/parse_perf.py" --run-dir "$OUT_DIR"
 
@@ -318,5 +419,9 @@ if grep -R -E "^\[(FAIL|TIMEOUT)\]" "$LOG_DIR" >/dev/null 2>&1; then
 fi
 
 if grep -R -E "^\[INFO\] sim_exit=([1-9][0-9]*)" "$LOG_DIR" >/dev/null 2>&1; then
+    exit 1
+fi
+
+if [ "$RUN_FAILED" -ne 0 ]; then
     exit 1
 fi
