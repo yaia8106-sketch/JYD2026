@@ -1,17 +1,21 @@
 #!/bin/bash
 # ============================================================
 # run_axi_adapter.sh - Standalone VCS smoke test for AXI adapter
+#
+# Classification:
+#   Functional correctness / AXI protocol smoke.
 # ============================================================
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-RTL_DIR="$(cd "$SCRIPT_DIR/../rtl" && pwd)"
-WORK_DIR="$SCRIPT_DIR/work/axi_adapter"
+RISCV_TESTS_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+RTL_DIR="$(cd "$RISCV_TESTS_DIR/../rtl" && pwd)"
+WORK_DIR="$RISCV_TESTS_DIR/work/axi_adapter"
 VCS_ENV="${VCS_ENV:-/home/anokyai/synopsys/env.sh}"
 VCS_OPTS="${VCS_OPTS:--full64 -sverilog -timescale=1ns/1ps}"
 VCS_EXTRA_OPTS="${VCS_EXTRA_OPTS:-}"
-VCS_SHIM="$SCRIPT_DIR/tools/vcs_pthread_yield.c"
+VCS_SHIM="$RISCV_TESTS_DIR/tools/vcs_pthread_yield.c"
 SIM_BIN="$WORK_DIR/axi_adapter_simv"
 COMPILE_LOG="$WORK_DIR/axi_adapter_vcs.log"
 
@@ -29,9 +33,9 @@ if ! command -v vcs >/dev/null 2>&1; then
 fi
 
 RTL_FILES="
-    $RTL_DIR/axi_master_adapter.sv
-    $RTL_DIR/dcache_axi_backend.sv
-    $SCRIPT_DIR/tb/tb_axi_master_adapter.sv
+    $RTL_DIR/bus/axi/axi_master_adapter.sv
+    $RTL_DIR/memory/backends/dcache_axi_backend.sv
+    $RISCV_TESTS_DIR/tb/tb_axi_master_adapter.sv
 "
 
 echo "[INFO] Compiling AXI adapter smoke test with VCS..."

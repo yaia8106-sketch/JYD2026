@@ -2,6 +2,10 @@
 # ============================================================
 # run_coe_perf.sh - Run full contest COE programs with perf counters.
 #
+# Classification:
+#   Performance / long-run / COE entry. Do not use this as a default smoke
+#   gate unless the user explicitly asks for COE-level validation.
+#
 # Full COE runs must end by each program's real stop_pc. This script derives
 # stop_pc from the first self-loop instruction (jal x0, 0 / 0000006f) in the
 # banked IROM stream. By default it runs until stop_pc; --max-cycles can cap
@@ -11,17 +15,18 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-cd "$SCRIPT_DIR"
+RISCV_TESTS_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+cd "$RISCV_TESTS_DIR"
 
-WORKSPACE="$(cd "$SCRIPT_DIR/../.." && pwd)"
+WORKSPACE="$(cd "$RISCV_TESTS_DIR/../.." && pwd)"
 RTL_DIR="$WORKSPACE/02_Design/rtl"
 COE_ROOT="${COE_ROOT:-$WORKSPACE/02_Design/coe/dual_issue}"
-WORK_DIR="work"
+WORK_DIR="$RISCV_TESTS_DIR/work"
 HEX_DIR="${HEX_DIR:-$WORK_DIR/coe_hex}"
 VCS_OPTS="${VCS_OPTS:--full64 -sverilog -timescale=1ns/1ps}"
 VCS_EXTRA_OPTS="${VCS_EXTRA_OPTS:-}"
 VCS_ENV="${VCS_ENV:-/home/anokyai/synopsys/env.sh}"
-VCS_SHIM="$SCRIPT_DIR/tools/vcs_pthread_yield.c"
+VCS_SHIM="$RISCV_TESTS_DIR/tools/vcs_pthread_yield.c"
 OUT_DIR=""
 NO_COMPILE=0
 PARALLEL=0
@@ -36,7 +41,7 @@ ORIGINAL_ARGS=("$@")
 usage() {
     cat <<'EOF'
 Usage:
-  ./run_coe_perf.sh [options] [program ...]
+  bash performance/long/run_coe_perf.sh [options] [program ...]
 
 Options:
   --out <dir>             Output directory. Default: work/perf/coe_full_<timestamp>_<git>.
@@ -171,39 +176,39 @@ derive_stop_pc() {
 }
 
 RTL_FILES="
-    $RTL_DIR/cpu_defs.sv
-    $RTL_DIR/if_id_reg.sv
-    $RTL_DIR/decoder.sv
-    $RTL_DIR/imm_gen.sv
-    $RTL_DIR/regfile.sv
-    $RTL_DIR/forwarding.sv
-    $RTL_DIR/alu_src_mux.sv
-    $RTL_DIR/id_ex_reg.sv
-    $RTL_DIR/id_ex_reg_s1.sv
-    $RTL_DIR/alu.sv
-    $RTL_DIR/branch_condition.sv
-    $RTL_DIR/id_stage_derive.sv
-    $RTL_DIR/ex_stage_ctrl.sv
-    $RTL_DIR/branch_unit.sv
-    $RTL_DIR/branch_predictor.sv
-    $RTL_DIR/frontend_ftq.sv
-    $RTL_DIR/mem_interface.sv
-    $RTL_DIR/redirect_ctrl.sv
-    $RTL_DIR/csr_trap_unit.sv
-    $RTL_DIR/memory_access_unit.sv
-    $RTL_DIR/muldiv_unit.sv
-    $RTL_DIR/dual_issue_counter.sv
-    $RTL_DIR/ex_mem_reg.sv
-    $RTL_DIR/ex_mem_reg_s1.sv
-    $RTL_DIR/mem_wb_reg.sv
-    $RTL_DIR/mem_wb_reg_s1.sv
-    $RTL_DIR/wb_mux.sv
-    $RTL_DIR/dcache.sv
-    $RTL_DIR/dcache_bram_backend.sv
-    $RTL_DIR/cpu_top.sv
-    $SCRIPT_DIR/work/dcache_data_ram.v
-    $SCRIPT_DIR/tb/perf_monitor.sv
-    $SCRIPT_DIR/tb/tb_riscv_tests.sv
+    $RTL_DIR/common/cpu_defs.sv
+    $RTL_DIR/core/if_id_reg.sv
+    $RTL_DIR/core/decoder.sv
+    $RTL_DIR/core/imm_gen.sv
+    $RTL_DIR/core/regfile.sv
+    $RTL_DIR/core/forwarding.sv
+    $RTL_DIR/core/alu_src_mux.sv
+    $RTL_DIR/core/id_ex_reg.sv
+    $RTL_DIR/core/id_ex_reg_s1.sv
+    $RTL_DIR/core/alu.sv
+    $RTL_DIR/core/branch_condition.sv
+    $RTL_DIR/core/id_stage_derive.sv
+    $RTL_DIR/core/ex_stage_ctrl.sv
+    $RTL_DIR/core/branch_unit.sv
+    $RTL_DIR/core/branch_predictor.sv
+    $RTL_DIR/core/frontend_ftq.sv
+    $RTL_DIR/core/mem_interface.sv
+    $RTL_DIR/core/redirect_ctrl.sv
+    $RTL_DIR/core/csr_trap_unit.sv
+    $RTL_DIR/core/memory_access_unit.sv
+    $RTL_DIR/core/muldiv_unit.sv
+    $RTL_DIR/core/dual_issue_counter.sv
+    $RTL_DIR/core/ex_mem_reg.sv
+    $RTL_DIR/core/ex_mem_reg_s1.sv
+    $RTL_DIR/core/mem_wb_reg.sv
+    $RTL_DIR/core/mem_wb_reg_s1.sv
+    $RTL_DIR/core/wb_mux.sv
+    $RTL_DIR/memory/dcache.sv
+    $RTL_DIR/memory/backends/dcache_bram_backend.sv
+    $RTL_DIR/core/cpu_top.sv
+    $RISCV_TESTS_DIR/work/dcache_data_ram.v
+    $RISCV_TESTS_DIR/tb/perf_monitor.sv
+    $RISCV_TESTS_DIR/tb/tb_riscv_tests.sv
 "
 
 {
@@ -407,7 +412,7 @@ else
     done
 fi
 
-python3 "$SCRIPT_DIR/tools/parse_perf.py" --run-dir "$OUT_DIR"
+python3 "$RISCV_TESTS_DIR/tools/parse_perf.py" --run-dir "$OUT_DIR"
 
 echo ""
 echo "[INFO] Summary CSV:  $OUT_DIR/summary.csv"

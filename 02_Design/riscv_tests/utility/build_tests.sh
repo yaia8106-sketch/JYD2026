@@ -2,19 +2,24 @@
 # ============================================================
 # build_tests.sh - 编译 riscv-tests 并转换为 hex 文件
 # 使用自定义 env + 自定义 link.ld (IROM/DRAM 分离)
+#
+# Classification:
+#   Utility only. This generates work/hex inputs after test source changes;
+#   it is not a verification entry point.
 # ============================================================
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-HEX_DIR="$SCRIPT_DIR/work/hex"
+RISCV_TESTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+HEX_DIR="$RISCV_TESTS_DIR/work/hex"
 BUILD_DIR="/tmp/riscv_build"
 
 CC=riscv64-unknown-elf-gcc
 OBJDUMP="riscv64-unknown-elf-objdump"
 CFLAGS="-march=rv32im_zicsr -mabi=ilp32 -static -mcmodel=medany -fvisibility=hidden -nostdlib -nostartfiles"
-INCLUDES="-I$SCRIPT_DIR/env"
-LDFLAGS="-T$SCRIPT_DIR/env/link.ld"
+INCLUDES="-I$RISCV_TESTS_DIR/env"
+LDFLAGS="-T$RISCV_TESTS_DIR/env/link.ld"
 
 # RV32IM 指令测试 (去掉 fence_i)
 TESTS="simple \
@@ -43,7 +48,7 @@ mkdir -p "$BUILD_DIR"
 
 echo "========================================================"
 echo " Building riscv-tests for RV32IM/Zicsr (custom env)"
-echo " Source:  $SCRIPT_DIR/src/rv32ui/"
+echo " Source:  $RISCV_TESTS_DIR/src/rv32ui/"
 echo " Output:  $HEX_DIR/"
 echo "========================================================"
 
@@ -52,7 +57,7 @@ FAIL=0
 SKIP=0
 
 for test in $TESTS; do
-    src="$SCRIPT_DIR/src/rv32ui/$test.S"
+    src="$RISCV_TESTS_DIR/src/rv32ui/$test.S"
     elf="$BUILD_DIR/rv32ui-p-$test"
 
     if [ ! -f "$src" ]; then
@@ -65,7 +70,7 @@ for test in $TESTS; do
 
     if $CC $CFLAGS $INCLUDES $LDFLAGS "$src" -o "$elf" 2>/tmp/rv_build_err.txt; then
         # 转换为 hex (直接输出到 HEX_DIR)
-        python3 "$SCRIPT_DIR/tools/elf2hex.py" "$elf" \
+        python3 "$RISCV_TESTS_DIR/tools/elf2hex.py" "$elf" \
             "$HEX_DIR/rv32ui-p-${test}.irom.hex" \
             "$HEX_DIR/rv32ui-p-${test}.dram.hex"
 

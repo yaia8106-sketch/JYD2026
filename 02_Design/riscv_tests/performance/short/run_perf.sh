@@ -2,15 +2,19 @@
 # ============================================================
 # run_perf.sh - Run lightweight performance profiling.
 #
-# Safe default:
-#   ./run_perf.sh
-#       Runs the smoke set only: simple dual_alu.
+# Classification:
+#   Performance / profiling entry. Do not use this script as the functional
+#   correctness smoke gate; use run_all.sh / AXI smoke scripts for that.
+#
+# Short default:
+#   bash performance/short/run_perf.sh
+#       Runs a small profiling sanity set only: simple dual_alu.
 #
 # Examples:
-#   ./run_perf.sh --set focused
-#   ./run_perf.sh --set branch --max-cycles 200000
-#   ./run_perf.sh --out work/perf/my_run simple dual_alu
-#   ./run_perf.sh --baseline work/perf/baseline
+#   bash performance/short/run_perf.sh --set focused
+#   bash performance/short/run_perf.sh --set branch --max-cycles 200000
+#   bash performance/short/run_perf.sh --out work/perf/my_run simple dual_alu
+#   bash performance/short/run_perf.sh --baseline work/perf/baseline
 #
 # Outputs:
 #   work/perf/<timestamp>_<git>_<set>/
@@ -25,15 +29,16 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-cd "$SCRIPT_DIR"
+RISCV_TESTS_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+cd "$RISCV_TESTS_DIR"
 
-RTL_DIR="$(cd "$SCRIPT_DIR/../rtl" && pwd)"
-HEX_DIR="${HEX_DIR:-work/hex}"
-WORK_DIR="work"
+RTL_DIR="$(cd "$RISCV_TESTS_DIR/../rtl" && pwd)"
+HEX_DIR="${HEX_DIR:-$RISCV_TESTS_DIR/work/hex}"
+WORK_DIR="$RISCV_TESTS_DIR/work"
 VCS_OPTS="${VCS_OPTS:--full64 -sverilog -timescale=1ns/1ps}"
 VCS_EXTRA_OPTS="${VCS_EXTRA_OPTS:-}"
 VCS_ENV="${VCS_ENV:-/home/anokyai/synopsys/env.sh}"
-VCS_SHIM="$SCRIPT_DIR/tools/vcs_pthread_yield.c"
+VCS_SHIM="$RISCV_TESTS_DIR/tools/vcs_pthread_yield.c"
 
 TEST_SET="smoke"
 MAX_CYCLES=50000
@@ -49,11 +54,12 @@ VERBOSE=0
 usage() {
     cat <<'EOF'
 Usage:
-  ./run_perf.sh [options] [test ...]
+  bash performance/short/run_perf.sh [options] [test ...]
 
 Options:
-  --set <name>         Test set: smoke, focused, branch, cache, dual, all.
-                       Default: smoke.
+  --set <name>         Profiling set: smoke, focused, branch, cache, dual, all.
+                       Default: smoke. This is a profiling sanity set, not the
+                       functional correctness gate.
   --max-cycles <n>     Cycle timeout passed to the testbench. Default: 50000.
   --max-commits <n>    Optional commit-count stop. Default: 0 (disabled).
   --out <dir>          Output directory. Default: work/perf/<timestamp>_<git>_<set>.
@@ -172,7 +178,7 @@ else
 fi
 
 if [ ! -d "$HEX_DIR" ] || [ -z "$(ls "$HEX_DIR"/*.irom.hex 2>/dev/null)" ]; then
-    echo "ERROR: hex not found. Run: bash build_tests.sh"
+    echo "ERROR: hex not found. Run: bash utility/build_tests.sh"
     exit 1
 fi
 
@@ -187,39 +193,39 @@ LOG_DIR="$OUT_DIR/logs"
 mkdir -p "$LOG_DIR"
 
 RTL_FILES="
-    $RTL_DIR/cpu_defs.sv
-    $RTL_DIR/if_id_reg.sv
-    $RTL_DIR/decoder.sv
-    $RTL_DIR/imm_gen.sv
-    $RTL_DIR/regfile.sv
-    $RTL_DIR/forwarding.sv
-    $RTL_DIR/alu_src_mux.sv
-    $RTL_DIR/id_ex_reg.sv
-    $RTL_DIR/id_ex_reg_s1.sv
-    $RTL_DIR/alu.sv
-    $RTL_DIR/branch_condition.sv
-    $RTL_DIR/id_stage_derive.sv
-    $RTL_DIR/ex_stage_ctrl.sv
-    $RTL_DIR/branch_unit.sv
-    $RTL_DIR/branch_predictor.sv
-    $RTL_DIR/frontend_ftq.sv
-    $RTL_DIR/mem_interface.sv
-    $RTL_DIR/redirect_ctrl.sv
-    $RTL_DIR/csr_trap_unit.sv
-    $RTL_DIR/memory_access_unit.sv
-    $RTL_DIR/muldiv_unit.sv
-    $RTL_DIR/dual_issue_counter.sv
-    $RTL_DIR/ex_mem_reg.sv
-    $RTL_DIR/ex_mem_reg_s1.sv
-    $RTL_DIR/mem_wb_reg.sv
-    $RTL_DIR/mem_wb_reg_s1.sv
-    $RTL_DIR/wb_mux.sv
-    $RTL_DIR/dcache.sv
-    $RTL_DIR/dcache_bram_backend.sv
-    $RTL_DIR/cpu_top.sv
-    $SCRIPT_DIR/work/dcache_data_ram.v
-    $SCRIPT_DIR/tb/perf_monitor.sv
-    $SCRIPT_DIR/tb/tb_riscv_tests.sv
+    $RTL_DIR/common/cpu_defs.sv
+    $RTL_DIR/core/if_id_reg.sv
+    $RTL_DIR/core/decoder.sv
+    $RTL_DIR/core/imm_gen.sv
+    $RTL_DIR/core/regfile.sv
+    $RTL_DIR/core/forwarding.sv
+    $RTL_DIR/core/alu_src_mux.sv
+    $RTL_DIR/core/id_ex_reg.sv
+    $RTL_DIR/core/id_ex_reg_s1.sv
+    $RTL_DIR/core/alu.sv
+    $RTL_DIR/core/branch_condition.sv
+    $RTL_DIR/core/id_stage_derive.sv
+    $RTL_DIR/core/ex_stage_ctrl.sv
+    $RTL_DIR/core/branch_unit.sv
+    $RTL_DIR/core/branch_predictor.sv
+    $RTL_DIR/core/frontend_ftq.sv
+    $RTL_DIR/core/mem_interface.sv
+    $RTL_DIR/core/redirect_ctrl.sv
+    $RTL_DIR/core/csr_trap_unit.sv
+    $RTL_DIR/core/memory_access_unit.sv
+    $RTL_DIR/core/muldiv_unit.sv
+    $RTL_DIR/core/dual_issue_counter.sv
+    $RTL_DIR/core/ex_mem_reg.sv
+    $RTL_DIR/core/ex_mem_reg_s1.sv
+    $RTL_DIR/core/mem_wb_reg.sv
+    $RTL_DIR/core/mem_wb_reg_s1.sv
+    $RTL_DIR/core/wb_mux.sv
+    $RTL_DIR/memory/dcache.sv
+    $RTL_DIR/memory/backends/dcache_bram_backend.sv
+    $RTL_DIR/core/cpu_top.sv
+    $RISCV_TESTS_DIR/work/dcache_data_ram.v
+    $RISCV_TESTS_DIR/tb/perf_monitor.sv
+    $RISCV_TESTS_DIR/tb/tb_riscv_tests.sv
 "
 
 {
@@ -339,7 +345,7 @@ if [ -n "$BASELINE" ]; then
     PARSER_ARGS+=(--baseline "$BASELINE")
 fi
 
-python3 "$SCRIPT_DIR/tools/parse_perf.py" "${PARSER_ARGS[@]}"
+python3 "$RISCV_TESTS_DIR/tools/parse_perf.py" "${PARSER_ARGS[@]}"
 
 echo ""
 echo "[INFO] Summary CSV:  $OUT_DIR/summary.csv"

@@ -2,9 +2,13 @@
 # ============================================================
 # run_all.sh - 批量运行所有 riscv-tests 并汇总结果
 #
+# Classification:
+#   Functional correctness gate. Add short correctness tests here, not in
+#   run_perf.sh or COE long-run scripts.
+#
 # 用法:
-#   ./run_all.sh              # 使用 Synopsys VCS
-#   ./run_all.sh vcs          # 等价写法
+#   bash functional/run_all.sh      # 使用 Synopsys VCS
+#   bash functional/run_all.sh vcs  # 等价写法
 #
 # 前置条件:
 #   1. 先运行 build_tests.sh 生成 hex 文件
@@ -14,48 +18,49 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-cd "$SCRIPT_DIR"
+RISCV_TESTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$RISCV_TESTS_DIR"
 
-RTL_DIR="$(cd "$SCRIPT_DIR/../rtl" && pwd)"
-HEX_DIR="work/hex"
-WORK_DIR="work"
+RTL_DIR="$(cd "$RISCV_TESTS_DIR/../rtl" && pwd)"
+HEX_DIR="${HEX_DIR:-$RISCV_TESTS_DIR/work/hex}"
+WORK_DIR="$RISCV_TESTS_DIR/work"
 SIMULATOR="${1:-vcs}"
 
 # RTL 源文件 (cpu_top + dcache + 子模块)
 RTL_FILES="
-    $RTL_DIR/cpu_defs.sv
-    $RTL_DIR/if_id_reg.sv
-    $RTL_DIR/decoder.sv
-    $RTL_DIR/imm_gen.sv
-    $RTL_DIR/regfile.sv
-    $RTL_DIR/forwarding.sv
-    $RTL_DIR/alu_src_mux.sv
-    $RTL_DIR/id_ex_reg.sv
-    $RTL_DIR/id_ex_reg_s1.sv
-    $RTL_DIR/alu.sv
-    $RTL_DIR/branch_condition.sv
-    $RTL_DIR/id_stage_derive.sv
-    $RTL_DIR/ex_stage_ctrl.sv
-    $RTL_DIR/branch_unit.sv
-    $RTL_DIR/branch_predictor.sv
-    $RTL_DIR/frontend_ftq.sv
-    $RTL_DIR/mem_interface.sv
-    $RTL_DIR/redirect_ctrl.sv
-    $RTL_DIR/csr_trap_unit.sv
-    $RTL_DIR/memory_access_unit.sv
-    $RTL_DIR/muldiv_unit.sv
-    $RTL_DIR/dual_issue_counter.sv
-    $RTL_DIR/ex_mem_reg.sv
-    $RTL_DIR/ex_mem_reg_s1.sv
-    $RTL_DIR/mem_wb_reg.sv
-    $RTL_DIR/mem_wb_reg_s1.sv
-    $RTL_DIR/wb_mux.sv
-    $RTL_DIR/dcache.sv
-    $RTL_DIR/dcache_bram_backend.sv
-    $RTL_DIR/cpu_top.sv
-    $SCRIPT_DIR/work/dcache_data_ram.v
-    $SCRIPT_DIR/tb/perf_monitor.sv
-    $SCRIPT_DIR/tb/tb_riscv_tests.sv
+    $RTL_DIR/common/cpu_defs.sv
+    $RTL_DIR/core/if_id_reg.sv
+    $RTL_DIR/core/decoder.sv
+    $RTL_DIR/core/imm_gen.sv
+    $RTL_DIR/core/regfile.sv
+    $RTL_DIR/core/forwarding.sv
+    $RTL_DIR/core/alu_src_mux.sv
+    $RTL_DIR/core/id_ex_reg.sv
+    $RTL_DIR/core/id_ex_reg_s1.sv
+    $RTL_DIR/core/alu.sv
+    $RTL_DIR/core/branch_condition.sv
+    $RTL_DIR/core/id_stage_derive.sv
+    $RTL_DIR/core/ex_stage_ctrl.sv
+    $RTL_DIR/core/branch_unit.sv
+    $RTL_DIR/core/branch_predictor.sv
+    $RTL_DIR/core/frontend_ftq.sv
+    $RTL_DIR/core/mem_interface.sv
+    $RTL_DIR/core/redirect_ctrl.sv
+    $RTL_DIR/core/csr_trap_unit.sv
+    $RTL_DIR/core/memory_access_unit.sv
+    $RTL_DIR/core/muldiv_unit.sv
+    $RTL_DIR/core/dual_issue_counter.sv
+    $RTL_DIR/core/ex_mem_reg.sv
+    $RTL_DIR/core/ex_mem_reg_s1.sv
+    $RTL_DIR/core/mem_wb_reg.sv
+    $RTL_DIR/core/mem_wb_reg_s1.sv
+    $RTL_DIR/core/wb_mux.sv
+    $RTL_DIR/memory/dcache.sv
+    $RTL_DIR/memory/backends/dcache_bram_backend.sv
+    $RTL_DIR/core/cpu_top.sv
+    $RISCV_TESTS_DIR/work/dcache_data_ram.v
+    $RISCV_TESTS_DIR/tb/perf_monitor.sv
+    $RISCV_TESTS_DIR/tb/tb_riscv_tests.sv
 "
 
 # 要运行的测试 (与 build_tests.sh 一致, 去掉 fence_i)
@@ -84,7 +89,7 @@ SIM_GUARD_ARGS="${SIM_GUARD_ARGS:-+pc_guard +watchdog=5000}"
 VCS_OPTS="${VCS_OPTS:--full64 -sverilog -timescale=1ns/1ps}"
 VCS_EXTRA_OPTS="${VCS_EXTRA_OPTS:-}"
 VCS_ENV="${VCS_ENV:-/home/anokyai/synopsys/env.sh}"
-VCS_SHIM="$SCRIPT_DIR/tools/vcs_pthread_yield.c"
+VCS_SHIM="$RISCV_TESTS_DIR/tools/vcs_pthread_yield.c"
 SIM_BIN="$WORK_DIR/riscv_tests_simv"
 COMPILE_LOG="$WORK_DIR/riscv_tests_vcs.log"
 
@@ -97,7 +102,7 @@ mkdir -p "$WORK_DIR"
 
 # ---- 检查 hex 文件是否存在 ----
 if [ ! -d "$HEX_DIR" ] || [ -z "$(ls $HEX_DIR/*.irom.hex 2>/dev/null)" ]; then
-    echo "ERROR: hex 文件不存在。请先运行: bash build_tests.sh"
+    echo "ERROR: hex 文件不存在。请先运行: bash utility/build_tests.sh"
     exit 1
 fi
 
