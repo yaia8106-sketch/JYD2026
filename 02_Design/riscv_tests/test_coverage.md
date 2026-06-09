@@ -2,9 +2,16 @@
 
 本文记录默认回归中各测试程序覆盖的处理器行为。
 
+脚本入口分类见 `SCRIPT_CLASSIFICATION.md`。简要原则：
+
+- `functional/run_all.sh` 属于常规功能正确性 / smoke 入口。
+- `functional/special/run_axi_adapter.sh`、`functional/special/run_student_top_axi.sh`、`functional/special/run_student_top_smoke.sh` 属于特殊功能正确性 smoke。
+- `performance/short/run_perf.sh`、`performance/long/run_coe_perf.sh` 属于性能 / 长跑 / COE 入口，不作为默认 smoke gate。
+- 新增 correctness case 应进入 `run_all.sh` 体系；性能实验和 COE 检查不要混入短功能回归。
+
 ## 默认回归规模
 
-`run_all.sh` 默认运行 80 个测试：
+`functional/run_all.sh` 默认运行 80 个测试：
 
 - 38 个基础 RV32I/smoke 测试：`simple` + 官方 `rv32ui` 指令测试（不包含 `fence_i`）。
 - 2 个综合访存测试：`ld_st`、`st_ld`。
@@ -73,9 +80,9 @@
 | 4 | cache line 最后一个 word miss | refill final beat forwarding |
 | 5 | 背靠背 store 后 evict/refill | store buffer drain 排序、多个写回后外存可见性 |
 
-### `run_student_top_axi.sh`
+### `functional/special/run_student_top_axi.sh`
 
-该脚本不是 `run_all.sh` 默认回归的一部分，而是处理器侧 AXI master 集成 smoke：
+该脚本不是 `functional/run_all.sh` 默认回归的一部分，而是处理器侧 AXI master 集成 smoke：
 
 | 场景 | 覆盖内容 |
 |------|----------|
@@ -83,6 +90,17 @@
 | Store buffer drain | cacheable store 经 AXI AW/W/B 写回，带 `WSTRB` |
 | 本地 MMIO | LED/SW/SEG/timer 地址保持在 `mmio_bridge`，不产生 AXI AR/AW |
 | AXI transaction shape | read 使用 4-beat INCR burst，write 当前为 single-beat INCR |
+
+### `functional/special/run_student_top_smoke.sh`
+
+该脚本不是 `functional/run_all.sh` 默认回归的一部分，而是 `student_top` 板级封装短 smoke：
+
+| 场景 | 覆盖内容 |
+|------|----------|
+| `simple` | `student_top -> cpu_top -> mmio_bridge -> virtual_led` 的最小 PASS 路径 |
+| `dcache_stress` | `student_top` 封装下的 DCache、DRAM IP model、store buffer、MMIO 混合访问 |
+| LED pass/fail | 监控 `0x8020_0040` LED MMIO 写，`1` 为 PASS，非零非 `1` 为 FAIL |
+| IP model wiring | 使用 `student_top_ip_models.sv` 替代 Vivado IROM/DRAM IP，验证仿真接线没有断裂 |
 
 ### `bp_stress`
 

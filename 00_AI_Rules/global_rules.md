@@ -109,7 +109,7 @@ runtime ~= cycles * clock_period
 1. 从干净 `master` 开实验分支，确认 `git status --short` 为空。
 2. 写清楚假设：要改善哪个 benchmark/热点、预期减少哪类 stall 或哪条关键路径、可能伤害哪条路径。
 3. 对性能 RTL 改动，用脚本或已有记录拿 baseline，而不是凭感觉：
-   - benchmark cycles：`run_perf.sh` 或 `run_coe_perf.sh`。
+   - benchmark cycles：`performance/short/run_perf.sh` 或 `performance/long/run_coe_perf.sh`。
    - 更细的 CPI/热点归因：优先用临时 `/tmp/` 分析脚本，不把一次性评估脚本放进仓库。
    - 时序相关方案：先跑 Vivado timing，至少确认当前 top critical paths。
 4. 设定淘汰线。没有明确超过门槛的预期，不动 RTL。
@@ -121,8 +121,8 @@ runtime ~= cycles * clock_period
 ### RTL 修改后验证
 
 - RTL 仿真统一使用 **Synopsys VCS**。禁止新增或继续使用 `iverilog`/`vvp`/`xsim` 作为 RTL 验证入口；旧 Icarus/Vivado 仿真结果不得作为当前验证依据。
-- 功能：改 RTL 后运行 `run_all.sh`，目标是全通过。
-- 长程序检查：涉及前端/分支/访存时，运行 `run_coe_perf.sh` 或 `run_student_top_coe.sh`；当前仓库没有 commit trace diff 脚本。
+- 功能：改 RTL 后运行 `functional/run_all.sh`，目标是全通过。
+- 长程序检查：涉及前端/分支/访存时，运行 `performance/long/run_coe_perf.sh`；当前仓库没有 commit trace diff 脚本。
 - 性能：性能相关改动需要和 baseline cycles/runtime 对比，不能只报”功能通过”。
 - 时序：任何影响 IF/IROM、redirect、DCache ready、forwarding/hazard 的改动需要跑 Vivado timing。
 
@@ -136,11 +136,18 @@ runtime ~= cycles * clock_period
 
 ## 7. 验证流程
 
-### 回归测试（仅在 RTL 改动后或用户要求时运行）
+脚本分类以 `02_Design/riscv_tests/SCRIPT_CLASSIFICATION.md` 为准。原则：
+
+- 功能正确性 / smoke：`functional/run_all.sh`，以及 `functional/special/` 下的特殊 smoke。
+- 性能 / 长跑 / COE：`performance/short/run_perf.sh`、`performance/long/run_coe_perf.sh`。
+- 新增功能正确性测试进入 `run_all.sh` 体系；不要把 correctness case 只放进 profiling 或 COE 脚本。
+- `run_perf.sh` 即使默认测试集较短，也属于 profiling 入口，不作为默认 smoke gate。
+
+### 功能正确性回归（RTL 改动后的主 gate）
 
 ```bash
 cd 02_Design/riscv_tests
-bash run_all.sh
+bash functional/run_all.sh
 ```
 
 - 预期结果：**80/80 PASS**（`run_all.sh` 当前测试集：基础 RV32I、RV32M、综合/压力、自定义双发射/BP/DCache/RAS、AXI backend、Zicsr/Trap/Timer 测试）
@@ -148,46 +155,49 @@ bash run_all.sh
 - 依赖：Synopsys VCS、`work/hex/*.hex`（已预编译，无需重新 build）
 - 编译产物自动生成在 `work/`，已 gitignore
 
-### 性能 Profiling（按需运行）
+### AXI 功能 Smoke（处理器侧 AXI master 改动后运行）
 
 ```bash
 cd 02_Design/riscv_tests
-bash run_perf.sh [test_name...]
+bash functional/special/run_axi_adapter.sh
+bash functional/special/run_student_top_axi.sh
+bash functional/special/run_student_top_smoke.sh
 ```
 
-- 不带参数时脚本会跑 smoke 集：`simple dual_alu`
+- `run_axi_adapter.sh`：AXI adapter 单模块协议 smoke。
+- `run_student_top_axi.sh`：默认 4/4 PASS，覆盖 DCache miss/refill 经 AXI read burst、store buffer 经 AXI write、本地 MMIO 不产生 AXI 请求。
+- `run_student_top_smoke.sh`：`student_top` 板级封装短 smoke，覆盖 `student_top + mmio_bridge + IROM/DRAM IP model` 的基本接线和 LED pass/fail 路径。
+
+### 性能 Profiling（按需运行，不作为 smoke）
+
+```bash
+cd 02_Design/riscv_tests
+bash performance/short/run_perf.sh [test_name...]
+```
+
+- 不带参数时脚本会跑 profiling sanity 集：`simple dual_alu`
 - 输出 `[PERF]` 开头的性能报告（CPI、stall 分解、双发射率、BP 误预测率）
-
-### AXI 顶层 Smoke（处理器侧 AXI master 改动后运行）
-
-```bash
-cd 02_Design/riscv_tests
-bash run_student_top_axi.sh
-```
-
-- 预期结果：默认 4/4 PASS。
-- 覆盖：DCache miss/refill 经 AXI read burst、store buffer 经 AXI write、LED/SW/SEG/timer 等本地 MMIO 不产生 AXI 请求。
+- 这里的短默认集只是 profiling sanity，不是 correctness smoke；功能正确性仍以 `run_all.sh` 和 AXI smoke 为准。
 
 ### 重新编译测试（仅在修改/新增测试用例时）
 
 ```bash
 cd 02_Design/riscv_tests
-bash build_tests.sh
+bash utility/build_tests.sh
 ```
 
 - 依赖：`riscv64-unknown-elf-gcc`、项目根目录 `riscv-tests/` 源码
 - 中间产物放 `/tmp/riscv_build/`，只有 .hex 输出到 `work/hex/`
 
-### COE 程序功能/性能检查
+### COE 程序功能/性能检查（长跑，按需运行）
 
 ```bash
 cd 02_Design/riscv_tests
-bash run_coe_perf.sh current src0 src1 src2
-bash run_student_top_coe.sh new_with_Mext
+bash performance/long/run_coe_perf.sh current src0 src1 src2
 ```
 
 - `run_coe_perf.sh`：使用 `cpu_top + dcache` 仿真模型跑完整 dual-bank COE 程序，自动从首个 `0000006f` 自环推导 `stop_pc`，输出 `summary.csv/json` 性能指标。
-- `run_student_top_coe.sh`：使用 `student_top` 板级封装跑单个 COE 程序，适合检查 LED/MMIO 集成路径。
+- Performance / Long-Run / COE 只保留这一个长入口；`student_top` 板级封装短检查使用 `functional/special/run_student_top_smoke.sh`。
 - 当前仓库没有 `run_coe_suite.sh` / `run_coe_diff.sh`。需要软件参考模型或 commit trace diff 时，应先补齐对应脚本，再把入口写回本文档。
 
 ### Vivado 时序流

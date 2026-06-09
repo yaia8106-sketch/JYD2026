@@ -11,6 +11,7 @@ AI 或人工接手工程时，先看本文件，再按需进入对应目录。
 按需阅读：
 
 - **`PERFORMANCE_OPTIMIZATION_PLAN.md`** — 性能优化总目标、profiling 计划和长短测试边界
+- **`02_Design/riscv_tests/SCRIPT_CLASSIFICATION.md`** — riscv_tests 脚本分类：功能正确性 smoke vs 性能/长跑/COE
 - **`02_Design/riscv_tests/test_coverage.md`** — 回归测试覆盖范围
 - **`02_Design/coe/README.md`** — COE 文件、转换脚本和静态分布
 - **`03_Timing_Analysis/sta.sh`** — 对已有 implementation 运行 timing 分组报告
@@ -39,37 +40,25 @@ CPU_Workspace/
 
 ## 常用入口
 
-回归测试：
+功能正确性 / Smoke：
 
 ```bash
 cd 02_Design/riscv_tests
-bash run_all.sh
+bash functional/run_all.sh
+bash functional/special/run_axi_adapter.sh
+bash functional/special/run_student_top_axi.sh
+bash functional/special/run_student_top_smoke.sh
 ```
 
-性能 profiling：
+性能 / 长跑 / COE（不要当作默认 smoke）：
 
 ```bash
 cd 02_Design/riscv_tests
-bash run_perf.sh
-bash run_perf.sh --set branch
-bash run_perf.sh --set cache
-bash run_perf.sh --set dual
-```
-
-COE 程序检查：
-
-```bash
-cd 02_Design/riscv_tests
-bash run_coe_perf.sh current src0 src1 src2
-bash run_student_top_coe.sh new_with_Mext
-```
-
-AXI 集成 smoke：
-
-```bash
-cd 02_Design/riscv_tests
-bash run_student_top_axi.sh
-bash run_axi_adapter.sh
+bash performance/short/run_perf.sh
+bash performance/short/run_perf.sh --set branch
+bash performance/short/run_perf.sh --set cache
+bash performance/short/run_perf.sh --set dual
+bash performance/long/run_coe_perf.sh current src0 src1 src2
 ```
 
 实现后 timing 报告：
