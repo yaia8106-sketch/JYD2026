@@ -49,7 +49,24 @@ module tb_riscv_tests;
     reg  [31:0] mmio_rdata;
     wire        timer_irq_pending;
 
-    // DCache ↔ DRAM
+    // DCache ↔ memory backend
+    wire        dmem_req_valid;
+    wire        dmem_req_ready;
+    wire        dmem_req_write;
+    wire [31:0] dmem_req_addr;
+    wire [ 7:0] dmem_req_len;
+    wire [31:0] dmem_req_wdata;
+    wire [ 3:0] dmem_req_wstrb;
+    wire        dmem_rd_valid;
+    wire        dmem_rd_ready;
+    wire [31:0] dmem_rd_data;
+    wire        dmem_rd_last;
+    wire [ 1:0] dmem_rd_resp;
+    wire        dmem_wr_valid;
+    wire        dmem_wr_ready;
+    wire [ 1:0] dmem_wr_resp;
+
+    // BRAM backend ↔ DRAM
     wire [15:0] dram_rd_addr;
     wire [31:0] dram_rdata_w;
     wire [15:0] dram_wr_addr;
@@ -99,11 +116,46 @@ module tb_riscv_tests;
         .cpu_ready   (cache_ready),
         .pipeline_stall (cache_pipeline_stall),
         .flush       (cache_flush),      // pipeline flush → abort refill
-        .dram_rd_addr(dram_rd_addr),
-        .dram_rdata  (dram_rdata_w),
-        .dram_wr_addr(dram_wr_addr),
-        .dram_wea    (dram_wea),
-        .dram_wdata  (dram_wdata)
+        .mem_req_valid (dmem_req_valid),
+        .mem_req_ready (dmem_req_ready),
+        .mem_req_write (dmem_req_write),
+        .mem_req_addr  (dmem_req_addr),
+        .mem_req_len   (dmem_req_len),
+        .mem_req_wdata (dmem_req_wdata),
+        .mem_req_wstrb (dmem_req_wstrb),
+        .mem_rd_valid  (dmem_rd_valid),
+        .mem_rd_ready  (dmem_rd_ready),
+        .mem_rd_data   (dmem_rd_data),
+        .mem_rd_last   (dmem_rd_last),
+        .mem_rd_resp   (dmem_rd_resp),
+        .mem_wr_valid  (dmem_wr_valid),
+        .mem_wr_ready  (dmem_wr_ready),
+        .mem_wr_resp   (dmem_wr_resp)
+    );
+
+    dcache_bram_backend u_dcache_bram_backend (
+        .clk           (clk),
+        .rst_n         (rst_n),
+        .mem_req_valid (dmem_req_valid),
+        .mem_req_ready (dmem_req_ready),
+        .mem_req_write (dmem_req_write),
+        .mem_req_addr  (dmem_req_addr),
+        .mem_req_len   (dmem_req_len),
+        .mem_req_wdata (dmem_req_wdata),
+        .mem_req_wstrb (dmem_req_wstrb),
+        .mem_rd_valid  (dmem_rd_valid),
+        .mem_rd_ready  (dmem_rd_ready),
+        .mem_rd_data   (dmem_rd_data),
+        .mem_rd_last   (dmem_rd_last),
+        .mem_rd_resp   (dmem_rd_resp),
+        .mem_wr_valid  (dmem_wr_valid),
+        .mem_wr_ready  (dmem_wr_ready),
+        .mem_wr_resp   (dmem_wr_resp),
+        .dram_rd_addr  (dram_rd_addr),
+        .dram_rdata    (dram_rdata_w),
+        .dram_wr_addr  (dram_wr_addr),
+        .dram_wea      (dram_wea),
+        .dram_wdata    (dram_wdata)
     );
 
     // ================================================================
@@ -273,9 +325,11 @@ module tb_riscv_tests;
     integer cycle_cnt = 0;
     integer max_cycles = 50000;
     integer cycle_timeout_enable = 1;
+    integer cycle_limit_done = 0;
     integer max_commits = 0;
     integer commit_cnt = 0;
     integer watchdog_cycles = 0;
+    integer progress_cycles = 0;
     integer idle_cycles = 0;
     integer trace_fd = 0;
     integer trace_enable = 0;
@@ -329,12 +383,15 @@ module tb_riscv_tests;
             ; // optional override
         if ($test$plusargs("no_cycle_timeout"))
             cycle_timeout_enable = 0;
+        cycle_limit_done = $test$plusargs("cycle_limit_done");
         if ($value$plusargs("commits=%d", max_commits))
             ; // optional commit-count stop for differential trace
         if ($value$plusargs("stop_pc=%h", stop_pc))
             stop_pc_enable = 1;
         if ($value$plusargs("watchdog=%d", watchdog_cycles))
             ; // optional idle-cycle watchdog
+        if ($value$plusargs("progress_cycles=%d", progress_cycles))
+            ; // optional periodic status print interval
         led_trace_enable = $test$plusargs("led_trace");
         trace_enable = $test$plusargs("trace");
         if (!$value$plusargs("trace_file=%s", trace_file_r))
@@ -434,6 +491,11 @@ module tb_riscv_tests;
                      test_name_r, commit_cnt, tohost_value, last_tohost_value,
                      led_write_count, u_cpu.pc, last_wb0_pc, last_wb1_pc,
                      cycle_cnt);
+        end else if (cycle_limit_done && cycle_timeout_enable && cycle_cnt >= max_cycles) begin
+            $display("[DONE] %0s  reached cycle_limit=%0d commits=%0d first_led=0x%08x last_led=0x%08x led_writes=%0d pc=0x%08x last_wb0_pc=0x%08x last_wb1_pc=0x%08x  (%0d cycles)",
+                     test_name_r, max_cycles, commit_cnt, tohost_value,
+                     last_tohost_value, led_write_count, u_cpu.pc,
+                     last_wb0_pc, last_wb1_pc, cycle_cnt);
         end else begin
             $display("[TIMEOUT] %0s  commits=%0d first_led=0x%08x last_led=0x%08x led_writes=%0d pc=0x%08x last_wb0_pc=0x%08x last_wb1_pc=0x%08x  (>%0d cycles)",
                      test_name_r, commit_cnt, tohost_value, last_tohost_value,
@@ -453,6 +515,16 @@ module tb_riscv_tests;
 
     always @(posedge clk) begin
         if (rst_n) cycle_cnt <= cycle_cnt + 1;
+    end
+
+    always @(posedge clk) begin
+        if (rst_n && progress_cycles > 0 && cycle_cnt > 0 &&
+            ((cycle_cnt % progress_cycles) == 0)) begin
+            $display("[PROGRESS] %0s  cycle=%0d commits=%0d pc=0x%08x idle=%0d led_writes=%0d first_led=0x%08x last_led=0x%08x last_wb0_pc=0x%08x last_wb1_pc=0x%08x",
+                     test_name_r, cycle_cnt, commit_cnt, u_cpu.pc,
+                     idle_cycles, led_write_count, tohost_value,
+                     last_tohost_value, last_wb0_pc, last_wb1_pc);
+        end
     end
 
     // ================================================================

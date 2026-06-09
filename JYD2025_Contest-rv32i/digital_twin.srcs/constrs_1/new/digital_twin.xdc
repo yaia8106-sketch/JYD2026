@@ -154,16 +154,19 @@ set_property IOSTANDARD LVCMOS18 [get_ports {virtual_seg[30]}]
 
 # ============================================================
 # 250MHz timing: MAX_FANOUT to enable register duplication for
-# high-fanout DRAM BRAM signals (68 BRAM blocks)
+# high-fanout memory/cache backend signals.
 # ============================================================
-set_property MAX_FANOUT 24 [get_cells student_top_inst/u_cpu/u_ex_mem_reg/mem_alu_result_reg[*]]
-set_property MAX_FANOUT 24 [get_cells student_top_inst/u_cpu/u_ex_mem_reg/mem_store_data_reg[*]]
-set_property MAX_FANOUT 24 [get_cells student_top_inst/u_cpu/u_ex_mem_reg/mem_store_wea_reg[*]]
-set_property MAX_FANOUT 12 [get_cells student_top_inst/u_dcache/dram_rd_addr_reg[*]]
+set_property MAX_FANOUT 24 [get_cells {student_top_inst/u_cpu/u_ex_mem_reg/mem_alu_result_reg[*]}]
+set_property MAX_FANOUT 24 [get_cells {student_top_inst/u_cpu/u_ex_mem_reg/mem_store_data_reg[*]}]
+set_property MAX_FANOUT 24 [get_cells {student_top_inst/u_cpu/u_ex_mem_reg/mem_store_wea_reg[*]}]
+set dcache_backend_addr_regs [get_cells -quiet {student_top_inst/u_dcache_bram_backend/addr_r_reg[*]}]
+if {[llength $dcache_backend_addr_regs] != 0} {
+    set_property MAX_FANOUT 12 $dcache_backend_addr_regs
+}
 
 # ============================================================
 # 250MHz timing: Pblock — 2 VERTICAL clock regions (same column)
-#   X1Y3 + X1Y4: CPU + DCache + IROM in same BRAM column.
+#   X1Y3 + X1Y4: CPU + DCache + current BRAM backend + IROM in same BRAM column.
 #   Vertical stacking keeps BRAMs in same physical column
 #   (short routing), 2 regions avoids congestion.
 # ============================================================
@@ -171,4 +174,8 @@ create_pblock pblock_cpu_irom
 add_cells_to_pblock [get_pblocks pblock_cpu_irom] [get_cells student_top_inst/u_cpu]
 add_cells_to_pblock [get_pblocks pblock_cpu_irom] [get_cells student_top_inst/u_irom]
 add_cells_to_pblock [get_pblocks pblock_cpu_irom] [get_cells student_top_inst/u_dcache]
+set dcache_bram_backend_cell [get_cells -quiet student_top_inst/u_dcache_bram_backend]
+if {[llength $dcache_bram_backend_cell] != 0} {
+    add_cells_to_pblock [get_pblocks pblock_cpu_irom] $dcache_bram_backend_cell
+}
 resize_pblock pblock_cpu_irom -add {CLOCKREGION_X1Y3:CLOCKREGION_X1Y4}

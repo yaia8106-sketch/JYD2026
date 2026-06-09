@@ -1,26 +1,16 @@
 `timescale 1ns / 1ps
 // ============================================================
-// Module: student_top
-// Description: 顶层连线，集成 cpu_top + IROM + DCache + memory backend + DRAM + mmio_bridge
+// Module: student_top_axi
+// Description:
+//   Processor-side AXI top. This top keeps local MMIO direct and exposes the
+//   DCache external-memory path as an AXI4 master.
 //
-// 层次结构:
-//   top.sv (模板，不可修改)
-//     └── student_top (本文件)
-//           ├── cpu_top         (自研 RV32I 五级流水线)
-//           ├── IROM            (BRAM ROM, 无 output register, 1 拍)
-//           ├── dcache          (2KB 2-way WT+WA data cache)
-//           │     └── dcache_bram_backend
-//           │           └── DRAM (BRAM RAM, SDP, 65536×32)
-//           └── mmio_bridge     (LED/SEG/SW/KEY/CNT)
-//
-// 复位约定:
-//   top.sv 传入 w_clk_rst = ~pll_locked (高有效)
-//   student_top 内部对 CPU 时钟域做 async assert / sync release
-//   cpu_top 需要 rst_n (低有效) → 使用同步释放后的反相信号
-//   mmio_bridge 需要 rst (高有效) → 使用同步释放后的高有效信号
+//   This module is intentionally parallel to student_top.sv:
+//     - student_top.sv keeps the current BRAM backend contest flow.
+//     - student_top_axi.sv is the processor-side AXI integration target.
 // ============================================================
 
-module student_top #(
+module student_top_axi #(
     parameter P_SW_CNT  = 64,
     parameter P_LED_CNT = 32,
     parameter P_SEG_CNT = 40,
@@ -28,23 +18,62 @@ module student_top #(
 ) (
     input                            w_cpu_clk,
     input                            w_clk_50Mhz,
-    input                            w_clk_rst,      // 高有效复位
+    input                            w_clk_rst,      // active-high reset
     input  [P_KEY_CNT - 1:0]         virtual_key,
     input  [P_SW_CNT  - 1:0]         virtual_sw,
 
     output [P_LED_CNT - 1:0]         virtual_led,
-    output [P_SEG_CNT - 1:0]         virtual_seg
+    output [P_SEG_CNT - 1:0]         virtual_seg,
+
+    // AXI4 master write address channel.
+    output logic [31:0]              m_axi_awaddr,
+    output logic [ 7:0]              m_axi_awlen,
+    output logic [ 2:0]              m_axi_awsize,
+    output logic [ 1:0]              m_axi_awburst,
+    output logic                     m_axi_awlock,
+    output logic [ 3:0]              m_axi_awcache,
+    output logic [ 2:0]              m_axi_awprot,
+    output logic [ 3:0]              m_axi_awqos,
+    output logic                     m_axi_awvalid,
+    input  logic                     m_axi_awready,
+
+    // AXI4 master write data channel.
+    output logic [31:0]              m_axi_wdata,
+    output logic [ 3:0]              m_axi_wstrb,
+    output logic                     m_axi_wlast,
+    output logic                     m_axi_wvalid,
+    input  logic                     m_axi_wready,
+
+    // AXI4 master write response channel.
+    input  logic [ 1:0]              m_axi_bresp,
+    input  logic                     m_axi_bvalid,
+    output logic                     m_axi_bready,
+
+    // AXI4 master read address channel.
+    output logic [31:0]              m_axi_araddr,
+    output logic [ 7:0]              m_axi_arlen,
+    output logic [ 2:0]              m_axi_arsize,
+    output logic [ 1:0]              m_axi_arburst,
+    output logic                     m_axi_arlock,
+    output logic [ 3:0]              m_axi_arcache,
+    output logic [ 2:0]              m_axi_arprot,
+    output logic [ 3:0]              m_axi_arqos,
+    output logic                     m_axi_arvalid,
+    input  logic                     m_axi_arready,
+
+    // AXI4 master read data channel.
+    input  logic [31:0]              m_axi_rdata,
+    input  logic [ 1:0]              m_axi_rresp,
+    input  logic                     m_axi_rlast,
+    input  logic                     m_axi_rvalid,
+    output logic                     m_axi_rready
 );
 
-    // ================================================================
-    //  内部连线
-    // ================================================================
-
-    // CPU ↔ IROM
+    // CPU <-> IROM
     logic [63:0] irom_data;
     logic [11:0] irom_addr;
 
-    // CPU ↔ DCache
+    // CPU <-> DCache
     logic        cache_req;
     logic        cache_wr;
     logic [31:0] cache_addr;
@@ -53,7 +82,7 @@ module student_top #(
     logic [31:0] cache_rdata;
     logic        cache_ready;
 
-    // CPU ↔ MMIO bridge
+    // CPU <-> local MMIO bridge
     logic [31:0] mmio_addr;
     logic [31:0] mmio_wr_addr;
     logic [ 3:0] mmio_wea;
@@ -61,7 +90,7 @@ module student_top #(
     logic [31:0] mmio_rdata;
     logic        timer_irq_pending;
 
-    // DCache ↔ memory backend
+    // DCache <-> memory backend
     logic        dmem_req_valid;
     logic        dmem_req_ready;
     logic        dmem_req_write;
@@ -77,26 +106,12 @@ module student_top #(
     logic        dmem_wr_valid;
     logic        dmem_wr_ready;
     logic [ 1:0] dmem_wr_resp;
+    logic        axi_backend_busy;
 
-    // BRAM backend ↔ DRAM BRAM
-    logic [15:0] dram_rd_addr;
-    logic [31:0] dram_rdata;
-    logic [15:0] dram_wr_addr;
-    logic [ 3:0] dram_wea;
-    logic [31:0] dram_wdata;
+    logic        dcache_flush;
+    logic        cache_pipeline_stall;
 
-    // DCache flush — driven by cpu_top's cache_flush output
-    logic dcache_flush;
-
-    // DCache pipeline sync — driven by cpu_top's ~mem_allowin
-    logic cache_pipeline_stall;
-
-    // ================================================================
-    //  Reset synchronizer
-    //  w_clk_rst comes from PLL locked in the contest top. Keep assertion
-    //  asynchronous, but release reset on w_cpu_clk to avoid board-only
-    //  startup hazards in CPU/DCache/BRAM control paths.
-    // ================================================================
+    // Reset synchronizer: async assert, sync release in CPU clock domain.
     logic [1:0] cpu_rst_pipe;
     logic       cpu_rst;
     logic       cpu_rst_n;
@@ -111,18 +126,11 @@ module student_top #(
     assign cpu_rst   = cpu_rst_pipe[1];
     assign cpu_rst_n = ~cpu_rst;
 
-    // ================================================================
-    //  CPU Core
-    // ================================================================
     cpu_top u_cpu (
         .clk         (w_cpu_clk),
         .rst_n       (cpu_rst_n),
-
-        // IROM 接口 (IF stage)
-        .irom_addr      (irom_addr),
+        .irom_addr   (irom_addr),
         .irom_data   (irom_data),
-
-        // DCache 接口
         .cache_req   (cache_req),
         .cache_wr    (cache_wr),
         .cache_addr  (cache_addr),
@@ -132,36 +140,23 @@ module student_top #(
         .cache_ready (cache_ready),
         .cache_flush (dcache_flush),
         .cache_pipeline_stall (cache_pipeline_stall),
-
-        // MMIO 接口
-        .mmio_addr    (mmio_addr),
-        .mmio_wr_addr (mmio_wr_addr),
-        .mmio_wea     (mmio_wea),
-        .mmio_wdata   (mmio_wdata),
-        .mmio_rdata   (mmio_rdata),
+        .mmio_addr   (mmio_addr),
+        .mmio_wr_addr(mmio_wr_addr),
+        .mmio_wea    (mmio_wea),
+        .mmio_wdata  (mmio_wdata),
+        .mmio_rdata  (mmio_rdata),
         .timer_irq_pending (timer_irq_pending)
     );
 
-    // ================================================================
-    //  IROM fetch block
-    //  One 64-bit ROM entry stores two sequential 32-bit instructions:
-    //    irom_data[31:0]  = inst at block_pc
-    //    irom_data[63:32] = inst at block_pc + 4
-    // ================================================================
     IROM64 u_irom (
         .clka  (w_cpu_clk),
         .addra (irom_addr),
         .douta (irom_data)
     );
 
-    // ================================================================
-    //  DCache (2KB, 2-way, WT+WA, 16B line)
-    // ================================================================
     dcache u_dcache (
         .clk         (w_cpu_clk),
         .rst_n       (cpu_rst_n),
-
-        // CPU interface
         .cpu_req     (cache_req),
         .cpu_wr      (cache_wr),
         .cpu_addr    (cache_addr),
@@ -169,14 +164,8 @@ module student_top #(
         .cpu_wdata   (cache_wdata),
         .cpu_rdata   (cache_rdata),
         .cpu_ready   (cache_ready),
-
-        // Pipeline synchronization
         .pipeline_stall (cache_pipeline_stall),
-
-        // Flush
         .flush       (dcache_flush),
-
-        // Memory backend interface
         .mem_req_valid (dmem_req_valid),
         .mem_req_ready (dmem_req_ready),
         .mem_req_write (dmem_req_write),
@@ -194,7 +183,7 @@ module student_top #(
         .mem_wr_resp   (dmem_wr_resp)
     );
 
-    dcache_bram_backend u_dcache_bram_backend (
+    dcache_axi_backend u_dcache_axi_backend (
         .clk           (w_cpu_clk),
         .rst_n         (cpu_rst_n),
         .mem_req_valid (dmem_req_valid),
@@ -212,50 +201,52 @@ module student_top #(
         .mem_wr_valid  (dmem_wr_valid),
         .mem_wr_ready  (dmem_wr_ready),
         .mem_wr_resp   (dmem_wr_resp),
-        .dram_rd_addr  (dram_rd_addr),
-        .dram_rdata    (dram_rdata),
-        .dram_wr_addr  (dram_wr_addr),
-        .dram_wea      (dram_wea),
-        .dram_wdata    (dram_wdata)
+        .busy          (axi_backend_busy),
+        .m_axi_awaddr  (m_axi_awaddr),
+        .m_axi_awlen   (m_axi_awlen),
+        .m_axi_awsize  (m_axi_awsize),
+        .m_axi_awburst (m_axi_awburst),
+        .m_axi_awlock  (m_axi_awlock),
+        .m_axi_awcache (m_axi_awcache),
+        .m_axi_awprot  (m_axi_awprot),
+        .m_axi_awqos   (m_axi_awqos),
+        .m_axi_awvalid (m_axi_awvalid),
+        .m_axi_awready (m_axi_awready),
+        .m_axi_wdata   (m_axi_wdata),
+        .m_axi_wstrb   (m_axi_wstrb),
+        .m_axi_wlast   (m_axi_wlast),
+        .m_axi_wvalid  (m_axi_wvalid),
+        .m_axi_wready  (m_axi_wready),
+        .m_axi_bresp   (m_axi_bresp),
+        .m_axi_bvalid  (m_axi_bvalid),
+        .m_axi_bready  (m_axi_bready),
+        .m_axi_araddr  (m_axi_araddr),
+        .m_axi_arlen   (m_axi_arlen),
+        .m_axi_arsize  (m_axi_arsize),
+        .m_axi_arburst (m_axi_arburst),
+        .m_axi_arlock  (m_axi_arlock),
+        .m_axi_arcache (m_axi_arcache),
+        .m_axi_arprot  (m_axi_arprot),
+        .m_axi_arqos   (m_axi_arqos),
+        .m_axi_arvalid (m_axi_arvalid),
+        .m_axi_arready (m_axi_arready),
+        .m_axi_rdata   (m_axi_rdata),
+        .m_axi_rresp   (m_axi_rresp),
+        .m_axi_rlast   (m_axi_rlast),
+        .m_axi_rvalid  (m_axi_rvalid),
+        .m_axi_rready  (m_axi_rready)
     );
 
-    // ================================================================
-    //  DRAM (Block Memory Generator RAM, SDP)
-    //  配置: 32bit, 65536 depth (256KB), 4-bit WEA, 有 output register (DOB_REG=1, 2-cycle read latency)
-    //  Port A = 写端口 (from DCache store buffer drain)
-    //  Port B = 读端口 (from DCache refill FSM)
-    // ================================================================
-    DRAM4MyOwn u_dram (
-        // 写端口 (Port A)
-        .clka  (w_cpu_clk),
-        .wea   (dram_wea),
-        .addra (dram_wr_addr),
-        .dina  (dram_wdata),
-
-        // 读端口 (Port B)
-        .clkb  (w_cpu_clk),
-        .enb   (1'b1),
-        .addrb (dram_rd_addr),
-        .doutb (dram_rdata)
-    );
-
-    // ================================================================
-    //  MMIO Bridge (LED/SEG/SW/KEY/CNT)
-    // ================================================================
     mmio_bridge u_mmio (
         .clk     (w_cpu_clk),
         .cnt_clk (w_clk_50Mhz),
         .rst     (cpu_rst),
-
-        // CPU MMIO bus
         .addr     (mmio_addr),
         .wr_addr  (mmio_wr_addr),
         .wea      (mmio_wea),
         .wdata    (mmio_wdata),
         .rdata    (mmio_rdata),
         .timer_irq_pending (timer_irq_pending),
-
-        // 平台 I/O
         .sw      (virtual_sw),
         .key     (virtual_key),
         .led     (virtual_led),

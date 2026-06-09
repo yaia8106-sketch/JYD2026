@@ -123,13 +123,13 @@ set_tests_from_set() {
             TESTS=(simple dual_alu)
             ;;
         focused)
-            TESTS=(bp_stress dcache_stress counter_stress sb_stress)
+            TESTS=(bp_stress dcache_stress axi_backend_stress counter_stress sb_stress)
             ;;
         branch)
             TESTS=(bp_stress bp_dual branch_dual_edge slot1_bp_update)
             ;;
         cache)
-            TESTS=(dcache_stress dcache_dual counter_stress sb_stress)
+            TESTS=(dcache_stress axi_backend_stress dcache_dual counter_stress sb_stress)
             ;;
         dual)
             TESTS=(dual_alu raw_block loaduse_dual fwd_s1 slot1_load slot1_store)
@@ -146,7 +146,7 @@ set_tests_from_set() {
                    lb lbu lh lhu lw
                    sb sh sw
                    ld_st st_ld
-                   dcache_stress counter_stress bp_stress
+                   dcache_stress axi_backend_stress counter_stress bp_stress
                    dual_alu raw_block branch_single branch_dual branch_dual_flush
                    branch_fwd_matrix branch_dual_edge slot1_branch waw loaduse_dual
                    inst_buffer fwd_s1 waw_fwd flush_instbuf pc_align loaduse_cross
@@ -215,6 +215,7 @@ RTL_FILES="
     $RTL_DIR/mem_wb_reg_s1.sv
     $RTL_DIR/wb_mux.sv
     $RTL_DIR/dcache.sv
+    $RTL_DIR/dcache_bram_backend.sv
     $RTL_DIR/cpu_top.sv
     $SCRIPT_DIR/work/dcache_data_ram.v
     $SCRIPT_DIR/tb/perf_monitor.sv

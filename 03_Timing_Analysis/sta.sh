@@ -6,6 +6,7 @@ WORKSPACE="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PROJECT_PATH="${WORKSPACE}/JYD2025_Contest-rv32i/digital_twin.xpr"
 TIMING_TCL="${SCRIPT_DIR}/report_stage_timing.tcl"
 VIVADO_WORK="${SCRIPT_DIR}/vivado_work"
+VIVADO_TMP="${VIVADO_WORK}/tmp"
 RUN_NAME="${1:-impl_1}"
 
 if [[ "${RUN_NAME}" == "-h" || "${RUN_NAME}" == "--help" ]]; then
@@ -41,7 +42,7 @@ if ! command -v vivado >/dev/null 2>&1; then
     exit 127
 fi
 
-mkdir -p "${VIVADO_WORK}"
+mkdir -p "${VIVADO_WORK}" "${VIVADO_TMP}"
 
 RUN_TCL="$(mktemp "${TMPDIR:-/tmp}/cpu_sta_existing_impl.XXXXXX.tcl")"
 trap 'rm -f "${RUN_TCL}"' EXIT
@@ -110,9 +111,13 @@ EOF
 
 echo ">>> Running timing analysis on existing ${RUN_NAME}"
 echo ">>> Log: ${VIVADO_WORK}/sta.log"
-vivado -mode batch \
-    -log "${VIVADO_WORK}/sta.log" \
-    -journal "${VIVADO_WORK}/sta.jou" \
-    -source "${RUN_TCL}"
+(
+    cd "${VIVADO_WORK}"
+    vivado -mode batch \
+        -log "${VIVADO_WORK}/sta.log" \
+        -journal "${VIVADO_WORK}/sta.jou" \
+        -tempDir "${VIVADO_TMP}" \
+        -source "${RUN_TCL}"
+)
 
 echo ">>> Timing report: ${SCRIPT_DIR}/stage_timing_report.txt"

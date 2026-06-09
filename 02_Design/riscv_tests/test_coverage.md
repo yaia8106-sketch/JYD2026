@@ -4,11 +4,11 @@
 
 ## 默认回归规模
 
-`run_all.sh` 默认运行 79 个测试：
+`run_all.sh` 默认运行 80 个测试：
 
 - 38 个基础 RV32I/smoke 测试：`simple` + 官方 `rv32ui` 指令测试（不包含 `fence_i`）。
 - 2 个综合访存测试：`ld_st`、`st_ld`。
-- 3 个压力测试：`dcache_stress`、`counter_stress`、`bp_stress`。
+- 4 个压力测试：`dcache_stress`、`axi_backend_stress`、`counter_stress`、`bp_stress`。
 - 26 个双发射、分支预测、DCache、RAS 相关测试。
 - 1 个 RV32M 覆盖测试：`m_ext`。
 - 9 个 Zicsr / Trap / Timer 测试：`zicsr_basic`、`zicsr_edge`、`csr_forwarding`、`csr_trap_stall`、`trap_mret`、`trap_slot1`、`trap_flush`、`trap_nested`、`timer_irq_basic`。
@@ -62,6 +62,27 @@
 | 3 | 循环后最终值检查 | 多次读写后的最终数据正确性 |
 | 4 | 空操作后再次读回 | 流水线排空后的数据保持 |
 | 5 | 函数调用栈操作与 DRAM 访问交错 | SP 相关访存、调用返回、普通 DRAM 访问组合 |
+
+### `axi_backend_stress`
+
+| # | 场景 | 覆盖内容 |
+|:-:|------|----------|
+| 1 | store hit 后 load hit | DCache 基本写后读可见性 |
+| 2 | byte store 后 evict/refill | 后端 byte strobe、store buffer 写回、重填后数据保持 |
+| 3 | halfword store 后 evict/refill | 后端 halfword strobe、非整字写回和重填 |
+| 4 | cache line 最后一个 word miss | refill final beat forwarding |
+| 5 | 背靠背 store 后 evict/refill | store buffer drain 排序、多个写回后外存可见性 |
+
+### `run_student_top_axi.sh`
+
+该脚本不是 `run_all.sh` 默认回归的一部分，而是处理器侧 AXI master 集成 smoke：
+
+| 场景 | 覆盖内容 |
+|------|----------|
+| DCache miss/refill | `student_top_axi -> dcache_axi_backend -> axi_master_adapter` 发出 AXI read burst |
+| Store buffer drain | cacheable store 经 AXI AW/W/B 写回，带 `WSTRB` |
+| 本地 MMIO | LED/SW/SEG/timer 地址保持在 `mmio_bridge`，不产生 AXI AR/AW |
+| AXI transaction shape | read 使用 4-beat INCR burst，write 当前为 single-beat INCR |
 
 ### `bp_stress`
 
@@ -175,6 +196,7 @@ Zicsr / Trap 测试覆盖 M 模式下的最小 CSR、同步异常与机器定时
 | inst_buf + stall 交互 | `instbuf_stall` |
 | BP 误预测 + 双发射循环 | `bp_dual` |
 | Store buffer 冲突 stall | `sb_stress` |
+| DCache 后端 byte/half/word 写回和 refill final beat | `axi_backend_stress` |
 | RAS 溢出与恢复 | `ras_overflow` |
 | RV32M 乘除取余与边界条件 | `m_ext` |
 | M 结果前递 / 背靠背 M / M wrong-path flush | `m_ext` |
