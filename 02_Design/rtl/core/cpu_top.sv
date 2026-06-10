@@ -860,7 +860,6 @@ module cpu_top (
         .ex_redirect_target(frontend_branch_target),
         .irom_addr        (irom_addr),
         .irom_data        (irom_data),
-        .bp_lookup_pc     (),
         .bp_taken         (bp_taken),
         .bp_target        (bp_target),
         .bp_ghr_snap      (bp_ghr_snap),

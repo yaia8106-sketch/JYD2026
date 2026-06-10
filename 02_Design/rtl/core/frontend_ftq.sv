@@ -1,7 +1,7 @@
 // ============================================================
 // Module: frontend_ftq
-// Description: FTQ-centered BP0/F0/F1 frontend.
-//   BP0: current PC prediction, FTQ allocation, IROM request
+// Description: BP0/F0/F1 frontend with packet queue, predecode, and ID verification.
+//   BP0: current PC prediction, packet allocation, IROM request
 //   F0 : 64-bit IROM response alignment, predecode, BP1 check, enqueue
 //   F1 : fetch-queue head pair selection for the existing ID stage
 // ============================================================
@@ -29,7 +29,6 @@ module frontend_ftq
     input  logic [63:0] irom_data,
 
     // BP0 lookup and result.
-    output logic [31:0] bp_lookup_pc,
     input  logic        bp_taken,
     input  logic [31:0] bp_target,
     input  logic [ 7:0] bp_ghr_snap,
@@ -84,20 +83,19 @@ module frontend_ftq
     localparam logic [31:0] RESET_PC = 32'h8000_0000;
     localparam logic [6:0]  OP_FENCE = 7'b0001111;
     localparam logic [1:0]  BTB_TYPE_BRANCH = 2'b10;
-    localparam logic [FTQ_PTR_W:0] FTQ_DEPTH_COUNT = FTQ_DEPTH;
-    localparam logic [FQ_PTR_W:0]  FQ_DEPTH_MINUS_2 = FQ_DEPTH - 2;
-    localparam logic [FQ_PTR_W:0]  FQ_DEPTH_MINUS_4 = FQ_DEPTH - 4;
+    localparam logic [FTQ_PTR_W:0] FTQ_DEPTH_COUNT = (FTQ_PTR_W+1)'(FTQ_DEPTH);
+    localparam logic [FQ_PTR_W:0]  FQ_DEPTH_MINUS_2 = (FQ_PTR_W+1)'(FQ_DEPTH - 2);
+    localparam logic [FQ_PTR_W:0]  FQ_DEPTH_MINUS_4 = (FQ_PTR_W+1)'(FQ_DEPTH - 4);
 
     typedef struct packed {
         logic        valid;
         logic [31:0] pc;
-        logic [31:0] pc_plus4;
         logic [31:0] inst;
 
         logic        pred_taken;
         logic [31:0] pred_target;
-        logic        bp_lookup_taken;
-        logic [31:0] bp_lookup_target;
+        logic        lookup_taken;
+        logic [31:0] lookup_target;
         logic [ 7:0] bp_ghr_snap;
         logic        bp_btb_hit;
         logic [ 1:0] bp_btb_type;
@@ -149,20 +147,18 @@ module frontend_ftq
         end
     endfunction
 
-    function automatic logic fq_pair_policy_ok(
+    function automatic logic fq_pair_payload_ok(
         input logic      contiguous,
         input fq_entry_t head0,
         input fq_entry_t head1
     );
         begin
-            fq_pair_policy_ok = contiguous
-                              && head0.valid
-                              && head1.valid
-                              && !head0.pred_taken
-                              && !head0.force_single
-                              && !head1.force_single
-                              && !fq_raw_dep(head0, head1)
-                              && fq_pair_supported(head0, head1);
+            fq_pair_payload_ok = contiguous
+                               && !head0.pred_taken
+                               && !head0.force_single
+                               && !head1.force_single
+                               && !fq_raw_dep(head0, head1)
+                               && fq_pair_supported(head0, head1);
         end
     endfunction
 
@@ -263,7 +259,6 @@ module frontend_ftq
     logic [1:0] f0_epoch_r;
     logic [31:0] f0_start_pc_r;
     logic [1:0]  f0_base_mask_r;
-    logic [FTQ_PTR_W-1:0] f0_ftq_idx_r;
     logic        f0_bp0_taken_r;
     logic [31:0] f0_bp0_target_r;
     logic [ 7:0] f0_bp_ghr_snap_r;
@@ -280,22 +275,14 @@ module frontend_ftq
     logic [ 1:0] f0_s1_bp_btb_bht_r;
     logic [ 1:0] f0_s1_bp_pht_cnt_r;
     logic [ 1:0] f0_s1_bp_sel_cnt_r;
-
-    logic [FTQ_PTR_W-1:0] ftq_tail;
+    // Outstanding fetch-packet count used for allocation throttling and perf taps.
     logic [FTQ_PTR_W:0]   ftq_count;
-    logic                 ftq_valid [0:FTQ_DEPTH-1];
-    logic [31:0]          ftq_pc [0:FTQ_DEPTH-1];
-    logic [31:0]          ftq_bp0_target [0:FTQ_DEPTH-1];
-    logic                 ftq_bp0_taken [0:FTQ_DEPTH-1];
-    logic [31:0]          ftq_final_target [0:FTQ_DEPTH-1];
-    logic                 ftq_final_taken [0:FTQ_DEPTH-1];
 
     wire [31:0] bp0_seq_next_pc = current_pc + (current_pc[2] ? 32'd4 : 32'd8);
     wire [31:0] bp0_next_pc = bp_taken ? bp_target : bp0_seq_next_pc;
     wire [1:0]  bp0_base_mask = current_pc[2] ? 2'b01 : 2'b11;
 
-    assign bp_lookup_pc = current_pc;
-    assign irom_addr = current_pc[13:3];
+    assign irom_addr = {1'b0, current_pc[13:3]};
 
     // ================================================================
     //  F0 alignment, BP1, and enqueue preparation
@@ -390,9 +377,9 @@ module frontend_ftq
     wire f0_enq1_payload = f0_accept_base && f0_base_mask_r[1];
     wire f0_enq0_valid = f0_enq0_payload;
     wire f0_enq1_valid = f0_enq1_payload && !f0_kill_after_slot0;
-    wire [1:0] f0_enq_count = f0_enq1_valid ? 2'd2 :
-                               f0_enq0_valid ? 2'd1 :
-                                               2'd0;
+    wire f0_enq_two  = f0_enq1_valid;
+    wire f0_enq_one  = f0_enq0_valid && !f0_enq1_valid;
+    wire f0_enq_none = !f0_enq0_valid;
 
     fq_entry_t f0_entry0;
     fq_entry_t f0_entry1;
@@ -401,12 +388,11 @@ module frontend_ftq
         f0_entry0 = '0;
         f0_entry0.valid = f0_enq0_valid;
         f0_entry0.pc = f0_slot0_pc;
-        f0_entry0.pc_plus4 = f0_slot0_pc + 32'd4;
         f0_entry0.inst = f0_slot0_inst;
         f0_entry0.pred_taken = bp1_final_taken;
         f0_entry0.pred_target = bp1_final_target;
-        f0_entry0.bp_lookup_taken = bp1_final_taken;
-        f0_entry0.bp_lookup_target = bp1_final_target;
+        f0_entry0.lookup_taken = bp1_final_taken;
+        f0_entry0.lookup_target = bp1_final_target;
         f0_entry0.bp_ghr_snap = f0_bp_ghr_snap_r;
         f0_entry0.bp_btb_hit = f0_bp_btb_hit_r;
         f0_entry0.bp_btb_type = f0_bp_btb_type_r;
@@ -435,24 +421,20 @@ module frontend_ftq
         f0_entry1 = '0;
         f0_entry1.valid = f0_enq1_valid;
         f0_entry1.pc = f0_slot1_pc;
-        f0_entry1.pc_plus4 = f0_slot1_pc + 32'd4;
         f0_entry1.inst = f0_slot1_inst;
-        // Slot1 prediction is not used to steer fetch in this design.  Keep
-        // the branch-unit prediction false so a taken slot1 control flow still
-        // redirects correctly, but retain the lookup result for training meta.
+        // Slot1 lookup is not used to steer fetch.  Keep branch-unit visible
+        // prediction false if this instruction later issues as slot0.
         f0_entry1.pred_taken = 1'b0;
         f0_entry1.pred_target = 32'd0;
-        f0_entry1.bp_lookup_taken = f0_s1_bp_taken_r;
-        f0_entry1.bp_lookup_target = f0_s1_bp_target_r;
+        f0_entry1.lookup_taken = f0_s1_bp_taken_r;
+        f0_entry1.lookup_target = f0_s1_bp_target_r;
         f0_entry1.bp_ghr_snap = f0_s1_bp_ghr_snap_r;
         f0_entry1.bp_btb_hit = f0_s1_bp_btb_hit_r;
         f0_entry1.bp_btb_type = f0_s1_bp_btb_type_r;
         f0_entry1.bp_btb_bht = f0_s1_bp_btb_bht_r;
         f0_entry1.bp_pht_cnt = f0_s1_bp_pht_cnt_r;
         f0_entry1.bp_sel_cnt = f0_s1_bp_sel_cnt_r;
-        // ID-stage tournament redirect only works for slot0 predictions that
-        // the frontend has already used for fetch steering.  Slot1 metadata is
-        // carried for training only, so suppress ID correction for it.
+        // Slot1 metadata is carried for training only, so suppress ID correction.
         f0_entry1.bp_verified = 1'b1;
         f0_entry1.is_branch = f0_slot1_branch;
         f0_entry1.is_jal = f0_slot1_jal;
@@ -500,12 +482,14 @@ module frontend_ftq
     wire fq_has_slot1 = (fq_count >= 2);
     wire fq_tail_has_prev = (fq_count != 0);
     wire fq_prev_tail_next_contiguous =
-        fq_tail_has_prev && (fq_tail_prev.pc_plus4 == f0_slot0_pc);
+        fq_tail_has_prev && (fq_tail_prev.pc + 32'd4 == f0_slot0_pc);
 
     wire fq_prev_tail_pair_ok =
-        fq_pair_policy_ok(fq_prev_tail_next_contiguous, fq_tail_prev, f0_entry0);
+        f0_entry0.valid
+        && fq_pair_payload_ok(fq_prev_tail_next_contiguous, fq_tail_prev, f0_entry0);
     wire f0_entry0_pair_ok =
-        fq_pair_policy_ok(f0_enq1_valid, f0_entry0, f0_entry1);
+        f0_entry1.valid
+        && fq_pair_payload_ok(1'b1, f0_entry0, f0_entry1);
 
     assign raw_pair_raw = fq_raw_dep(fq_head0, fq_head1);
 
@@ -529,8 +513,8 @@ module frontend_ftq
     assign if_bp_pht_cnt  = fq_head0.bp_pht_cnt;
     assign if_bp_sel_cnt  = fq_head0.bp_sel_cnt;
     assign if_bp_verified = fq_head0.bp_verified;
-    assign if_s1_bp_taken    = fq_head1.bp_lookup_taken;
-    assign if_s1_bp_target   = fq_head1.bp_lookup_target;
+    assign if_s1_bp_taken    = fq_head1.lookup_taken;
+    assign if_s1_bp_target   = fq_head1.lookup_target;
     assign if_s1_bp_ghr_snap = fq_head1.bp_ghr_snap;
     assign if_s1_bp_btb_hit  = fq_head1.bp_btb_hit;
     assign if_s1_bp_btb_type = fq_head1.bp_btb_type;
@@ -545,25 +529,9 @@ module frontend_ftq
     wire [FQ_PTR_W:0] fq_count_m1 = fq_count - {{FQ_PTR_W{1'b0}}, 1'b1};
     wire [FQ_PTR_W:0] fq_count_m2 = fq_count - {{(FQ_PTR_W-1){1'b0}}, 2'd2};
 
-    wire f0_enq_one  = (f0_enq_count == 2'd1);
-    wire f0_enq_two  = (f0_enq_count == 2'd2);
-
-    wire [FQ_PTR_W:0] fq_count_deq0_candidate =
-        f0_enq_two ? fq_count_p2 :
-        f0_enq_one ? fq_count_p1 :
-                     fq_count;
-    wire [FQ_PTR_W:0] fq_count_deq1_candidate =
-        f0_enq_two ? fq_count_p1 :
-        f0_enq_one ? fq_count :
-                     fq_count_m1;
-    wire [FQ_PTR_W:0] fq_count_deq2_candidate =
-        f0_enq_two ? fq_count :
-        f0_enq_one ? fq_count_m1 :
-                     fq_count_m2;
-
     wire if_accept_dual = if_accept & can_dual_issue;
     wire if_accept_single = if_accept & ~can_dual_issue;
-    wire f0_enq_none = ~f0_enq_two & ~f0_enq_one;
+    wire if_accept_none = ~if_accept;
 
     wire [FQ_PTR_W-1:0] fq_head_next =
         ({FQ_PTR_W{if_accept_dual}}   & fq_head_p2) |
@@ -575,10 +543,21 @@ module frontend_ftq
         ({FQ_PTR_W{f0_enq_one}}  & fq_tail_p1) |
         ({FQ_PTR_W{f0_enq_none}} & fq_tail);
 
+    wire fq_count_inc2 = f0_enq_two & if_accept_none;
+    wire fq_count_inc1 = (f0_enq_two & if_accept_single)
+                       | (f0_enq_one & if_accept_none);
+    wire fq_count_dec1 = (f0_enq_one & if_accept_dual)
+                       | (f0_enq_none & if_accept_single);
+    wire fq_count_dec2 = f0_enq_none & if_accept_dual;
+    wire fq_count_hold = ~(fq_count_inc2 | fq_count_inc1
+                         | fq_count_dec1 | fq_count_dec2);
+
     wire [FQ_PTR_W:0] fq_count_next =
-        ({(FQ_PTR_W+1){if_accept_dual}}   & fq_count_deq2_candidate) |
-        ({(FQ_PTR_W+1){if_accept_single}} & fq_count_deq1_candidate) |
-        ({(FQ_PTR_W+1){~if_accept}}       & fq_count_deq0_candidate);
+        ({(FQ_PTR_W+1){fq_count_inc2}} & fq_count_p2) |
+        ({(FQ_PTR_W+1){fq_count_inc1}} & fq_count_p1) |
+        ({(FQ_PTR_W+1){fq_count_hold}} & fq_count) |
+        ({(FQ_PTR_W+1){fq_count_dec1}} & fq_count_m1) |
+        ({(FQ_PTR_W+1){fq_count_dec2}} & fq_count_m2);
 
     wire ftq_alloc_ready = (ftq_count < FTQ_DEPTH_COUNT);
     wire fq_credit_for_bp0 = f0_valid_r ? (fq_count <= FQ_DEPTH_MINUS_4)
@@ -593,7 +572,6 @@ module frontend_ftq
     // ================================================================
     //  Sequential state
     // ================================================================
-    integer ftq_i;
     integer fq_i;
 
     always_ff @(posedge clk or negedge rst_n) begin
@@ -614,7 +592,6 @@ module frontend_ftq
             f0_epoch_r <= 2'd0;
             f0_start_pc_r <= 32'd0;
             f0_base_mask_r <= 2'd0;
-            f0_ftq_idx_r <= '0;
             f0_bp0_taken_r <= 1'b0;
             f0_bp0_target_r <= 32'd0;
             f0_bp_ghr_snap_r <= 8'd0;
@@ -639,7 +616,6 @@ module frontend_ftq
                 f0_epoch_r <= frontend_epoch;
                 f0_start_pc_r <= current_pc;
                 f0_base_mask_r <= bp0_base_mask;
-                f0_ftq_idx_r <= ftq_tail;
                 f0_bp0_taken_r <= bp_taken;
                 f0_bp0_target_r <= bp_target;
                 f0_bp_ghr_snap_r <= bp_ghr_snap;
@@ -662,40 +638,10 @@ module frontend_ftq
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            ftq_tail <= '0;
             ftq_count <= '0;
-            for (ftq_i = 0; ftq_i < FTQ_DEPTH; ftq_i = ftq_i + 1) begin
-                ftq_valid[ftq_i] <= 1'b0;
-                ftq_pc[ftq_i] <= 32'd0;
-                ftq_bp0_target[ftq_i] <= 32'd0;
-                ftq_bp0_taken[ftq_i] <= 1'b0;
-                ftq_final_target[ftq_i] <= 32'd0;
-                ftq_final_taken[ftq_i] <= 1'b0;
-            end
         end else if (ex_redirect_valid) begin
-            ftq_tail <= '0;
             ftq_count <= '0;
-            for (ftq_i = 0; ftq_i < FTQ_DEPTH; ftq_i = ftq_i + 1)
-                ftq_valid[ftq_i] <= 1'b0;
         end else begin
-            if (f0_valid_r) begin
-                ftq_valid[f0_ftq_idx_r] <= 1'b0;
-                if (bp1_override) begin
-                    ftq_final_taken[f0_ftq_idx_r] <= bp1_final_taken;
-                    ftq_final_target[f0_ftq_idx_r] <= bp1_final_target;
-                end
-            end
-
-            if (bp0_fire) begin
-                ftq_valid[ftq_tail] <= 1'b1;
-                ftq_pc[ftq_tail] <= current_pc;
-                ftq_bp0_taken[ftq_tail] <= bp_taken;
-                ftq_bp0_target[ftq_tail] <= bp_target;
-                ftq_final_taken[ftq_tail] <= bp_taken;
-                ftq_final_target[ftq_tail] <= bp_target;
-                ftq_tail <= ftq_tail + {{(FTQ_PTR_W-1){1'b0}}, 1'b1};
-            end
-
             case ({bp0_fire, f0_valid_r})
                 2'b10: ftq_count <= ftq_count + {{FTQ_PTR_W{1'b0}}, 1'b1};
                 2'b01: ftq_count <= ftq_count - {{FTQ_PTR_W{1'b0}}, 1'b1};
@@ -720,6 +666,8 @@ module frontend_ftq
             for (fq_i = 0; fq_i < FQ_DEPTH; fq_i = fq_i + 1)
                 fq_pair_ok[fq_i] <= 1'b0;
         end else begin
+            // pair_ok payload may be written speculatively; fq_count and later
+            // cross-packet overwrite prevent an invalid follower from being used.
             if (f0_enq0_payload && fq_tail_has_prev)
                 fq_pair_ok[fq_tail_m1] <= fq_prev_tail_pair_ok;
             if (f0_enq0_payload) begin
