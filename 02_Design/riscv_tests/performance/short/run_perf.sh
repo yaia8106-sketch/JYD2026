@@ -129,13 +129,13 @@ set_tests_from_set() {
             TESTS=(simple dual_alu)
             ;;
         focused)
-            TESTS=(bp_stress dcache_stress axi_backend_stress counter_stress sb_stress)
+            TESTS=(bp_stress dcache_stress axi_backend_stress dcache_wna_edge counter_stress sb_stress)
             ;;
         branch)
             TESTS=(bp_stress bp_dual branch_dual_edge slot1_bp_update)
             ;;
         cache)
-            TESTS=(dcache_stress axi_backend_stress dcache_dual counter_stress sb_stress)
+            TESTS=(dcache_stress axi_backend_stress dcache_dual dcache_wna_edge counter_stress sb_stress)
             ;;
         dual)
             TESTS=(dual_alu raw_block loaduse_dual fwd_s1 slot1_load slot1_store)
@@ -157,7 +157,7 @@ set_tests_from_set() {
                    branch_fwd_matrix branch_dual_edge slot1_branch waw loaduse_dual
                    inst_buffer fwd_s1 waw_fwd flush_instbuf pc_align loaduse_cross
                    slot1_load slot1_store slot1_jal lui_auipc_s1
-                   dcache_dual instbuf_stall bp_dual slot1_bp_update
+                   dcache_dual dcache_wna_edge instbuf_stall bp_dual slot1_bp_update
                    sb_stress ras_overflow m_ext
                    zicsr_basic zicsr_edge csr_forwarding csr_trap_stall
                    trap_mret trap_slot1 trap_flush trap_nested)

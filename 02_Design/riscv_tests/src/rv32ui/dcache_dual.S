@@ -90,9 +90,9 @@ RVTEST_CODE_BEGIN
     bne   t5, t4, fail
 
     // ================================================================
-    // Part 3: Store miss + write-allocate
-    // Evict tag 2, then store to it → write-allocate refill.
-    // Read back to verify.
+    // Part 3: Store miss + write-no-allocate, then load-miss merge
+    // Evict tag 2, then store to it. The store should only enter SB.
+    // The following load miss refills the line and merges the pending SB word.
     // ================================================================
     .align 3
     li    TESTNUM, 6
@@ -105,7 +105,7 @@ RVTEST_CODE_BEGIN
     addi  s1, x0, 0
 
     li    t0, 0xEF
-    sw    t0, 0(a2)           // miss → refill → store
+    sw    t0, 0(a2)           // miss → SB only
 
     addi  s0, x0, 0
     addi  s1, x0, 0

@@ -38,7 +38,7 @@ TESTS="simple \
        bp_stress \
        dual_alu raw_block branch_single branch_dual branch_dual_flush branch_fwd_matrix branch_dual_edge slot1_branch waw loaduse_dual inst_buffer \
        fwd_s1 waw_fwd flush_instbuf pc_align loaduse_cross slot1_load slot1_store slot1_jal lui_auipc_s1 \
-       dcache_dual instbuf_stall bp_dual slot1_bp_update \
+	       dcache_dual dcache_wna_edge instbuf_stall bp_dual slot1_bp_update \
        sb_stress ras_overflow \
        m_ext \
        zicsr_basic zicsr_edge csr_forwarding csr_trap_stall trap_mret trap_slot1 trap_flush trap_nested timer_irq_basic"
