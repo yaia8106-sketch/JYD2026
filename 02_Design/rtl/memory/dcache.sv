@@ -1,6 +1,6 @@
 // ============================================================
 // Module: dcache
-// Description: 2KB, 2-way set-associative, Write-Through + Write-Allocate
+// Description: 2KB, 2-way set-associative, Write-Through + Write-No-Allocate
 //              Data Cache with Store Buffer
 //
 // Architecture:
@@ -8,10 +8,11 @@
 //   - Tag: LUTRAM async read, result latched EX→MEM
 //   - Data: BRAM sync read (addr in EX, data in MEM)
 //   - Hit detection: MEM stage (combinational)
-//   - Miss: FSM → refill line from memory backend → S_DONE
-//   - Store: WT to cache + store buffer → memory backend
-//   - Store-forward: when S_DONE writes store data to BRAM,
-//     the value is forwarded to bypass the 1-cycle BRAM read latency
+//   - Load miss: FSM → refill line from memory backend → S_DONE
+//   - Store hit: WT to cache + store buffer → memory backend
+//   - Store miss: no allocate, store buffer only
+//   - Store-forward: when a store hit writes data to BRAM, the value is
+//     forwarded to bypass the 1-cycle BRAM read latency
 // ============================================================
 
 module dcache (
@@ -67,6 +68,7 @@ module dcache (
     localparam INDEX_W    = 6;    // addr[9:4]
     localparam WORD_W     = 2;    // addr[3:2]
     localparam DATA_DEPTH = SETS * LINE_WORDS;  // 256
+    localparam SB_DEPTH   = 2;
 
     // ================================================================
     //  EX-stage address decomposition
@@ -272,6 +274,15 @@ module dcache (
     logic        rf_last_fwd_way;
     logic [INDEX_W+WORD_W-1:0] rf_last_fwd_addr;
     logic [31:0] rf_last_fwd_data;
+    wire  [31:0] refill_write_data;
+
+    // Capture the pending store-buffer entry once when a refill starts.
+    // The line compare is resolved up front; each refill beat then only
+    // needs a narrow word check and byte selection.
+    logic                 rf_merge_valid [SB_DEPTH-1:0];
+    logic [1:0]           rf_merge_word  [SB_DEPTH-1:0];
+    logic [ 3:0]          rf_merge_wea   [SB_DEPTH-1:0];
+    logic [31:0]          rf_merge_data  [SB_DEPTH-1:0];
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -284,7 +295,7 @@ module dcache (
                 rf_last_fwd_valid <= 1'b1;
                 rf_last_fwd_way  <= rf_way;
                 rf_last_fwd_addr <= rf_wr_data_addr;
-                rf_last_fwd_data <= mem_rd_data;
+                rf_last_fwd_data <= refill_write_data;
             end else if (state == S_DONE) begin
                 rf_last_fwd_valid <= 1'b0;
             end
@@ -336,12 +347,93 @@ module dcache (
     wire lru_victim = lru[mem_index];
 
     // ================================================================
-    //  Store Buffer (1 entry)
+    //  Store Buffer (2 entries)
     // ================================================================
-    logic        sb_valid;
-    logic [31:0] sb_addr;
-    logic [ 3:0] sb_wea;
-    logic [31:0] sb_data;
+    logic [SB_DEPTH-1:0] sb_valid_q;
+    logic [31:0]         sb_addr_q [SB_DEPTH-1:0];
+    logic [ 3:0]         sb_wea_q  [SB_DEPTH-1:0];
+    logic [31:0]         sb_data_q [SB_DEPTH-1:0];
+
+    logic [SB_DEPTH-1:0] sb_valid_n;
+    logic [31:0]         sb_addr_n [SB_DEPTH-1:0];
+    logic [ 3:0]         sb_wea_n  [SB_DEPTH-1:0];
+    logic [31:0]         sb_data_n [SB_DEPTH-1:0];
+
+    wire        sb_valid = |sb_valid_q;
+    wire        sb_full  = &sb_valid_q;
+    wire [31:0] sb_addr  = sb_addr_q[0];
+    wire [ 3:0] sb_wea   = sb_wea_q[0];
+    wire [31:0] sb_data  = sb_data_q[0];
+    wire        sb_resp_fire;
+    wire        sb_store_enqueue;
+    wire        sb_pop   = sb_resp_fire;
+    wire        sb_push  = sb_store_enqueue;
+    wire [31:0] sb_push_addr = {mem_addr[31:2], 2'b00};
+
+    // Parallel FIFO candidates. Payload may update under an invalid slot; the
+    // valid bits are the architectural guard.
+    wire sb_push_slot0 = sb_push & (~sb_valid_q[0] | (sb_pop & ~sb_valid_q[1]));
+    wire sb_push_slot1 = sb_push & ((sb_valid_q[0] & ~sb_pop) | (sb_pop & sb_valid_q[1]));
+    wire sb_after_pop_valid0 = sb_pop ? sb_valid_q[1] : sb_valid_q[0];
+    wire sb_after_pop_valid1 = sb_pop ? 1'b0 : sb_valid_q[1];
+    wire [31:0] sb_after_pop_addr0 = sb_pop ? sb_addr_q[1] : sb_addr_q[0];
+    wire [31:0] sb_after_pop_addr1 = sb_pop ? 32'd0 : sb_addr_q[1];
+    wire [ 3:0] sb_after_pop_wea0  = sb_pop ? sb_wea_q[1] : sb_wea_q[0];
+    wire [ 3:0] sb_after_pop_wea1  = sb_pop ? 4'd0 : sb_wea_q[1];
+    wire [31:0] sb_after_pop_data0  = sb_pop ? sb_data_q[1] : sb_data_q[0];
+    wire [31:0] sb_after_pop_data1  = sb_pop ? 32'd0 : sb_data_q[1];
+
+    assign sb_valid_n[0] = sb_push_slot0 | sb_after_pop_valid0;
+    assign sb_valid_n[1] = sb_push_slot1 | sb_after_pop_valid1;
+
+    assign sb_addr_n[0] = sb_push_slot0 ? sb_push_addr : sb_after_pop_addr0;
+    assign sb_addr_n[1] = sb_push_slot1 ? sb_push_addr : sb_after_pop_addr1;
+
+    assign sb_wea_n[0] = sb_push_slot0 ? mem_wea : sb_after_pop_wea0;
+    assign sb_wea_n[1] = sb_push_slot1 ? mem_wea : sb_after_pop_wea1;
+
+    assign sb_data_n[0] = sb_push_slot0 ? mem_wdata : sb_after_pop_data0;
+    assign sb_data_n[1] = sb_push_slot1 ? mem_wdata : sb_after_pop_data1;
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            for (int e = 0; e < SB_DEPTH; e++) begin
+                rf_merge_valid[e] <= 1'b0;
+                rf_merge_word[e]  <= '0;
+                rf_merge_wea[e]   <= 4'd0;
+                rf_merge_data[e]  <= 32'd0;
+            end
+        end else if (state == S_IDLE && state_nxt == S_REFILL_REQ) begin
+            for (int e = 0; e < SB_DEPTH; e++) begin
+                rf_merge_valid[e] <= sb_valid_q[e] & (sb_addr_q[e][31:4] == mem_addr[31:4]);
+                rf_merge_word[e]  <= sb_addr_q[e][3:2];
+                rf_merge_wea[e]   <= sb_wea_q[e];
+                rf_merge_data[e]  <= sb_data_q[e];
+            end
+        end
+    end
+
+    // If a load miss refills a line while a store-buffer entry for the same
+    // line is still pending, merge the pending store bytes into the cache line.
+    // Entry 0 is older; entry 1 is younger and wins for overlapping bytes.
+    wire refill_sb0_same_word = rf_merge_valid[0] & (rf_merge_word[0] == rf_data_cnt);
+    wire refill_sb1_same_word = rf_merge_valid[1] & (rf_merge_word[1] == rf_data_cnt);
+    wire [31:0] refill_sb0_data;
+    wire [31:0] refill_sb1_data;
+
+    assign refill_sb0_data[ 7: 0] = (refill_sb0_same_word & rf_merge_wea[0][0]) ? rf_merge_data[0][ 7: 0] : mem_rd_data[ 7: 0];
+    assign refill_sb0_data[15: 8] = (refill_sb0_same_word & rf_merge_wea[0][1]) ? rf_merge_data[0][15: 8] : mem_rd_data[15: 8];
+    assign refill_sb0_data[23:16] = (refill_sb0_same_word & rf_merge_wea[0][2]) ? rf_merge_data[0][23:16] : mem_rd_data[23:16];
+    assign refill_sb0_data[31:24] = (refill_sb0_same_word & rf_merge_wea[0][3]) ? rf_merge_data[0][31:24] : mem_rd_data[31:24];
+
+    assign refill_sb1_data[ 7: 0] = (refill_sb1_same_word & rf_merge_wea[1][0]) ? rf_merge_data[1][ 7: 0] : mem_rd_data[ 7: 0];
+    assign refill_sb1_data[15: 8] = (refill_sb1_same_word & rf_merge_wea[1][1]) ? rf_merge_data[1][15: 8] : mem_rd_data[15: 8];
+    assign refill_sb1_data[23:16] = (refill_sb1_same_word & rf_merge_wea[1][2]) ? rf_merge_data[1][23:16] : mem_rd_data[23:16];
+    assign refill_sb1_data[31:24] = (refill_sb1_same_word & rf_merge_wea[1][3]) ? rf_merge_data[1][31:24] : mem_rd_data[31:24];
+
+    assign refill_write_data = refill_sb1_same_word ? refill_sb1_data :
+                               refill_sb0_same_word ? refill_sb0_data :
+                                                       mem_rd_data;
 
     // ================================================================
     //  FSM — variable-latency refill/store backend
@@ -357,17 +449,21 @@ module dcache (
     wire state_idle = (state == S_IDLE);
     wire state_done = (state == S_DONE);
 
-    wire idle_miss      = mem_req & ~cache_hit & state_idle;
-    wire idle_store_hit = mem_req & cache_hit & mem_wr & state_idle;
-    wire idle_load_hit  = mem_req & cache_hit & ~mem_wr & state_idle;
-    wire sb_conflict    = idle_store_hit & sb_valid;
+    wire idle_load_miss  = mem_req & ~mem_wr & ~cache_hit & state_idle;
+    wire idle_store_miss = mem_req &  mem_wr & ~cache_hit & state_idle;
+    wire idle_store_hit  = mem_req &  mem_wr &  cache_hit & state_idle;
+    wire idle_store      = mem_req &  mem_wr & state_idle;
+    wire sb_conflict     = idle_store & sb_full;
+    wire store_hit_accept  = idle_store_hit & ~sb_full;
+    wire store_miss_accept = idle_store_miss & ~sb_full;
+    assign sb_store_enqueue = store_hit_accept | store_miss_accept;
 
 
     wire refill_req_fire = (state == S_REFILL_REQ) & mem_req_ready;
     wire refill_data_last = rf_data_valid & (rf_data_cnt == WORD_W'(LINE_WORDS - 1));
     wire refill_drop_done = (state == S_REFILL_DROP) & mem_rd_valid & mem_rd_ready & mem_rd_last;
     wire sb_req_fire = (state == S_SB_DRAIN_REQ) & mem_req_ready;
-    wire sb_resp_fire = (state == S_SB_DRAIN_RESP) & mem_wr_valid & mem_wr_ready;
+    assign sb_resp_fire = (state == S_SB_DRAIN_RESP) & mem_wr_valid & mem_wr_ready;
 
     always_comb begin
         state_nxt = state;
@@ -375,14 +471,12 @@ module dcache (
             S_IDLE: begin
                 if (sb_conflict)
                     state_nxt = S_SB_DRAIN_REQ;
-                else if (sb_valid)
-                    // MUST drain SB before any refill — otherwise refill
-                    // reads stale memory data (SB hasn't written back yet).
-                    // After drain, FSM returns to IDLE and re-evaluates
-                    // the miss, starting the refill with up-to-date memory.
-                    state_nxt = S_SB_DRAIN_REQ;
-                else if (idle_miss)
+                else if (idle_load_miss)
                     state_nxt = S_REFILL_REQ;
+                else if (sb_valid & ~sb_store_enqueue)
+                    // Background drain. Load misses are allowed to refill
+                    // before drain; same-line SB data is merged into refill.
+                    state_nxt = S_SB_DRAIN_REQ;
             end
 
             S_REFILL_REQ: begin
@@ -450,35 +544,13 @@ module dcache (
     assign rf_wr_data_addr = {rf_idx, rf_data_cnt};
     wire [INDEX_W+WORD_W-1:0] st_data_addr    = {mem_index, mem_word};
 
-    // Track whether a store is being written this cycle (for forwarding)
-    logic        doing_store;
-    logic        doing_store_way;
-    logic [INDEX_W+WORD_W-1:0] doing_store_addr;
-    logic [31:0] doing_store_data;
-    logic [ 3:0] doing_store_wea;
-
-    always_comb begin
-        doing_store = 1'b0;
-        doing_store_way = 1'b0;
-        doing_store_addr = '0;
-        doing_store_data = 32'd0;
-        doing_store_wea = 4'd0;
-
-        if (idle_store_hit & ~sb_conflict) begin
-            doing_store = 1'b1;
-            doing_store_way = hit_way;
-            doing_store_addr = st_data_addr;
-            doing_store_data = mem_wdata;
-            doing_store_wea = mem_wea;
-        end
-        if (state == S_DONE && mem_req && mem_wr) begin
-            doing_store = 1'b1;
-            doing_store_way = rf_way;
-            doing_store_addr = st_data_addr;
-            doing_store_data = mem_wdata;
-            doing_store_wea = mem_wea;
-        end
-    end
+    // Track whether a store hit is writing cache this cycle (for forwarding).
+    // Store misses are write-no-allocate: they only enqueue the store buffer.
+    wire        doing_store = store_hit_accept;
+    wire        doing_store_way = hit_way;
+    wire [INDEX_W+WORD_W-1:0] doing_store_addr = st_data_addr;
+    wire [31:0] doing_store_data = mem_wdata;
+    wire [ 3:0] doing_store_wea = mem_wea;
 
     // Refill write: one cache data RAM write per accepted backend read beat.
     assign refill_wr = rf_data_valid;
@@ -491,14 +563,14 @@ module dcache (
     wire store_w0  = doing_store & ~doing_store_way;
     assign bram_wea[0]   = refill_w0 ? 4'b1111          : store_w0 ? doing_store_wea  : 4'b0000;
     assign bram_waddr[0] = refill_w0 ? rf_wr_data_addr   : store_w0 ? doing_store_addr : '0;
-    assign bram_wdata[0] = refill_w0 ? mem_rd_data        : store_w0 ? doing_store_data : 32'd0;
+    assign bram_wdata[0] = refill_w0 ? refill_write_data  : store_w0 ? doing_store_data : 32'd0;
 
     // Way 1
     wire refill_w1 = refill_wr &  rf_way;
     wire store_w1  = doing_store &  doing_store_way;
     assign bram_wea[1]   = refill_w1 ? 4'b1111          : store_w1 ? doing_store_wea  : 4'b0000;
     assign bram_waddr[1] = refill_w1 ? rf_wr_data_addr   : store_w1 ? doing_store_addr : '0;
-    assign bram_wdata[1] = refill_w1 ? mem_rd_data        : store_w1 ? doing_store_data : 32'd0;
+    assign bram_wdata[1] = refill_w1 ? refill_write_data  : store_w1 ? doing_store_data : 32'd0;
 
     // Store forward register: capture store info at clock edge
     always_ff @(posedge clk or negedge rst_n) begin
@@ -510,12 +582,10 @@ module dcache (
             st_fwd_wea   <= 4'd0;
         end else begin
             st_fwd_valid <= doing_store;
-            if (doing_store) begin
-                st_fwd_way  <= doing_store_way;
-                st_fwd_addr <= doing_store_addr;
-                st_fwd_data <= doing_store_data;
-                st_fwd_wea  <= doing_store_wea;
-            end
+            st_fwd_way  <= doing_store_way;
+            st_fwd_addr <= doing_store_addr;
+            st_fwd_data <= doing_store_data;
+            st_fwd_wea  <= doing_store_wea;
         end
     end
 
@@ -561,24 +631,23 @@ module dcache (
     // ================================================================
     //  Store Buffer
     // ================================================================
-    // Drain SB to memory backend when S_SB_DRAIN_REQ/RESP or when IDLE and no miss
-    // Enqueue on store hit or store-miss-done
+    // Drain SB to memory backend when S_SB_DRAIN_REQ/RESP or when IDLE.
+    // Enqueue on accepted store hit or store miss. Store miss is WNA and does
+    // not allocate/update the cache line.
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            sb_valid <= 1'b0;
-            sb_addr  <= 32'd0;
-            sb_wea   <= 4'd0;
-            sb_data  <= 32'd0;
+            sb_valid_q <= '0;
+            for (int e = 0; e < SB_DEPTH; e++) begin
+                sb_addr_q[e] <= 32'd0;
+                sb_wea_q[e]  <= 4'd0;
+                sb_data_q[e] <= 32'd0;
+            end
         end else begin
-            // Drain takes priority (clear valid after backend write response)
-            if (sb_resp_fire)
-                sb_valid <= 1'b0;
-            // Enqueue store (after drain priority, so enqueue wins if same cycle)
-            if (doing_store) begin
-                sb_valid <= 1'b1;
-                sb_addr  <= {mem_addr[31:2], 2'b00};
-                sb_wea   <= doing_store_wea;
-                sb_data  <= doing_store_data;
+            sb_valid_q <= sb_valid_n;
+            for (int e = 0; e < SB_DEPTH; e++) begin
+                sb_addr_q[e] <= sb_addr_n[e];
+                sb_wea_q[e]  <= sb_wea_n[e];
+                sb_data_q[e] <= sb_data_n[e];
             end
         end
     end
@@ -623,11 +692,12 @@ module dcache (
     // ================================================================
     assign cpu_ready = ~mem_req
                      | state_done
+                     | store_miss_accept
                      | (state_idle & cache_hit & ~sb_conflict);
 
     // ================================================================
-    //  Background SB drain: when idle, no miss, SB valid → drain
-    //  FSM: IDLE + sb_valid + no miss → S_SB_DRAIN_REQ
+    //  Background SB drain: when idle, SB valid, and no higher-priority
+    //  load-miss refill or store-hit conflict → S_SB_DRAIN_REQ
     //  Already handled in FSM next-state logic above.
     // ================================================================
 

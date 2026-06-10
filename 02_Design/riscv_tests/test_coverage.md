@@ -11,12 +11,12 @@
 
 ## 默认回归规模
 
-`functional/run_all.sh` 默认运行 80 个测试：
+`functional/run_all.sh` 默认运行 81 个测试：
 
 - 38 个基础 RV32I/smoke 测试：`simple` + 官方 `rv32ui` 指令测试（不包含 `fence_i`）。
 - 2 个综合访存测试：`ld_st`、`st_ld`。
 - 4 个压力测试：`dcache_stress`、`axi_backend_stress`、`counter_stress`、`bp_stress`。
-- 26 个双发射、分支预测、DCache、RAS 相关测试。
+- 27 个双发射、分支预测、DCache、RAS 相关测试。
 - 1 个 RV32M 覆盖测试：`m_ext`。
 - 9 个 Zicsr / Trap / Timer 测试：`zicsr_basic`、`zicsr_edge`、`csr_forwarding`、`csr_trap_stall`、`trap_mret`、`trap_slot1`、`trap_flush`、`trap_nested`、`timer_irq_basic`。
 
@@ -79,6 +79,17 @@
 | 3 | halfword store 后 evict/refill | 后端 halfword strobe、非整字写回和重填 |
 | 4 | cache line 最后一个 word miss | refill final beat forwarding |
 | 5 | 背靠背 store 后 evict/refill | store buffer drain 排序、多个写回后外存可见性 |
+
+### `dcache_wna_edge`
+
+| # | 场景 | 覆盖内容 |
+|:-:|------|----------|
+| 1 | cold SB store miss 后立即 LW 同 word | WT+WNA store miss 不分配，load refill 按 byte mask 合并 pending SB |
+| 2 | SH store miss 到同 line 不同 word，随后 LW 另一个 word | refill merge 不能污染非目标 word |
+| 3 | refill 完成后读取被 SH 修改的 word | pending SB 在非请求 beat 上也会合并进 cache line |
+| 4 | SW store miss 到 line 最后一个 word | final refill beat forwarding 必须转发合并后的数据 |
+| 5 | 两个 store miss 连续进入 2-entry SB，随后 LW 同 line | refill 同时合并两个 pending store，覆盖不同 word 的可见性 |
+| 6 | 同 word 的 SW 后接 SB，随后第三个 store 在 SB full 时到达 | full 后 drain/stall/retry、年轻 store byte 覆盖老 store、第三个 store 继续参与 refill merge |
 
 ### `functional/special/run_student_top_axi.sh`
 
@@ -158,7 +169,8 @@
 
 | 测试 | 覆盖内容 |
 |------|----------|
-| `dcache_dual` | DCache miss/refill 期间的双发射保持、miss 后前递、store miss write-allocate |
+| `dcache_dual` | DCache miss/refill 期间的双发射保持、miss 后前递、store miss WNA 与 load refill 合并 |
+| `dcache_wna_edge` | WT+WNA store miss 的 byte/half/word refill 合并、非目标 word 不污染、2-entry SB 满时 drain/retry 和年轻 store 覆盖 |
 | `bp_dual` | 误预测 flush 与双发循环、嵌套循环、JAL 返回点双发、背靠背分支组合 |
 | `sb_stress` | store buffer 冲突 stall、连续 store 覆盖写、store 与双发 ALU 交错 |
 | `ras_overflow` | RAS 容量内调用、超出容量后的返回修正，以及恢复后的再次调用 |
@@ -211,6 +223,7 @@ Zicsr / Trap 测试覆盖 M 模式下的最小 CSR、同步异常与机器定时
 | Slot1 JAL 延迟重定向 | `slot1_jal` |
 | LUI/AUIPC 在 S1 | `lui_auipc_s1` |
 | DCache miss + 双发射 stall | `dcache_dual` |
+| WT+WNA store miss/refill merge 边界 | `dcache_wna_edge` |
 | inst_buf + stall 交互 | `instbuf_stall` |
 | BP 误预测 + 双发射循环 | `bp_dual` |
 | Store buffer 冲突 stall | `sb_stress` |
