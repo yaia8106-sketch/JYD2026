@@ -8,7 +8,7 @@
 //     └── student_top (本文件)
 //           ├── cpu_top         (自研 RV32I 五级流水线)
 //           ├── IROM            (BRAM ROM, 无 output register, 1 拍)
-//           ├── dcache          (2KB 2-way WT+WA data cache)
+//           ├── dcache          (2KB 2-way WT+WNA data cache)
 //           │     └── dcache_bram_backend
 //           │           └── DRAM (BRAM RAM, SDP, 65536×32)
 //           └── mmio_bridge     (LED/SEG/SW/KEY/CNT)
@@ -155,7 +155,7 @@ module student_top #(
     );
 
     // ================================================================
-    //  DCache (2KB, 2-way, WT+WA, 16B line)
+    //  DCache (2KB, 2-way, WT+WNA, 16B line)
     // ================================================================
     dcache u_dcache (
         .clk         (w_cpu_clk),

@@ -39,12 +39,9 @@ module dcache_bram_backend (
     output logic [31:0] dram_wdata
 );
 
-    typedef enum logic [2:0] {
+    typedef enum logic [1:0] {
         B_IDLE,
-        B_RD_ISSUE,
-        B_RD_WAIT0,
-        B_RD_WAIT1,
-        B_RD_RESP,
+        B_RD_BURST,
         B_WR_ISSUE,
         B_WR_RESP
     } state_t;
@@ -56,22 +53,24 @@ module dcache_bram_backend (
     logic [ 7:0] beat_r;
     logic [31:0] wdata_r;
     logic [ 3:0] wstrb_r;
-    logic [31:0] rdata_r;
+    logic [1:0]  rd_valid_pipe;
+    logic [1:0]  rd_last_pipe;
 
     wire req_fire = mem_req_valid & mem_req_ready;
     wire rd_fire  = mem_rd_valid & mem_rd_ready;
     wire wr_fire  = mem_wr_valid & mem_wr_ready;
+    wire rd_issue = (state == B_RD_BURST) & (beat_r <= len_r);
 
     assign mem_req_ready = (state == B_IDLE);
 
-    assign dram_rd_addr = (state == B_RD_ISSUE) ? addr_r : 16'd0;
+    assign dram_rd_addr = rd_issue ? addr_r : 16'd0;
     assign dram_wr_addr = (state == B_WR_ISSUE) ? addr_r : 16'd0;
     assign dram_wea     = (state == B_WR_ISSUE) ? wstrb_r : 4'd0;
     assign dram_wdata   = wdata_r;
 
-    assign mem_rd_valid = (state == B_RD_RESP);
-    assign mem_rd_data  = rdata_r;
-    assign mem_rd_last  = (beat_r == len_r);
+    assign mem_rd_valid = (state == B_RD_BURST) & rd_valid_pipe[1];
+    assign mem_rd_data  = dram_rdata;
+    assign mem_rd_last  = rd_last_pipe[1];
     assign mem_rd_resp  = 2'b00;
 
     assign mem_wr_valid = (state == B_WR_RESP);
@@ -85,7 +84,8 @@ module dcache_bram_backend (
             beat_r  <= 8'd0;
             wdata_r <= 32'd0;
             wstrb_r <= 4'd0;
-            rdata_r <= 32'd0;
+            rd_valid_pipe <= 2'b00;
+            rd_last_pipe <= 2'b00;
         end else begin
             case (state)
                 B_IDLE: begin
@@ -95,29 +95,24 @@ module dcache_bram_backend (
                         beat_r  <= 8'd0;
                         wdata_r <= mem_req_wdata;
                         wstrb_r <= mem_req_wstrb;
-                        state   <= mem_req_write ? B_WR_ISSUE : B_RD_ISSUE;
+                        rd_valid_pipe <= 2'b00;
+                        rd_last_pipe <= 2'b00;
+                        state   <= mem_req_write ? B_WR_ISSUE : B_RD_BURST;
                     end
                 end
 
-                B_RD_ISSUE:
-                    state <= B_RD_WAIT0;
+                B_RD_BURST: begin
+                    if (rd_fire & mem_rd_last) begin
+                        state <= B_IDLE;
+                        rd_valid_pipe <= 2'b00;
+                        rd_last_pipe <= 2'b00;
+                    end else begin
+                        rd_valid_pipe <= {rd_valid_pipe[0], rd_issue};
+                        rd_last_pipe <= {rd_last_pipe[0], rd_issue & (beat_r == len_r)};
 
-                B_RD_WAIT0:
-                    state <= B_RD_WAIT1;
-
-                B_RD_WAIT1: begin
-                    rdata_r <= dram_rdata;
-                    state   <= B_RD_RESP;
-                end
-
-                B_RD_RESP: begin
-                    if (rd_fire) begin
-                        if (beat_r == len_r) begin
-                            state <= B_IDLE;
-                        end else begin
+                        if (rd_issue) begin
                             beat_r <= beat_r + 8'd1;
                             addr_r <= addr_r + 16'd1;
-                            state  <= B_RD_ISSUE;
                         end
                     end
                 end
@@ -135,5 +130,12 @@ module dcache_bram_backend (
             endcase
         end
     end
+
+`ifndef SYNTHESIS
+    always_ff @(posedge clk) begin
+        if (rst_n && mem_rd_valid && !mem_rd_ready)
+            $error("dcache_bram_backend read burst does not support response backpressure");
+    end
+`endif
 
 endmodule
