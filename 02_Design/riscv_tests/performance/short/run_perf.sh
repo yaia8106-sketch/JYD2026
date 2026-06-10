@@ -13,6 +13,7 @@
 # Examples:
 #   bash performance/short/run_perf.sh --set focused
 #   bash performance/short/run_perf.sh --set branch --max-cycles 200000
+#   bash performance/short/run_perf.sh --set branch_diag --max-cycles 200000
 #   bash performance/short/run_perf.sh --out work/perf/my_run simple dual_alu
 #   bash performance/short/run_perf.sh --baseline work/perf/baseline
 #
@@ -57,7 +58,8 @@ Usage:
   bash performance/short/run_perf.sh [options] [test ...]
 
 Options:
-  --set <name>         Profiling set: smoke, focused, branch, cache, dual, all.
+  --set <name>         Profiling set: smoke, focused, branch, branch_diag,
+                       cache, dual, all.
                        Default: smoke. This is a profiling sanity set, not the
                        functional correctness gate.
   --max-cycles <n>     Cycle timeout passed to the testbench. Default: 50000.
@@ -134,6 +136,27 @@ set_tests_from_set() {
         branch)
             TESTS=(bp_stress bp_dual branch_dual_edge slot1_bp_update)
             ;;
+        branch_diag)
+            TESTS=(bp_s0_taken_loop
+                   bp_s0_not_taken_loop
+                   bp_s0_alternating
+                   bp_btb_alias_pair
+                   bp_wrongpath_pollution
+                   branch_single
+                   branch_dual
+                   branch_dual_flush
+                   branch_fwd_matrix
+                   branch_dual_edge
+                   slot1_branch
+                   slot1_bp_update
+                   slot1_jal
+                   pc_align
+                   instbuf_stall
+                   bp_dual
+                   bp_stress
+                   jalr
+                   ras_overflow)
+            ;;
         cache)
             TESTS=(dcache_stress axi_backend_stress dcache_dual dcache_wna_edge counter_stress sb_stress)
             ;;
@@ -164,7 +187,7 @@ set_tests_from_set() {
             ;;
         *)
             echo "ERROR: unknown test set '$1'"
-            echo "       Supported: smoke, focused, branch, cache, dual, all"
+            echo "       Supported: smoke, focused, branch, branch_diag, cache, dual, all"
             exit 1
             ;;
     esac
