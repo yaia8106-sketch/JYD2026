@@ -21,7 +21,9 @@ CFLAGS="-march=rv32im_zicsr -mabi=ilp32 -static -mcmodel=medany -fvisibility=hid
 INCLUDES="-I$RISCV_TESTS_DIR/env"
 LDFLAGS="-T$RISCV_TESTS_DIR/env/link.ld"
 
-# RV32IM 指令测试 (去掉 fence_i)
+# RV32IM 指令测试 (去掉 fence_i).
+# Includes diagnostic-only microbenchmarks used by performance/branch; those
+# are built here but intentionally not added to functional/run_all.sh.
 TESTS="simple \
        add addi sub \
        and andi or ori xor xori \
@@ -36,6 +38,7 @@ TESTS="simple \
        dcache_stress axi_backend_stress \
        counter_stress \
        bp_stress \
+       bp_s0_taken_loop bp_s0_not_taken_loop bp_s0_alternating bp_btb_alias_pair bp_wrongpath_pollution \
        dual_alu raw_block branch_single branch_dual branch_dual_flush branch_fwd_matrix branch_dual_edge slot1_branch waw loaduse_dual inst_buffer \
        fwd_s1 waw_fwd flush_instbuf pc_align loaduse_cross slot1_load slot1_store slot1_jal lui_auipc_s1 \
 	       dcache_dual dcache_wna_edge instbuf_stall bp_dual slot1_bp_update \
