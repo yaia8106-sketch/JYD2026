@@ -30,28 +30,50 @@
 - AXI CPU 集成测试放在 `tb_student_top_axi.sv` / `functional/special/run_student_top_axi.sh`。
 - 不要为了覆盖功能 bug，把新 correctness case 只加到 `run_perf.sh` 或 COE 脚本里。
 
-## B. Performance / Long-Run / COE
+## B. Performance / Diagnosis / Long-Run / COE
 
-这类脚本用于性能分析或完整 COE 长程序。它们不是默认 smoke gate，不应替代 `functional/run_all.sh`。
+这类脚本用于性能分析、分支诊断或完整 COE 长程序。它们不是默认 smoke gate，不应替代 `functional/run_all.sh`。
+
+常用代号：
+
+- `short-perf`: `performance/short/run_perf.sh`
+- `run-perf` / `coe-perf`: `performance/long/run_coe_perf.sh`
+- `branch-diag`: `performance/branch/run_branch_diag.sh`
+
+这些代号在仓库根目录 `bin/` 下有可追踪的薄入口；`bash bin/install-command-links.sh`
+会把它们链接到 `~/.local/bin`，方便人工直接输入命令。
+
+AI 执行约定：
+
+- AI 可以维护这些脚本、运行 `--help`、`bash -n`、parser/unit-style 静态检查和 stop_pc 静态推导。
+- AI 不应为了常规验证主动运行 `run-perf` / `coe-perf` 或 `branch-diag`，因为它们会启动完整 contest COE 长程序。
+- 这两个长入口由人工显式执行；用户明确要求时再运行。
 
 | 脚本 | 角色 | 何时运行 |
 |------|------|----------|
 | `performance/short/run_perf.sh` | 短 profiling 入口，对 riscv-tests 程序输出 CPI、stall、双发率、BP 等性能指标 | 人工需要快速 profiling 或比较优化效果时 |
-| `performance/branch/run_branch_diag.sh` | 分支预测诊断 wrapper，复用 `run_perf.sh` / `run_coe_perf.sh` 和 `parse_perf.py`，输出 branch-only 指标与启发式分类 | 定位 BTB、方向预测、训练、slot1、redirect/flush、RAS/JALR 等分支预测问题时 |
-| `performance/long/run_coe_perf.sh` | 长 COE 入口，跑完整 contest COE 程序并输出性能摘要 | 分析完整比赛程序性能或长程序行为时 |
+| `performance/long/run_coe_perf.sh` | 长 COE 入口，直接基于 `tb_riscv_tests` 跑完整 contest COE 程序并输出性能摘要 | 分析完整比赛程序性能或长程序行为时 |
+| `performance/branch/run_branch_diag.sh` | 分支预测诊断入口，直接基于 `tb_riscv_tests` 运行精选 riscv-tests 和完整 contest COE 集合，输出 branch-only 指标与启发式分类 | 定位 BTB、方向预测、训练、slot1、redirect/flush、RAS/JALR 等分支预测问题时 |
 
 规则：
 
 - `run_perf.sh` 即使默认只跑很少程序，也属于 profiling 入口；不要把它当 correctness smoke。
-- `run_coe_perf.sh` 可能长时间运行，除非用户明确要求或需要检查完整 COE 行为，不要作为常规 smoke。
+- `run_coe_perf.sh` 是完整 contest COE 性能入口；它每次都跑完整 contest COE 集合，并行任务数等于 contest 程序数。
+- `run_branch_diag.sh` 是独立的 branch 诊断入口，不依赖 `run_perf.sh` 或 `run_coe_perf.sh`；它的 COE 阶段同样每次都跑完整 contest COE 集合，并行任务数等于 contest 程序数。
+- `run_coe_perf.sh` 和 `run_branch_diag.sh` 是同级入口：二者都直接编译/运行 `tb_riscv_tests`，不是脚本链式调用关系。
+- COE stop_pc 由共享工具 `tools/derive_coe_stop_pc.py` 从入口启动段的 `0000006f` fall-through 自环推导；不要在各脚本里复制一套宽松的 stop_pc 扫描逻辑。
 - 性能实验新增测试集时，应更新 `performance/short/run_perf.sh` 的 set 和本文件；不要修改 `functional/run_all.sh` 的 correctness gate 语义。
-- 诊断 wrapper 可以放在 `performance/<topic>/`，但应复用现有短跑/长跑入口和解析器，不另起一套仿真编译流程。
-- 不要新增第三个 COE/长跑实现脚本；确实需要板级封装短验证时，放入 `functional/special/`。
+- 主题诊断入口可以放在 `performance/<topic>/`；若它需要和短跑/长跑不同的测试组织，应直接复用基础 TB 和共享解析器，而不是让诊断脚本依赖另一个入口脚本。
+- 新增长程序或 COE 相关能力时，优先扩展 `coe-perf`、`branch-diag` 或共享 `tools/`；不要新增语义重叠的长跑入口。确实需要板级封装短验证时，放入 `functional/special/`。
 
 ## Utility
 
 | 脚本 | 角色 |
 |------|------|
 | `utility/build_tests.sh` | 编译/生成 `work/hex/*.hex`，不是验证入口 |
+| `tools/derive_coe_stop_pc.py` | 从 dual-bank COE/hex 的入口 fall-through 自环静态推导 stop_pc，供 `coe-perf` 和 `branch-diag` 复用 |
+| `tools/parse_perf.py` | 解析 perf log，生成 `summary.csv/json` |
+| `tools/branch_diag_report.py` | 聚合 branch-only 指标并生成诊断报告 |
+| `bin/install-command-links.sh` | 安装 `short-perf`、`run-perf` / `coe-perf`、`branch-diag` 短命令链接 |
 
 `build_tests.sh` 只在修改或新增测试源时运行。普通 RTL 改动不需要重新 build hex。

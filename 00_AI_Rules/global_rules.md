@@ -196,7 +196,7 @@ cd 02_Design/riscv_tests
 bash performance/long/run_coe_perf.sh current src0 src1 src2
 ```
 
-- `run_coe_perf.sh`：使用 `cpu_top + dcache` 仿真模型跑完整 dual-bank COE 程序，自动从首个 `0000006f` 自环推导 `stop_pc`，输出 `summary.csv/json` 性能指标。
+- `run_coe_perf.sh`：使用 `cpu_top + dcache` 仿真模型跑完整 dual-bank COE 程序，自动从入口启动段的 `0000006f` fall-through 自环推导 `stop_pc`，输出 `summary.csv/json` 性能指标。
 - Performance / Long-Run / COE 只保留这一个长入口；`student_top` 板级封装短检查使用 `functional/special/run_student_top_smoke.sh`。
 - 当前仓库没有 `run_coe_suite.sh` / `run_coe_diff.sh`。需要软件参考模型或 commit trace diff 时，应先补齐对应脚本，再把入口写回本文档。
 

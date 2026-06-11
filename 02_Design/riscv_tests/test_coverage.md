@@ -7,7 +7,7 @@
 - `functional/run_all.sh` 属于常规功能正确性 / smoke 入口。
 - `functional/special/run_axi_adapter.sh`、`functional/special/run_student_top_axi.sh`、`functional/special/run_student_top_smoke.sh` 属于特殊功能正确性 smoke。
 - `performance/short/run_perf.sh`、`performance/long/run_coe_perf.sh` 属于性能 / 长跑 / COE 入口，不作为默认 smoke gate。
-- `performance/branch/run_branch_diag.sh` 属于性能诊断 wrapper，聚焦分支预测，不作为默认 smoke gate。
+- `performance/branch/run_branch_diag.sh` 属于性能诊断入口，聚焦分支预测，不作为默认 smoke gate。
 - 新增 correctness case 应进入 `run_all.sh` 体系；性能实验和 COE 检查不要混入短功能回归。
 
 ## 默认回归规模
@@ -125,7 +125,7 @@
 
 ### Branch Predictor Diagnosis Microbenchmarks
 
-这些程序由 `utility/build_tests.sh` 生成 hex，并由 `performance/branch/run_branch_diag.sh` 或 `run_perf.sh --set branch_diag` 使用；它们不属于 `functional/run_all.sh` 默认 correctness gate。
+这些程序由 `utility/build_tests.sh` 生成 hex，主要由 `performance/branch/run_branch_diag.sh` 使用；必要时也可用 `run_perf.sh --set branch_diag` 做短 profiling。它们不属于 `functional/run_all.sh` 默认 correctness gate。
 
 | 测试 | 诊断意图 |
 |------|----------|
