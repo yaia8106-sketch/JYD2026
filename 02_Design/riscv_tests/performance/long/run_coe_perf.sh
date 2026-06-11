@@ -6,10 +6,11 @@
 #   Performance / long-run / COE entry. Do not use this as a default smoke
 #   gate unless the user explicitly asks for COE-level validation.
 #
-# Full COE runs must end by each program's real stop_pc. This script derives
-# stop_pc from the first self-loop instruction (jal x0, 0 / 0000006f) in the
-# banked IROM stream. By default it runs until stop_pc; --max-cycles can cap
-# each program for sampled profiling.
+# Full COE runs always cover every contest program and run them in parallel,
+# one simv process per program.  Each program must end by its real stop_pc.
+# This script derives stop_pc from the entry fall-through self-loop
+# (jal x0, 0 / 0000006f) after startup calls. By default it runs until stop_pc;
+# --max-cycles can cap each program for sampled profiling.
 # ============================================================
 
 set -e
@@ -29,19 +30,21 @@ VCS_ENV="${VCS_ENV:-/home/anokyai/synopsys/env.sh}"
 VCS_SHIM="$RISCV_TESTS_DIR/tools/vcs_pthread_yield.c"
 OUT_DIR=""
 NO_COMPILE=0
-PARALLEL=0
 VERBOSE=0
 MAX_CYCLES="${MAX_CYCLES:-0}"
 WATCHDOG_CYCLES="${WATCHDOG_CYCLES:-150000}"
 PROGRESS_CYCLES="${PROGRESS_CYCLES:-0}"
 SIM_GUARD_ARGS="${SIM_GUARD_ARGS:-+pc_guard}"
-TESTS=()
+COE_STOP_ENTRY_BYTES="${COE_STOP_ENTRY_BYTES:-0x100}"
+CONTEST_PROGRAMS=(current src0 src1 src2 new_without_Mext new_with_Mext)
+REQUESTED_TESTS=()
+TESTS=("${CONTEST_PROGRAMS[@]}")
 ORIGINAL_ARGS=("$@")
 
 usage() {
     cat <<'EOF'
 Usage:
-  bash performance/long/run_coe_perf.sh [options] [program ...]
+  bash performance/long/run_coe_perf.sh [options]
 
 Options:
   --out <dir>             Output directory. Default: work/perf/coe_full_<timestamp>_<git>.
@@ -49,13 +52,15 @@ Options:
                           means run until stop_pc / watchdog.
   --progress-cycles <n>   Print [PROGRESS] every n simulated cycles. Default: 0 (disabled).
                           Can also be set with PROGRESS_CYCLES=<n>.
-  --parallel              Run all selected programs concurrently, one simv process per program.
+  --parallel              Accepted for compatibility; COE programs always run in parallel.
   --no-compile            Reuse work/coe_perf_simv.
   --verbose               Print full [PERF] lines to the terminal.
   -h, --help              Show this help.
 
-Programs default to:
+Programs always run as the full contest set:
   current src0 src1 src2 new_without_Mext new_with_Mext
+
+Parallel jobs always equal the contest program count.
 
 Normal completion is stop_pc unless --max-cycles is set. Watchdog is an
 idle-progress guard, not a duration limit.
@@ -74,7 +79,6 @@ while [ $# -gt 0 ]; do
             shift
             ;;
         --parallel)
-            PARALLEL=1
             shift
             ;;
         --max-cycles)
@@ -101,14 +105,14 @@ while [ $# -gt 0 ]; do
             exit 1
             ;;
         *)
-            TESTS+=("$1")
+            REQUESTED_TESTS+=("$1")
             shift
             ;;
     esac
 done
 
-if [ "${#TESTS[@]}" -eq 0 ]; then
-    TESTS=(current src0 src1 src2 new_without_Mext new_with_Mext)
+if [ "${#REQUESTED_TESTS[@]}" -gt 0 ]; then
+    echo "[WARN] coe-perf always runs all contest programs; ignoring explicit program list: ${REQUESTED_TESTS[*]}"
 fi
 
 if ! [[ "$PROGRESS_CYCLES" =~ ^[0-9]+$ ]]; then
@@ -148,31 +152,10 @@ coe_to_hex() {
 derive_stop_pc() {
     local slot0_hex="$1"
     local slot1_hex="$2"
-    awk '
-        FNR == NR {
-            slot0[FNR] = tolower($0)
-            if (FNR > n0) n0 = FNR
-            next
-        }
-        {
-            slot1[FNR] = tolower($0)
-            if (FNR > n1) n1 = FNR
-        }
-        END {
-            max = (n0 > n1) ? n0 : n1
-            for (i = 1; i <= max; i++) {
-                if (slot0[i] == "0000006f") {
-                    printf "%08x\n", 2147483648 + ((i - 1) * 2) * 4
-                    exit 0
-                }
-                if (slot1[i] == "0000006f") {
-                    printf "%08x\n", 2147483648 + (((i - 1) * 2) + 1) * 4
-                    exit 0
-                }
-            }
-            exit 1
-        }
-    ' "$slot0_hex" "$slot1_hex"
+    python3 "$RISCV_TESTS_DIR/tools/derive_coe_stop_pc.py" \
+        --slot0 "$slot0_hex" \
+        --slot1 "$slot1_hex" \
+        --entry-bytes "$COE_STOP_ENTRY_BYTES"
 }
 
 RTL_FILES="
@@ -221,7 +204,8 @@ RTL_FILES="
     fi
     printf "coe_root=%s\n" "$COE_ROOT"
     printf "tests=%s\n" "${TESTS[*]}"
-    printf "stop_pc_source=first_self_jump_0000006f\n"
+    printf "stop_pc_source=entry_fallthrough_self_loop_0000006f\n"
+    printf "stop_pc_entry_bytes=%s\n" "$COE_STOP_ENTRY_BYTES"
     if [ "$MAX_CYCLES" -gt 0 ]; then
         printf "cycle_timeout=%s\n" "$MAX_CYCLES"
     else
@@ -229,7 +213,7 @@ RTL_FILES="
     fi
     printf "watchdog_cycles=%s\n" "$WATCHDOG_CYCLES"
     printf "progress_cycles=%s\n" "$PROGRESS_CYCLES"
-    printf "parallel=%s\n" "$PARALLEL"
+    printf "parallel=1\n"
     printf "parallel_jobs=%s\n" "${#TESTS[@]}"
     printf "sim_guard_args=%s\n" "$SIM_GUARD_ARGS"
     printf "simulator=vcs\n"
@@ -260,11 +244,7 @@ if [ "$PROGRESS_CYCLES" -gt 0 ]; then
 else
     echo "[INFO] Progress:       disabled"
 fi
-if [ "$PARALLEL" -eq 1 ]; then
-    echo "[INFO] Parallel:       enabled (${#TESTS[@]} sim jobs)"
-else
-    echo "[INFO] Parallel:       disabled"
-fi
+echo "[INFO] Parallel:       enabled (${#TESTS[@]} sim jobs)"
 echo "[INFO] Output dir:     $OUT_DIR"
 echo ""
 
@@ -393,24 +373,16 @@ run_one_test() {
 }
 
 RUN_FAILED=0
-if [ "$PARALLEL" -eq 1 ]; then
-    PIDS=()
-    for test_name in "${TESTS[@]}"; do
-        run_one_test "$test_name" &
-        PIDS+=("$!")
-    done
-    for pid in "${PIDS[@]}"; do
-        if ! wait "$pid"; then
-            RUN_FAILED=1
-        fi
-    done
-else
-    for test_name in "${TESTS[@]}"; do
-        if ! run_one_test "$test_name"; then
-            RUN_FAILED=1
-        fi
-    done
-fi
+PIDS=()
+for test_name in "${TESTS[@]}"; do
+    run_one_test "$test_name" &
+    PIDS+=("$!")
+done
+for pid in "${PIDS[@]}"; do
+    if ! wait "$pid"; then
+        RUN_FAILED=1
+    fi
+done
 
 python3 "$RISCV_TESTS_DIR/tools/parse_perf.py" --run-dir "$OUT_DIR"
 
