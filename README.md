@@ -53,13 +53,21 @@ bash functional/special/run_student_top_smoke.sh
 性能 / 长跑 / COE（不要当作默认 smoke）：
 
 ```bash
-cd 02_Design/riscv_tests
-bash performance/short/run_perf.sh
-bash performance/short/run_perf.sh --set branch
-bash performance/short/run_perf.sh --set cache
-bash performance/short/run_perf.sh --set dual
-bash performance/long/run_coe_perf.sh current src0 src1 src2
+short-perf
+short-perf --set branch
+short-perf --set cache
+short-perf --set dual
+run-perf
+branch-diag
 ```
+
+短命令由 `bin/install-command-links.sh` 链接到 `~/.local/bin`。若换机器或链接丢失，执行：
+
+```bash
+bash bin/install-command-links.sh
+```
+
+其中 `run-perf` / `coe-perf` 会运行完整 contest COE 程序集合；`branch-diag` 会运行分支诊断集合并在 COE 阶段运行完整 contest COE 集合。这两个入口很长，不作为 AI 默认验证命令。
 
 实现后 timing 报告：
 
