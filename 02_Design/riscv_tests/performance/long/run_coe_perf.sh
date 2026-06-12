@@ -11,6 +11,9 @@
 # This script derives stop_pc from the entry fall-through self-loop
 # (jal x0, 0 / 0000006f) after startup calls. By default it runs until stop_pc;
 # --max-cycles can cap each program for sampled profiling.
+#
+# The output directory is replaced at the start of each run, so it contains
+# only the latest result.
 # ============================================================
 
 set -e
@@ -28,6 +31,7 @@ VCS_OPTS="${VCS_OPTS:--full64 -sverilog -timescale=1ns/1ps}"
 VCS_EXTRA_OPTS="${VCS_EXTRA_OPTS:-}"
 VCS_ENV="${VCS_ENV:-/home/anokyai/synopsys/env.sh}"
 VCS_SHIM="$RISCV_TESTS_DIR/tools/vcs_pthread_yield.c"
+source "$RISCV_TESTS_DIR/tools/perf_output.sh"
 OUT_DIR=""
 NO_COMPILE=0
 VERBOSE=0
@@ -47,7 +51,8 @@ Usage:
   bash performance/long/run_coe_perf.sh [options]
 
 Options:
-  --out <dir>             Output directory. Default: work/perf/coe_full_<timestamp>_<git>.
+  --out <dir>             Output directory. Default: work/perf/latest/coe.
+                          Existing contents are replaced before the run.
   --max-cycles <n>        Stop each program after n simulated cycles. Default: 0
                           means run until stop_pc / watchdog.
   --progress-cycles <n>   Print [PROGRESS] every n simulated cycles. Default: 0 (disabled).
@@ -126,11 +131,10 @@ fi
 
 mkdir -p "$WORK_DIR" "$HEX_DIR"
 
-GIT_SHORT="$(git rev-parse --short HEAD 2>/dev/null || echo nogit)"
-TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 if [ -z "$OUT_DIR" ]; then
-    OUT_DIR="$WORK_DIR/perf/coe_full_${TIMESTAMP}_${GIT_SHORT}"
+    OUT_DIR="$WORK_DIR/perf/latest/coe"
 fi
+prepare_perf_output_dir "$OUT_DIR"
 LOG_DIR="$OUT_DIR/logs"
 mkdir -p "$LOG_DIR"
 

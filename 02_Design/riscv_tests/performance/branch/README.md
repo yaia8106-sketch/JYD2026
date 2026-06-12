@@ -14,7 +14,9 @@ bash performance/branch/run_branch_diag.sh --suite existing --baseline work/perf
 bash performance/branch/run_branch_diag.sh --coe-max-cycles 5000000
 ```
 
-Outputs are written under `work/perf/branch_diag_<timestamp>_<git>/`:
+Outputs are written under `work/perf/latest/branch_diag/`. The directory is
+replaced at the start of each run, so it contains only the latest branch
+diagnosis result:
 
 - `rv32ui/summary.csv,json`: raw `parse_perf.py` output.
 - `coe/summary.csv,json`: COE raw output for all contest programs.

@@ -15,6 +15,9 @@
 #       Runs focused microbenchmarks plus existing branch-oriented tests,
 #       always runs every contest COE program in parallel, then emits
 #       branch-only summaries and heuristic findings.
+#
+# The output directory is replaced at the start of each run, so it contains
+# only the latest result.
 # ============================================================
 
 set -e
@@ -33,6 +36,7 @@ VCS_OPTS="${VCS_OPTS:--full64 -sverilog -timescale=1ns/1ps}"
 VCS_EXTRA_OPTS="${VCS_EXTRA_OPTS:-}"
 VCS_ENV="${VCS_ENV:-/home/anokyai/synopsys/env.sh}"
 VCS_SHIM="$RISCV_TESTS_DIR/tools/vcs_pthread_yield.c"
+source "$RISCV_TESTS_DIR/tools/perf_output.sh"
 RV_GUARD_ARGS="${RV_GUARD_ARGS:-+pc_guard +watchdog=5000}"
 COE_GUARD_ARGS="${COE_GUARD_ARGS:-+pc_guard}"
 
@@ -88,7 +92,8 @@ Options:
                            Positional rv32ui tests override --suite.
   --max-cycles <n>         Cycle timeout for rv32ui tests. Default: 200000.
   --max-commits <n>        Optional commit-count stop for rv32ui tests. Default: 0.
-  --out <dir>              Output directory. Default: work/perf/branch_diag_<timestamp>_<git>.
+  --out <dir>              Output directory. Default: work/perf/latest/branch_diag.
+                           Existing contents are replaced before the run.
   --baseline <path>        Baseline run dir or summary for branch_compare.csv.
   --build                  Run utility/build_tests.sh before profiling.
   --no-compile             Reuse work/branch_diag_simv.
@@ -241,11 +246,10 @@ fi
 
 mkdir -p "$WORK_DIR" "$COE_HEX_DIR"
 
-GIT_SHORT="$(git rev-parse --short HEAD 2>/dev/null || echo nogit)"
-TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 if [ -z "$OUT_DIR" ]; then
-    OUT_DIR="$WORK_DIR/perf/branch_diag_${TIMESTAMP}_${GIT_SHORT}"
+    OUT_DIR="$WORK_DIR/perf/latest/branch_diag"
 fi
+prepare_perf_output_dir "$OUT_DIR" "$BASELINE"
 RV_OUT="$OUT_DIR/rv32ui"
 COE_OUT="$OUT_DIR/coe"
 RV_LOG_DIR="$RV_OUT/logs"

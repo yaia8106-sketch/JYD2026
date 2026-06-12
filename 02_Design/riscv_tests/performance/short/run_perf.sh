@@ -18,13 +18,16 @@
 #   bash performance/short/run_perf.sh --baseline work/perf/baseline
 #
 # Outputs:
-#   work/perf/<timestamp>_<git>_<set>/
+#   work/perf/latest/short/
 #       logs/<test>.log
 #       summary.csv
 #       summary.json
 #       run_meta.env
 #       git_commit.txt
 #       git_status.txt
+#
+# The output directory is replaced at the start of each run, so it contains
+# only the latest result.
 # ============================================================
 
 set -e
@@ -40,6 +43,7 @@ VCS_OPTS="${VCS_OPTS:--full64 -sverilog -timescale=1ns/1ps}"
 VCS_EXTRA_OPTS="${VCS_EXTRA_OPTS:-}"
 VCS_ENV="${VCS_ENV:-/home/anokyai/synopsys/env.sh}"
 VCS_SHIM="$RISCV_TESTS_DIR/tools/vcs_pthread_yield.c"
+source "$RISCV_TESTS_DIR/tools/perf_output.sh"
 
 TEST_SET="smoke"
 MAX_CYCLES=50000
@@ -64,7 +68,8 @@ Options:
                        functional correctness gate.
   --max-cycles <n>     Cycle timeout passed to the testbench. Default: 50000.
   --max-commits <n>    Optional commit-count stop. Default: 0 (disabled).
-  --out <dir>          Output directory. Default: work/perf/<timestamp>_<git>_<set>.
+  --out <dir>          Output directory. Default: work/perf/latest/short.
+                       Existing contents are replaced before the run.
   --baseline <path>    Baseline run directory or summary.csv for comparison.
   --no-compile         Reuse work/riscv_perf_simv.
   --verbose            Print full [PERF] lines to the terminal.
@@ -207,11 +212,10 @@ fi
 
 mkdir -p "$WORK_DIR"
 
-GIT_SHORT="$(git rev-parse --short HEAD 2>/dev/null || echo nogit)"
-TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 if [ -z "$OUT_DIR" ]; then
-    OUT_DIR="$WORK_DIR/perf/${TIMESTAMP}_${GIT_SHORT}_${TEST_SET}"
+    OUT_DIR="$WORK_DIR/perf/latest/short"
 fi
+prepare_perf_output_dir "$OUT_DIR" "$BASELINE"
 LOG_DIR="$OUT_DIR/logs"
 mkdir -p "$LOG_DIR"
 
