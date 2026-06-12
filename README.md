@@ -10,6 +10,7 @@ AI 或人工接手工程时，先看本文件，再按需进入对应目录。
 
 按需阅读：
 
+- **`02_Design/FRONTEND_STAGE1_PREDICTOR_AI_PROMPT.md`** — 一级 ABTB/PHT/uRAS、双 bank、FTQ 和 redirect 的已确认设计约束
 - **`PERFORMANCE_OPTIMIZATION_PLAN.md`** — 性能优化总目标、profiling 计划和长短测试边界
 - **`02_Design/riscv_tests/SCRIPT_CLASSIFICATION.md`** — riscv_tests 脚本分类：功能正确性 smoke vs 性能/长跑/COE
 - **`02_Design/riscv_tests/test_coverage.md`** — 回归测试覆盖范围
