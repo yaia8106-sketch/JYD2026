@@ -1,5 +1,5 @@
 #!/bin/bash
-# frontend_ftq canonical/BP1 arbitration VCS test.
+# frontend_ftq ABTB/PHT canonical steering VCS test.
 
 set -euo pipefail
 
@@ -17,18 +17,12 @@ SIM_LOG="$WORK_DIR/frontend_ftq_canonical_sim.log"
 PASS_MARKER="[PASS] frontend FTQ canonical steering test"
 
 mkdir -p "$WORK_DIR"
-if [ "${ABTB_BRANCH_STEERING:-0}" = "1" ]; then
-    VCS_EXTRA_OPTS="$VCS_EXTRA_OPTS +define+ABTB_BRANCH_STEERING"
-fi
-if [ "${ABTB_BRANCH_REGISTERED_BP1_REDIRECT:-0}" = "1" ]; then
-    VCS_EXTRA_OPTS="$VCS_EXTRA_OPTS +define+ABTB_BRANCH_REGISTERED_BP1_REDIRECT"
-fi
 if ! command -v vcs >/dev/null 2>&1 && [ -f "$VCS_ENV" ]; then
     # shellcheck disable=SC1090
     source "$VCS_ENV"
 fi
 
-if ! vcs $VCS_OPTS $VCS_EXTRA_OPTS +define+ABTB_DIRECT_STEERING \
+if ! vcs $VCS_OPTS $VCS_EXTRA_OPTS \
     -top tb_frontend_ftq_canonical \
     -Mdir="$WORK_DIR/frontend_ftq_canonical_vcs.csrc" \
     -o "$SIM_BIN" \

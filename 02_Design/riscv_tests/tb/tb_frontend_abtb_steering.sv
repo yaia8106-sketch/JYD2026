@@ -236,39 +236,38 @@ module tb_frontend_abtb_steering;
                 end
             end
             if (!found)
-                fail($sformatf("timed out waiting for direct steer pc=%08x",
+                fail($sformatf("timed out waiting for ABTB steer pc=%08x",
                                expected_lookup_pc));
         end
     endtask
 
-    task automatic wait_legacy(
+    task automatic wait_sequential(
         input logic [31:0] expected_lookup_pc,
-        input logic expected_taken,
         input integer max_cycles
     );
         integer cycle;
         logic found;
         begin
             found = 1'b0;
-            begin : wait_legacy_loop
+            begin : wait_sequential_loop
                 for (cycle = 0; cycle < max_cycles; cycle = cycle + 1) begin
                     @(negedge clk);
                     if (dut.stage1_steer_valid
                         && !dut.stage1_steer_source_abtb
                         && dut.pc == expected_lookup_pc
-                        && dut.stage1_steer_taken == expected_taken) begin
+                        && !dut.stage1_steer_taken) begin
                         found = 1'b1;
-                        disable wait_legacy_loop;
+                        disable wait_sequential_loop;
                     end
                 end
             end
             if (!found)
-                fail($sformatf("timed out waiting for legacy steer pc=%08x",
+                fail($sformatf("timed out waiting for sequential steer pc=%08x",
                                expected_lookup_pc));
         end
     endtask
 
-    task automatic wait_legacy_source(
+    task automatic wait_sequential_source(
         input logic [31:0] expected_lookup_pc,
         input integer max_cycles
     );
@@ -276,24 +275,24 @@ module tb_frontend_abtb_steering;
         logic found;
         begin
             found = 1'b0;
-            begin : wait_legacy_source_loop
+            begin : wait_sequential_source_loop
                 for (cycle = 0; cycle < max_cycles; cycle = cycle + 1) begin
                     @(negedge clk);
                     if (dut.stage1_steer_valid
                         && !dut.stage1_steer_source_abtb
                         && dut.pc == expected_lookup_pc) begin
                         found = 1'b1;
-                        disable wait_legacy_source_loop;
+                        disable wait_sequential_source_loop;
                     end
                 end
             end
             if (!found)
-                fail($sformatf("timed out waiting for legacy source pc=%08x",
+                fail($sformatf("timed out waiting for sequential source pc=%08x",
                                expected_lookup_pc));
         end
     endtask
 
-    task automatic wait_f0_legacy_accept(
+    task automatic wait_f0_sequential_accept(
         input logic [31:0] expected_pc,
         input integer max_cycles
     );
@@ -301,19 +300,20 @@ module tb_frontend_abtb_steering;
         logic found;
         begin
             found = 1'b0;
-            begin : wait_f0_legacy_loop
+            begin : wait_f0_sequential_loop
                 for (cycle = 0; cycle < max_cycles; cycle = cycle + 1) begin
                     @(negedge clk);
                     if (dut.u_frontend_ftq.f0_valid_r
                         && dut.u_frontend_ftq.f0_start_pc_r == expected_pc
+                        && !dut.u_frontend_ftq.f0_steer_taken_r
                         && !dut.u_frontend_ftq.f0_steer_source_abtb_r) begin
                         found = 1'b1;
-                        disable wait_f0_legacy_loop;
+                        disable wait_f0_sequential_loop;
                     end
                 end
             end
             if (!found)
-                fail($sformatf("timed out waiting for F0 legacy accept pc=%08x",
+                fail($sformatf("timed out waiting for F0 sequential accept pc=%08x",
                                expected_pc));
         end
     endtask
@@ -337,7 +337,7 @@ module tb_frontend_abtb_steering;
                         && dut.ex_pc == expected_pc
                         && dut.ex_ready_go_w && dut.mem_allowin) begin
                         check(dut.branch_flush == expected_redirect,
-                              "slot0 direct prediction redirect mismatch");
+                              "slot0 ABTB prediction redirect mismatch");
                         found = 1'b1;
                         disable wait_resolve_loop;
                     end
@@ -347,14 +347,14 @@ module tb_frontend_abtb_steering;
                         && dut.ex_s1_pc == expected_pc
                         && dut.ex_ready_go_w && dut.mem_allowin) begin
                         check(dut.ex_s1_branch_redirect == expected_redirect,
-                              "slot1 direct prediction redirect mismatch");
+                              "slot1 ABTB prediction redirect mismatch");
                         found = 1'b1;
                         disable wait_resolve_loop;
                     end
                 end
             end
             if (!found)
-                fail($sformatf("timed out waiting for direct resolve pc=%08x",
+                fail($sformatf("timed out waiting for ABTB resolve pc=%08x",
                                expected_pc));
         end
     endtask
@@ -408,10 +408,10 @@ module tb_frontend_abtb_steering;
             irom[BANK0_INDEX + 1] = enc_addi(5'd7, 5'd7, 1);
             reset_cpu();
 
-            wait_f0_legacy_accept(test_pc, 160);
-            pass_case("cold miss uses legacy fallback");
+            wait_f0_sequential_accept(test_pc, 160);
+            pass_case("cold miss uses sequential fallback");
             wait_update(test_pc, 1'b0, TYPE_JAL, 220);
-            pass_case("EX training allocates the cold direct CFI");
+            pass_case("EX training allocates the cold ABTB CFI");
 
             wait_direct(test_pc, 1'b0, TYPE_JAL, test_pc, 220);
             pass_case("bank0 JAL hit drives canonical steering");
@@ -423,20 +423,20 @@ module tb_frontend_abtb_steering;
                     if (dut.u_frontend_ftq.f0_enq1_payload
                         && dut.u_frontend_ftq.f0_slot0_pred_source_abtb) begin
                         check(!dut.u_frontend_ftq.f0_enq1_valid,
-                              "slot0 direct JAL did not kill slot1");
+                              "slot0 ABTB JAL did not kill slot1");
                         saw_slot1_kill = 1'b1;
                         disable slot1_kill_loop;
                     end
                 end
             end
             check(saw_slot1_kill,
-                  "did not observe slot0 direct kill at F0");
-            pass_case("slot0 direct taken kills slot1");
+                  "did not observe slot0 ABTB kill at F0");
+            pass_case("slot0 ABTB taken kills slot1");
 
             redirects_before = dut.abtb_direct_redirect_count;
             wait_direct_resolve(test_pc, 1'b0, 1'b0, 220);
             check(dut.abtb_direct_redirect_count == redirects_before,
-                  "correct bank0 direct target produced an extra redirect");
+                  "correct bank0 ABTB target produced an extra redirect");
             pass_case("correct bank0 target reaches EX without redirect");
         end
     endtask
@@ -533,7 +533,6 @@ module tb_frontend_abtb_steering;
 
             branch_pc = BASE + BRANCH_INDEX * 4;
             clear_program();
-`ifdef ABTB_BRANCH_STEERING
             irom[BRANCH_INDEX] = NOP;
             irom[BRANCH_INDEX + 1] = enc_jal(5'd0, -4);
             reset_cpu();
@@ -544,13 +543,7 @@ module tb_frontend_abtb_steering;
             // without resetting predictor state. A taken slot0 branch kills
             // slot1, so training bank1 first is required for this scenario.
             irom[BRANCH_INDEX] = enc_branch(3'b000, 5'd0, 5'd0, 0);
-`endif
-`ifndef ABTB_BRANCH_STEERING
-            irom[BRANCH_INDEX] = enc_branch(3'b000, 5'd0, 5'd0, 0);
-            reset_cpu();
-`endif
             wait_update(branch_pc, 1'b0, TYPE_BRANCH, 680);
-`ifdef ABTB_BRANCH_STEERING
             wait_direct(branch_pc, 1'b0, TYPE_BRANCH, branch_pc, 1200);
             begin : branch_owned_taken_loop
                 logic saw_owned_taken;
@@ -583,8 +576,7 @@ module tb_frontend_abtb_steering;
                         && dut.u_frontend_ftq.f0_start_pc_r == branch_pc
                         && dut.u_frontend_ftq.f0_slot0_stage1_branch_owned
                         && !dut.u_frontend_ftq.f0_slot0_pred_taken) begin
-                        check(!dut.u_frontend_ftq.bp1_applicable
-                              && dut.u_frontend_ftq.f0_final_taken
+                        check(dut.u_frontend_ftq.f0_final_taken
                               && dut.u_frontend_ftq.f0_final_source_abtb
                               && dut.u_frontend_ftq.f0_final_bank
                               && dut.u_frontend_ftq.f0_slot1_pred_source_abtb,
@@ -597,29 +589,6 @@ module tb_frontend_abtb_steering;
                       "did not observe branch-owned not-taken metadata");
             end
             pass_case("PHT not-taken branch retains ownership and selects bank1");
-`else
-            wait_legacy(branch_pc, 1'b1, 320);
-            check(!dut.stage1_steer_source_abtb,
-                  "TYPE_BRANCH entry used ABTB direct steering");
-            begin : branch_shadow_loop
-                logic saw_shadow_taken;
-                saw_shadow_taken = 1'b0;
-                for (cycle = 0; cycle < 320; cycle = cycle + 1) begin
-                    @(negedge clk);
-                    if (dut.pc == branch_pc
-                        && dut.abtb_bank0_hit
-                        && dut.stage1_bank0_pht_taken) begin
-                        check(!dut.stage1_steer_source_abtb,
-                              "PHT shadow direction enabled TYPE_BRANCH steering");
-                        saw_shadow_taken = 1'b1;
-                        disable branch_shadow_loop;
-                    end
-                end
-                check(saw_shadow_taken,
-                      "did not observe trained PHT direction on ABTB branch hit");
-            end
-            pass_case("PHT branch direction remains shadow-only");
-`endif
 
             ret_pc = BASE + RET_INDEX * 4;
             clear_program();
@@ -628,14 +597,10 @@ module tb_frontend_abtb_steering;
             irom[RET_INDEX] = enc_jalr(5'd0, 5'd1, 0);
             reset_cpu();
             wait_update(ret_pc, 1'b0, TYPE_RET, 760);
-            wait_legacy_source(ret_pc, 360);
+            wait_sequential_source(ret_pc, 360);
             check(!dut.stage1_steer_source_abtb,
-                  "TYPE_RET entry used ABTB direct steering");
-`ifdef ABTB_BRANCH_STEERING
-            pass_case("TYPE_RET remains legacy-only under branch steering");
-`else
-            pass_case("TYPE_BRANCH and TYPE_RET entries remain legacy-only");
-`endif
+                  "TYPE_RET entry used ABTB/PHT branch steering");
+            pass_case("TYPE_RET falls through under default branch steering");
         end
     endtask
 
@@ -644,7 +609,7 @@ module tb_frontend_abtb_steering;
         begin
             block_pc = BASE + ORDER_INDEX * 4;
             // Train bank1 first, then turn slot0 into a JAL without resetting the
-            // predictor. Both physical banks then hold direct entries.
+            // predictor. Both physical banks then hold ABTB entries.
             clear_program();
             irom[ORDER_INDEX] = NOP;
             irom[ORDER_INDEX + 1] = enc_jal(5'd0, -4);
@@ -654,25 +619,18 @@ module tb_frontend_abtb_steering;
             wait_update(block_pc, 1'b0, TYPE_JAL, 320);
             wait_direct(block_pc, 1'b0, TYPE_JAL, block_pc, 320);
             check(dut.abtb_bank1_pred_taken,
-                  "bank1 direct candidate was absent in dual-CFI arbitration");
-            pass_case("bank0 wins when both ABTB banks contain direct CFI");
+                  "bank1 ABTB candidate was absent in dual-CFI arbitration");
+            pass_case("bank0 wins when both ABTB banks contain taken CFI");
 
             // A trained taken branch is older than the still-present bank1 JAL.
             irom[ORDER_INDEX] = enc_branch(3'b000, 5'd0, 5'd0, 0);
             wait_update(block_pc, 1'b1, TYPE_BRANCH, 360);
-`ifdef ABTB_BRANCH_STEERING
             wait_direct(block_pc, 1'b0, TYPE_BRANCH, block_pc, 1200);
             check(dut.abtb_bank1_pred_taken
                   && dut.stage1_steer_source_abtb
                   && dut.stage1_steer_bank == 1'b0,
                   "owned bank0 branch did not beat younger bank1 ABTB");
             pass_case("owned bank0 branch wins over bank1 ABTB");
-`else
-            wait_legacy(block_pc, 1'b1, 360);
-            check(dut.abtb_bank1_pred_taken && !dut.stage1_steer_source_abtb,
-                  "younger bank1 ABTB candidate beat legacy first-instruction taken");
-            pass_case("legacy first-instruction taken beats bank1 ABTB");
-`endif
         end
     endtask
 
@@ -708,7 +666,7 @@ module tb_frontend_abtb_steering;
 
             wait_direct(test_pc, 1'b0, TYPE_JAL, test_pc + 32'd12, 360);
             wait_direct_resolve(test_pc, 1'b0, 1'b0, 360);
-            pass_case("retrained target becomes a correct direct prediction");
+            pass_case("retrained target becomes a correct ABTB prediction");
         end
     endtask
 
@@ -719,7 +677,7 @@ module tb_frontend_abtb_steering;
         logic [31:0] test_pc;
         begin
             test_pc = BASE + OVERRIDE_INDEX * 4;
-            // Establish a direct JAL entry for BASE+8.
+            // Establish a JAL ABTB entry for BASE+8.
             clear_program();
             irom[OVERRIDE_INDEX] = enc_jal(5'd0, 8);
             irom[OVERRIDE_INDEX + 2] = enc_jal(5'd0, -8);
@@ -727,7 +685,7 @@ module tb_frontend_abtb_steering;
             wait_direct(test_pc, 1'b0, TYPE_JAL, test_pc + 32'd8, 1080);
 
             // A not-taken branch hit updates the legacy BTB target, while ABTB
-            // correctly performs no write and retains the old direct entry.
+            // correctly performs no write and retains the old ABTB entry.
             irom[OVERRIDE_INDEX] =
                 enc_branch(3'b001, 5'd0, 5'd0, 12);
             irom[OVERRIDE_INDEX + 1] = enc_jal(5'd0, -4);
@@ -764,7 +722,7 @@ module tb_frontend_abtb_steering;
             end
             check(saw_divergence,
                   "did not observe ABTB overriding legacy on the same instruction");
-            pass_case("same-instruction ABTB target overrides a different legacy target");
+            pass_case("same-instruction ABTB target ignores a different legacy target");
         end
     endtask
 
@@ -795,7 +753,7 @@ module tb_frontend_abtb_steering;
                 if (saw_wrap)
                     cycle = 1400;
             end
-            check(saw_wrap, "FQ pointer did not wrap under direct build");
+            check(saw_wrap, "FQ pointer did not wrap under default branch steering");
             pass_case("FQ wrap-around preserves steering operation");
 
             cache_ready = 1'b0;
@@ -1040,9 +998,6 @@ module tb_frontend_abtb_steering;
     endtask
 
     initial begin
-`ifndef ABTB_DIRECT_STEERING
-        $fatal(1, "[FAIL] steering TB requires ABTB_DIRECT_STEERING");
-`endif
         clk = 1'b0;
         rst_n = 1'b0;
         cache_rdata = 32'd0;
@@ -1067,7 +1022,7 @@ module tb_frontend_abtb_steering;
         repeat (2) @(negedge clk);
         check(dut.stage1_confirmed_branch_count != 0,
               "Stage-1 direction confirmed-branch counter remained empty");
-        $display("[PASS] frontend ABTB direct steering integration test (%0d cases)",
+        $display("[PASS] frontend ABTB/PHT branch steering integration test (%0d cases)",
                  case_count);
         $finish;
     end

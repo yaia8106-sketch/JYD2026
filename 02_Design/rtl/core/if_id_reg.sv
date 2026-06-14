@@ -36,11 +36,10 @@ module if_id_reg (
     input  logic [31:0] if_bp_target,
     input  logic [ 7:0] if_bp_ghr_snap,
     input  logic        if_bp_btb_hit,
-    input  logic [ 1:0] if_bp_btb_type,    // NLP: entry type for ID verification
+    input  logic [ 1:0] if_bp_btb_type,
     input  logic [ 1:0] if_bp_btb_bht,
     input  logic [ 1:0] if_bp_pht_cnt,
     input  logic [ 1:0] if_bp_sel_cnt,
-    input  logic        if_bp_verified,
     input  logic        if_pred_source_abtb,
     input  logic        if_stage1_branch_owned,
     input  logic        if_s1_bp_taken,
@@ -73,11 +72,10 @@ module if_id_reg (
     output logic [31:0] id_bp_target,
     output logic [ 7:0] id_bp_ghr_snap,
     output logic        id_bp_btb_hit,
-    output logic [ 1:0] id_bp_btb_type,    // NLP: entry type for ID verification
+    output logic [ 1:0] id_bp_btb_type,
     output logic [ 1:0] id_bp_btb_bht,
     output logic [ 1:0] id_bp_pht_cnt,
     output logic [ 1:0] id_bp_sel_cnt,
-    output logic        id_bp_verified,
     output logic        id_pred_source_abtb,
     output logic        id_stage1_branch_owned,
     output logic        id_s1_bp_taken,
@@ -127,7 +125,6 @@ module if_id_reg (
             id_bp_btb_bht   <= 2'd0;
             id_bp_pht_cnt   <= 2'd0;
             id_bp_sel_cnt   <= 2'd0;
-            id_bp_verified  <= 1'b0;
             id_pred_source_abtb <= 1'b0;
             id_stage1_branch_owned <= 1'b0;
             id_s1_bp_taken    <= 1'b0;
@@ -159,7 +156,6 @@ module if_id_reg (
         end else if (id_flush) begin
             id_valid        <= 1'b0;
             id_s1_valid     <= 1'b0;
-            id_bp_verified  <= 1'b0;
             id_pred_source_abtb <= 1'b0;
             id_stage1_branch_owned <= 1'b0;
             id_s1_bp_taken  <= 1'b0;
@@ -179,7 +175,6 @@ module if_id_reg (
             id_bp_btb_bht   <= if_bp_btb_bht;
             id_bp_pht_cnt   <= if_bp_pht_cnt;
             id_bp_sel_cnt   <= if_bp_sel_cnt;
-            id_bp_verified  <= if_bp_verified;
             id_pred_source_abtb <= if_pred_source_abtb;
             id_stage1_branch_owned <= if_stage1_branch_owned;
             id_s1_bp_taken    <= if_s1_bp_taken;

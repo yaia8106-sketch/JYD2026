@@ -1,8 +1,8 @@
 // ============================================================
 // Module: frontend_ftq
-// Description: BP0/F0/F1 frontend with packet queue, predecode, and ID verification.
+// Description: BP0/F0/F1 frontend with packet queue and predecode.
 //   BP0: current PC prediction, packet allocation, IROM request
-//   F0 : 64-bit IROM response alignment, predecode, BP1 check, enqueue
+//   F0 : 64-bit IROM response alignment, predecode, enqueue
 //   F1 : fetch-queue head pair selection for the existing ID stage
 // ============================================================
 
@@ -72,7 +72,8 @@ module frontend_ftq
     input  logic [31:0] abtb_bank1_pred_target,
 
     // Stage-1 direction metadata is queried in parallel with ABTB and captured
-    // with the accepted prediction block. TYPE_BRANCH remains shadow-only.
+    // with the accepted prediction block. ABTB/PHT branch steering is the
+    // default Stage-1 behavior.
     input  logic [ 7:0] stage1_bank0_pht_index,
     input  logic [ 1:0] stage1_bank0_pht_counter,
     input  logic [ 7:0] stage1_bank1_pht_index,
@@ -93,7 +94,6 @@ module frontend_ftq
     output logic [ 1:0] if_bp_btb_bht,
     output logic [ 1:0] if_bp_pht_cnt,
     output logic [ 1:0] if_bp_sel_cnt,
-    output logic        if_bp_verified,
     output logic        if_pred_source_abtb,
     output logic        if_stage1_branch_owned,
     output logic        if_s1_bp_taken,
@@ -144,7 +144,6 @@ module frontend_ftq
 
     localparam logic [31:0] RESET_PC = 32'h8000_0000;
     localparam logic [6:0]  OP_FENCE = 7'b0001111;
-    localparam logic [1:0]  BTB_TYPE_BRANCH = 2'b10;
     localparam logic [1:0]  ABTB_TYPE_JAL    = 2'b00;
     localparam logic [1:0]  ABTB_TYPE_CALL   = 2'b01;
     localparam logic [1:0]  ABTB_TYPE_BRANCH = 2'b10;
@@ -162,15 +161,12 @@ module frontend_ftq
         logic        pred_source_abtb;
         logic        stage1_branch_owned;
         logic [ 1:0] pred_cfi_type;
-        logic        lookup_taken;
-        logic [31:0] lookup_target;
         logic [ 7:0] bp_ghr_snap;
         logic        bp_btb_hit;
         logic [ 1:0] bp_btb_type;
         logic [ 1:0] bp_btb_bht;
         logic [ 1:0] bp_pht_cnt;
         logic [ 1:0] bp_sel_cnt;
-        logic        bp_verified;
         logic [ 7:0] stage1_pht_index;
         logic [ 1:0] stage1_pht_counter;
 
@@ -356,16 +352,12 @@ module frontend_ftq
     logic [1:0] f0_epoch_r;
     logic [31:0] f0_start_pc_r;
     logic [1:0]  f0_base_mask_r;
-    logic        f0_bp0_taken_r;
-    logic [31:0] f0_bp0_target_r;
     logic [ 7:0] f0_bp_ghr_snap_r;
     logic        f0_bp_btb_hit_r;
     logic [ 1:0] f0_bp_btb_type_r;
     logic [ 1:0] f0_bp_btb_bht_r;
     logic [ 1:0] f0_bp_pht_cnt_r;
     logic [ 1:0] f0_bp_sel_cnt_r;
-    logic        f0_s1_bp_taken_r;
-    logic [31:0] f0_s1_bp_target_r;
     logic [ 7:0] f0_s1_bp_ghr_snap_r;
     logic        f0_s1_bp_btb_hit_r;
     logic [ 1:0] f0_s1_bp_btb_type_r;
@@ -378,22 +370,13 @@ module frontend_ftq
     logic [ 1:0] f0_steer_cfi_type_r;
     logic [31:0] f0_steer_target_r;
     logic [31:0] f0_steer_next_pc_r;
-    // The accepted canonical result is the sole F0 prediction source. The only
-    // retained alternate is a younger bank1 direct CFI, needed when BP1 changes
-    // an older legacy first-instruction prediction from taken to not-taken.
-    logic        f0_bank1_alternate_taken_r;
-    logic [ 1:0] f0_bank1_alternate_cfi_type_r;
-    logic [31:0] f0_bank1_alternate_target_r;
+    // The accepted canonical result is the sole F0 prediction source.
     logic        f0_stage1_bank0_branch_owned_r;
     logic        f0_stage1_bank1_branch_owned_r;
     logic [ 7:0] f0_stage1_bank0_pht_index_r;
     logic [ 1:0] f0_stage1_bank0_pht_counter_r;
     logic [ 7:0] f0_stage1_bank1_pht_index_r;
     logic [ 1:0] f0_stage1_bank1_pht_counter_r;
-`ifdef ABTB_BRANCH_REGISTERED_BP1_REDIRECT
-    logic        bp1_redirect_pending;
-    logic [31:0] bp1_redirect_target_r;
-`endif
     logic        f0_abtb_bank0_hit_r;
     logic        f0_abtb_bank0_way_r;
 `ifdef FRONTEND_FTQ_ABTB_WIDE_META
@@ -429,25 +412,15 @@ module frontend_ftq
         && ((abtb_bank1_cfi_type == ABTB_TYPE_JAL)
             || (abtb_bank1_cfi_type == ABTB_TYPE_CALL));
 
-`ifdef ABTB_DIRECT_STEERING
     wire abtb_bank0_direct_candidate = abtb_bank0_direct_lookup;
     wire abtb_bank1_direct_candidate = abtb_bank1_direct_lookup;
-`else
-    wire abtb_bank0_direct_candidate = 1'b0;
-    wire abtb_bank1_direct_candidate = 1'b0;
-`endif
 
-`ifdef ABTB_BRANCH_STEERING
     wire abtb_bank0_branch_owned =
         abtb_bank0_lookup_hit
         && (abtb_bank0_cfi_type == ABTB_TYPE_BRANCH);
     wire abtb_bank1_branch_owned =
         abtb_bank1_lookup_hit
         && (abtb_bank1_cfi_type == ABTB_TYPE_BRANCH);
-`else
-    wire abtb_bank0_branch_owned = 1'b0;
-    wire abtb_bank1_branch_owned = 1'b0;
-`endif
 
     wire abtb_bank0_stage1_valid =
         abtb_bank0_direct_candidate || abtb_bank0_branch_owned;
@@ -485,11 +458,11 @@ module frontend_ftq
         stage1_steer_source_abtb = 1'b0;
         stage1_steer_branch_owned = 1'b0;
         stage1_steer_branch_owned_nt = 1'b0;
-        stage1_steer_taken = bp_taken;
+        stage1_steer_taken = 1'b0;
         stage1_steer_bank = current_pc[2];
-        stage1_steer_cfi_type = bp_btb_type;
-        stage1_steer_target = bp_target;
-        stage1_steer_next_pc = bp_taken ? bp_target : bp0_seq_next_pc;
+        stage1_steer_cfi_type = 2'd0;
+        stage1_steer_target = bp0_seq_next_pc;
+        stage1_steer_next_pc = bp0_seq_next_pc;
 
         // An ABTB-owned first instruction is authoritative even when its PHT
         // direction is not-taken. In that case arbitration continues only to
@@ -516,7 +489,7 @@ module frontend_ftq
                 stage1_steer_target = bp0_second_abtb_target;
                 stage1_steer_next_pc = bp0_second_abtb_target;
             end
-        end else if (!bp_taken && bp0_second_abtb_taken) begin
+        end else if (bp0_second_abtb_taken) begin
             stage1_steer_source_abtb = 1'b1;
             stage1_steer_taken = 1'b1;
             stage1_steer_bank = 1'b1;
@@ -529,18 +502,12 @@ module frontend_ftq
     assign irom_addr = {1'b0, current_pc[13:3]};
 
     // ================================================================
-    //  F0 alignment, BP1, and enqueue preparation
+    //  F0 alignment and enqueue preparation
     // ================================================================
     wire f0_epoch_match = (f0_epoch_r == frontend_epoch);
-`ifdef ABTB_BRANCH_REGISTERED_BP1_REDIRECT
-    wire bp1_registered_redirect_active = bp1_redirect_pending;
-`else
-    wire bp1_registered_redirect_active = 1'b0;
-`endif
     wire f0_accept_base = f0_valid_r
                         && f0_epoch_match
-                        && !ex_redirect_valid
-                        && !bp1_registered_redirect_active;
+                        && !ex_redirect_valid;
 
     wire [31:0] f0_slot0_inst = f0_start_pc_r[2] ? irom_data[63:32]
                                                   : irom_data[31:0];
@@ -605,25 +572,6 @@ module frontend_ftq
         && !f0_start_pc_r[2]
         && f0_stage1_bank1_branch_owned_r;
 
-    wire bp1_applicable = f0_accept_base
-                        && !f0_slot0_stage1_branch_owned
-                        && f0_bp_btb_hit_r
-                        && (f0_bp_btb_type_r == BTB_TYPE_BRANCH);
-    wire bp1_bimodal_taken = f0_bp_btb_bht_r[1];
-    wire bp1_gshare_taken  = (f0_bp_pht_cnt_r >= 2'd2);
-    wire bp1_use_bimodal   = (f0_bp_sel_cnt_r >= 2'd2);
-    wire bp1_tournament_taken = bp1_use_bimodal ? bp1_bimodal_taken
-                                                : bp1_gshare_taken;
-    wire bp1_override = bp1_applicable
-                      && (bp1_bimodal_taken != bp1_tournament_taken);
-    wire bp1_final_taken = bp1_override ? bp1_tournament_taken
-                                        : f0_bp0_taken_r;
-    wire [31:0] bp1_final_target = bp1_override
-                                 ? (bp1_tournament_taken ? f0_bp0_target_r
-                                                         : (f0_start_pc_r + 32'd4))
-                                 : f0_bp0_target_r;
-    wire [31:0] bp1_not_taken_next_pc = f0_start_pc_r + (f0_base_mask_r[1] ? 32'd8 : 32'd4);
-
     logic        f0_final_taken;
     logic        f0_final_source_abtb;
     logic        f0_final_bank;
@@ -642,9 +590,7 @@ module frontend_ftq
     logic [ 1:0] f0_slot1_stage1_pht_counter;
 
     always_comb begin
-        // Start from the exact result accepted at BP0. BP1 is not a second
-        // Stage-1 arbiter: it may only correct the older legacy first
-        // instruction. A first-instruction ABTB direct result is authoritative.
+        // F0 consumes the exact canonical result accepted at BP0.
         f0_final_taken = f0_steer_taken_r;
         f0_final_source_abtb = f0_steer_source_abtb_r;
         f0_final_bank = f0_steer_bank_r;
@@ -652,37 +598,10 @@ module frontend_ftq
         f0_final_target = f0_steer_target_r;
         f0_final_next_pc = f0_steer_next_pc_r;
 
-        if (bp1_override
-            && !(f0_steer_source_abtb_r
-                 && (f0_steer_bank_r == f0_start_pc_r[2]))) begin
-            if (bp1_final_taken) begin
-                f0_final_taken = 1'b1;
-                f0_final_source_abtb = 1'b0;
-                f0_final_bank = f0_start_pc_r[2];
-                f0_final_cfi_type = f0_bp_btb_type_r;
-                f0_final_target = bp1_final_target;
-                f0_final_next_pc = bp1_final_target;
-            end else if (f0_bank1_alternate_taken_r) begin
-                f0_final_taken = 1'b1;
-                f0_final_source_abtb = 1'b1;
-                f0_final_bank = 1'b1;
-                f0_final_cfi_type = f0_bank1_alternate_cfi_type_r;
-                f0_final_target = f0_bank1_alternate_target_r;
-                f0_final_next_pc = f0_bank1_alternate_target_r;
-            end else begin
-                f0_final_taken = 1'b0;
-                f0_final_source_abtb = 1'b0;
-                f0_final_bank = f0_start_pc_r[2];
-                f0_final_cfi_type = f0_bp_btb_type_r;
-                f0_final_target = bp1_not_taken_next_pc;
-                f0_final_next_pc = bp1_not_taken_next_pc;
-            end
-        end
-
         f0_slot0_pred_taken = f0_final_taken
                             && (f0_final_bank == f0_start_pc_r[2]);
         f0_slot0_pred_target = f0_slot0_pred_taken ? f0_final_target
-                                                   : bp1_final_target;
+                                                   : (f0_slot0_pc + 32'd4);
         f0_slot0_pred_source_abtb =
             f0_slot0_pred_taken && f0_final_source_abtb;
         f0_slot1_pred_taken = f0_final_taken
@@ -703,30 +622,8 @@ module frontend_ftq
         f0_slot1_stage1_pht_counter = f0_stage1_bank1_pht_counter_r;
     end
 
-    wire f0_first_instruction_abtb_direct =
-        f0_steer_source_abtb_r
-        && (f0_steer_bank_r == f0_start_pc_r[2])
-        && ((f0_steer_cfi_type_r == ABTB_TYPE_JAL)
-            || (f0_steer_cfi_type_r == ABTB_TYPE_CALL));
-    wire f0_first_instruction_stage1_authoritative =
-        f0_slot0_stage1_branch_owned
-        || f0_first_instruction_abtb_direct;
-    // A redirect is needed only when BP1 changes the accepted canonical next PC.
-    wire bp1_redirect_valid =
-        bp1_override
-        && !f0_first_instruction_stage1_authoritative
-        && (f0_final_next_pc != f0_steer_next_pc_r);
-    wire [31:0] bp1_redirect_target = f0_final_next_pc;
-
-`ifdef ABTB_BRANCH_REGISTERED_BP1_REDIRECT
-    wire redirect_valid = ex_redirect_valid || bp1_registered_redirect_active;
-    wire [31:0] redirect_target = ex_redirect_valid ? ex_redirect_target
-                                                    : bp1_redirect_target_r;
-`else
-    wire redirect_valid = ex_redirect_valid || bp1_redirect_valid;
-    wire [31:0] redirect_target = ex_redirect_valid ? ex_redirect_target
-                                                    : bp1_redirect_target;
-`endif
+    wire redirect_valid = ex_redirect_valid;
+    wire [31:0] redirect_target = ex_redirect_target;
 
     wire f0_kill_after_slot0 = f0_slot0_jal
                              || f0_slot0_jalr
@@ -758,18 +655,13 @@ module frontend_ftq
                                 ? ABTB_TYPE_BRANCH
                                 : f0_slot0_pred_taken
                                 ? f0_final_cfi_type
-                                : f0_bp_btb_type_r;
-        f0_entry0.lookup_taken = bp1_final_taken;
-        f0_entry0.lookup_target = bp1_final_target;
+                                : 2'd0;
         f0_entry0.bp_ghr_snap = f0_bp_ghr_snap_r;
         f0_entry0.bp_btb_hit = f0_bp_btb_hit_r;
         f0_entry0.bp_btb_type = f0_bp_btb_type_r;
         f0_entry0.bp_btb_bht = f0_bp_btb_bht_r;
         f0_entry0.bp_pht_cnt = f0_bp_pht_cnt_r;
         f0_entry0.bp_sel_cnt = f0_bp_sel_cnt_r;
-        f0_entry0.bp_verified = bp1_applicable
-                              || f0_slot0_pred_source_abtb
-                              || f0_slot0_stage1_branch_owned;
         f0_entry0.stage1_pht_index = f0_slot0_stage1_pht_index;
         f0_entry0.stage1_pht_counter = f0_slot0_stage1_pht_counter;
         f0_entry0.is_branch = f0_slot0_branch;
@@ -802,17 +694,13 @@ module frontend_ftq
                                 ? ABTB_TYPE_BRANCH
                                 : f0_slot1_pred_taken
                                 ? f0_final_cfi_type
-                                : f0_s1_bp_btb_type_r;
-        f0_entry1.lookup_taken = f0_s1_bp_taken_r;
-        f0_entry1.lookup_target = f0_s1_bp_target_r;
+                                : 2'd0;
         f0_entry1.bp_ghr_snap = f0_s1_bp_ghr_snap_r;
         f0_entry1.bp_btb_hit = f0_s1_bp_btb_hit_r;
         f0_entry1.bp_btb_type = f0_s1_bp_btb_type_r;
         f0_entry1.bp_btb_bht = f0_s1_bp_btb_bht_r;
         f0_entry1.bp_pht_cnt = f0_s1_bp_pht_cnt_r;
         f0_entry1.bp_sel_cnt = f0_s1_bp_sel_cnt_r;
-        // Slot1 metadata is carried for training only, so suppress ID correction.
-        f0_entry1.bp_verified = 1'b1;
         f0_entry1.stage1_pht_index = f0_slot1_stage1_pht_index;
         f0_entry1.stage1_pht_counter = f0_slot1_stage1_pht_counter;
         f0_entry1.is_branch = f0_slot1_branch;
@@ -1044,7 +932,6 @@ module frontend_ftq
     assign if_bp_btb_bht  = fq_head0.bp_btb_bht;
     assign if_bp_pht_cnt  = fq_head0.bp_pht_cnt;
     assign if_bp_sel_cnt  = fq_head0.bp_sel_cnt;
-    assign if_bp_verified = fq_head0.bp_verified;
     assign if_pred_source_abtb = fq_head0.pred_source_abtb;
     assign if_stage1_branch_owned = fq_head0.stage1_branch_owned;
     assign if_s1_bp_taken    = fq_head1.pred_taken;
@@ -1200,39 +1087,18 @@ module frontend_ftq
         end
     end
 
-`ifdef ABTB_BRANCH_REGISTERED_BP1_REDIRECT
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            bp1_redirect_pending <= 1'b0;
-            bp1_redirect_target_r <= 32'd0;
-        end else if (ex_redirect_valid) begin
-            bp1_redirect_pending <= 1'b0;
-            bp1_redirect_target_r <= 32'd0;
-        end else if (bp1_registered_redirect_active) begin
-            bp1_redirect_pending <= 1'b0;
-        end else if (bp1_redirect_valid) begin
-            bp1_redirect_pending <= 1'b1;
-            bp1_redirect_target_r <= bp1_redirect_target;
-        end
-    end
-`endif
-
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             f0_valid_r <= 1'b0;
             f0_epoch_r <= 2'd0;
             f0_start_pc_r <= 32'd0;
             f0_base_mask_r <= 2'd0;
-            f0_bp0_taken_r <= 1'b0;
-            f0_bp0_target_r <= 32'd0;
             f0_bp_ghr_snap_r <= 8'd0;
             f0_bp_btb_hit_r <= 1'b0;
             f0_bp_btb_type_r <= 2'd0;
             f0_bp_btb_bht_r <= 2'd0;
             f0_bp_pht_cnt_r <= 2'd0;
             f0_bp_sel_cnt_r <= 2'd0;
-            f0_s1_bp_taken_r <= 1'b0;
-            f0_s1_bp_target_r <= 32'd0;
             f0_s1_bp_ghr_snap_r <= 8'd0;
             f0_s1_bp_btb_hit_r <= 1'b0;
             f0_s1_bp_btb_type_r <= 2'd0;
@@ -1245,9 +1111,6 @@ module frontend_ftq
             f0_steer_cfi_type_r <= 2'd0;
             f0_steer_target_r <= 32'd0;
             f0_steer_next_pc_r <= 32'd0;
-            f0_bank1_alternate_taken_r <= 1'b0;
-            f0_bank1_alternate_cfi_type_r <= 2'd0;
-            f0_bank1_alternate_target_r <= 32'd0;
             f0_stage1_bank0_branch_owned_r <= 1'b0;
             f0_stage1_bank1_branch_owned_r <= 1'b0;
             f0_stage1_bank0_pht_index_r <= 8'd0;
@@ -1278,16 +1141,12 @@ module frontend_ftq
                 f0_epoch_r <= frontend_epoch;
                 f0_start_pc_r <= current_pc;
                 f0_base_mask_r <= bp0_base_mask;
-                f0_bp0_taken_r <= bp_taken;
-                f0_bp0_target_r <= bp_target;
                 f0_bp_ghr_snap_r <= bp_ghr_snap;
                 f0_bp_btb_hit_r <= bp_btb_hit;
                 f0_bp_btb_type_r <= bp_btb_type;
                 f0_bp_btb_bht_r <= bp_btb_bht;
                 f0_bp_pht_cnt_r <= bp_pht_cnt;
                 f0_bp_sel_cnt_r <= bp_sel_cnt;
-                f0_s1_bp_taken_r <= bp_s1_taken;
-                f0_s1_bp_target_r <= bp_s1_target;
                 f0_s1_bp_ghr_snap_r <= bp_s1_ghr_snap;
                 f0_s1_bp_btb_hit_r <= bp_s1_btb_hit;
                 f0_s1_bp_btb_type_r <= bp_s1_btb_type;
@@ -1300,10 +1159,6 @@ module frontend_ftq
                 f0_steer_cfi_type_r <= stage1_steer_cfi_type;
                 f0_steer_target_r <= stage1_steer_target;
                 f0_steer_next_pc_r <= stage1_steer_next_pc;
-                f0_bank1_alternate_taken_r <= bp0_second_abtb_taken;
-                f0_bank1_alternate_cfi_type_r <=
-                    bp0_second_abtb_cfi_type;
-                f0_bank1_alternate_target_r <= bp0_second_abtb_target;
                 f0_stage1_bank0_branch_owned_r <=
                     abtb_bank0_branch_owned;
                 f0_stage1_bank1_branch_owned_r <=

@@ -10,16 +10,13 @@
 
 | 脚本 | 角色 | 何时运行 |
 |------|------|----------|
-| `functional/run_all.sh` | 主功能回归，先运行 ABTB 单模块和 CPU 影子集成定向测试，再运行大量短 riscv-tests 程序 | 普通 RTL 改动后的 correctness gate |
+| `functional/run_all.sh` | 默认 ABTB + PHT branch steering 主功能回归，先运行 frontend directed tests，再运行大量短 riscv-tests 程序 | 普通 RTL 改动后的 correctness gate |
 | `functional/frontend/run_abtb.sh` | 双 bank ABTB 单模块定向测试，由 `run_all.sh` 自动调用 | 修改 ABTB 表项、替换或选择逻辑后 |
 | `functional/frontend/run_direction.sh` | 8-bit committed GHR 与 256-entry PHT 的 VCS 单模块测试，由 `run_all.sh` 自动调用，覆盖 index/hash、四状态饱和、GHR、alias 和无 bypass 可见周期 | 修改 Stage-1 direction 表或更新策略后 |
 | `functional/frontend/run_integration.sh` | 真实 `cpu_top` 指令流下的 ABTB shadow metadata、EX 训练、stall/redirect/sidecar 泄漏集成测试，由 `run_all.sh` 自动调用 | 修改前端队列、流水寄存器或 ABTB 训练链路后 |
 | `functional/frontend/run_pair.sh` | `frontend_ftq` pair-policy VCS 定向测试，由 `run_all.sh` 自动调用，覆盖同包/跨包 pair、RAW、force-single、pred-taken、slot kill、stall、redirect 和 wrap-around | 修改 FTQ pair eligibility、FQ entry metadata 或双发策略后 |
-| `functional/frontend/run_canonical.sh` | `ABTB_DIRECT_STEERING` 下 canonical snapshot/BP1 correction VCS 测试，覆盖 legacy 与 bank1 ABTB 改判、first ABTB 权威性、stall 和 EX redirect 优先级 | 修改 canonical steering 或 BP1 修正规则后 |
-| `functional/frontend/run_steering.sh` | `ABTB_DIRECT_STEERING` 下的 J/CALL canonical steering 与 PHT shadow pipeline VCS 定向测试，覆盖程序顺序、slot metadata、BP1/EX correction、stall/redirect/wrap、slot1 branch、wrong-path 抑制和 confirmed update | 修改 direct steering、PHT metadata 或训练资格后 |
-| `functional/run_all_abtb_direct.sh` | 设置 `ABTB_DIRECT_STEERING=1` 后运行完整 VCS correctness gate 和 81 项 CPU 回归 | direct steering RTL 改动后的最终功能 gate |
-| `functional/run_all_abtb_branch.sh` | 设置 `ABTB_DIRECT_STEERING=1` 和 `ABTB_BRANCH_STEERING=1` 后运行完整 VCS correctness gate 和 81 项 CPU 回归 | 条件分支 Stage-1 ownership 实验配置改动后的功能 gate |
-| `functional/run_all_abtb_branch_registered.sh` | 在 branch steering 上额外设置 `ABTB_BRANCH_REGISTERED_BP1_REDIRECT=1`，运行完整 VCS correctness gate 和 81 项 CPU 回归 | 验证注册化 BP1 frontend override 实验配置 |
+| `functional/frontend/run_canonical.sh` | 默认 branch steering 下 canonical snapshot VCS 测试，覆盖 legacy `bp_taken/bp_target` 不再 steering、bank1 ABTB 选择、first ABTB 权威性、branch ownership、stall 和 EX redirect 优先级 | 修改 canonical steering 或 legacy 隔离规则后 |
+| `functional/frontend/run_steering.sh` | 默认 ABTB/PHT branch steering 集成 VCS 定向测试，覆盖程序顺序、slot metadata、sequential cold miss、EX correction、stall/redirect/wrap、slot1 branch、wrong-path 抑制和 confirmed update | 修改 branch steering、PHT metadata 或训练资格后 |
 
 ### A2. Special / Temporary Correctness Smoke
 
@@ -35,20 +32,20 @@
 
 - 新增常规功能正确性测试应放进 `src/`、由 `utility/build_tests.sh` 生成 hex，并纳入 `functional/run_all.sh` 的测试列表。
 - 不需要预编译 hex 的独立或集成 RTL 定向测试可放在 `tb/`，使用 `functional/` 下的 VCS 脚本并由 `run_all.sh` 调用。
-- 默认 build 的 ABTB 集成仍是 shadow mode。只有显式定义
-  `ABTB_DIRECT_STEERING` 时，TYPE_JAL/TYPE_CALL 才参与 canonical Stage-1
-  steering。J/CALL 候选使用 ABTB raw tag hit/type/target，不使用 shadow PHT
-  direction；PHT direction 仅形成 B 型 shadow candidate，B/RET/普通间接
-  JALR 仍由 legacy predictor 处理。
-- 只有同时显式定义 `ABTB_DIRECT_STEERING` 和 `ABTB_BRANCH_STEERING` 时，
-  TYPE_BRANCH ABTB hit 才进入 Stage-1 ownership 实验配置。该配置新增
-  per-slot `stage1_branch_owned` 表达“Stage-1 拥有该 branch 的方向预测”，
+- 默认 build 就是 ABTB + PHT branch steering。TYPE_JAL/TYPE_CALL 永远参与
+  canonical Stage-1 steering；TYPE_BRANCH ABTB hit 永远进入 Stage-1 ownership。
+  J/CALL 候选使用 ABTB raw tag hit/type/target；branch 候选使用 ABTB raw tag
+  hit/type/target 和 Stage-1 PHT 方向。ABTB miss 顺序取指，不回退到 legacy
+  `bp_taken/bp_target`。RET/普通间接 JALR 在当前阶段 fall through 后由 EX
+  redirect 修正。
+- 历史 direct/branch/registered steering wrapper 已删除。不要在 RTL、
+  testbench、functional 脚本或 performance 脚本里重新添加旧 steering define。
+- per-slot `stage1_branch_owned` 表达“Stage-1 拥有该 branch 的方向预测”，
   taken 时使用 ABTB target，not-taken 时继续检查更年轻 bank1 CFI 或顺序 PC。
   `pred_source_abtb` 仍只表示最终 taken next-PC 来源，不能作为 branch ownership
   的替代信号。
-- `ABTB_BRANCH_REGISTERED_BP1_REDIRECT` 只注册 legacy BP1 correction：
-  F0 先锁存 pending target，下一拍再覆盖 `current_pc` 并清除年轻 F0 request。
-  correcting block 已写入的 FQ metadata 不清除，EX redirect 仍具有最高优先级。
+- 没有 frontend legacy correction 版本；frontend redirect 只来自后端/EX
+  redirect，旧 predictor metadata 仅用于后续 confirmed training 清理前的兼容。
 - FTQ pair-policy 定向测试只验证现有双发资格语义。它不得通过禁止
   cross-packet pairing、降低双发能力或推迟 pair 生效周期来换取 PASS。
 - 上述 VCS 脚本必须真正获得 license 并完成仿真后才能记为 PASS。若 license

@@ -832,8 +832,7 @@ module tb_frontend_abtb_integration;
                 ref_ex_s1_valid <= 1'b0;
             end else if (dut.ex_allowin) begin
                 ref_ex_valid <= ref_id_valid && dut.id_ready_go;
-                ref_ex_s1_valid <= ref_id_s1_valid && dut.id_ready_go
-                                 && !dut.id_s1_squash_raw;
+                ref_ex_s1_valid <= ref_id_s1_valid && dut.id_ready_go;
                 ref_ex_token <= ref_id_token;
                 ref_ex_hit <= ref_id_hit;
                 ref_ex_way <= ref_id_way;
@@ -923,7 +922,7 @@ module tb_frontend_abtb_integration;
                 if (dut.u_frontend_ftq.f0_slot0_jal
                     || dut.u_frontend_ftq.f0_slot0_jalr
                     || dut.u_frontend_ftq.f0_slot0_system_redirect
-                    || dut.u_frontend_ftq.bp1_final_taken)
+                    || dut.u_frontend_ftq.f0_slot0_pred_taken)
                     slot1_sidecar_kill_redirect_checks =
                         slot1_sidecar_kill_redirect_checks + 1;
                 if (dut.u_frontend_ftq.f0_slot0_jal)
@@ -933,7 +932,7 @@ module tb_frontend_abtb_integration;
                     slot1_sidecar_kill_jalr_checks =
                         slot1_sidecar_kill_jalr_checks + 1;
                 if (dut.u_frontend_ftq.f0_slot0_branch
-                    && dut.u_frontend_ftq.bp1_final_taken)
+                    && dut.u_frontend_ftq.f0_slot0_pred_taken)
                     slot1_sidecar_kill_branch_checks =
                         slot1_sidecar_kill_branch_checks + 1;
                 killed_pc_for_coverage = dut.u_frontend_ftq.f0_slot1_pc;

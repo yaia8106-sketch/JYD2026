@@ -117,7 +117,6 @@ module perf_monitor (
 
     // -- Flush --
     longint unsigned cnt_branch_flush;    // branch misprediction (EX)
-    longint unsigned cnt_nlp_redirect;    // NLP L1 redirect (ID)
     longint unsigned cnt_total_branch;    // total branch instructions reaching EX
     longint unsigned cnt_jcall_redirect;  // JAL/JALR redirect from either slot
 
@@ -143,8 +142,6 @@ module perf_monitor (
     longint unsigned cnt_bp_s1_dir_wrong;
     longint unsigned cnt_bp_s1_target_wrong;
     longint unsigned cnt_bp_s1_redirect;
-    longint unsigned cnt_bp_id_redirect_raw;
-    longint unsigned cnt_bp_id_redirect;
     longint unsigned cnt_bp_train_total;
     longint unsigned cnt_bp_train_s0;
     longint unsigned cnt_bp_train_s1;
@@ -169,7 +166,6 @@ module perf_monitor (
     longint unsigned cnt_fe_bp0_block_fq_credit;
     longint unsigned cnt_fe_redirect_total;
     longint unsigned cnt_fe_redirect_ex;
-    longint unsigned cnt_fe_redirect_bp1;
     longint unsigned cnt_fe_f0_valid;
     longint unsigned cnt_fe_f0_accept;
     longint unsigned cnt_fe_f0_epoch_miss;
@@ -178,10 +174,6 @@ module perf_monitor (
     longint unsigned cnt_fe_f0_enq1;
     longint unsigned cnt_fe_f0_enq_none;
     longint unsigned cnt_fe_f0_kill_slot0;
-    longint unsigned cnt_fe_bp1_applicable;
-    longint unsigned cnt_fe_bp1_override;
-    longint unsigned cnt_fe_bp1_to_taken;
-    longint unsigned cnt_fe_bp1_to_not_taken;
     longint unsigned cnt_fe_if_accept;
     longint unsigned cnt_fe_if_accept_dual;
     longint unsigned cnt_fe_if_accept_single;
@@ -295,8 +287,6 @@ module perf_monitor (
     wire        branch_flush_w  = tb_riscv_tests.u_cpu.branch_flush;
     wire        mem_branch_flush_w = tb_riscv_tests.u_cpu.mem_branch_flush;
     wire        frontend_branch_flush_w = tb_riscv_tests.u_cpu.frontend_branch_flush;
-    wire        id_bp_redirect_w = tb_riscv_tests.u_cpu.id_bp_redirect;
-    wire        id_bp_redirect_raw_w = tb_riscv_tests.u_cpu.id_bp_redirect_raw;
     wire        ex_is_branch    = tb_riscv_tests.u_cpu.ex_is_branch;
     wire        ex_is_jal       = tb_riscv_tests.u_cpu.ex_is_jal;
     wire        ex_is_jalr      = tb_riscv_tests.u_cpu.ex_is_jalr;
@@ -342,7 +332,6 @@ module perf_monitor (
     wire [4:0] id_rs2_addr_w = tb_riscv_tests.u_cpu.id_rs2_addr;
     wire       id_rs1_used_w = tb_riscv_tests.u_cpu.id_rs1_used;
     wire       id_rs2_used_w = tb_riscv_tests.u_cpu.id_rs2_used;
-    wire       id_s1_squash_raw_w = tb_riscv_tests.u_cpu.id_s1_squash_raw;
     wire [4:0] id_s1_rs1_addr_w = tb_riscv_tests.u_cpu.id_s1_rs1_addr;
     wire [4:0] id_s1_rs2_addr_w = tb_riscv_tests.u_cpu.id_s1_rs2_addr;
     wire       id_s1_rs1_used_w = tb_riscv_tests.u_cpu.id_s1_rs1_used;
@@ -534,7 +523,7 @@ module perf_monitor (
                                  | s0_mem_ready_store_addr | s0_mem_ready_store_data;
     wire s0_mem_ready_other      = s0_mem_ready_event & ~s0_mem_ready_known;
 
-    wire id_s1_valid_eff = id_s1_valid & ~id_s1_squash_raw_w;
+    wire id_s1_valid_eff = id_s1_valid;
     wire id_s0_uses_ex_muldiv = ex_valid & ex_is_muldiv_w & ~muldiv_done_w
                                & ex_reg_write_en_w & (ex_rd_w != 5'd0)
                                & ((id_rs1_used_w & (id_rs1_addr_w == ex_rd_w))
@@ -610,7 +599,6 @@ module perf_monitor (
     wire        fe_fq_credit_for_bp0_w = tb_riscv_tests.u_cpu.u_frontend_ftq.fq_credit_for_bp0;
     wire        fe_redirect_valid_w = tb_riscv_tests.u_cpu.u_frontend_ftq.redirect_valid;
     wire        fe_ex_redirect_valid_w = tb_riscv_tests.u_cpu.u_frontend_ftq.ex_redirect_valid;
-    wire        fe_bp1_redirect_valid_w = tb_riscv_tests.u_cpu.u_frontend_ftq.bp1_redirect_valid;
     wire        fe_f0_valid_w = tb_riscv_tests.u_cpu.u_frontend_ftq.f0_valid_r;
     wire        fe_f0_epoch_match_w = tb_riscv_tests.u_cpu.u_frontend_ftq.f0_epoch_match;
     wire        fe_f0_accept_base_w = tb_riscv_tests.u_cpu.u_frontend_ftq.f0_accept_base;
@@ -618,9 +606,6 @@ module perf_monitor (
     wire        fe_f0_enq1_valid_w = tb_riscv_tests.u_cpu.u_frontend_ftq.f0_enq1_valid;
     wire        fe_f0_enq_none_w = tb_riscv_tests.u_cpu.u_frontend_ftq.f0_enq_none;
     wire        fe_f0_kill_after_slot0_w = tb_riscv_tests.u_cpu.u_frontend_ftq.f0_kill_after_slot0;
-    wire        fe_bp1_applicable_w = tb_riscv_tests.u_cpu.u_frontend_ftq.bp1_applicable;
-    wire        fe_bp1_override_w = tb_riscv_tests.u_cpu.u_frontend_ftq.bp1_override;
-    wire        fe_bp1_tournament_taken_w = tb_riscv_tests.u_cpu.u_frontend_ftq.bp1_tournament_taken;
     wire        fe_if_accept_w = tb_riscv_tests.u_cpu.u_frontend_ftq.if_accept;
     wire        fe_if_accept_dual_w = tb_riscv_tests.u_cpu.u_frontend_ftq.if_accept_dual;
     wire        fe_if_accept_single_w = tb_riscv_tests.u_cpu.u_frontend_ftq.if_accept_single;
@@ -633,8 +618,7 @@ module perf_monitor (
     wire fe_bp0_block_fq_credit_w = ~fe_redirect_valid_w & fe_ftq_alloc_ready_w
                                   & ~fe_fq_credit_for_bp0_w;
     wire cpi_redirect_event = frontend_branch_flush_w | mem_branch_flush_w
-                            | branch_flush_w | id_bp_redirect_w
-                            | fe_bp1_redirect_valid_w;
+                            | branch_flush_w;
     wire cpi_dcache_event = mem_valid & ~mem_ready_go_w;
     wire cpi_muldiv_event = ex_valid & ex_is_muldiv_w & ~muldiv_done_w;
     wire cpi_raw_not_ready_event = raw_nr_ex_load_event | raw_nr_mem_load_wait_event
@@ -755,7 +739,6 @@ module perf_monitor (
             cnt_raw_ready_other_no_fwd <= 0;
             cnt_raw_unclassified_stall <= 0;
             cnt_branch_flush   <= 0;
-            cnt_nlp_redirect   <= 0;
             cnt_total_branch   <= 0;
             cnt_jcall_redirect <= 0;
             cnt_bp_s0_ctrl <= 0;
@@ -779,8 +762,6 @@ module perf_monitor (
             cnt_bp_s1_dir_wrong <= 0;
             cnt_bp_s1_target_wrong <= 0;
             cnt_bp_s1_redirect <= 0;
-            cnt_bp_id_redirect_raw <= 0;
-            cnt_bp_id_redirect <= 0;
             cnt_bp_train_total <= 0;
             cnt_bp_train_s0 <= 0;
             cnt_bp_train_s1 <= 0;
@@ -803,7 +784,6 @@ module perf_monitor (
             cnt_fe_bp0_block_fq_credit <= 0;
             cnt_fe_redirect_total <= 0;
             cnt_fe_redirect_ex <= 0;
-            cnt_fe_redirect_bp1 <= 0;
             cnt_fe_f0_valid <= 0;
             cnt_fe_f0_accept <= 0;
             cnt_fe_f0_epoch_miss <= 0;
@@ -812,10 +792,6 @@ module perf_monitor (
             cnt_fe_f0_enq1 <= 0;
             cnt_fe_f0_enq_none <= 0;
             cnt_fe_f0_kill_slot0 <= 0;
-            cnt_fe_bp1_applicable <= 0;
-            cnt_fe_bp1_override <= 0;
-            cnt_fe_bp1_to_taken <= 0;
-            cnt_fe_bp1_to_not_taken <= 0;
             cnt_fe_if_accept <= 0;
             cnt_fe_if_accept_dual <= 0;
             cnt_fe_if_accept_single <= 0;
@@ -1014,7 +990,6 @@ module perf_monitor (
 
             // Flush
             if (branch_flush_w & ex_valid)   cnt_branch_flush  <= cnt_branch_flush + 1;
-            if (id_bp_redirect_w)            cnt_nlp_redirect  <= cnt_nlp_redirect + 1;
             if (ex_valid & (ex_is_branch | ex_is_jal | ex_is_jalr))
                 cnt_total_branch <= cnt_total_branch + 1;
             if ((branch_flush_w & ex_valid & (ex_is_jal | ex_is_jalr))
@@ -1050,9 +1025,6 @@ module perf_monitor (
             if (bp_s1_dir_wrong_event) cnt_bp_s1_dir_wrong <= cnt_bp_s1_dir_wrong + 1;
             if (bp_s1_target_wrong_event) cnt_bp_s1_target_wrong <= cnt_bp_s1_target_wrong + 1;
             if (ex_s1_branch_redirect_w) cnt_bp_s1_redirect <= cnt_bp_s1_redirect + 1;
-
-            if (id_bp_redirect_raw_w) cnt_bp_id_redirect_raw <= cnt_bp_id_redirect_raw + 1;
-            if (id_bp_redirect_w)     cnt_bp_id_redirect <= cnt_bp_id_redirect + 1;
 
             if (tb_riscv_tests.u_cpu.bp_train_valid) begin
                 cnt_bp_train_total <= cnt_bp_train_total + 1;
@@ -1097,7 +1069,6 @@ module perf_monitor (
                 cnt_fe_bp0_block_fq_credit <= cnt_fe_bp0_block_fq_credit + 1;
             if (fe_redirect_valid_w) cnt_fe_redirect_total <= cnt_fe_redirect_total + 1;
             if (fe_ex_redirect_valid_w) cnt_fe_redirect_ex <= cnt_fe_redirect_ex + 1;
-            if (fe_bp1_redirect_valid_w) cnt_fe_redirect_bp1 <= cnt_fe_redirect_bp1 + 1;
             if (fe_f0_valid_w) cnt_fe_f0_valid <= cnt_fe_f0_valid + 1;
             if (fe_f0_accept_base_w) cnt_fe_f0_accept <= cnt_fe_f0_accept + 1;
             if (fe_f0_valid_w & ~fe_f0_epoch_match_w & ~fe_ex_redirect_valid_w)
@@ -1110,12 +1081,6 @@ module perf_monitor (
                 cnt_fe_f0_enq_none <= cnt_fe_f0_enq_none + 1;
             if (fe_f0_enq0_valid_w & fe_f0_kill_after_slot0_w)
                 cnt_fe_f0_kill_slot0 <= cnt_fe_f0_kill_slot0 + 1;
-            if (fe_bp1_applicable_w) cnt_fe_bp1_applicable <= cnt_fe_bp1_applicable + 1;
-            if (fe_bp1_override_w) cnt_fe_bp1_override <= cnt_fe_bp1_override + 1;
-            if (fe_bp1_override_w & fe_bp1_tournament_taken_w)
-                cnt_fe_bp1_to_taken <= cnt_fe_bp1_to_taken + 1;
-            if (fe_bp1_override_w & ~fe_bp1_tournament_taken_w)
-                cnt_fe_bp1_to_not_taken <= cnt_fe_bp1_to_not_taken + 1;
             if (fe_if_accept_w) cnt_fe_if_accept <= cnt_fe_if_accept + 1;
             if (fe_if_accept_dual_w) cnt_fe_if_accept_dual <= cnt_fe_if_accept_dual + 1;
             if (fe_if_accept_single_w) cnt_fe_if_accept_single <= cnt_fe_if_accept_single + 1;
@@ -1357,7 +1322,6 @@ module perf_monitor (
             $display("[PERF]  --- Branch ---");
             $display("[PERF]  Total branch:  %0d", cnt_total_branch);
             $display("[PERF]  Mispredicts:   %0d  (%0.1f%%)", cnt_branch_flush, mispredict_rate);
-            $display("[PERF]  NLP redirects: %0d", cnt_nlp_redirect);
             $display("[PERF]  J/CALL redirects: %0d", cnt_jcall_redirect);
             $display("[PERF]");
             $display("[PERF]  --- Branch Predictor Detailed ---");
@@ -1375,8 +1339,6 @@ module perf_monitor (
                      cnt_bp_s1_lookup_btb_hit, cnt_bp_s1_lookup_taken,
                      cnt_bp_s1_actual_taken, cnt_bp_s1_dir_wrong,
                      cnt_bp_s1_target_wrong, cnt_bp_s1_redirect);
-            $display("[PERF]  BP ID redirect: raw=%0d valid=%0d",
-                     cnt_bp_id_redirect_raw, cnt_bp_id_redirect);
             $display("[PERF]  BP training:   total=%0d s0=%0d s1=%0d branch=%0d jal=%0d jalr=%0d btb_hit=%0d btb_miss=%0d alloc=%0d",
                      cnt_bp_train_total, cnt_bp_train_s0, cnt_bp_train_s1,
                      cnt_bp_train_branch, cnt_bp_train_jal, cnt_bp_train_jalr,
@@ -1391,16 +1353,12 @@ module perf_monitor (
             $display("[PERF]  FE BP0:        fire=%0d ftq_full=%0d fq_credit_block=%0d",
                      cnt_fe_bp0_fire, cnt_fe_bp0_block_ftq_full,
                      cnt_fe_bp0_block_fq_credit);
-            $display("[PERF]  FE redirect:   total=%0d ex=%0d bp1=%0d",
-                     cnt_fe_redirect_total, cnt_fe_redirect_ex,
-                     cnt_fe_redirect_bp1);
+            $display("[PERF]  FE redirect:   total=%0d ex=%0d",
+                     cnt_fe_redirect_total, cnt_fe_redirect_ex);
             $display("[PERF]  FE F0:         valid=%0d accept=%0d epoch_miss=%0d ex_kill=%0d enq0=%0d enq1=%0d enq_none=%0d kill_slot0=%0d",
                      cnt_fe_f0_valid, cnt_fe_f0_accept, cnt_fe_f0_epoch_miss,
                      cnt_fe_f0_ex_kill, cnt_fe_f0_enq0, cnt_fe_f0_enq1,
                      cnt_fe_f0_enq_none, cnt_fe_f0_kill_slot0);
-            $display("[PERF]  FE BP1:        applicable=%0d override=%0d to_taken=%0d to_not_taken=%0d",
-                     cnt_fe_bp1_applicable, cnt_fe_bp1_override,
-                     cnt_fe_bp1_to_taken, cnt_fe_bp1_to_not_taken);
             $display("[PERF]  FE IF:         accept=%0d dual=%0d single=%0d empty=%0d fq_nonempty=%0d fq_pair_ready=%0d",
                      cnt_fe_if_accept, cnt_fe_if_accept_dual,
                      cnt_fe_if_accept_single, cnt_fe_if_empty,
@@ -1408,7 +1366,7 @@ module perf_monitor (
             $display("[PERF]  FE occupancy:  fq_avg=%0.2f ftq_avg=%0.2f fq_sum=%0d ftq_sum=%0d",
                      fe_fq_avg, fe_ftq_avg,
                      cnt_fe_fq_occupancy_sum, cnt_fe_ftq_occupancy_sum);
-            $display("[PERF]  ABTB direct:   lookup=%0d steer=%0d bank0=%0d bank1=%0d correct=%0d redirect=%0d target_miss=%0d legacy_fallback=%0d stage1_owned=%0d owned_nt=%0d",
+            $display("[PERF]  ABTB direct:   lookup=%0d steer=%0d bank0=%0d bank1=%0d correct=%0d redirect=%0d target_miss=%0d stage1_sequential=%0d stage1_owned=%0d owned_nt=%0d",
                      tb_riscv_tests.u_cpu.abtb_direct_lookup_count,
                      tb_riscv_tests.u_cpu.abtb_direct_steer_count,
                      tb_riscv_tests.u_cpu.abtb_direct_bank0_count,
@@ -1416,7 +1374,7 @@ module perf_monitor (
                      tb_riscv_tests.u_cpu.abtb_direct_correct_count,
                      tb_riscv_tests.u_cpu.abtb_direct_redirect_count,
                      tb_riscv_tests.u_cpu.abtb_direct_target_miss_count,
-                     tb_riscv_tests.u_cpu.legacy_fallback_count,
+                     tb_riscv_tests.u_cpu.stage1_sequential_count,
                      tb_riscv_tests.u_cpu.stage1_abtb_owned_count,
                      tb_riscv_tests.u_cpu.stage1_branch_owned_nt_count);
             $display("[PERF]  Stage1 PHT:    confirmed=%0d abtb_branch_hit=%0d pred_taken=%0d pred_nt=%0d correct=%0d wrong=%0d bank0=%0d bank1=%0d",

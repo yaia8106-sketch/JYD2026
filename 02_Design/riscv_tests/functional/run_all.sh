@@ -90,9 +90,6 @@ TESTS="simple \
 SIM_GUARD_ARGS="${SIM_GUARD_ARGS:-+pc_guard +watchdog=5000}"
 VCS_OPTS="${VCS_OPTS:--full64 -sverilog -timescale=1ns/1ps}"
 VCS_EXTRA_OPTS="${VCS_EXTRA_OPTS:-}"
-ABTB_DIRECT_STEERING="${ABTB_DIRECT_STEERING:-0}"
-ABTB_BRANCH_STEERING="${ABTB_BRANCH_STEERING:-0}"
-ABTB_BRANCH_REGISTERED_BP1_REDIRECT="${ABTB_BRANCH_REGISTERED_BP1_REDIRECT:-0}"
 VCS_ENV="${VCS_ENV:-/home/anokyai/synopsys/env.sh}"
 VCS_SHIM="$RISCV_TESTS_DIR/tools/vcs_pthread_yield.c"
 SIM_BIN="$WORK_DIR/riscv_tests_simv"
@@ -105,17 +102,7 @@ fi
 
 mkdir -p "$WORK_DIR"
 
-if [ "$ABTB_BRANCH_STEERING" = "1" ]; then
-    ABTB_DIRECT_STEERING=1
-    VCS_EXTRA_OPTS="$VCS_EXTRA_OPTS +define+ABTB_BRANCH_STEERING"
-fi
-if [ "$ABTB_BRANCH_REGISTERED_BP1_REDIRECT" = "1" ]; then
-    VCS_EXTRA_OPTS="$VCS_EXTRA_OPTS +define+ABTB_BRANCH_REGISTERED_BP1_REDIRECT"
-fi
-if [ "$ABTB_DIRECT_STEERING" = "1" ]; then
-    VCS_EXTRA_OPTS="$VCS_EXTRA_OPTS +define+ABTB_DIRECT_STEERING"
-    export VCS_EXTRA_OPTS
-fi
+export VCS_EXTRA_OPTS
 
 # ---- 检查 hex 文件是否存在 ----
 if [ ! -d "$HEX_DIR" ] || [ -z "$(ls $HEX_DIR/*.irom.hex 2>/dev/null)" ]; then
@@ -143,15 +130,13 @@ echo "[INFO] Running frontend FTQ pair-policy test..."
 bash "$SCRIPT_DIR/frontend/run_pair.sh"
 echo ""
 
-if [ "$ABTB_DIRECT_STEERING" = "1" ]; then
-    echo "[INFO] Running frontend canonical steering test..."
-    bash "$SCRIPT_DIR/frontend/run_canonical.sh"
-    echo ""
+echo "[INFO] Running frontend canonical steering test..."
+bash "$SCRIPT_DIR/frontend/run_canonical.sh"
+echo ""
 
-    echo "[INFO] Running frontend ABTB direct steering integration test..."
-    bash "$SCRIPT_DIR/frontend/run_steering.sh"
-    echo ""
-fi
+echo "[INFO] Running frontend ABTB/PHT branch steering integration test..."
+bash "$SCRIPT_DIR/frontend/run_steering.sh"
+echo ""
 
 TOTAL=0
 PASSED=0

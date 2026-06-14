@@ -368,7 +368,6 @@ module cpu_top (
     // ---- Handshake ----
     wire if_ready_go_w;             // driven by frontend_ftq
     wire mmio_st_ld_hazard;
-    wire id_bp_redirect;            // NLP: ID-stage Tournament redirect
     wire ex_muldiv_ready = mem_branch_flush | ~ex_muldiv_req | muldiv_done;
     wire ex_ready_go_w  = ~mmio_st_ld_hazard & ex_muldiv_ready;
     wire mem_ready_go_w = cache_ready; // DCache controls MEM stage flow
@@ -382,14 +381,14 @@ module cpu_top (
             timer_irq_hold <= 1'b0;
         else if (timer_irq_take)
             timer_irq_hold <= 1'b0;
-        else if (frontend_branch_flush | id_bp_redirect)
+        else if (frontend_branch_flush)
             timer_irq_hold <= 1'b0;
         else if (timer_irq_request & id_valid)
             timer_irq_hold <= 1'b1;
     end
 
     // ---- Flush / redirect ----
-    wire id_flush = frontend_branch_flush | id_bp_redirect;
+    wire id_flush = frontend_branch_flush;
     wire ex_flush = frontend_branch_flush;
 
     // ---- Register addresses from instruction (ID stage, from IF/ID reg) ----
@@ -410,11 +409,6 @@ module cpu_top (
     wire        id_s1_rs2_used;
     wire        id_s0_alu_only;
     wire        id_branch_taken_pre;
-    wire        id_tournament_taken;
-    wire        id_bp_redirect_raw;
-    wire        id_s1_squash_raw;
-    wire [31:0] id_redirect_target;
-
     memory_access_unit u_memory_access_unit (
         .ex_valid            (ex_valid),
         .ex_mem_read_en      (ex_mem_read_en),
@@ -558,7 +552,6 @@ module cpu_top (
     wire [ 1:0] id_bp_btb_bht;
     wire [ 1:0] id_bp_pht_cnt;
     wire [ 1:0] id_bp_sel_cnt;
-    wire        id_bp_verified;
     wire        id_s1_bp_taken;
     wire [31:0] id_s1_bp_target;
     wire [ 7:0] id_s1_bp_ghr_snap;
@@ -584,8 +577,8 @@ module cpu_top (
     wire [ 1:0] ex_s1_bp_pht_cnt;
     wire [ 1:0] ex_s1_bp_sel_cnt;
 
-    // ABTB lookup/training metadata. ABTB direct J/CALL steering is enabled
-    // only when ABTB_DIRECT_STEERING is defined; otherwise this remains shadow.
+    // ABTB lookup/training metadata. ABTB/PHT owns Stage-1 J/CALL and branch
+    // steering by default; legacy predictor metadata is still carried onward.
     wire        abtb_lookup_accept;
     wire        abtb_bank0_hit;
     wire        abtb_bank0_lookup_hit;
@@ -725,10 +718,6 @@ module cpu_top (
     // ================================================================
 
     id_stage_derive u_id_stage_derive (
-        .id_valid          (id_valid),
-        .id_ready_go       (id_ready_go),
-        .ex_allowin        (ex_allowin),
-        .mem_branch_flush  (mem_branch_flush),
         .id_pc             (id_pc),
         .id_inst           (id_inst),
         .id_inst1          (id_inst1),
@@ -756,14 +745,6 @@ module cpu_top (
         .fwd_branch_rs1_data(fwd_branch_rs1_data),
         .fwd_branch_rs2_data(fwd_branch_rs2_data),
         .fwd_rs1_jalr_data (fwd_rs1_jalr_data),
-        .id_bp_btb_hit     (id_bp_btb_hit),
-        .id_bp_btb_type    (id_bp_btb_type),
-        .id_bp_btb_bht     (id_bp_btb_bht),
-        .id_bp_pht_cnt     (id_bp_pht_cnt),
-        .id_bp_sel_cnt     (id_bp_sel_cnt),
-        .id_bp_target      (id_bp_target),
-        .id_bp_verified    (id_bp_verified),
-        .id_stage1_branch_owned(id_stage1_branch_owned),
         .id_rs1_addr       (id_rs1_addr),
         .id_rs2_addr       (id_rs2_addr),
         .id_rd_addr        (id_rd_addr),
@@ -780,12 +761,7 @@ module cpu_top (
         .id_s1_rs1_used    (id_s1_rs1_used),
         .id_s1_rs2_used    (id_s1_rs2_used),
         .id_s0_alu_only    (id_s0_alu_only),
-        .id_branch_taken_pre(id_branch_taken_pre),
-        .id_tournament_taken(id_tournament_taken),
-        .id_bp_redirect_raw(id_bp_redirect_raw),
-        .id_bp_redirect    (id_bp_redirect),
-        .id_s1_squash_raw  (id_s1_squash_raw),
-        .id_redirect_target(id_redirect_target)
+        .id_branch_taken_pre(id_branch_taken_pre)
     );
 
     // Decode-time ABTB classification. Carry the confirmed type to EX so RET
@@ -1087,7 +1063,7 @@ module cpu_top (
     logic [31:0] abtb_direct_correct_count;
     logic [31:0] abtb_direct_redirect_count;
     logic [31:0] abtb_direct_target_miss_count;
-    logic [31:0] legacy_fallback_count;
+    logic [31:0] stage1_sequential_count;
     logic [31:0] stage1_abtb_owned_count;
     logic [31:0] stage1_branch_owned_nt_count;
     logic [31:0] stage1_confirmed_branch_count;
@@ -1140,7 +1116,7 @@ module cpu_top (
             abtb_direct_correct_count <= 32'd0;
             abtb_direct_redirect_count <= 32'd0;
             abtb_direct_target_miss_count <= 32'd0;
-            legacy_fallback_count <= 32'd0;
+            stage1_sequential_count <= 32'd0;
             stage1_abtb_owned_count <= 32'd0;
             stage1_branch_owned_nt_count <= 32'd0;
             stage1_confirmed_branch_count <= 32'd0;
@@ -1182,7 +1158,7 @@ module cpu_top (
             if (stage1_steer_valid
                 && !stage1_steer_source_abtb
                 && !stage1_steer_branch_owned)
-                legacy_fallback_count <= legacy_fallback_count + 32'd1;
+                stage1_sequential_count <= stage1_sequential_count + 32'd1;
             if (stage1_bank0_branch_lookup_event)
                 stage1_bank0_branch_lookup_count <=
                     stage1_bank0_branch_lookup_count + 32'd1;
@@ -1360,7 +1336,6 @@ module cpu_top (
     wire [ 1:0] if_bp_btb_bht_out;
     wire [ 1:0] if_bp_pht_cnt_out;
     wire [ 1:0] if_bp_sel_cnt_out;
-    wire        if_bp_verified_out;
     wire        if_s1_bp_taken_out;
     wire [31:0] if_s1_bp_target_out;
     wire [ 7:0] if_s1_bp_ghr_snap_out;
@@ -1444,7 +1419,6 @@ module cpu_top (
         .if_bp_btb_bht    (if_bp_btb_bht_out),
         .if_bp_pht_cnt    (if_bp_pht_cnt_out),
         .if_bp_sel_cnt    (if_bp_sel_cnt_out),
-        .if_bp_verified   (if_bp_verified_out),
         .if_pred_source_abtb(if_pred_source_abtb_out),
         .if_stage1_branch_owned(if_stage1_branch_owned_out),
         .if_s1_bp_taken   (if_s1_bp_taken_out),
@@ -1527,7 +1501,6 @@ module cpu_top (
         .if_bp_btb_bht  (if_bp_btb_bht_out),
         .if_bp_pht_cnt  (if_bp_pht_cnt_out),
         .if_bp_sel_cnt  (if_bp_sel_cnt_out),
-        .if_bp_verified (if_bp_verified_out),
         .if_pred_source_abtb(if_pred_source_abtb_out),
         .if_stage1_branch_owned(if_stage1_branch_owned_out),
         .if_s1_bp_taken    (if_s1_bp_taken_out),
@@ -1564,7 +1537,6 @@ module cpu_top (
         .id_bp_btb_bht  (id_bp_btb_bht),
         .id_bp_pht_cnt  (id_bp_pht_cnt),
         .id_bp_sel_cnt  (id_bp_sel_cnt),
-        .id_bp_verified (id_bp_verified),
         .id_pred_source_abtb(id_pred_source_abtb),
         .id_stage1_branch_owned(id_stage1_branch_owned),
         .id_s1_bp_taken    (id_s1_bp_taken),
@@ -1686,7 +1658,7 @@ module cpu_top (
         .id_s0_branch   (dec_is_branch),
         .rf_rs1_data    (rf_rs1_data),
         .rf_rs2_data    (rf_rs2_data),
-        .id_s1_valid    (id_s1_valid & ~id_s1_squash_raw),
+        .id_s1_valid    (id_s1_valid),
         .id_s1_rs1_addr (id_s1_rs1_addr),
         .id_s1_rs2_addr (id_s1_rs2_addr),
         .id_s1_rs1_used (id_s1_rs1_used),
@@ -1814,11 +1786,9 @@ module cpu_top (
         .id_is_mret       (dec_is_mret),
         .id_is_muldiv     (dec_is_muldiv),
         .id_muldiv_op     (id_inst[14:12]),
-        // Branch prediction passthrough (NLP: corrected by Tournament in ID)
-        // When ID redirect fires, override L0's prediction with Tournament's result
-        // so EX stage sees the corrected prediction for misprediction detection
-        .id_bp_taken      (id_bp_redirect ? id_tournament_taken : id_bp_taken),
-        .id_bp_target     (id_bp_redirect ? id_redirect_target  : id_bp_target),
+        // Stage-1 canonical prediction passthrough.
+        .id_bp_taken      (id_bp_taken),
+        .id_bp_target     (id_bp_target),
         .id_bp_ghr_snap   (id_bp_ghr_snap),
         .id_bp_btb_hit    (id_bp_btb_hit),
         .id_bp_btb_bht    (id_bp_btb_bht),
@@ -1895,7 +1865,7 @@ module cpu_top (
     id_ex_reg_s1 u_id_ex_reg_s1 (
         .clk                 (clk),
         .rst_n               (rst_n),
-        .id_s1_valid         (id_s1_valid & ~id_s1_squash_raw),
+        .id_s1_valid         (id_s1_valid),
         .id_ready_go         (id_ready_go),
         .ex_allowin          (ex_allowin),
         .ex_flush            (ex_flush),

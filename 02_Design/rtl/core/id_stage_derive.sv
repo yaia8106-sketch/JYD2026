@@ -1,14 +1,9 @@
 // ============================================================
 // Module: id_stage_derive
-// Description: ID-stage field extraction, branch precompute, and NLP redirect.
+// Description: ID-stage field extraction and branch precompute.
 // ============================================================
 
 module id_stage_derive (
-    input  logic        id_valid,
-    input  logic        id_ready_go,
-    input  logic        ex_allowin,
-    input  logic        mem_branch_flush,
-
     input  logic [31:0] id_pc,
     input  logic [31:0] id_inst,
     input  logic [31:0] id_inst1,
@@ -40,15 +35,6 @@ module id_stage_derive (
     input  logic [31:0] fwd_branch_rs2_data,
     input  logic [31:0] fwd_rs1_jalr_data,
 
-    input  logic        id_bp_btb_hit,
-    input  logic [ 1:0] id_bp_btb_type,
-    input  logic [ 1:0] id_bp_btb_bht,
-    input  logic [ 1:0] id_bp_pht_cnt,
-    input  logic [ 1:0] id_bp_sel_cnt,
-    input  logic [31:0] id_bp_target,
-    input  logic        id_bp_verified,
-    input  logic        id_stage1_branch_owned,
-
     output logic [ 4:0] id_rs1_addr,
     output logic [ 4:0] id_rs2_addr,
     output logic [ 4:0] id_rd_addr,
@@ -65,12 +51,7 @@ module id_stage_derive (
     output logic        id_s1_rs1_used,
     output logic        id_s1_rs2_used,
     output logic        id_s0_alu_only,
-    output logic        id_branch_taken_pre,
-    output logic        id_tournament_taken,
-    output logic        id_bp_redirect_raw,
-    output logic        id_bp_redirect,
-    output logic        id_s1_squash_raw,
-    output logic [31:0] id_redirect_target
+    output logic        id_branch_taken_pre
 );
 
     assign id_rs1_addr = id_inst[19:15];
@@ -113,28 +94,5 @@ module id_stage_derive (
 
     assign id_branch_taken_pre = dec_branch_cond[2] ? id_branch_taken_cmp
                                                     : id_branch_taken_eqne;
-
-    wire id_bimodal_taken  = (id_bp_btb_bht >= 2'd2);
-    wire id_gshare_taken   = (id_bp_pht_cnt >= 2'd2);
-    wire id_use_bimodal    = (id_bp_sel_cnt >= 2'd2);
-    assign id_tournament_taken = id_use_bimodal ? id_bimodal_taken : id_gshare_taken;
-
-    wire id_bp_branch_candidate = id_valid & ~mem_branch_flush
-                                 & ~id_bp_verified
-                                 & ~id_stage1_branch_owned
-                                 & id_bp_btb_hit
-                                 & (id_bp_btb_type == 2'b10);
-    wire id_bp_redirect_taken_raw = id_bp_branch_candidate
-                                  & id_tournament_taken
-                                  & ~id_bp_btb_bht[1];
-    wire id_bp_redirect_nt_raw = id_bp_branch_candidate
-                               & ~id_tournament_taken
-                               & id_bp_btb_bht[1];
-
-    assign id_bp_redirect_raw = id_bp_redirect_taken_raw | id_bp_redirect_nt_raw;
-    assign id_bp_redirect = id_bp_redirect_raw & id_ready_go & ex_allowin;
-    assign id_s1_squash_raw = id_bp_redirect_taken_raw;
-    assign id_redirect_target = id_tournament_taken ? id_bp_target
-                                                    : id_pc_plus_4;
 
 endmodule

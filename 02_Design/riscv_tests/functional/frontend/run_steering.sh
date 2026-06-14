@@ -1,5 +1,5 @@
 #!/bin/bash
-# cpu_top ABTB direct J/CALL steering integration test.
+# cpu_top default ABTB/PHT branch steering integration test.
 
 set -euo pipefail
 
@@ -14,16 +14,9 @@ VCS_SHIM="$RISCV_TESTS_DIR/tools/vcs_pthread_yield.c"
 SIM_BIN="$WORK_DIR/frontend_abtb_steering_simv"
 COMPILE_LOG="$WORK_DIR/frontend_abtb_steering_vcs.log"
 SIM_LOG="$WORK_DIR/frontend_abtb_steering_sim.log"
-PASS_MARKER="[PASS] frontend ABTB direct steering integration test"
+PASS_MARKER="[PASS] frontend ABTB/PHT branch steering integration test"
 
 mkdir -p "$WORK_DIR"
-
-if [ "${ABTB_BRANCH_STEERING:-0}" = "1" ]; then
-    VCS_EXTRA_OPTS="$VCS_EXTRA_OPTS +define+ABTB_BRANCH_STEERING"
-fi
-if [ "${ABTB_BRANCH_REGISTERED_BP1_REDIRECT:-0}" = "1" ]; then
-    VCS_EXTRA_OPTS="$VCS_EXTRA_OPTS +define+ABTB_BRANCH_REGISTERED_BP1_REDIRECT"
-fi
 
 if ! command -v vcs >/dev/null 2>&1; then
     if [ -f "$VCS_ENV" ]; then
@@ -70,9 +63,9 @@ RTL_FILES="
     $RISCV_TESTS_DIR/tb/tb_frontend_abtb_steering.sv
 "
 
-echo "[INFO] Compiling frontend ABTB direct steering test with VCS..."
+echo "[INFO] Compiling frontend ABTB/PHT branch steering test with VCS..."
 # shellcheck disable=SC2086
-if ! vcs $VCS_OPTS $VCS_EXTRA_OPTS +define+ABTB_DIRECT_STEERING \
+if ! vcs $VCS_OPTS $VCS_EXTRA_OPTS \
     -top tb_frontend_abtb_steering \
     -Mdir="$WORK_DIR/frontend_abtb_steering_vcs.csrc" \
     -o "$SIM_BIN" $RTL_FILES "$VCS_SHIM" >"$COMPILE_LOG" 2>&1; then
@@ -81,13 +74,13 @@ if ! vcs $VCS_OPTS $VCS_EXTRA_OPTS +define+ABTB_DIRECT_STEERING \
     exit 1
 fi
 
-echo "[INFO] Running frontend ABTB direct steering test..."
+echo "[INFO] Running frontend ABTB/PHT branch steering test..."
 if ! "$SIM_BIN" >"$SIM_LOG" 2>&1; then
     cat "$SIM_LOG"
     exit 1
 fi
 cat "$SIM_LOG"
 if ! grep -qF "$PASS_MARKER" "$SIM_LOG"; then
-    echo "ERROR: direct steering simulation did not report PASS"
+    echo "ERROR: branch steering simulation did not report PASS"
     exit 1
 fi

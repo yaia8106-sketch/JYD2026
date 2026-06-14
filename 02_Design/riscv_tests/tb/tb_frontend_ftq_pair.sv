@@ -45,7 +45,6 @@ module tb_frontend_ftq_pair;
     logic [1:0] if_bp_btb_bht;
     logic [1:0] if_bp_pht_cnt;
     logic [1:0] if_bp_sel_cnt;
-    logic if_bp_verified;
     logic if_s1_bp_taken;
     logic [31:0] if_s1_bp_target;
     logic [7:0] if_s1_bp_ghr_snap;
@@ -78,9 +77,9 @@ module tb_frontend_ftq_pair;
     logic pred_taken_valid;
     logic [31:0] pred_taken_pc;
     logic [31:0] pred_taken_target;
-    logic bp1_override_valid;
-    logic [31:0] bp1_override_pc;
-    logic [31:0] bp1_override_target;
+    logic legacy_metadata_valid;
+    logic [31:0] legacy_metadata_pc;
+    logic [31:0] legacy_metadata_target;
 
     integer case_count;
     integer fail_count;
@@ -110,13 +109,13 @@ module tb_frontend_ftq_pair;
         .bp_s1_btb_bht(bp_s1_btb_bht),
         .bp_s1_pht_cnt(bp_s1_pht_cnt),
         .bp_s1_sel_cnt(bp_s1_sel_cnt),
-        .abtb_bank0_lookup_hit(1'b0),
-        .abtb_bank0_hit(1'b0),
+        .abtb_bank0_lookup_hit(pred_taken_valid && (current_pc == pred_taken_pc)),
+        .abtb_bank0_hit(pred_taken_valid && (current_pc == pred_taken_pc)),
         .abtb_bank0_way(1'b0),
         .abtb_bank0_cfi_type(2'd0),
-        .abtb_bank0_target(32'd0),
-        .abtb_bank0_pred_taken(1'b0),
-        .abtb_bank0_pred_target(32'd0),
+        .abtb_bank0_target(pred_taken_target),
+        .abtb_bank0_pred_taken(pred_taken_valid && (current_pc == pred_taken_pc)),
+        .abtb_bank0_pred_target(pred_taken_target),
         .abtb_bank1_lookup_hit(1'b0),
         .abtb_bank1_hit(1'b0),
         .abtb_bank1_way(1'b0),
@@ -138,7 +137,6 @@ module tb_frontend_ftq_pair;
         .if_bp_btb_bht(if_bp_btb_bht),
         .if_bp_pht_cnt(if_bp_pht_cnt),
         .if_bp_sel_cnt(if_bp_sel_cnt),
-        .if_bp_verified(if_bp_verified),
         .if_s1_bp_taken(if_s1_bp_taken),
         .if_s1_bp_target(if_s1_bp_target),
         .if_s1_bp_ghr_snap(if_s1_bp_ghr_snap),
@@ -184,10 +182,10 @@ module tb_frontend_ftq_pair;
         bp_taken = pred_taken_valid && (current_pc == pred_taken_pc);
         bp_target = pred_taken_target;
         bp_ghr_snap = 8'd0;
-        bp_btb_hit = bp1_override_valid && (current_pc == bp1_override_pc);
+        bp_btb_hit = legacy_metadata_valid && (current_pc == legacy_metadata_pc);
         bp_btb_type = 2'b10;
         bp_btb_bht = 2'b00;
-        bp_pht_cnt = bp1_override_valid && (current_pc == bp1_override_pc)
+        bp_pht_cnt = legacy_metadata_valid && (current_pc == legacy_metadata_pc)
                    ? 2'b10 : 2'b00;
         bp_sel_cnt = 2'b00;
         bp_s1_taken = 1'b0;
@@ -293,9 +291,9 @@ module tb_frontend_ftq_pair;
             pred_taken_valid = 1'b0;
             pred_taken_pc = 32'd0;
             pred_taken_target = 32'd0;
-            bp1_override_valid = 1'b0;
-            bp1_override_pc = 32'd0;
-            bp1_override_target = 32'd0;
+            legacy_metadata_valid = 1'b0;
+            legacy_metadata_pc = 32'd0;
+            legacy_metadata_target = 32'd0;
             id_allowin = 1'b0;
             ex_redirect_valid = 1'b0;
             ex_redirect_target = 32'd0;
@@ -371,26 +369,26 @@ module tb_frontend_ftq_pair;
 
     task automatic run_pred_taken_case;
         begin
-            begin_case("pred_taken suppresses pair");
+            begin_case("ABTB taken suppresses pair");
             set_block(RESET_PC, beq_inst(5'd1, 5'd2), r_add(5'd3, 5'd4, 5'd5));
             pred_taken_valid = 1'b1;
             pred_taken_pc = RESET_PC;
             pred_taken_target = RESET_PC + 32'd32;
             release_reset();
-            expect_pair_at_head("pred_taken", RESET_PC, 1'b0);
+            expect_pair_at_head("abtb_taken", RESET_PC, 1'b0);
         end
     endtask
 
-    task automatic run_bp1_redirect_case;
+    task automatic run_legacy_metadata_neutral_case;
         begin
-            begin_case("BP1 redirect kill preserves slot1 invalid");
+            begin_case("legacy metadata does not affect pair eligibility");
             set_block(RESET_PC, beq_inst(5'd1, 5'd2), r_add(5'd3, 5'd4, 5'd5));
-            bp1_override_valid = 1'b1;
-            bp1_override_pc = RESET_PC;
-            bp1_override_target = RESET_PC + 32'd32;
-            pred_taken_target = bp1_override_target;
+            legacy_metadata_valid = 1'b1;
+            legacy_metadata_pc = RESET_PC;
+            legacy_metadata_target = RESET_PC + 32'd32;
+            pred_taken_target = legacy_metadata_target;
             release_reset();
-            expect_pair_at_head("bp1_redirect", RESET_PC, 1'b0);
+            expect_pair_at_head("legacy_metadata_neutral", RESET_PC, 1'b1);
         end
     endtask
 
@@ -487,9 +485,9 @@ module tb_frontend_ftq_pair;
         pred_taken_valid = 1'b0;
         pred_taken_pc = 32'd0;
         pred_taken_target = 32'd0;
-        bp1_override_valid = 1'b0;
-        bp1_override_pc = 32'd0;
-        bp1_override_target = 32'd0;
+        legacy_metadata_valid = 1'b0;
+        legacy_metadata_pc = 32'd0;
+        legacy_metadata_target = 32'd0;
         clear_imem();
 
         run_pair_case("same fetch ALU+ALU",
@@ -513,7 +511,7 @@ module tb_frontend_ftq_pair;
                       r_add(5'd2, 5'd0, 5'd0),
                       1'b0);
         run_pred_taken_case();
-        run_bp1_redirect_case();
+        run_legacy_metadata_neutral_case();
         run_pair_case("ALU+load",
                       r_add(5'd1, 5'd0, 5'd0),
                       lw_inst(5'd2, 5'd3),

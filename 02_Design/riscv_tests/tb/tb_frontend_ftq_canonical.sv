@@ -122,7 +122,6 @@ module tb_frontend_ftq_canonical;
         .if_bp_btb_bht               (),
         .if_bp_pht_cnt               (),
         .if_bp_sel_cnt               (),
-        .if_bp_verified              (),
         .if_pred_source_abtb         (if_pred_source_abtb),
         .if_stage1_branch_owned      (if_stage1_branch_owned),
         .if_s1_bp_taken              (if_s1_bp_taken),
@@ -229,7 +228,7 @@ module tb_frontend_ftq_canonical;
         end
     endtask
 
-    task automatic accept_and_check(
+    task automatic accept_taken_and_check(
         input logic expected_source_abtb,
         input logic expected_bank,
         input logic [31:0] expected_next
@@ -252,58 +251,49 @@ module tb_frontend_ftq_canonical;
         end
     endtask
 
-    task automatic scenario_legacy_nt_bp1_taken;
-        logic [31:0] branch_target;
-        logic [31:0] bank1_target;
+    task automatic accept_sequential_and_check(input logic [31:0] expected_next);
         begin
-            drive_defaults();
-            branch_target = BASE + 32'h40;
-            bank1_target = BASE + 32'h80;
-            bp_taken = 1'b0;
-            bp_target = branch_target;
-            bp_btb_bht = 2'b01;
-            bp_pht_cnt = 2'b10;
-            abtb_bank1_pred_target = bank1_target;
-            reset_dut();
-
-            accept_and_check(1'b1, 1'b1, bank1_target);
-            check(dut.bp1_override
-                  && dut.bp1_final_taken
-                  && dut.f0_final_taken
-                  && !dut.f0_final_source_abtb
-                  && dut.f0_final_next_pc == branch_target
-                  && dut.bp1_redirect_valid,
-                  "BP1 taken did not replace younger bank1 ABTB canonical");
-`ifdef ABTB_BRANCH_REGISTERED_BP1_REDIRECT
-            check(!dut.redirect_valid,
-                  "registered BP1 correction drove same-cycle redirect");
+            #1;
+            check(stage1_steer_valid
+                  && !stage1_steer_source_abtb
+                  && !stage1_steer_branch_owned
+                  && !stage1_steer_branch_owned_nt
+                  && !stage1_steer_taken
+                  && stage1_steer_next_pc == expected_next,
+                  "BP0 canonical sequential fallback mismatch");
             @(posedge clk);
             #1;
-            check(dut.bp1_redirect_pending,
-                  "registered BP1 taken correction was not latched pending");
-            check(if_valid && if_bp_taken && !if_pred_source_abtb
-                  && if_bp_target == branch_target && !if_s1_valid,
-                  "FQ metadata did not match BP1 legacy-taken correction");
-            @(posedge clk);
-            #1;
-            check(current_pc == branch_target
-                  && !dut.bp1_redirect_pending
-                  && !dut.f0_valid_r,
-                  "registered BP1 taken redirect did not update PC and kill younger F0");
-`else
-            @(posedge clk);
-            #1;
-            check(current_pc == branch_target,
-                  "BP1 taken redirect did not update current_pc");
-            check(if_valid && if_bp_taken && !if_pred_source_abtb
-                  && if_bp_target == branch_target && !if_s1_valid,
-                  "FQ metadata did not match BP1 legacy-taken correction");
-`endif
-            pass_case("legacy NT plus bank1 ABTB is corrected to older BP1 taken");
+            check(current_pc == expected_next
+                  && !dut.f0_steer_taken_r
+                  && !dut.f0_steer_source_abtb_r
+                  && dut.f0_steer_next_pc_r == expected_next,
+                  "accepted sequential snapshot and current_pc diverged");
         end
     endtask
 
-    task automatic scenario_legacy_taken_bp1_nt_with_stall;
+    task automatic scenario_cold_miss_ignores_legacy_taken;
+        logic [31:0] branch_target;
+        logic [31:0] seq_target;
+        begin
+            drive_defaults();
+            branch_target = BASE + 32'h40;
+            seq_target = BASE + 32'd8;
+            bp_taken = 1'b1;
+            bp_target = branch_target;
+            bp_btb_bht = 2'b01;
+            bp_pht_cnt = 2'b10;
+            abtb_bank1_hit = 1'b0;
+            reset_dut();
+
+            accept_sequential_and_check(seq_target);
+            check(!dut.f0_final_taken
+                  && dut.f0_final_next_pc == seq_target,
+                  "legacy cold-miss metadata changed canonical sequential result");
+            pass_case("cold miss ignores legacy taken and fetches sequentially");
+        end
+    endtask
+
+    task automatic scenario_legacy_taken_does_not_suppress_bank1;
         logic [31:0] branch_target;
         logic [31:0] bank1_target;
         logic [31:0] held_pc;
@@ -320,48 +310,23 @@ module tb_frontend_ftq_canonical;
             abtb_bank1_pred_target = bank1_target;
             reset_dut();
 
-            accept_and_check(1'b0, 1'b0, branch_target);
-            check(dut.bp1_override
-                  && !dut.bp1_final_taken
-                  && dut.f0_final_taken
+            accept_taken_and_check(1'b1, 1'b1, bank1_target);
+            check(dut.f0_final_taken
                   && dut.f0_final_source_abtb
                   && dut.f0_final_bank
-                  && dut.f0_final_next_pc == bank1_target
-                  && dut.bp1_redirect_valid,
-                  "BP1 not-taken did not select bank1 ABTB alternate");
-`ifdef ABTB_BRANCH_REGISTERED_BP1_REDIRECT
-            check(!dut.redirect_valid,
-                  "registered BP1 correction drove same-cycle redirect");
+                  && dut.f0_final_next_pc == bank1_target,
+                  "legacy taken suppressed younger bank1 ABTB steering");
             @(posedge clk);
             #1;
-            check(dut.bp1_redirect_pending,
-                  "registered BP1 not-taken correction was not latched pending");
             check(if_valid && !if_bp_taken && !if_pred_source_abtb
                   && if_s1_valid && if_s1_bp_taken
                   && if_s1_pred_source_abtb
                   && if_s1_bp_target == bank1_target,
-                  "bank1 corrected metadata was bound to the wrong FQ slot");
-            @(posedge clk);
-            #1;
-            check(current_pc == bank1_target
-                  && !dut.bp1_redirect_pending
-                  && !dut.f0_valid_r,
-                  "registered BP1 not-taken redirect did not update PC and kill younger F0");
-`else
-            @(posedge clk);
-            #1;
-            check(current_pc == bank1_target,
-                  "BP1 not-taken/bank1 redirect did not update current_pc");
-            check(if_valid && !if_bp_taken && !if_pred_source_abtb
-                  && if_s1_valid && if_s1_bp_taken
-                  && if_s1_pred_source_abtb
-                  && if_s1_bp_target == bank1_target,
-                  "bank1 corrected metadata was bound to the wrong FQ slot");
-`endif
+                  "bank1 ABTB metadata was bound to the wrong FQ slot");
 
-            // Stop creating new correction events, then wait until the blocked
-            // FQ consumes all remaining credits and any accepted F0 request
-            // has drained before checking the actual hold interval.
+            // Stop creating new ABTB events, then wait until the blocked FQ
+            // consumes all remaining credits and any accepted F0 request has
+            // drained before checking the actual hold interval.
             bp_btb_hit = 1'b0;
             bp_taken = 1'b0;
             abtb_bank0_hit = 1'b0;
@@ -380,11 +345,11 @@ module tb_frontend_ftq_canonical;
                       && if_s1_pred_source_abtb == held_s1_source,
                       "frontend stall changed canonical PC or FQ metadata");
             end
-            pass_case("legacy taken plus bank1 ABTB is corrected under stall");
+            pass_case("legacy taken does not suppress younger bank1 ABTB under stall");
         end
     endtask
 
-    task automatic scenario_first_abtb_ignores_bp1;
+    task automatic scenario_first_abtb_ignores_legacy_metadata;
         logic [31:0] abtb_target;
         begin
             drive_defaults();
@@ -401,56 +366,38 @@ module tb_frontend_ftq_canonical;
             bp_pht_cnt = 2'b10;
             reset_dut();
 
-            accept_and_check(1'b1, 1'b0, abtb_target);
-            check(dut.bp1_override
-                  && dut.f0_first_instruction_abtb_direct
-                  && dut.f0_final_source_abtb
-                  && dut.f0_final_next_pc == abtb_target
-                  && !dut.bp1_redirect_valid,
-                  "legacy BP1 disagreement overrode first ABTB direct");
-            pass_case("first ABTB direct ignores BP1 and shadow direction");
+            accept_taken_and_check(1'b1, 1'b0, abtb_target);
+            check(dut.f0_final_source_abtb
+                  && dut.f0_final_bank == 1'b0
+                  && dut.f0_final_next_pc == abtb_target,
+                  "legacy metadata overrode first ABTB direct");
+            pass_case("first ABTB direct ignores legacy metadata");
         end
     endtask
 
     task automatic scenario_ex_redirect_priority;
-        logic [31:0] bank1_target;
         logic [31:0] ex_target;
         begin
             drive_defaults();
-            bank1_target = BASE + 32'h80;
             ex_target = BASE + 32'h140;
-            bp_taken = 1'b0;
-            bp_btb_bht = 2'b01;
-            bp_pht_cnt = 2'b10;
-            abtb_bank1_pred_target = bank1_target;
             reset_dut();
 
-            accept_and_check(1'b1, 1'b1, bank1_target);
-            check(dut.bp1_redirect_valid,
-                  "test setup did not produce simultaneous BP1 correction");
-`ifdef ABTB_BRANCH_REGISTERED_BP1_REDIRECT
-            check(!dut.redirect_valid,
-                  "registered correction redirected before pending edge");
-            @(posedge clk);
-            #1;
-            check(dut.bp1_redirect_pending && dut.redirect_valid,
-                  "registered correction did not become an active override");
-`endif
             ex_redirect_valid = 1'b1;
             ex_redirect_target = ex_target;
             #1;
-            check(dut.redirect_valid && dut.redirect_target == ex_target,
-                  "EX redirect did not win over simultaneous BP1 redirect");
+            check(dut.redirect_valid
+                  && dut.redirect_target == ex_target
+                  && !dut.bp0_fire,
+                  "EX redirect did not override Stage-1 steering");
             @(posedge clk);
             #1;
             check(current_pc == ex_target && dut.fq_count == 0,
                   "EX redirect did not flush FQ and update current_pc");
             ex_redirect_valid = 1'b0;
-            pass_case("EX redirect has priority over simultaneous BP1 correction");
+            pass_case("EX redirect has priority over Stage-1 steering");
         end
     endtask
 
-`ifdef ABTB_BRANCH_STEERING
     task automatic scenario_branch_owned_taken;
         logic [31:0] branch_target;
         begin
@@ -467,11 +414,9 @@ module tb_frontend_ftq_canonical;
             bp_pht_cnt = 2'b01;
             reset_dut();
 
-            accept_and_check(1'b1, 1'b0, branch_target);
-            check(dut.f0_slot0_stage1_branch_owned
-                  && !dut.bp1_applicable
-                  && !dut.bp1_override,
-                  "owned taken branch was exposed to legacy BP1 correction");
+            accept_taken_and_check(1'b1, 1'b0, branch_target);
+            check(dut.f0_slot0_stage1_branch_owned,
+                  "owned taken branch lost Stage-1 ownership");
             @(posedge clk);
             #1;
             check(if_valid && if_bp_taken && if_pred_source_abtb
@@ -499,11 +444,9 @@ module tb_frontend_ftq_canonical;
             bp_pht_cnt = 2'b01;
             reset_dut();
 
-            accept_and_check(1'b1, 1'b1, bank1_target);
-            check(dut.f0_slot0_stage1_branch_owned
-                  && !dut.bp1_applicable
-                  && !dut.bp1_override,
-                  "owned not-taken branch was overridden by legacy/BP1");
+            accept_taken_and_check(1'b1, 1'b1, bank1_target);
+            check(dut.f0_slot0_stage1_branch_owned,
+                  "owned not-taken branch lost Stage-1 ownership");
             @(posedge clk);
             #1;
             check(if_valid && !if_bp_taken && !if_pred_source_abtb
@@ -544,8 +487,7 @@ module tb_frontend_ftq_canonical;
             #1;
             check(current_pc == BASE + 32'd8
                   && dut.f0_slot0_stage1_branch_owned
-                  && dut.f0_slot1_stage1_branch_owned
-                  && !dut.bp1_applicable,
+                  && dut.f0_slot1_stage1_branch_owned,
                   "dual branch ownership was not captured with canonical PC");
             @(posedge clk);
             #1;
@@ -555,30 +497,22 @@ module tb_frontend_ftq_canonical;
             pass_case("dual owned NT branches retain per-slot ownership");
         end
     endtask
-`endif
 
     initial begin
-`ifndef ABTB_DIRECT_STEERING
-        $fatal(1, "[FAIL] canonical TB requires ABTB_DIRECT_STEERING");
-`endif
         clk = 1'b0;
         rst_n = 1'b0;
         case_count = 0;
         drive_defaults();
 
-        scenario_legacy_nt_bp1_taken();
-        scenario_legacy_taken_bp1_nt_with_stall();
-        scenario_first_abtb_ignores_bp1();
+        scenario_cold_miss_ignores_legacy_taken();
+        scenario_legacy_taken_does_not_suppress_bank1();
+        scenario_first_abtb_ignores_legacy_metadata();
         scenario_ex_redirect_priority();
 
-`ifdef ABTB_BRANCH_STEERING
         scenario_branch_owned_taken();
         scenario_branch_owned_nt_then_bank1();
         scenario_dual_branch_owned_nt();
         check(case_count == 7, "canonical branch TB did not run all scenarios");
-`else
-        check(case_count == 4, "canonical TB did not run all scenarios");
-`endif
         $display("[PASS] frontend FTQ canonical steering test (%0d cases)",
                  case_count);
         $finish;

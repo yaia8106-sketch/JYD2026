@@ -69,7 +69,6 @@ SUMMARY_COLUMNS = [
     "total_branch",
     "mispredicts",
     "mispredict_rate_pct",
-    "nlp_redirects",
     "jcall_redirects",
     "abtb_direct_lookup",
     "abtb_direct_steer",
@@ -78,7 +77,7 @@ SUMMARY_COLUMNS = [
     "abtb_direct_correct",
     "abtb_direct_redirect",
     "abtb_direct_target_miss",
-    "legacy_fallback",
+    "stage1_sequential",
     "stage1_abtb_owned",
     "stage1_branch_owned_nt",
     "stage1_pht_confirmed",
@@ -110,8 +109,6 @@ SUMMARY_COLUMNS = [
     "bp_s1_dir_wrong",
     "bp_s1_target_wrong",
     "bp_s1_redirect",
-    "bp_id_redirect_raw",
-    "bp_id_redirect",
     "bp_train_total",
     "bp_train_s0",
     "bp_train_s1",
@@ -134,7 +131,6 @@ SUMMARY_COLUMNS = [
     "fe_bp0_fq_credit_block",
     "fe_redirect_total",
     "fe_redirect_ex",
-    "fe_redirect_bp1",
     "fe_f0_valid",
     "fe_f0_accept",
     "fe_f0_epoch_miss",
@@ -143,10 +139,6 @@ SUMMARY_COLUMNS = [
     "fe_f0_enq1",
     "fe_f0_enq_none",
     "fe_f0_kill_slot0",
-    "fe_bp1_applicable",
-    "fe_bp1_override",
-    "fe_bp1_to_taken",
-    "fe_bp1_to_not_taken",
     "fe_if_accept",
     "fe_if_accept_dual",
     "fe_if_accept_single",
@@ -192,7 +184,6 @@ COMPARE_METRICS = [
     "dc_sb_conflicts",
     "mispredicts",
     "mispredict_rate_pct",
-    "nlp_redirects",
     "jcall_redirects",
     "abtb_direct_lookup",
     "abtb_direct_steer",
@@ -201,7 +192,7 @@ COMPARE_METRICS = [
     "abtb_direct_correct",
     "abtb_direct_redirect",
     "abtb_direct_target_miss",
-    "legacy_fallback",
+    "stage1_sequential",
     "stage1_abtb_owned",
     "stage1_branch_owned_nt",
     "stage1_pht_confirmed",
@@ -217,14 +208,12 @@ COMPARE_METRICS = [
     "bp_s0_dir_to_fallthrough",
     "bp_s0_target_wrong",
     "bp_s1_redirect",
-    "bp_id_redirect",
     "bp_train_btb_miss",
     "bp_write_btb",
     "bp_write_pht",
     "bp_write_selector",
     "fe_bp0_ftq_full",
     "fe_bp0_fq_credit_block",
-    "fe_redirect_bp1",
     "fe_f0_ex_kill",
     "fe_if_empty",
     "fe_fq_pair_ready",
@@ -251,7 +240,6 @@ INT_PATTERNS = [
     ("same_pair_raw_lost_slots", r"^Same-pair RAW lost slots:\s+(\d+)"),
     ("total_branch", r"^Total branch:\s+(\d+)"),
     ("mispredicts", r"^Mispredicts:\s+(\d+)"),
-    ("nlp_redirects", r"^NLP redirects:\s+(\d+)"),
     ("jcall_redirects", r"^J/CALL redirects:\s+(\d+)"),
     ("fetch_valid", r"^Fetch valid:\s+(\d+)"),
     ("pc2_fetch", r"^PC\[2\]=1 fetch:\s+(\d+)"),
@@ -471,12 +459,6 @@ def parse_perf_payload(payload: str, metrics: dict[str, Any]) -> None:
         metrics["bp_s1_redirect"] = values.get("redirect", 0)
         return
 
-    if payload.startswith("BP ID redirect:"):
-        values = parse_value_pairs(payload)
-        metrics["bp_id_redirect_raw"] = values.get("raw", 0)
-        metrics["bp_id_redirect"] = values.get("valid", 0)
-        return
-
     if payload.startswith("BP training:"):
         values = parse_value_pairs(payload)
         metrics["bp_train_total"] = values.get("total", 0)
@@ -513,7 +495,6 @@ def parse_perf_payload(payload: str, metrics: dict[str, Any]) -> None:
         values = parse_value_pairs(payload)
         metrics["fe_redirect_total"] = values.get("total", 0)
         metrics["fe_redirect_ex"] = values.get("ex", 0)
-        metrics["fe_redirect_bp1"] = values.get("bp1", 0)
         return
 
     if payload.startswith("FE F0:"):
@@ -526,14 +507,6 @@ def parse_perf_payload(payload: str, metrics: dict[str, Any]) -> None:
         metrics["fe_f0_enq1"] = values.get("enq1", 0)
         metrics["fe_f0_enq_none"] = values.get("enq_none", 0)
         metrics["fe_f0_kill_slot0"] = values.get("kill_slot0", 0)
-        return
-
-    if payload.startswith("FE BP1:"):
-        values = parse_value_pairs(payload)
-        metrics["fe_bp1_applicable"] = values.get("applicable", 0)
-        metrics["fe_bp1_override"] = values.get("override", 0)
-        metrics["fe_bp1_to_taken"] = values.get("to_taken", 0)
-        metrics["fe_bp1_to_not_taken"] = values.get("to_not_taken", 0)
         return
 
     if payload.startswith("FE IF:"):
@@ -566,7 +539,7 @@ def parse_perf_payload(payload: str, metrics: dict[str, Any]) -> None:
         metrics["abtb_direct_correct"] = values.get("correct", 0)
         metrics["abtb_direct_redirect"] = values.get("redirect", 0)
         metrics["abtb_direct_target_miss"] = values.get("target_miss", 0)
-        metrics["legacy_fallback"] = values.get("legacy_fallback", 0)
+        metrics["stage1_sequential"] = values.get("stage1_sequential", 0)
         metrics["stage1_abtb_owned"] = values.get("stage1_owned", 0)
         metrics["stage1_branch_owned_nt"] = values.get("owned_nt", 0)
         return

@@ -32,7 +32,6 @@ BRANCH_COLUMNS = [
     "train_coverage_pct",
     "pht_write_per_branch",
     "selector_write_per_branch",
-    "bp1_override_rate_pct",
     "cpi_redirect_pct",
     "ras_push_pop_delta",
     "issue_class",
@@ -51,7 +50,6 @@ COMPARE_METRICS = [
     "s0_target_wrong_pct",
     "s1_dir_wrong_rate_pct",
     "train_coverage_pct",
-    "bp1_override_rate_pct",
     "cpi_redirect_pct",
 ]
 
@@ -145,7 +143,6 @@ def classify(row: dict[str, Any]) -> tuple[str, str]:
     pht_per_branch = as_float(row, "pht_write_per_branch")
     s1_dir = as_float(row, "s1_dir_wrong_rate_pct")
     s1_branch = as_float(row, "bp_s1_branch")
-    bp1_override = as_float(row, "bp1_override_rate_pct")
     mispredict = as_float(row, "mispredict_rate_pct")
     dir_to_taken = as_float(row, "s0_dir_to_taken_pct")
     dir_to_fallthrough = as_float(row, "s0_dir_to_fallthrough_pct")
@@ -175,8 +172,6 @@ def classify(row: dict[str, Any]) -> tuple[str, str]:
         return "direction_overpredict_taken", bias
     if train < 80.0 or pht_per_branch < 0.90:
         return "training_coverage_or_update_gate", bias
-    if bp1_override > 20.0:
-        return "bp1_l1_override_path", bias
     return "mixed_or_needs_trace", bias
 
 
@@ -221,7 +216,6 @@ def derive(row: dict[str, Any]) -> dict[str, Any]:
     out["train_coverage_pct"] = pct(train_total, resolved_total)
     out["pht_write_per_branch"] = ratio(as_float(row, "bp_write_pht"), train_branch)
     out["selector_write_per_branch"] = ratio(as_float(row, "bp_write_selector"), train_branch)
-    out["bp1_override_rate_pct"] = pct(as_float(row, "fe_bp1_override"), as_float(row, "fe_bp1_applicable"))
     out["cpi_redirect_pct"] = pct(as_float(row, "cpi_stack_redirect"), as_float(row, "cycles"))
     out["ras_push_pop_delta"] = int(as_float(row, "bp_write_ras_push") - as_float(row, "bp_write_ras_pop"))
     out["issue_class"], out["direction_bias"] = classify(out)

@@ -531,7 +531,7 @@ module tb_riscv_tests;
     //  Optional diagnostic guards
     // ================================================================
     wire sim_progress = u_cpu.wb_valid | u_cpu.wb_s1_valid |
-                        u_cpu.id_bp_redirect | u_cpu.branch_flush |
+                        u_cpu.branch_flush |
                         u_cpu.mem_branch_flush | (|mmio_wea);
 
     always @(posedge clk) begin
@@ -587,10 +587,6 @@ module tb_riscv_tests;
     // ================================================================
     always @(posedge clk) begin
         if (rst_n && trace_enable && trace_fd != 0) begin
-            if (u_cpu.id_bp_redirect)
-                $fdisplay(trace_fd, "%0d ID_REDIRECT pc=%08x target=%08x taken=%0d",
-                          cycle_cnt, u_cpu.id_pc, u_cpu.id_redirect_target,
-                          u_cpu.id_tournament_taken);
             if (u_cpu.branch_flush)
                 $fdisplay(trace_fd, "%0d EX_FLUSH pc=%08x target=%08x actual=%0d pred=%0d",
                           cycle_cnt, u_cpu.ex_pc, u_cpu.branch_target,

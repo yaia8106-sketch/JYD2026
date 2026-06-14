@@ -58,7 +58,7 @@ module tb_student_top_smoke;
 
     wire led_write = (|dut.u_mmio.wea) && (dut.u_mmio.wr_addr == LED_MMIO_ADDR);
     wire sim_progress = dut.u_cpu.wb_valid | dut.u_cpu.wb_s1_valid |
-                        dut.u_cpu.id_bp_redirect | dut.u_cpu.branch_flush |
+                        dut.u_cpu.branch_flush |
                         dut.u_cpu.mem_branch_flush | led_write;
 
     initial begin

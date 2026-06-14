@@ -575,15 +575,24 @@ flush range, or performance accounting.
 
 ## Current Implementation Status
 
-As of 2026-06-14, the frontend has two build-time modes:
+As of 2026-06-14 after Stage 3, the frontend has one supported build-time mode:
 
-- Default build: ABTB remains shadow-only and legacy prediction is the sole
-  steering source.
-- `ABTB_DIRECT_STEERING`: ABTB `TYPE_JAL` and `TYPE_CALL` may directly steer
-  Stage 1. Conditional branches, RET, and ordinary indirect JALR still use the
-  legacy path.
+- ABTB + PHT owns Stage-1 steering for `TYPE_JAL`, `TYPE_CALL`, and
+  `TYPE_BRANCH`.
+- ABTB miss fetches sequentially.
+- EX/backend redirect is the final correction point.
 
-Both modes use one canonical Stage-1 result:
+The historical shadow-only, J/CALL-only, branch-wrapper, and registered frontend
+correction variants have been retired. Do not reintroduce old steering defines
+in RTL, testbench, functional scripts, or performance scripts.
+
+The frontend still instantiates the legacy `branch_predictor` in Stage 1. In
+this phase it remains only for legacy training metadata, RAS/JALR/RET residual
+plumbing, and update/statistics wiring. Its `bp_taken/bp_target` output must
+not decide the Stage-1 next PC. Removing the instance and the IF/ID or ID/EX
+`bp_*` metadata is a later phase.
+
+The canonical Stage-1 result is:
 
 ```text
 stage1_steer_valid
@@ -595,85 +604,47 @@ stage1_steer_target
 stage1_steer_next_pc
 ```
 
-`current_pc` consumes this result only on `bp0_fire`. Backend/EX and BP1
-redirects remain higher priority. The direct-mode program-order arbitration is:
+`current_pc` consumes this result only on `bp0_fire`. Backend/EX redirects
+remain highest priority and are the only frontend redirect source. There is no
+ID-stage or F0 legacy correction path back into frontend PC steering.
+
+Default program-order arbitration is:
 
 ```text
-first-instruction ABTB J/CALL
-else first-instruction legacy taken
-else bank1 ABTB J/CALL
-else legacy sequential
+first-instruction ABTB J/CALL taken
+else first-instruction ABTB branch + PHT taken
+else first-instruction ABTB-owned branch not-taken and younger bank1 CFI taken
+else bank1 ABTB J/CALL taken
+else bank1 ABTB branch + PHT taken
+else sequential PC
 ```
 
 When `current_pc[2] == 1`, bank1 is the first instruction and bank0 is
-ineligible. For the same instruction, ABTB direct target/type may replace the
-legacy result. A legacy taken prediction for the first instruction remains
-older than a bank1 ABTB prediction.
+ineligible. For the same instruction, ABTB/PHT ownership replaces the legacy
+direction decision. Legacy `bp_taken/bp_target` must not suppress a younger
+bank1 ABTB CFI and must not select the first-instruction next PC on an ABTB
+miss.
 
 At `bp0_fire`, F0 locks the complete canonical result and uses that snapshot as
-its sole prediction source. F0 does not rerun the BP0 ABTB/legacy arbitration.
-It retains only the younger bank1 direct alternate needed when BP1 changes an
-older legacy first-instruction branch from taken to not-taken.
+its sole prediction source. F0 does not rerun arbitration against legacy
+predictor outputs. ID/EX receives the canonical `pred_taken/pred_target`
+metadata directly; no ID-stage redirect can override it.
 
 The ABTB exposes a continuous per-bank raw tag-hit result separately from its
-accepted `hit` metadata. J/CALL canonical candidates use raw hit, CFI type, and
-stored target because direct direction is intrinsic to the type. `lookup_valid`
-continues to qualify accepted metadata, LRU touch, and counters. Consequently,
-the shadow PHT direction and `bp0_fire` acceptance control do not enter the
-direct J/CALL steering data cone.
+accepted `hit` metadata. J/CALL candidates use raw hit, CFI type, and stored
+target because direct direction is intrinsic to the type. Branch ownership uses
+raw hit, `TYPE_BRANCH`, and the parallel Stage-1 PHT direction. `lookup_valid`
+continues to qualify accepted metadata, LRU touch, and counters.
 
-BP1 may correct only the legacy first-instruction component:
+`stage1_branch_owned` means Stage 1 owns the branch direction decision, whether
+the PHT prediction is taken or not-taken.
 
-- legacy not-taken may become taken and override a younger bank1 ABTB direct;
-- legacy taken may become not-taken, exposing a retained bank1 ABTB direct or
-  the sequential next PC;
-- first-instruction ABTB J/CALL is authoritative and BP1 cannot replace it;
-- EX redirect remains higher priority than BP1 correction.
-
-`ABTB_BRANCH_REGISTERED_BP1_REDIRECT` is a timing experiment that removes the
-F0/IROM BP1 correction from the same-cycle `current_pc[D]` cone. It is kept
-behind a separate macro and does not change default, direct, or unregistered
-branch builds.
-
-```text
-edge x:
-BP0 accepts block P, captures its canonical snapshot, and advances current_pc
-using the Stage-1 result.
-
-cycle x:
-The synchronous IROM response for P is decoded in F0. BP1 may compute a
-different canonical result, but only drives the pending target input.
-
-edge x+1:
-P's corrected metadata enters FQ. The correction target and pending valid bit
-are registered. A younger wrong-path fetch may also have been accepted.
-
-cycle x+1:
-The registered pending bit becomes the frontend override source. The younger
-F0 request is invalidated and cannot enqueue.
-
-edge x+2:
-current_pc takes the registered correction target, the frontend epoch advances,
-and pending clears. The already-enqueued correcting block remains in FQ.
-```
-
-An EX/backend redirect clears pending and wins over the registered frontend
-override. The macro adds one cycle only to an actual legacy BP1 correction; it
-does not change ABTB branch ownership, EX confirmed training, FQ ordering, or
-the normal Stage-1 prediction latency.
-
-`ABTB_BRANCH_STEERING` is an explicit experimental build option layered on top
-of `ABTB_DIRECT_STEERING`. It does not change the default or J/CALL-only
-configuration. In that build a `TYPE_BRANCH` ABTB hit creates a per-slot
-`stage1_branch_owned` bit independent of `pred_source_abtb`.
-
-- `stage1_branch_owned` means Stage 1 owns the branch direction decision,
-  whether the PHT prediction is taken or not-taken.
 - If the owned branch is predicted taken, the ABTB target steers fetch.
 - If the owned branch is predicted not-taken, the first instruction remains
   owned by Stage 1, and program order continues to a younger bank1 CFI if it is
   eligible or otherwise to the sequential PC.
-- Legacy prediction and BP1 correction must not override the same owned branch.
+- Legacy prediction metadata must not override the same owned branch.
+- Legacy prediction metadata must not override any Stage-1 steering decision.
 - `pred_source_abtb` remains a taken-source marker for the selected next PC; it
   must not be used as an ownership proxy.
 - `stage1_abtb_owned_count` counts canonical fetch blocks with an ABTB-owned or
@@ -683,16 +654,17 @@ configuration. In that build a `TYPE_BRANCH` ABTB hit creates a per-slot
 Final `pred_taken`, `pred_target`, and `pred_source_abtb` are bound to the
 selected physical instruction:
 
-- bank0/first-slot direct taken binds to slot0 and kills slot1;
-- bank1 direct taken from an aligned block binds to slot1;
+- bank0/first-slot taken ABTB result binds to slot0 and kills slot1;
+- bank1 taken ABTB result from an aligned block binds to slot1;
 - a fetch beginning at `pc[2] == 1` binds bank1 to slot0;
-- legacy fallback retains its existing metadata semantics.
+- sequential fallback binds not-taken metadata to the first physical slot and
+  does not consume legacy `bp_taken/bp_target`.
 
 ABTB update continues to use prediction-time `hit/way` metadata and never
 performs an update-side tag/payload reread. Stale way metadata may overwrite a
 predictor entry and affects performance only.
 
-The Stage-1 direction predictor is currently shadow-only:
+The Stage-1 direction predictor is now in the default steering path:
 
 - both PHT query ports and both ABTB banks run in parallel;
 - PHT index and counter snapshot are captured with the accepted fetch block and
@@ -702,10 +674,6 @@ The Stage-1 direction predictor is currently shadow-only:
 - the committed GHR shifts at the same confirmed EX edge;
 - redirect does not restore GHR, and there is no speculative GHR update;
 - there is no PHT write-to-read bypass;
-- PHT direction feeds the ABTB branch candidate calculation. In default and
-  `ABTB_DIRECT_STEERING` builds, `TYPE_BRANCH` is filtered out of canonical
-  steering and remains shadow-only. In `ABTB_BRANCH_STEERING` builds, ABTB
-  branch hits may own direction as described above.
 - PHT training uses the prediction-time counter snapshot. If multiple
   in-flight branches alias to the same PHT row, later confirmed updates can be
   based on an older snapshot and lose precision. This is a prediction-quality
@@ -714,6 +682,10 @@ The Stage-1 direction predictor is currently shadow-only:
   not-taken. Runtime `rst_n` resets GHR but does not scrub all PHT rows; a bulk
   reset inferred 512 flip-flops and was rejected because it destroyed LUTRAM
   inference.
+
+The retired registered frontend correction experiment is no longer a supported
+configuration. If a future frontend correction experiment is needed, introduce a
+new name, new tests, and new documentation instead of reviving the retired path.
 
 The FTQ pair eligibility path has been timing-refactored without changing the
 pipeline boundary:
@@ -728,85 +700,22 @@ pipeline boundary:
 - `fq_mem.pc -> fq_pair_ok_reg` no longer has a reportable post-route path in
   the pair-optimized Vivado reports.
 
-The accepted 2026-06-14 post-route comparison at the existing 5 ns clock is:
+Current verification expectation:
 
-- frozen pre-steering baseline: WNS `+0.103 ns`;
-- current default shadow production: WNS `+0.008 ns`;
-- `ABTB_DIRECT_STEERING` production: WNS `+0.008 ns`.
-- direct J/CALL plus shadow PHT/GHR: WNS `-0.432 ns`, TNS `-231.357 ns`.
-- `ABTB_BRANCH_STEERING` production: WNS `-2.085 ns`, TNS `-2851.934 ns`,
-  Slice LUT `13312`, LUTRAM `386`, FF `8091`, BRAM tile `72.5`, DSP `4`.
-  The worst path is IROM RAMB18 to `frontend_ftq.current_pc_reg[7]`, with
-  `7.099 ns` data delay and 12 logic levels. ABTB RAM to F0 steering metadata
-  is `-0.398 ns`; PHT direction/GHR to F0 steering is `-1.110 ns`; EX PHT
-  metadata to PHT write remains met at `+2.504 ns`; GHR update remains met at
-  `+0.674 ns`.
-- registered-BP1 branch steering: WNS `-0.677 ns`, TNS `-115.199 ns`,
-  Slice LUT `13364`, LUTRAM `386`, FF `8546`, BRAM tile `72.5`, DSP `4`.
-  The previous IROM-to-`current_pc[D]` path is no longer reportable. The new
-  worst path is IROM RAMB36 to `bp1_redirect_target_r[11]/CE`, with `5.448 ns`
-  data delay and 9 logic levels. IROM to the registered override data input is
-  `-0.216 ns`; registered override to `current_pc[D]` is met at `+1.160 ns`.
-  IROM to `fq_pair_ok` remains a separate `-0.415 ns` path. The experiment
-  therefore removes the hard same-cycle current-PC correction path and reduces
-  WNS violation by `1.408 ns` and TNS magnitude by `2736.735 ns`, but it still
-  does not meet the 5 ns whole-chip constraint.
+- VCS ABTB standalone.
+- VCS Stage-1 PHT/GHR standalone.
+- VCS ABTB integration.
+- VCS FTQ pair-policy directed test.
+- VCS canonical steering directed test, 7 default Stage-3 cases.
+- VCS ABTB/PHT branch steering directed test, default Stage-3 cases.
+- VCS default CPU functional regression through `functional/run_all.sh`.
 
-These branch-steering timing numbers are historical experimental measurements,
-not default-build timing claims. Reproduce future measurements through the
-repository's canonical Vivado project rather than a separately maintained
-whole-chip input flow.
-
-For the PHT/GHR build, the whole-chip worst path is IROM-to-`fq_pair_ok`,
-`5.407 ns`, 5 logic levels. ABTB LUTRAM-to-F0 canonical metadata has
-`+0.192 ns` slack and `4.695 ns` data delay. The PHT/GHR-to-F0 metadata path has
-`+0.776 ns` slack; EX metadata-to-PHT write has `+2.787 ns`; confirmed
-branch-to-GHR update has `+1.402 ns`. Vivado reports no path from PHT direction
-state to F0 canonical steering after the raw-hit/type decoupling.
-
-The branch-steering experiment does not meet the 5 ns whole-chip constraint.
-The failure now includes the full IROM-to-current-PC/F0-steering cone through
-ABTB/PHT branch ownership. Conditional branch steering is therefore kept behind
-the `ABTB_BRANCH_STEERING` macro and is not enabled by default.
-
-Current verification status:
-
-- VCS ABTB standalone: PASS.
-- VCS Stage-1 PHT/GHR standalone: PASS, 9 cases.
-- VCS ABTB shadow integration: PASS.
-- VCS FTQ pair-policy directed test: PASS.
-- VCS canonical steering directed test: PASS, 4 cases in direct mode and
-  7 cases with either unregistered or registered `ABTB_BRANCH_STEERING`.
-- VCS ABTB direct/branch steering directed test: PASS, 28 direct-mode cases
-  and 29 cases in both branch modes.
-- VCS direct-mode CPU functional regression: 81/81 PASS.
-- VCS `ABTB_BRANCH_STEERING` CPU functional regression: 81/81 PASS.
-- VCS registered-BP1 branch CPU functional regression: 81/81 PASS.
-
-The direct `bp_stress` observation run recorded 612 confirmed conditional
-branches, 798 ABTB branch hits, 517 PHT taken and 281 PHT not-taken
-predictions, with 424 correct and 188 wrong directions. Bank lookup counts were
-377 for bank0 and 421 for bank1.
-
-On the 19-program `run_perf.sh --set branch_diag` short workload, the
-2026-06-14 comparison was:
-
-- legacy: cycles `21732`, IPC `0.5103`, mispredicts `2520`,
-  J/CALL redirects `1187`, frontend redirects `2416`;
-- `ABTB_DIRECT_STEERING`: cycles `19668`, IPC `0.5639`, mispredicts `1948`,
-  J/CALL redirects `489`, frontend redirects `1977`, ABTB selections `1426`;
-- `ABTB_BRANCH_STEERING`: cycles `15273`, IPC `0.7261`, mispredicts `847`,
-  J/CALL redirects `207`, frontend redirects `772`, Stage-1 owned selections
-  `5465`, owned not-taken branch events `210`.
-- registered-BP1 branch steering: the same `15273` cycles, IPC `0.7261`,
-  mispredicts `847`, and frontend redirects `772`.
-
-All four configurations passed 19/19 programs. The branch and registered
-branch results are identical because this workload recorded zero BP1
-applicable/override/redirect events once Stage-1 branch ownership was active.
-The canonical directed test, not this workload, proves the one-cycle registered
-correction behavior. Therefore the equal totals do not imply zero cost for a
-program that exercises legacy BP1 correction.
+On the 19-program `run_perf.sh --set branch_diag` short workload, the latest
+pre-cleanup branch-steering observation was cycles `15273`, IPC `0.7261`,
+mispredicts `847`, frontend redirects `772`, Stage-1 owned selections `5465`,
+and owned not-taken branch events `210`. Stage 3 renames sequential fallback
+accounting to `stage1_sequential`; `stage1_abtb_owned_count` remains a
+canonical block-level count, not a per-slot CFI count.
 
 ## Required Performance Counters
 
@@ -820,8 +729,8 @@ Add counters sufficient to answer:
 - bank0 masked because `predict_pc[2] == 1`;
 - PHT prediction count and direction misprediction count per bank;
 - Stage-1 ABTB-owned prediction count and ABTB-owned not-taken branch count.
-  `legacy_fallback_count` must exclude ABTB-owned not-taken branches; it only
-  counts prediction blocks whose canonical source genuinely remains legacy.
+- Stage-1 sequential fallback count; it must exclude ABTB-owned not-taken
+  branches and must not imply legacy `bp_taken/bp_target` selected the next PC.
 - target misprediction count;
 - ABTB type mismatch count;
 - uRAS RET prediction count, valid count, invalid count, and target miss count;
@@ -870,7 +779,7 @@ Do not treat these as already decided:
 - speculative GHR/uRAS update and snapshot recovery;
 - partial FTQ rollback instead of full speculative flush;
 - indirect JALR target predictor;
-- removal of the registered redirect stage;
+- future frontend correction experiments;
 - larger ABTB capacity or additional ways.
 
 Resolve these from correctness needs, profiling, utilization, placement, and
