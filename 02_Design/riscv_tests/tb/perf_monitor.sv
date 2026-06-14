@@ -119,6 +119,7 @@ module perf_monitor (
     longint unsigned cnt_branch_flush;    // branch misprediction (EX)
     longint unsigned cnt_nlp_redirect;    // NLP L1 redirect (ID)
     longint unsigned cnt_total_branch;    // total branch instructions reaching EX
+    longint unsigned cnt_jcall_redirect;  // JAL/JALR redirect from either slot
 
     // -- Branch predictor breakdown --
     longint unsigned cnt_bp_s0_ctrl;
@@ -756,6 +757,7 @@ module perf_monitor (
             cnt_branch_flush   <= 0;
             cnt_nlp_redirect   <= 0;
             cnt_total_branch   <= 0;
+            cnt_jcall_redirect <= 0;
             cnt_bp_s0_ctrl <= 0;
             cnt_bp_s0_branch <= 0;
             cnt_bp_s0_jal <= 0;
@@ -1015,6 +1017,9 @@ module perf_monitor (
             if (id_bp_redirect_w)            cnt_nlp_redirect  <= cnt_nlp_redirect + 1;
             if (ex_valid & (ex_is_branch | ex_is_jal | ex_is_jalr))
                 cnt_total_branch <= cnt_total_branch + 1;
+            if ((branch_flush_w & ex_valid & (ex_is_jal | ex_is_jalr))
+                | (ex_s1_branch_redirect_w & ex_s1_valid & ex_s1_is_jal_w))
+                cnt_jcall_redirect <= cnt_jcall_redirect + 1;
 
             if (bp_s0_ctrl_event) begin
                 cnt_bp_s0_ctrl <= cnt_bp_s0_ctrl + 1;
@@ -1353,6 +1358,7 @@ module perf_monitor (
             $display("[PERF]  Total branch:  %0d", cnt_total_branch);
             $display("[PERF]  Mispredicts:   %0d  (%0.1f%%)", cnt_branch_flush, mispredict_rate);
             $display("[PERF]  NLP redirects: %0d", cnt_nlp_redirect);
+            $display("[PERF]  J/CALL redirects: %0d", cnt_jcall_redirect);
             $display("[PERF]");
             $display("[PERF]  --- Branch Predictor Detailed ---");
             $display("[PERF]  BP resolved:   s0=%0d branch=%0d jal=%0d jalr=%0d s1=%0d s1_branch=%0d s1_jal=%0d",
@@ -1402,6 +1408,26 @@ module perf_monitor (
             $display("[PERF]  FE occupancy:  fq_avg=%0.2f ftq_avg=%0.2f fq_sum=%0d ftq_sum=%0d",
                      fe_fq_avg, fe_ftq_avg,
                      cnt_fe_fq_occupancy_sum, cnt_fe_ftq_occupancy_sum);
+            $display("[PERF]  ABTB direct:   lookup=%0d steer=%0d bank0=%0d bank1=%0d correct=%0d redirect=%0d target_miss=%0d legacy_fallback=%0d stage1_owned=%0d owned_nt=%0d",
+                     tb_riscv_tests.u_cpu.abtb_direct_lookup_count,
+                     tb_riscv_tests.u_cpu.abtb_direct_steer_count,
+                     tb_riscv_tests.u_cpu.abtb_direct_bank0_count,
+                     tb_riscv_tests.u_cpu.abtb_direct_bank1_count,
+                     tb_riscv_tests.u_cpu.abtb_direct_correct_count,
+                     tb_riscv_tests.u_cpu.abtb_direct_redirect_count,
+                     tb_riscv_tests.u_cpu.abtb_direct_target_miss_count,
+                     tb_riscv_tests.u_cpu.legacy_fallback_count,
+                     tb_riscv_tests.u_cpu.stage1_abtb_owned_count,
+                     tb_riscv_tests.u_cpu.stage1_branch_owned_nt_count);
+            $display("[PERF]  Stage1 PHT:    confirmed=%0d abtb_branch_hit=%0d pred_taken=%0d pred_nt=%0d correct=%0d wrong=%0d bank0=%0d bank1=%0d",
+                     tb_riscv_tests.u_cpu.stage1_confirmed_branch_count,
+                     tb_riscv_tests.u_cpu.stage1_abtb_branch_hit_count,
+                     tb_riscv_tests.u_cpu.stage1_pht_taken_count,
+                     tb_riscv_tests.u_cpu.stage1_pht_not_taken_count,
+                     tb_riscv_tests.u_cpu.stage1_pht_correct_count,
+                     tb_riscv_tests.u_cpu.stage1_pht_wrong_count,
+                     tb_riscv_tests.u_cpu.stage1_bank0_branch_lookup_count,
+                     tb_riscv_tests.u_cpu.stage1_bank1_branch_lookup_count);
             $display("[PERF]");
             $display("[PERF]  --- Fetch Mix / Dual-issue Loss (excl. held) ---");
             $display("[PERF]  Fetch valid:   %0d", cnt_fetch_valid);

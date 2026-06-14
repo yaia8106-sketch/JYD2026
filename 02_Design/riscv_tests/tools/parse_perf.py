@@ -70,6 +70,25 @@ SUMMARY_COLUMNS = [
     "mispredicts",
     "mispredict_rate_pct",
     "nlp_redirects",
+    "jcall_redirects",
+    "abtb_direct_lookup",
+    "abtb_direct_steer",
+    "abtb_direct_bank0",
+    "abtb_direct_bank1",
+    "abtb_direct_correct",
+    "abtb_direct_redirect",
+    "abtb_direct_target_miss",
+    "legacy_fallback",
+    "stage1_abtb_owned",
+    "stage1_branch_owned_nt",
+    "stage1_pht_confirmed",
+    "stage1_pht_abtb_branch_hit",
+    "stage1_pht_pred_taken",
+    "stage1_pht_pred_not_taken",
+    "stage1_pht_correct",
+    "stage1_pht_wrong",
+    "stage1_pht_bank0",
+    "stage1_pht_bank1",
     "bp_s0_resolved",
     "bp_s0_branch",
     "bp_s0_jal",
@@ -174,6 +193,25 @@ COMPARE_METRICS = [
     "mispredicts",
     "mispredict_rate_pct",
     "nlp_redirects",
+    "jcall_redirects",
+    "abtb_direct_lookup",
+    "abtb_direct_steer",
+    "abtb_direct_bank0",
+    "abtb_direct_bank1",
+    "abtb_direct_correct",
+    "abtb_direct_redirect",
+    "abtb_direct_target_miss",
+    "legacy_fallback",
+    "stage1_abtb_owned",
+    "stage1_branch_owned_nt",
+    "stage1_pht_confirmed",
+    "stage1_pht_abtb_branch_hit",
+    "stage1_pht_pred_taken",
+    "stage1_pht_pred_not_taken",
+    "stage1_pht_correct",
+    "stage1_pht_wrong",
+    "stage1_pht_bank0",
+    "stage1_pht_bank1",
     "bp_s0_mispredict",
     "bp_s0_dir_to_taken",
     "bp_s0_dir_to_fallthrough",
@@ -214,6 +252,7 @@ INT_PATTERNS = [
     ("total_branch", r"^Total branch:\s+(\d+)"),
     ("mispredicts", r"^Mispredicts:\s+(\d+)"),
     ("nlp_redirects", r"^NLP redirects:\s+(\d+)"),
+    ("jcall_redirects", r"^J/CALL redirects:\s+(\d+)"),
     ("fetch_valid", r"^Fetch valid:\s+(\d+)"),
     ("pc2_fetch", r"^PC\[2\]=1 fetch:\s+(\d+)"),
     ("raw_dep", r"^RAW dep:\s+(\d+)"),
@@ -516,6 +555,34 @@ def parse_perf_payload(payload: str, metrics: dict[str, Any]) -> None:
         metrics["fe_ftq_avg"] = float(match.group(2))
         metrics["fe_fq_sum"] = int(match.group(3))
         metrics["fe_ftq_sum"] = int(match.group(4))
+        return
+
+    if payload.startswith("ABTB direct:"):
+        values = parse_value_pairs(payload)
+        metrics["abtb_direct_lookup"] = values.get("lookup", 0)
+        metrics["abtb_direct_steer"] = values.get("steer", 0)
+        metrics["abtb_direct_bank0"] = values.get("bank0", 0)
+        metrics["abtb_direct_bank1"] = values.get("bank1", 0)
+        metrics["abtb_direct_correct"] = values.get("correct", 0)
+        metrics["abtb_direct_redirect"] = values.get("redirect", 0)
+        metrics["abtb_direct_target_miss"] = values.get("target_miss", 0)
+        metrics["legacy_fallback"] = values.get("legacy_fallback", 0)
+        metrics["stage1_abtb_owned"] = values.get("stage1_owned", 0)
+        metrics["stage1_branch_owned_nt"] = values.get("owned_nt", 0)
+        return
+
+    if payload.startswith("Stage1 PHT:"):
+        values = parse_value_pairs(payload)
+        metrics["stage1_pht_confirmed"] = values.get("confirmed", 0)
+        metrics["stage1_pht_abtb_branch_hit"] = values.get(
+            "abtb_branch_hit", 0
+        )
+        metrics["stage1_pht_pred_taken"] = values.get("pred_taken", 0)
+        metrics["stage1_pht_pred_not_taken"] = values.get("pred_nt", 0)
+        metrics["stage1_pht_correct"] = values.get("correct", 0)
+        metrics["stage1_pht_wrong"] = values.get("wrong", 0)
+        metrics["stage1_pht_bank0"] = values.get("bank0", 0)
+        metrics["stage1_pht_bank1"] = values.get("bank1", 0)
         return
 
 
