@@ -7,6 +7,14 @@
 // Branch Prediction: Tournament (BTB+GShare+Selector+RAS)
 // ============================================================
 
+`ifdef SYNTHESIS
+`ifdef ABTB_MEASUREMENT
+`define CPU_TOP_ABTB_OBSERVE
+`endif
+`else
+`define CPU_TOP_ABTB_OBSERVE
+`endif
+
 module cpu_top (
     input  logic        clk,
     input  logic        rst_n,
@@ -34,6 +42,11 @@ module cpu_top (
     input  logic [31:0] mmio_rdata,      // MEM stage: 读数据
     input  logic        timer_irq_pending
 );
+
+    localparam logic [1:0] ABTB_TYPE_JAL    = 2'b00;
+    localparam logic [1:0] ABTB_TYPE_CALL   = 2'b01;
+    localparam logic [1:0] ABTB_TYPE_BRANCH = 2'b10;
+    localparam logic [1:0] ABTB_TYPE_RET    = 2'b11;
 
     // ================================================================
     //  Internal wires
@@ -571,6 +584,123 @@ module cpu_top (
     wire [ 1:0] ex_s1_bp_pht_cnt;
     wire [ 1:0] ex_s1_bp_sel_cnt;
 
+    // ABTB lookup/training metadata. ABTB direct J/CALL steering is enabled
+    // only when ABTB_DIRECT_STEERING is defined; otherwise this remains shadow.
+    wire        abtb_lookup_accept;
+    wire        abtb_bank0_hit;
+    wire        abtb_bank0_lookup_hit;
+    wire        abtb_bank0_way;
+    wire [ 1:0] abtb_bank0_cfi_type;
+    wire [31:0] abtb_bank0_target;
+    wire        abtb_bank0_pred_taken;
+    wire [31:0] abtb_bank0_pred_target;
+    wire        abtb_bank1_hit;
+    wire        abtb_bank1_lookup_hit;
+    wire        abtb_bank1_way;
+    wire [ 1:0] abtb_bank1_cfi_type;
+    wire [31:0] abtb_bank1_target;
+    wire        abtb_bank1_pred_taken;
+    wire [31:0] abtb_bank1_pred_target;
+    wire        abtb_shadow_pred_taken;
+    wire        abtb_shadow_pred_bank;
+    wire [ 1:0] abtb_shadow_pred_cfi_type;
+    wire [31:0] abtb_shadow_pred_target;
+    wire [31:0] abtb_shadow_pred_next_pc;
+
+    wire        if_abtb_hit_out;
+    wire        if_abtb_way_out;
+    wire [ 1:0] if_abtb_cfi_type_out;
+    wire [31:0] if_abtb_target_out;
+    wire        if_abtb_pred_taken_out;
+    wire [31:0] if_abtb_pred_target_out;
+    wire        if_pred_source_abtb_out;
+    wire        if_stage1_branch_owned_out;
+    wire        if_s1_abtb_hit_out;
+    wire        if_s1_abtb_way_out;
+    wire [ 1:0] if_s1_abtb_cfi_type_out;
+    wire [31:0] if_s1_abtb_target_out;
+    wire        if_s1_abtb_pred_taken_out;
+    wire [31:0] if_s1_abtb_pred_target_out;
+    wire        if_s1_pred_source_abtb_out;
+    wire        if_s1_stage1_branch_owned_out;
+
+    wire        id_abtb_hit;
+    wire        id_abtb_way;
+    wire [ 1:0] id_abtb_cfi_type;
+    wire [31:0] id_abtb_target;
+    wire        id_abtb_pred_taken;
+    wire [31:0] id_abtb_pred_target;
+    wire        id_pred_source_abtb;
+    wire        id_stage1_branch_owned;
+    wire        id_s1_abtb_hit;
+    wire        id_s1_abtb_way;
+    wire [ 1:0] id_s1_abtb_cfi_type;
+    wire [31:0] id_s1_abtb_target;
+    wire        id_s1_abtb_pred_taken;
+    wire [31:0] id_s1_abtb_pred_target;
+    wire        id_s1_pred_source_abtb;
+    wire        id_s1_stage1_branch_owned;
+
+    wire        ex_abtb_hit;
+    wire        ex_abtb_way;
+    wire [ 1:0] ex_abtb_cfi_type;
+    wire [31:0] ex_abtb_target;
+    wire        ex_abtb_pred_taken;
+    wire [31:0] ex_abtb_pred_target;
+    wire        ex_pred_source_abtb;
+    wire        ex_stage1_branch_owned;
+    wire        ex_abtb_update_qualified;
+    wire [ 1:0] ex_abtb_update_cfi_type;
+    wire        ex_s1_abtb_hit;
+    wire        ex_s1_abtb_way;
+    wire [ 1:0] ex_s1_abtb_cfi_type;
+    wire [31:0] ex_s1_abtb_target;
+    wire        ex_s1_abtb_pred_taken;
+    wire [31:0] ex_s1_abtb_pred_target;
+    wire        ex_s1_pred_source_abtb;
+    wire        ex_s1_stage1_branch_owned;
+    wire        ex_s1_abtb_update_qualified;
+    wire [ 1:0] ex_s1_abtb_update_cfi_type;
+    wire [ 7:0] stage1_bank0_pht_index;
+    wire [ 1:0] stage1_bank0_pht_counter;
+    wire        stage1_bank0_pht_taken;
+    wire [ 7:0] stage1_bank1_pht_index;
+    wire [ 1:0] stage1_bank1_pht_counter;
+    wire        stage1_bank1_pht_taken;
+    wire [ 7:0] stage1_lookup_ghr;
+    wire [ 7:0] stage1_committed_ghr;
+    wire [ 7:0] if_stage1_pht_index;
+    wire [ 1:0] if_stage1_pht_counter;
+    wire [ 7:0] if_s1_stage1_pht_index;
+    wire [ 1:0] if_s1_stage1_pht_counter;
+    wire [ 7:0] id_stage1_pht_index;
+    wire [ 1:0] id_stage1_pht_counter;
+    wire [ 7:0] id_s1_stage1_pht_index;
+    wire [ 1:0] id_s1_stage1_pht_counter;
+    wire [ 7:0] ex_stage1_pht_index;
+    wire [ 1:0] ex_stage1_pht_counter;
+    wire [ 7:0] ex_s1_stage1_pht_index;
+    wire [ 1:0] ex_s1_stage1_pht_counter;
+    wire        stage1_direction_update_valid;
+    wire [ 7:0] stage1_direction_update_index;
+    wire [ 1:0] stage1_direction_update_counter;
+
+    wire        abtb_update_valid;
+    wire        abtb_update_hit;
+    wire        abtb_update_way;
+    wire [31:0] abtb_update_pc;
+    wire [ 1:0] abtb_update_cfi_type;
+    wire [31:0] abtb_update_target;
+    wire        stage1_steer_valid;
+    wire        stage1_steer_source_abtb;
+    wire        stage1_steer_branch_owned;
+    wire        stage1_steer_branch_owned_nt;
+    wire        stage1_steer_taken;
+    wire        stage1_steer_bank;
+    wire [ 1:0] stage1_steer_cfi_type;
+    wire [31:0] stage1_steer_target;
+    wire [31:0] stage1_steer_next_pc;
+
     wire        s0_bp_update_valid_raw;
     wire        s1_bp_update_valid_raw;
     wire        bp_train_from_s1;
@@ -633,6 +763,7 @@ module cpu_top (
         .id_bp_sel_cnt     (id_bp_sel_cnt),
         .id_bp_target      (id_bp_target),
         .id_bp_verified    (id_bp_verified),
+        .id_stage1_branch_owned(id_stage1_branch_owned),
         .id_rs1_addr       (id_rs1_addr),
         .id_rs2_addr       (id_rs2_addr),
         .id_rd_addr        (id_rd_addr),
@@ -657,16 +788,57 @@ module cpu_top (
         .id_redirect_target(id_redirect_target)
     );
 
+    // Decode-time ABTB classification. Carry the confirmed type to EX so RET
+    // recognition uses the full JALR immediate instead of guessing from the
+    // reduced EX control signals.
+    wire id_rd_is_link = (id_rd_addr == 5'd1) | (id_rd_addr == 5'd5);
+    wire id_rs1_is_link = (id_rs1_addr == 5'd1) | (id_rs1_addr == 5'd5);
+    wire id_abtb_is_call = (dec_is_jal | dec_is_jalr) & id_rd_is_link;
+    wire id_abtb_is_ret = dec_is_jalr
+                        & (id_rd_addr == 5'd0)
+                        & id_rs1_is_link
+                        & (id_inst[31:20] == 12'd0);
+    wire id_abtb_update_qualified_w = dec_is_branch
+                                    | dec_is_jal
+                                    | id_abtb_is_call
+                                    | id_abtb_is_ret;
+    wire [1:0] id_abtb_update_cfi_type_w =
+        id_abtb_is_ret  ? ABTB_TYPE_RET :
+        id_abtb_is_call ? ABTB_TYPE_CALL :
+        dec_is_branch   ? ABTB_TYPE_BRANCH :
+                          ABTB_TYPE_JAL;
+
+    wire id_s1_rd_is_link = (id_s1_rd_addr == 5'd1)
+                          | (id_s1_rd_addr == 5'd5);
+    wire id_s1_rs1_is_link = (id_s1_rs1_addr == 5'd1)
+                           | (id_s1_rs1_addr == 5'd5);
+    wire id_s1_abtb_is_call = (dec1_is_jal | dec1_is_jalr)
+                            & id_s1_rd_is_link;
+    wire id_s1_abtb_is_ret = dec1_is_jalr
+                           & (id_s1_rd_addr == 5'd0)
+                           & id_s1_rs1_is_link
+                           & (id_inst1[31:20] == 12'd0);
+    wire id_s1_abtb_update_qualified_w = dec1_is_branch
+                                       | dec1_is_jal
+                                       | id_s1_abtb_is_call
+                                       | id_s1_abtb_is_ret;
+    wire [1:0] id_s1_abtb_update_cfi_type_w =
+        id_s1_abtb_is_ret  ? ABTB_TYPE_RET :
+        id_s1_abtb_is_call ? ABTB_TYPE_CALL :
+        dec1_is_branch     ? ABTB_TYPE_BRANCH :
+                             ABTB_TYPE_JAL;
+
     // ==================== Branch Predictor ====================
 
     assign s0_bp_update_valid_raw = ex_valid
                                   & (ex_is_branch | ex_is_jal | ex_is_jalr);
     assign s1_bp_update_valid_raw = ex_s1_valid
-                                  & (ex_s1_is_branch | ex_s1_is_jal)
-                                  & ex_ready_go_w & mem_allowin;
+                                  & (ex_s1_is_branch | ex_s1_is_jal);
     assign bp_train_from_s1 = ~s0_bp_update_valid_raw
                             & s1_bp_update_valid_raw;
     assign bp_train_valid = (s0_bp_update_valid_raw | s1_bp_update_valid_raw)
+                          & ex_ready_go_w
+                          & mem_allowin
                           & ~mem_branch_flush;
 
     assign bp_train_pc            = bp_train_from_s1 ? ex_s1_pc
@@ -702,6 +874,39 @@ module cpu_top (
                                                      : ex_bp_pht_cnt;
     assign bp_train_sel_cnt       = bp_train_from_s1 ? ex_s1_bp_sel_cnt
                                                      : ex_bp_sel_cnt;
+
+    // Shadow ABTB reuses the legacy predictor's EX slot arbitration, unified
+    // pipeline-fire qualification, and wrong-path suppression. A not-taken
+    // branch does not write ABTB.
+    wire abtb_train_update_qualified =
+        bp_train_from_s1 ? ex_s1_abtb_update_qualified
+                         : ex_abtb_update_qualified;
+    wire [1:0] abtb_train_update_cfi_type =
+        bp_train_from_s1 ? ex_s1_abtb_update_cfi_type
+                         : ex_abtb_update_cfi_type;
+    wire abtb_train_is_branch =
+        abtb_train_update_cfi_type == ABTB_TYPE_BRANCH;
+    wire abtb_train_write_qualified =
+        abtb_train_update_qualified
+        & (!abtb_train_is_branch | bp_train_actual_taken);
+
+    assign abtb_update_valid = bp_train_valid
+                             & abtb_train_write_qualified;
+    assign abtb_update_hit = bp_train_from_s1 ? ex_s1_abtb_hit
+                                               : ex_abtb_hit;
+    assign abtb_update_way = bp_train_from_s1 ? ex_s1_abtb_way
+                                               : ex_abtb_way;
+    assign abtb_update_pc = bp_train_pc;
+    assign abtb_update_cfi_type = abtb_train_update_cfi_type;
+    assign abtb_update_target = bp_train_actual_target;
+    assign stage1_direction_update_valid =
+        bp_train_valid && bp_train_is_branch;
+    assign stage1_direction_update_index =
+        bp_train_from_s1 ? ex_s1_stage1_pht_index
+                         : ex_stage1_pht_index;
+    assign stage1_direction_update_counter =
+        bp_train_from_s1 ? ex_s1_stage1_pht_counter
+                         : ex_stage1_pht_counter;
 
 `ifndef SYNTHESIS
 	    always @(posedge clk) begin
@@ -804,6 +1009,337 @@ module cpu_top (
         .ex_sel_cnt      (bp_train_sel_cnt)
     );
 
+    frontend_stage1_direction u_frontend_stage1_direction (
+        .clk                 (clk),
+        .rst_n               (rst_n),
+        .predict_pc          (pc),
+        .lookup_ghr          (stage1_lookup_ghr),
+        .bank0_index         (stage1_bank0_pht_index),
+        .bank0_counter       (stage1_bank0_pht_counter),
+        .bank0_taken         (stage1_bank0_pht_taken),
+        .bank1_index         (stage1_bank1_pht_index),
+        .bank1_counter       (stage1_bank1_pht_counter),
+        .bank1_taken         (stage1_bank1_pht_taken),
+        .update_valid        (stage1_direction_update_valid),
+        .update_index        (stage1_direction_update_index),
+        .update_counter      (stage1_direction_update_counter),
+        .update_actual_taken (bp_train_actual_taken),
+        .committed_ghr       (stage1_committed_ghr)
+    );
+
+`ifdef ABTB_MEASUREMENT
+    (* dont_touch = "true" *)
+`endif
+    frontend_abtb u_frontend_abtb (
+        .clk                  (clk),
+        .rst_n                (rst_n),
+        .lookup_valid         (abtb_lookup_accept),
+        .predict_pc           (pc),
+        .bank0_branch_taken   (stage1_bank0_pht_taken),
+        .bank1_branch_taken   (stage1_bank1_pht_taken),
+        .bank0_ret_valid      (1'b0),
+        .bank0_ret_target     (32'd0),
+        .bank1_ret_valid      (1'b0),
+        .bank1_ret_target     (32'd0),
+        .bank0_eligible       (),
+        .bank0_lookup_hit     (abtb_bank0_lookup_hit),
+        .bank0_hit            (abtb_bank0_hit),
+        .bank0_way            (abtb_bank0_way),
+        .bank0_cfi_type       (abtb_bank0_cfi_type),
+        .bank0_target         (abtb_bank0_target),
+        .bank0_pred_taken     (abtb_bank0_pred_taken),
+        .bank0_pred_target    (abtb_bank0_pred_target),
+        .bank1_eligible       (),
+        .bank1_lookup_hit     (abtb_bank1_lookup_hit),
+        .bank1_hit            (abtb_bank1_hit),
+        .bank1_way            (abtb_bank1_way),
+        .bank1_cfi_type       (abtb_bank1_cfi_type),
+        .bank1_target         (abtb_bank1_target),
+        .bank1_pred_taken     (abtb_bank1_pred_taken),
+        .bank1_pred_target    (abtb_bank1_pred_target),
+        .pred_taken           (abtb_shadow_pred_taken),
+        .pred_bank            (abtb_shadow_pred_bank),
+        .pred_cfi_type        (abtb_shadow_pred_cfi_type),
+        .pred_target          (abtb_shadow_pred_target),
+        .pred_next_pc         (abtb_shadow_pred_next_pc),
+        .update_valid         (abtb_update_valid),
+        .update_hit           (abtb_update_hit),
+        .update_way           (abtb_update_way),
+        .update_pc            (abtb_update_pc),
+        .update_cfi_type      (abtb_update_cfi_type),
+        .update_target        (abtb_update_target)
+    );
+
+`ifdef CPU_TOP_ABTB_OBSERVE
+    // Shadow observability. In production synthesis this block is removed; in
+    // simulation and ABTB measurement builds these counters do not feed
+    // prediction, queue ready/valid, or redirect control.
+    logic [31:0] abtb_lookup_block_count;
+    logic [31:0] abtb_bank0_hit_count;
+    logic [31:0] abtb_bank1_hit_count;
+    logic [31:0] abtb_ex_update_count;
+    logic [31:0] abtb_allocation_count;
+    logic [31:0] abtb_hit_update_count;
+    logic [31:0] abtb_direct_lookup_count;
+    logic [31:0] abtb_direct_steer_count;
+    logic [31:0] abtb_direct_bank0_count;
+    logic [31:0] abtb_direct_bank1_count;
+    logic [31:0] abtb_direct_correct_count;
+    logic [31:0] abtb_direct_redirect_count;
+    logic [31:0] abtb_direct_target_miss_count;
+    logic [31:0] legacy_fallback_count;
+    logic [31:0] stage1_abtb_owned_count;
+    logic [31:0] stage1_branch_owned_nt_count;
+    logic [31:0] stage1_confirmed_branch_count;
+    logic [31:0] stage1_abtb_branch_hit_count;
+    logic [31:0] stage1_pht_taken_count;
+    logic [31:0] stage1_pht_not_taken_count;
+    logic [31:0] stage1_pht_correct_count;
+    logic [31:0] stage1_pht_wrong_count;
+    logic [31:0] stage1_bank0_branch_lookup_count;
+    logic [31:0] stage1_bank1_branch_lookup_count;
+
+    wire abtb_direct_s0_resolve = ex_valid
+                                && ex_pred_source_abtb
+                                && ex_ready_go_w
+                                && mem_allowin
+                                && !mem_branch_flush;
+    wire abtb_direct_s1_resolve = ex_s1_valid
+                                && ex_s1_pred_source_abtb
+                                && ex_ready_go_w
+                                && mem_allowin
+                                && !mem_branch_flush
+                                && !s0_bp_update_valid_raw;
+    wire abtb_direct_s0_target_miss =
+        abtb_direct_s0_resolve && actual_taken && ex_bp_taken
+        && (actual_target != ex_bp_target);
+    wire abtb_direct_s1_target_miss =
+        abtb_direct_s1_resolve && ex_s1_actual_taken && ex_s1_bp_taken
+        && (ex_s1_branch_target != ex_s1_bp_target);
+    wire stage1_bank0_branch_lookup_event =
+        abtb_lookup_accept
+        && abtb_bank0_hit
+        && (abtb_bank0_cfi_type == ABTB_TYPE_BRANCH);
+    wire stage1_bank1_branch_lookup_event =
+        abtb_lookup_accept
+        && abtb_bank1_hit
+        && (abtb_bank1_cfi_type == ABTB_TYPE_BRANCH);
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            abtb_lookup_block_count <= 32'd0;
+            abtb_bank0_hit_count <= 32'd0;
+            abtb_bank1_hit_count <= 32'd0;
+            abtb_ex_update_count <= 32'd0;
+            abtb_allocation_count <= 32'd0;
+            abtb_hit_update_count <= 32'd0;
+            abtb_direct_lookup_count <= 32'd0;
+            abtb_direct_steer_count <= 32'd0;
+            abtb_direct_bank0_count <= 32'd0;
+            abtb_direct_bank1_count <= 32'd0;
+            abtb_direct_correct_count <= 32'd0;
+            abtb_direct_redirect_count <= 32'd0;
+            abtb_direct_target_miss_count <= 32'd0;
+            legacy_fallback_count <= 32'd0;
+            stage1_abtb_owned_count <= 32'd0;
+            stage1_branch_owned_nt_count <= 32'd0;
+            stage1_confirmed_branch_count <= 32'd0;
+            stage1_abtb_branch_hit_count <= 32'd0;
+            stage1_pht_taken_count <= 32'd0;
+            stage1_pht_not_taken_count <= 32'd0;
+            stage1_pht_correct_count <= 32'd0;
+            stage1_pht_wrong_count <= 32'd0;
+            stage1_bank0_branch_lookup_count <= 32'd0;
+            stage1_bank1_branch_lookup_count <= 32'd0;
+        end else begin
+            if (abtb_lookup_accept)
+                abtb_lookup_block_count <= abtb_lookup_block_count + 32'd1;
+            if (abtb_lookup_accept && abtb_bank0_hit)
+                abtb_bank0_hit_count <= abtb_bank0_hit_count + 32'd1;
+            if (abtb_lookup_accept && abtb_bank1_hit)
+                abtb_bank1_hit_count <= abtb_bank1_hit_count + 32'd1;
+            if (abtb_update_valid)
+                abtb_ex_update_count <= abtb_ex_update_count + 32'd1;
+            if (abtb_update_valid && !abtb_update_hit)
+                abtb_allocation_count <= abtb_allocation_count + 32'd1;
+            if (abtb_update_valid && abtb_update_hit)
+                abtb_hit_update_count <= abtb_hit_update_count + 32'd1;
+            if (stage1_steer_valid)
+                abtb_direct_lookup_count <= abtb_direct_lookup_count + 32'd1;
+            if (stage1_steer_valid && stage1_steer_source_abtb) begin
+                abtb_direct_steer_count <= abtb_direct_steer_count + 32'd1;
+                if (stage1_steer_bank)
+                    abtb_direct_bank1_count <= abtb_direct_bank1_count + 32'd1;
+                else
+                    abtb_direct_bank0_count <= abtb_direct_bank0_count + 32'd1;
+            end
+            if (stage1_steer_valid
+                && (stage1_steer_source_abtb || stage1_steer_branch_owned))
+                stage1_abtb_owned_count <= stage1_abtb_owned_count + 32'd1;
+            if (stage1_steer_valid && stage1_steer_branch_owned_nt)
+                stage1_branch_owned_nt_count <=
+                    stage1_branch_owned_nt_count + 32'd1;
+            if (stage1_steer_valid
+                && !stage1_steer_source_abtb
+                && !stage1_steer_branch_owned)
+                legacy_fallback_count <= legacy_fallback_count + 32'd1;
+            if (stage1_bank0_branch_lookup_event)
+                stage1_bank0_branch_lookup_count <=
+                    stage1_bank0_branch_lookup_count + 32'd1;
+            if (stage1_bank1_branch_lookup_event)
+                stage1_bank1_branch_lookup_count <=
+                    stage1_bank1_branch_lookup_count + 32'd1;
+            if (stage1_bank0_branch_lookup_event
+                || stage1_bank1_branch_lookup_event)
+                stage1_abtb_branch_hit_count <=
+                    stage1_abtb_branch_hit_count
+                    + {31'd0, stage1_bank0_branch_lookup_event}
+                    + {31'd0, stage1_bank1_branch_lookup_event};
+            if ((stage1_bank0_branch_lookup_event
+                 && stage1_bank0_pht_taken)
+                || (stage1_bank1_branch_lookup_event
+                    && stage1_bank1_pht_taken))
+                stage1_pht_taken_count <=
+                    stage1_pht_taken_count
+                    + {31'd0, stage1_bank0_branch_lookup_event
+                               && stage1_bank0_pht_taken}
+                    + {31'd0, stage1_bank1_branch_lookup_event
+                               && stage1_bank1_pht_taken};
+            if ((stage1_bank0_branch_lookup_event
+                 && !stage1_bank0_pht_taken)
+                || (stage1_bank1_branch_lookup_event
+                    && !stage1_bank1_pht_taken))
+                stage1_pht_not_taken_count <=
+                    stage1_pht_not_taken_count
+                    + {31'd0, stage1_bank0_branch_lookup_event
+                               && !stage1_bank0_pht_taken}
+                    + {31'd0, stage1_bank1_branch_lookup_event
+                               && !stage1_bank1_pht_taken};
+            if (stage1_direction_update_valid) begin
+                stage1_confirmed_branch_count <=
+                    stage1_confirmed_branch_count + 32'd1;
+                if (stage1_direction_update_counter[1]
+                    == bp_train_actual_taken)
+                    stage1_pht_correct_count <=
+                        stage1_pht_correct_count + 32'd1;
+                else
+                    stage1_pht_wrong_count <=
+                        stage1_pht_wrong_count + 32'd1;
+            end
+            if (abtb_direct_s0_resolve) begin
+                if (branch_flush)
+                    abtb_direct_redirect_count <=
+                        abtb_direct_redirect_count + 32'd1;
+                else
+                    abtb_direct_correct_count <=
+                        abtb_direct_correct_count + 32'd1;
+            end else if (abtb_direct_s1_resolve) begin
+                if (ex_s1_branch_redirect)
+                    abtb_direct_redirect_count <=
+                        abtb_direct_redirect_count + 32'd1;
+                else
+                    abtb_direct_correct_count <=
+                        abtb_direct_correct_count + 32'd1;
+            end
+            if (abtb_direct_s0_target_miss || abtb_direct_s1_target_miss)
+                abtb_direct_target_miss_count <=
+                    abtb_direct_target_miss_count + 32'd1;
+        end
+    end
+
+`ifdef ABTB_MEASUREMENT
+    // Measurement-only sink. It keeps the shadow ABTB, F0 capture, FQ sidecar,
+    // IF/ID, ID/EX, and EX update signals observable in the integrated timing
+    // build without feeding any production PC, redirect, ready/valid, or IROM
+    // steering path.
+    localparam int ABTB_MEASUREMENT_SINK_W = 920;
+    (* keep = "true" *)
+    wire [ABTB_MEASUREMENT_SINK_W-1:0] abtb_measurement_sink_d = {
+        pc,
+        abtb_lookup_accept,
+        abtb_bank0_hit,
+        abtb_bank0_way,
+        abtb_bank0_cfi_type,
+        abtb_bank0_target,
+        abtb_bank0_pred_taken,
+        abtb_bank0_pred_target,
+        abtb_bank1_hit,
+        abtb_bank1_way,
+        abtb_bank1_cfi_type,
+        abtb_bank1_target,
+        abtb_bank1_pred_taken,
+        abtb_bank1_pred_target,
+        abtb_shadow_pred_taken,
+        abtb_shadow_pred_bank,
+        abtb_shadow_pred_cfi_type,
+        abtb_shadow_pred_target,
+        abtb_shadow_pred_next_pc,
+        if_abtb_hit_out,
+        if_abtb_way_out,
+        if_abtb_cfi_type_out,
+        if_abtb_target_out,
+        if_abtb_pred_taken_out,
+        if_abtb_pred_target_out,
+        if_s1_abtb_hit_out,
+        if_s1_abtb_way_out,
+        if_s1_abtb_cfi_type_out,
+        if_s1_abtb_target_out,
+        if_s1_abtb_pred_taken_out,
+        if_s1_abtb_pred_target_out,
+        id_abtb_hit,
+        id_abtb_way,
+        id_abtb_cfi_type,
+        id_abtb_target,
+        id_abtb_pred_taken,
+        id_abtb_pred_target,
+        id_s1_abtb_hit,
+        id_s1_abtb_way,
+        id_s1_abtb_cfi_type,
+        id_s1_abtb_target,
+        id_s1_abtb_pred_taken,
+        id_s1_abtb_pred_target,
+        ex_abtb_hit,
+        ex_abtb_way,
+        ex_abtb_cfi_type,
+        ex_abtb_target,
+        ex_abtb_pred_taken,
+        ex_abtb_pred_target,
+        ex_abtb_update_qualified,
+        ex_abtb_update_cfi_type,
+        ex_s1_abtb_hit,
+        ex_s1_abtb_way,
+        ex_s1_abtb_cfi_type,
+        ex_s1_abtb_target,
+        ex_s1_abtb_pred_taken,
+        ex_s1_abtb_pred_target,
+        ex_s1_abtb_update_qualified,
+        ex_s1_abtb_update_cfi_type,
+        abtb_update_valid,
+        abtb_update_hit,
+        abtb_update_way,
+        abtb_update_pc,
+        abtb_update_cfi_type,
+        abtb_update_target,
+        abtb_lookup_block_count,
+        abtb_bank0_hit_count,
+        abtb_bank1_hit_count,
+        abtb_ex_update_count,
+        abtb_allocation_count,
+        abtb_hit_update_count
+    };
+
+    (* dont_touch = "true" *)
+    logic [ABTB_MEASUREMENT_SINK_W-1:0] abtb_measurement_sink_q;
+
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n)
+            abtb_measurement_sink_q <= '0;
+        else
+            abtb_measurement_sink_q <= abtb_measurement_sink_d;
+    end
+`endif
+`endif
+
     // ==================== Pre-IF ====================
 
     wire        can_dual_issue;
@@ -876,6 +1412,24 @@ module cpu_top (
         .bp_s1_btb_bht    (bp_s1_btb_bht),
         .bp_s1_pht_cnt    (bp_s1_pht_cnt),
         .bp_s1_sel_cnt    (bp_s1_sel_cnt),
+        .abtb_bank0_lookup_hit  (abtb_bank0_lookup_hit),
+        .abtb_bank0_hit         (abtb_bank0_hit),
+        .abtb_bank0_way         (abtb_bank0_way),
+        .abtb_bank0_cfi_type    (abtb_bank0_cfi_type),
+        .abtb_bank0_target      (abtb_bank0_target),
+        .abtb_bank0_pred_taken  (abtb_bank0_pred_taken),
+        .abtb_bank0_pred_target (abtb_bank0_pred_target),
+        .abtb_bank1_lookup_hit  (abtb_bank1_lookup_hit),
+        .abtb_bank1_hit         (abtb_bank1_hit),
+        .abtb_bank1_way         (abtb_bank1_way),
+        .abtb_bank1_cfi_type    (abtb_bank1_cfi_type),
+        .abtb_bank1_target      (abtb_bank1_target),
+        .abtb_bank1_pred_taken  (abtb_bank1_pred_taken),
+        .abtb_bank1_pred_target (abtb_bank1_pred_target),
+        .stage1_bank0_pht_index(stage1_bank0_pht_index),
+        .stage1_bank0_pht_counter(stage1_bank0_pht_counter),
+        .stage1_bank1_pht_index(stage1_bank1_pht_index),
+        .stage1_bank1_pht_counter(stage1_bank1_pht_counter),
         .if_valid         (if_valid),
         .if_ready_go      (if_ready_go_w),
         .if_pc            (if_pc_out),
@@ -891,6 +1445,8 @@ module cpu_top (
         .if_bp_pht_cnt    (if_bp_pht_cnt_out),
         .if_bp_sel_cnt    (if_bp_sel_cnt_out),
         .if_bp_verified   (if_bp_verified_out),
+        .if_pred_source_abtb(if_pred_source_abtb_out),
+        .if_stage1_branch_owned(if_stage1_branch_owned_out),
         .if_s1_bp_taken   (if_s1_bp_taken_out),
         .if_s1_bp_target  (if_s1_bp_target_out),
         .if_s1_bp_ghr_snap(if_s1_bp_ghr_snap_out),
@@ -899,7 +1455,35 @@ module cpu_top (
         .if_s1_bp_btb_bht (if_s1_bp_btb_bht_out),
         .if_s1_bp_pht_cnt (if_s1_bp_pht_cnt_out),
         .if_s1_bp_sel_cnt (if_s1_bp_sel_cnt_out),
+        .if_s1_pred_source_abtb(if_s1_pred_source_abtb_out),
+        .if_s1_stage1_branch_owned(if_s1_stage1_branch_owned_out),
+        .if_abtb_hit         (if_abtb_hit_out),
+        .if_abtb_way         (if_abtb_way_out),
+        .if_abtb_cfi_type    (if_abtb_cfi_type_out),
+        .if_abtb_target      (if_abtb_target_out),
+        .if_abtb_pred_taken  (if_abtb_pred_taken_out),
+        .if_abtb_pred_target (if_abtb_pred_target_out),
+        .if_s1_abtb_hit         (if_s1_abtb_hit_out),
+        .if_s1_abtb_way         (if_s1_abtb_way_out),
+        .if_s1_abtb_cfi_type    (if_s1_abtb_cfi_type_out),
+        .if_s1_abtb_target      (if_s1_abtb_target_out),
+        .if_s1_abtb_pred_taken  (if_s1_abtb_pred_taken_out),
+        .if_s1_abtb_pred_target (if_s1_abtb_pred_target_out),
+        .if_stage1_pht_index(if_stage1_pht_index),
+        .if_stage1_pht_counter(if_stage1_pht_counter),
+        .if_s1_stage1_pht_index(if_s1_stage1_pht_index),
+        .if_s1_stage1_pht_counter(if_s1_stage1_pht_counter),
         .current_pc       (pc),
+        .abtb_lookup_accept(abtb_lookup_accept),
+        .stage1_steer_valid(stage1_steer_valid),
+        .stage1_steer_source_abtb(stage1_steer_source_abtb),
+        .stage1_steer_branch_owned(stage1_steer_branch_owned),
+        .stage1_steer_branch_owned_nt(stage1_steer_branch_owned_nt),
+        .stage1_steer_taken(stage1_steer_taken),
+        .stage1_steer_bank(stage1_steer_bank),
+        .stage1_steer_cfi_type(stage1_steer_cfi_type),
+        .stage1_steer_target(stage1_steer_target),
+        .stage1_steer_next_pc(stage1_steer_next_pc),
         .can_dual_issue   (can_dual_issue),
         .raw_pair_raw     (raw_pair_raw),
         .predict_dual     (predict_dual),
@@ -944,6 +1528,8 @@ module cpu_top (
         .if_bp_pht_cnt  (if_bp_pht_cnt_out),
         .if_bp_sel_cnt  (if_bp_sel_cnt_out),
         .if_bp_verified (if_bp_verified_out),
+        .if_pred_source_abtb(if_pred_source_abtb_out),
+        .if_stage1_branch_owned(if_stage1_branch_owned_out),
         .if_s1_bp_taken    (if_s1_bp_taken_out),
         .if_s1_bp_target   (if_s1_bp_target_out),
         .if_s1_bp_ghr_snap (if_s1_bp_ghr_snap_out),
@@ -952,6 +1538,24 @@ module cpu_top (
         .if_s1_bp_btb_bht  (if_s1_bp_btb_bht_out),
         .if_s1_bp_pht_cnt  (if_s1_bp_pht_cnt_out),
         .if_s1_bp_sel_cnt  (if_s1_bp_sel_cnt_out),
+        .if_s1_pred_source_abtb(if_s1_pred_source_abtb_out),
+        .if_s1_stage1_branch_owned(if_s1_stage1_branch_owned_out),
+        .if_abtb_hit         (if_abtb_hit_out),
+        .if_abtb_way         (if_abtb_way_out),
+        .if_abtb_cfi_type    (if_abtb_cfi_type_out),
+        .if_abtb_target      (if_abtb_target_out),
+        .if_abtb_pred_taken  (if_abtb_pred_taken_out),
+        .if_abtb_pred_target (if_abtb_pred_target_out),
+        .if_s1_abtb_hit         (if_s1_abtb_hit_out),
+        .if_s1_abtb_way         (if_s1_abtb_way_out),
+        .if_s1_abtb_cfi_type    (if_s1_abtb_cfi_type_out),
+        .if_s1_abtb_target      (if_s1_abtb_target_out),
+        .if_s1_abtb_pred_taken  (if_s1_abtb_pred_taken_out),
+        .if_s1_abtb_pred_target (if_s1_abtb_pred_target_out),
+        .if_stage1_pht_index(if_stage1_pht_index),
+        .if_stage1_pht_counter(if_stage1_pht_counter),
+        .if_s1_stage1_pht_index(if_s1_stage1_pht_index),
+        .if_s1_stage1_pht_counter(if_s1_stage1_pht_counter),
         .id_bp_taken    (id_bp_taken),
         .id_bp_target   (id_bp_target),
         .id_bp_ghr_snap (id_bp_ghr_snap),
@@ -961,6 +1565,8 @@ module cpu_top (
         .id_bp_pht_cnt  (id_bp_pht_cnt),
         .id_bp_sel_cnt  (id_bp_sel_cnt),
         .id_bp_verified (id_bp_verified),
+        .id_pred_source_abtb(id_pred_source_abtb),
+        .id_stage1_branch_owned(id_stage1_branch_owned),
         .id_s1_bp_taken    (id_s1_bp_taken),
         .id_s1_bp_target   (id_s1_bp_target),
         .id_s1_bp_ghr_snap (id_s1_bp_ghr_snap),
@@ -968,7 +1574,25 @@ module cpu_top (
         .id_s1_bp_btb_type (id_s1_bp_btb_type),
         .id_s1_bp_btb_bht  (id_s1_bp_btb_bht),
         .id_s1_bp_pht_cnt  (id_s1_bp_pht_cnt),
-        .id_s1_bp_sel_cnt  (id_s1_bp_sel_cnt)
+        .id_s1_bp_sel_cnt  (id_s1_bp_sel_cnt),
+        .id_s1_pred_source_abtb(id_s1_pred_source_abtb),
+        .id_s1_stage1_branch_owned(id_s1_stage1_branch_owned),
+        .id_abtb_hit         (id_abtb_hit),
+        .id_abtb_way         (id_abtb_way),
+        .id_abtb_cfi_type    (id_abtb_cfi_type),
+        .id_abtb_target      (id_abtb_target),
+        .id_abtb_pred_taken  (id_abtb_pred_taken),
+        .id_abtb_pred_target (id_abtb_pred_target),
+        .id_s1_abtb_hit         (id_s1_abtb_hit),
+        .id_s1_abtb_way         (id_s1_abtb_way),
+        .id_s1_abtb_cfi_type    (id_s1_abtb_cfi_type),
+        .id_s1_abtb_target      (id_s1_abtb_target),
+        .id_s1_abtb_pred_taken  (id_s1_abtb_pred_taken),
+        .id_s1_abtb_pred_target (id_s1_abtb_pred_target),
+        .id_stage1_pht_index(id_stage1_pht_index),
+        .id_stage1_pht_counter(id_stage1_pht_counter),
+        .id_s1_stage1_pht_index(id_s1_stage1_pht_index),
+        .id_s1_stage1_pht_counter(id_s1_stage1_pht_counter)
     );
 
     decoder u_decoder (
@@ -1200,6 +1824,18 @@ module cpu_top (
         .id_bp_btb_bht    (id_bp_btb_bht),
         .id_bp_pht_cnt    (id_bp_pht_cnt),
         .id_bp_sel_cnt    (id_bp_sel_cnt),
+        .id_pred_source_abtb(id_pred_source_abtb),
+        .id_stage1_branch_owned(id_stage1_branch_owned),
+        .id_abtb_hit         (id_abtb_hit),
+        .id_abtb_way         (id_abtb_way),
+        .id_abtb_cfi_type    (id_abtb_cfi_type),
+        .id_abtb_target      (id_abtb_target),
+        .id_abtb_pred_taken  (id_abtb_pred_taken),
+        .id_abtb_pred_target (id_abtb_pred_target),
+        .id_abtb_update_qualified(id_abtb_update_qualified_w),
+        .id_abtb_update_cfi_type (id_abtb_update_cfi_type_w),
+        .id_stage1_pht_index(id_stage1_pht_index),
+        .id_stage1_pht_counter(id_stage1_pht_counter),
         .ex_pc            (ex_pc),
         .ex_alu_src1      (ex_alu_src1),
         .ex_alu_src2      (ex_alu_src2),
@@ -1241,7 +1877,19 @@ module cpu_top (
         .ex_bp_btb_hit    (ex_bp_btb_hit),
         .ex_bp_btb_bht    (ex_bp_btb_bht),
         .ex_bp_pht_cnt    (ex_bp_pht_cnt),
-        .ex_bp_sel_cnt    (ex_bp_sel_cnt)
+        .ex_bp_sel_cnt    (ex_bp_sel_cnt),
+        .ex_pred_source_abtb(ex_pred_source_abtb),
+        .ex_stage1_branch_owned(ex_stage1_branch_owned),
+        .ex_abtb_hit         (ex_abtb_hit),
+        .ex_abtb_way         (ex_abtb_way),
+        .ex_abtb_cfi_type    (ex_abtb_cfi_type),
+        .ex_abtb_target      (ex_abtb_target),
+        .ex_abtb_pred_taken  (ex_abtb_pred_taken),
+        .ex_abtb_pred_target (ex_abtb_pred_target),
+        .ex_abtb_update_qualified(ex_abtb_update_qualified),
+        .ex_abtb_update_cfi_type (ex_abtb_update_cfi_type),
+        .ex_stage1_pht_index(ex_stage1_pht_index),
+        .ex_stage1_pht_counter(ex_stage1_pht_counter)
     );
 
     id_ex_reg_s1 u_id_ex_reg_s1 (
@@ -1279,6 +1927,18 @@ module cpu_top (
         .id_bp_btb_bht       (id_s1_bp_btb_bht),
         .id_bp_pht_cnt       (id_s1_bp_pht_cnt),
         .id_bp_sel_cnt       (id_s1_bp_sel_cnt),
+        .id_pred_source_abtb (id_s1_pred_source_abtb),
+        .id_stage1_branch_owned(id_s1_stage1_branch_owned),
+        .id_abtb_hit         (id_s1_abtb_hit),
+        .id_abtb_way         (id_s1_abtb_way),
+        .id_abtb_cfi_type    (id_s1_abtb_cfi_type),
+        .id_abtb_target      (id_s1_abtb_target),
+        .id_abtb_pred_taken  (id_s1_abtb_pred_taken),
+        .id_abtb_pred_target (id_s1_abtb_pred_target),
+        .id_abtb_update_qualified(id_s1_abtb_update_qualified_w),
+        .id_abtb_update_cfi_type (id_s1_abtb_update_cfi_type_w),
+        .id_stage1_pht_index(id_s1_stage1_pht_index),
+        .id_stage1_pht_counter(id_s1_stage1_pht_counter),
         .ex_s1_valid         (ex_s1_valid),
         .ex_s1_pc            (ex_s1_pc),
         .ex_s1_inst          (ex_s1_inst),
@@ -1307,7 +1967,19 @@ module cpu_top (
         .ex_s1_bp_btb_hit    (ex_s1_bp_btb_hit),
         .ex_s1_bp_btb_bht    (ex_s1_bp_btb_bht),
         .ex_s1_bp_pht_cnt    (ex_s1_bp_pht_cnt),
-        .ex_s1_bp_sel_cnt    (ex_s1_bp_sel_cnt)
+        .ex_s1_bp_sel_cnt    (ex_s1_bp_sel_cnt),
+        .ex_s1_pred_source_abtb(ex_s1_pred_source_abtb),
+        .ex_s1_stage1_branch_owned(ex_s1_stage1_branch_owned),
+        .ex_s1_abtb_hit         (ex_s1_abtb_hit),
+        .ex_s1_abtb_way         (ex_s1_abtb_way),
+        .ex_s1_abtb_cfi_type    (ex_s1_abtb_cfi_type),
+        .ex_s1_abtb_target      (ex_s1_abtb_target),
+        .ex_s1_abtb_pred_taken  (ex_s1_abtb_pred_taken),
+        .ex_s1_abtb_pred_target (ex_s1_abtb_pred_target),
+        .ex_s1_abtb_update_qualified(ex_s1_abtb_update_qualified),
+        .ex_s1_abtb_update_cfi_type (ex_s1_abtb_update_cfi_type),
+        .ex_s1_stage1_pht_index(ex_s1_stage1_pht_index),
+        .ex_s1_stage1_pht_counter(ex_s1_stage1_pht_counter)
     );
 
     // ==================== EX stage ====================
@@ -1335,6 +2007,8 @@ module cpu_top (
         .ex_s1_rs1_data             (ex_s1_rs1_data),
         .ex_s1_rs2_data             (ex_s1_rs2_data),
         .ex_s1_control_target       (ex_s1_control_target),
+        .ex_s1_predicted_taken      (ex_s1_bp_taken),
+        .ex_s1_predicted_target     (ex_s1_bp_target),
         .mem_branch_flush           (mem_branch_flush),
         .ex_ready_go                (ex_ready_go_w),
         .mem_allowin                (mem_allowin),
@@ -1649,3 +2323,7 @@ module cpu_top (
     );
 
 endmodule
+
+`ifdef CPU_TOP_ABTB_OBSERVE
+`undef CPU_TOP_ABTB_OBSERVE
+`endif

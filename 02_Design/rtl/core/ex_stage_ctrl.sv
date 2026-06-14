@@ -27,6 +27,8 @@ module ex_stage_ctrl (
     input  logic [31:0] ex_s1_rs1_data,
     input  logic [31:0] ex_s1_rs2_data,
     input  logic [31:0] ex_s1_control_target,
+    input  logic        ex_s1_predicted_taken,
+    input  logic [31:0] ex_s1_predicted_target,
 
     input  logic        mem_branch_flush,
     input  logic        ex_ready_go,
@@ -74,16 +76,23 @@ module ex_stage_ctrl (
         .taken      (ex_s1_branch_taken)
     );
 
-    // Timing: do not compare S1 target against PC+4 on the flush path.
-    // A taken +4 control transfer may replay the same address, which is correct
-    // and only costs a bubble in that rare case.
-    wire ex_s1_control_redirect_raw = ex_s1_is_jal
-                                    | (ex_s1_is_branch & ex_s1_branch_taken);
+    wire ex_s1_actual_taken_w = ex_s1_is_jal
+                              | (ex_s1_is_branch & ex_s1_branch_taken);
+    wire ex_s1_direction_wrong =
+        ex_s1_actual_taken_w != ex_s1_predicted_taken;
+    wire ex_s1_target_wrong = ex_s1_actual_taken_w
+                            & ex_s1_predicted_taken
+                            & (ex_s1_control_target
+                               != ex_s1_predicted_target);
+    wire ex_s1_mispredict = ex_s1_direction_wrong | ex_s1_target_wrong;
+    wire [31:0] ex_s1_redirect_target = ex_s1_actual_taken_w
+                                      ? ex_s1_control_target
+                                      : ex_s1_pc_plus_4;
 
     assign ex_s1_branch_target = ex_s1_control_target;
-    assign ex_s1_actual_taken = ex_s1_control_redirect_raw;
+    assign ex_s1_actual_taken = ex_s1_actual_taken_w;
     assign ex_s1_branch_redirect = ex_s1_valid
-                                 & ex_s1_control_redirect_raw
+                                 & ex_s1_mispredict
                                  & ~mem_branch_flush
                                  & ex_ready_go & mem_allowin;
     assign ex_registered_branch_flush = ex_branch_redirect
@@ -91,6 +100,6 @@ module ex_stage_ctrl (
                                       | ex_s1_branch_redirect;
     assign ex_registered_branch_target = ex_branch_redirect ? branch_target :
                                          ex_system_redirect ? ex_system_target :
-                                                              ex_s1_branch_target;
+                                                              ex_s1_redirect_target;
 
 endmodule

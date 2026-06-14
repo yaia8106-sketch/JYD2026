@@ -47,6 +47,7 @@ module id_stage_derive (
     input  logic [ 1:0] id_bp_sel_cnt,
     input  logic [31:0] id_bp_target,
     input  logic        id_bp_verified,
+    input  logic        id_stage1_branch_owned,
 
     output logic [ 4:0] id_rs1_addr,
     output logic [ 4:0] id_rs2_addr,
@@ -120,6 +121,7 @@ module id_stage_derive (
 
     wire id_bp_branch_candidate = id_valid & ~mem_branch_flush
                                  & ~id_bp_verified
+                                 & ~id_stage1_branch_owned
                                  & id_bp_btb_hit
                                  & (id_bp_btb_type == 2'b10);
     wire id_bp_redirect_taken_raw = id_bp_branch_candidate
