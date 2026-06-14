@@ -192,6 +192,20 @@ while [ $# -gt 0 ]; do
     esac
 done
 
+ABTB_DIRECT_STEERING="${ABTB_DIRECT_STEERING:-0}"
+ABTB_BRANCH_STEERING="${ABTB_BRANCH_STEERING:-0}"
+ABTB_BRANCH_REGISTERED_BP1_REDIRECT="${ABTB_BRANCH_REGISTERED_BP1_REDIRECT:-0}"
+if [ "$ABTB_BRANCH_STEERING" = "1" ]; then
+    ABTB_DIRECT_STEERING=1
+    VCS_EXTRA_OPTS="$VCS_EXTRA_OPTS +define+ABTB_BRANCH_STEERING"
+fi
+if [ "$ABTB_BRANCH_REGISTERED_BP1_REDIRECT" = "1" ]; then
+    VCS_EXTRA_OPTS="$VCS_EXTRA_OPTS +define+ABTB_BRANCH_REGISTERED_BP1_REDIRECT"
+fi
+if [ "$ABTB_DIRECT_STEERING" = "1" ]; then
+    VCS_EXTRA_OPTS="$VCS_EXTRA_OPTS +define+ABTB_DIRECT_STEERING"
+fi
+
 if ! [[ "$MAX_CYCLES" =~ ^[0-9]+$ ]]; then
     echo "ERROR: --max-cycles must be a non-negative integer"
     exit 1
@@ -272,6 +286,8 @@ RTL_FILES="
     $RTL_DIR/core/ex_stage_ctrl.sv
     $RTL_DIR/core/branch_unit.sv
     $RTL_DIR/core/branch_predictor.sv
+    $RTL_DIR/core/frontend_stage1_direction.sv
+    $RTL_DIR/core/frontend_abtb.sv
     $RTL_DIR/core/frontend_ftq.sv
     $RTL_DIR/core/mem_interface.sv
     $RTL_DIR/core/redirect_ctrl.sv
@@ -321,6 +337,9 @@ write_meta() {
         printf "simulator=vcs\n"
         printf "vcs_opts=%s\n" "$VCS_OPTS"
         printf "vcs_extra_opts=%s\n" "$VCS_EXTRA_OPTS"
+        printf "abtb_direct_steering=%s\n" "$ABTB_DIRECT_STEERING"
+        printf "abtb_branch_steering=%s\n" "$ABTB_BRANCH_STEERING"
+        printf "abtb_branch_registered_bp1_redirect=%s\n" "$ABTB_BRANCH_REGISTERED_BP1_REDIRECT"
         printf "vcs_env=%s\n" "$VCS_ENV"
         printf "baseline=%s\n" "$BASELINE"
         printf "verbose=%s\n" "$VERBOSE"

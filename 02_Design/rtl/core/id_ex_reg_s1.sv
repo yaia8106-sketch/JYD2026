@@ -41,6 +41,18 @@ module id_ex_reg_s1 (
     input  logic [ 1:0] id_bp_btb_bht,
     input  logic [ 1:0] id_bp_pht_cnt,
     input  logic [ 1:0] id_bp_sel_cnt,
+    input  logic        id_pred_source_abtb,
+    input  logic        id_stage1_branch_owned,
+    input  logic        id_abtb_hit,
+    input  logic        id_abtb_way,
+    input  logic [ 1:0] id_abtb_cfi_type,
+    input  logic [31:0] id_abtb_target,
+    input  logic        id_abtb_pred_taken,
+    input  logic [31:0] id_abtb_pred_target,
+    input  logic        id_abtb_update_qualified,
+    input  logic [ 1:0] id_abtb_update_cfi_type,
+    input  logic [ 7:0] id_stage1_pht_index,
+    input  logic [ 1:0] id_stage1_pht_counter,
 
     output logic        ex_s1_valid,
     output logic [31:0] ex_s1_pc,
@@ -70,7 +82,22 @@ module id_ex_reg_s1 (
     output logic        ex_s1_bp_btb_hit,
     output logic [ 1:0] ex_s1_bp_btb_bht,
     output logic [ 1:0] ex_s1_bp_pht_cnt,
-    output logic [ 1:0] ex_s1_bp_sel_cnt
+    output logic [ 1:0] ex_s1_bp_sel_cnt,
+    output logic        ex_s1_pred_source_abtb,
+    output logic        ex_s1_stage1_branch_owned,
+    // Shadow ABTB training consumes only hit/way plus decoded update
+    // qualification/type. Wider prediction metadata is kept observable in
+    // simulation but must remain removable from synthesis until steering uses it.
+    output logic        ex_s1_abtb_hit,
+    output logic        ex_s1_abtb_way,
+    output logic [ 1:0] ex_s1_abtb_cfi_type,
+    output logic [31:0] ex_s1_abtb_target,
+    output logic        ex_s1_abtb_pred_taken,
+    output logic [31:0] ex_s1_abtb_pred_target,
+    output logic        ex_s1_abtb_update_qualified,
+    output logic [ 1:0] ex_s1_abtb_update_cfi_type,
+    output logic [ 7:0] ex_s1_stage1_pht_index,
+    output logic [ 1:0] ex_s1_stage1_pht_counter
 );
 
     always_ff @(posedge clk or negedge rst_n) begin
@@ -104,9 +131,23 @@ module id_ex_reg_s1 (
             ex_s1_bp_btb_bht   <= 2'd0;
             ex_s1_bp_pht_cnt   <= 2'd0;
             ex_s1_bp_sel_cnt   <= 2'd0;
+            ex_s1_pred_source_abtb <= 1'b0;
+            ex_s1_stage1_branch_owned <= 1'b0;
+            ex_s1_abtb_hit         <= 1'b0;
+            ex_s1_abtb_way         <= 1'b0;
+            ex_s1_abtb_cfi_type    <= 2'd0;
+            ex_s1_abtb_target      <= 32'd0;
+            ex_s1_abtb_pred_taken  <= 1'b0;
+            ex_s1_abtb_pred_target <= 32'd0;
+            ex_s1_abtb_update_qualified <= 1'b0;
+            ex_s1_abtb_update_cfi_type <= 2'd0;
+            ex_s1_stage1_pht_index <= 8'd0;
+            ex_s1_stage1_pht_counter <= 2'b01;
         end else if (ex_flush) begin
             ex_s1_valid        <= 1'b0;
             ex_s1_bp_taken     <= 1'b0;
+            ex_s1_pred_source_abtb <= 1'b0;
+            ex_s1_stage1_branch_owned <= 1'b0;
         end else if (ex_allowin) begin
             ex_s1_valid        <= id_s1_valid & id_ready_go;
             ex_s1_pc           <= id_pc;
@@ -137,6 +178,18 @@ module id_ex_reg_s1 (
             ex_s1_bp_btb_bht   <= id_bp_btb_bht;
             ex_s1_bp_pht_cnt   <= id_bp_pht_cnt;
             ex_s1_bp_sel_cnt   <= id_bp_sel_cnt;
+            ex_s1_pred_source_abtb <= id_pred_source_abtb;
+            ex_s1_stage1_branch_owned <= id_stage1_branch_owned;
+            ex_s1_abtb_hit         <= id_abtb_hit;
+            ex_s1_abtb_way         <= id_abtb_way;
+            ex_s1_abtb_cfi_type    <= id_abtb_cfi_type;
+            ex_s1_abtb_target      <= id_abtb_target;
+            ex_s1_abtb_pred_taken  <= id_abtb_pred_taken;
+            ex_s1_abtb_pred_target <= id_abtb_pred_target;
+            ex_s1_abtb_update_qualified <= id_abtb_update_qualified;
+            ex_s1_abtb_update_cfi_type <= id_abtb_update_cfi_type;
+            ex_s1_stage1_pht_index <= id_stage1_pht_index;
+            ex_s1_stage1_pht_counter <= id_stage1_pht_counter;
         end
     end
 

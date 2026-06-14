@@ -52,6 +52,8 @@ RTL_FILES="
     $RTL_DIR/core/ex_stage_ctrl.sv
     $RTL_DIR/core/branch_unit.sv
     $RTL_DIR/core/branch_predictor.sv
+    $RTL_DIR/core/frontend_stage1_direction.sv
+    $RTL_DIR/core/frontend_abtb.sv
     $RTL_DIR/core/frontend_ftq.sv
     $RTL_DIR/core/mem_interface.sv
     $RTL_DIR/core/redirect_ctrl.sv

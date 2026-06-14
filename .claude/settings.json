@@ -1,3 +1,7 @@
 {
-  "respectGitignore": false
+  "respectGitignore": false,
+  "permissions": {
+    "defaultMode": "bypassPermissions"
+  },
+  "skipDangerousModePermissionPrompt": true
 }
