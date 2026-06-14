@@ -1,5 +1,6 @@
 {
   "permissions": {
+    "defaultMode": "bypassPermissions",
     "allow": [
       "Bash(du -sh vivado*.jou vivado*.log)",
       "Bash(sort -t_ -k2 -n)",
