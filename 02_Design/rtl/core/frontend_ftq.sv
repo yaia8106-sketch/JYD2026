@@ -68,12 +68,12 @@ module frontend_ftq
     output logic [31:0] if_inst0,
     output logic [31:0] if_inst1,
     output logic        if_s1_valid,
-    output logic        if_bp_taken,
-    output logic [31:0] if_bp_target,
+    output logic        if_pred_taken,
+    output logic [31:0] if_pred_target,
     output logic        if_pred_source_abtb,
     output logic        if_stage1_branch_owned,
-    output logic        if_s1_bp_taken,
-    output logic [31:0] if_s1_bp_target,
+    output logic        if_s1_pred_taken,
+    output logic [31:0] if_s1_pred_target,
     output logic        if_s1_pred_source_abtb,
     output logic        if_s1_stage1_branch_owned,
     output logic        if_abtb_hit,
@@ -864,12 +864,12 @@ module frontend_ftq
     assign if_pc    = fq_head0.pc;
     assign if_inst0 = fq_head0.inst;
     assign if_inst1 = fq_head1.inst;
-    assign if_bp_taken    = fq_head0.pred_taken;
-    assign if_bp_target   = fq_head0.pred_target;
+    assign if_pred_taken    = fq_head0.pred_taken;
+    assign if_pred_target   = fq_head0.pred_target;
     assign if_pred_source_abtb = fq_head0.pred_source_abtb;
     assign if_stage1_branch_owned = fq_head0.stage1_branch_owned;
-    assign if_s1_bp_taken    = fq_head1.pred_taken;
-    assign if_s1_bp_target   = fq_head1.pred_target;
+    assign if_s1_pred_taken    = fq_head1.pred_taken;
+    assign if_s1_pred_target   = fq_head1.pred_target;
     assign if_s1_pred_source_abtb = fq_head1.pred_source_abtb;
     assign if_s1_stage1_branch_owned = fq_head1.stage1_branch_owned;
     assign if_stage1_pht_index = fq_head0.stage1_pht_index;

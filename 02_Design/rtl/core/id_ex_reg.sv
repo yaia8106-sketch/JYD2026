@@ -62,8 +62,8 @@ module id_ex_reg (
     input  logic [ 2:0] id_muldiv_op,
 
     // Branch prediction (ID → EX passthrough)
-    input  logic        id_bp_taken,
-    input  logic [31:0] id_bp_target,
+    input  logic        id_pred_taken,
+    input  logic [31:0] id_pred_target,
     input  logic        id_pred_source_abtb,
     input  logic        id_stage1_branch_owned,
     input  logic        id_abtb_hit,
@@ -114,8 +114,8 @@ module id_ex_reg (
     output logic [ 2:0] ex_muldiv_op,
 
     // Branch prediction out (to EX stage)
-    output logic        ex_bp_taken,
-    output logic [31:0] ex_bp_target,
+    output logic        ex_pred_taken,
+    output logic [31:0] ex_pred_target,
     output logic        ex_pred_source_abtb,
     output logic        ex_stage1_branch_owned,
     // Shadow ABTB training consumes only hit/way plus decoded update
@@ -174,8 +174,8 @@ module id_ex_reg (
             ex_is_mret       <= 1'b0;
             ex_is_muldiv     <= 1'b0;
             ex_muldiv_op     <= 3'd0;
-            ex_bp_taken      <= 1'b0;
-            ex_bp_target     <= 32'd0;
+            ex_pred_taken      <= 1'b0;
+            ex_pred_target     <= 32'd0;
             ex_pred_source_abtb <= 1'b0;
             ex_stage1_branch_owned <= 1'b0;
             ex_abtb_hit         <= 1'b0;
@@ -228,8 +228,8 @@ module id_ex_reg (
             ex_is_mret       <= id_is_mret;
             ex_is_muldiv     <= id_is_muldiv;
             ex_muldiv_op     <= id_muldiv_op;
-            ex_bp_taken      <= id_bp_taken;
-            ex_bp_target     <= id_bp_target;
+            ex_pred_taken      <= id_pred_taken;
+            ex_pred_target     <= id_pred_target;
             ex_pred_source_abtb <= id_pred_source_abtb;
             ex_stage1_branch_owned <= id_stage1_branch_owned;
             ex_abtb_hit         <= id_abtb_hit;

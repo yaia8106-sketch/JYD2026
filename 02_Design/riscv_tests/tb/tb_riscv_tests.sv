@@ -590,7 +590,7 @@ module tb_riscv_tests;
             if (u_cpu.branch_flush)
                 $fdisplay(trace_fd, "%0d EX_FLUSH pc=%08x target=%08x actual=%0d pred=%0d",
                           cycle_cnt, u_cpu.ex_pc, u_cpu.branch_target,
-                          u_cpu.actual_taken, u_cpu.ex_bp_taken);
+                          u_cpu.actual_taken, u_cpu.ex_pred_taken);
             if (u_cpu.mem_branch_flush)
                 $fdisplay(trace_fd, "%0d MEM_FLUSH target=%08x",
                           cycle_cnt, u_cpu.mem_branch_target);

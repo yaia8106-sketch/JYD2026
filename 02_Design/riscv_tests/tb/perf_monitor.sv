@@ -121,30 +121,30 @@ module perf_monitor (
     longint unsigned cnt_jcall_redirect;  // JAL/JALR redirect from either slot
 
     // -- Stage-1 prediction breakdown --
-    longint unsigned cnt_bp_s0_ctrl;
-    longint unsigned cnt_bp_s0_branch;
-    longint unsigned cnt_bp_s0_jal;
-    longint unsigned cnt_bp_s0_jalr;
-    longint unsigned cnt_bp_s1_ctrl;
-    longint unsigned cnt_bp_s1_branch;
-    longint unsigned cnt_bp_s1_jal;
-    longint unsigned cnt_bp_s0_pred_taken;
-    longint unsigned cnt_bp_s0_actual_taken;
-    longint unsigned cnt_bp_s0_mispredict;
-    longint unsigned cnt_bp_s0_dir_to_taken;
-    longint unsigned cnt_bp_s0_dir_to_fallthrough;
-    longint unsigned cnt_bp_s0_target_wrong;
-    longint unsigned cnt_bp_s1_pred_taken;
-    longint unsigned cnt_bp_s1_actual_taken;
-    longint unsigned cnt_bp_s1_dir_wrong;
-    longint unsigned cnt_bp_s1_target_wrong;
-    longint unsigned cnt_bp_s1_redirect;
-    longint unsigned cnt_bp_train_total;
-    longint unsigned cnt_bp_train_s0;
-    longint unsigned cnt_bp_train_s1;
-    longint unsigned cnt_bp_train_branch;
-    longint unsigned cnt_bp_train_jal;
-    longint unsigned cnt_bp_train_jalr;
+    longint unsigned cnt_pred_s0_ctrl;
+    longint unsigned cnt_pred_s0_branch;
+    longint unsigned cnt_pred_s0_jal;
+    longint unsigned cnt_pred_s0_jalr;
+    longint unsigned cnt_pred_s1_ctrl;
+    longint unsigned cnt_pred_s1_branch;
+    longint unsigned cnt_pred_s1_jal;
+    longint unsigned cnt_pred_s0_pred_taken;
+    longint unsigned cnt_pred_s0_actual_taken;
+    longint unsigned cnt_pred_s0_mispredict;
+    longint unsigned cnt_pred_s0_dir_to_taken;
+    longint unsigned cnt_pred_s0_dir_to_fallthrough;
+    longint unsigned cnt_pred_s0_target_wrong;
+    longint unsigned cnt_pred_s1_pred_taken;
+    longint unsigned cnt_pred_s1_actual_taken;
+    longint unsigned cnt_pred_s1_dir_wrong;
+    longint unsigned cnt_pred_s1_target_wrong;
+    longint unsigned cnt_pred_s1_redirect;
+    longint unsigned cnt_pred_train_total;
+    longint unsigned cnt_pred_train_s0;
+    longint unsigned cnt_pred_train_s1;
+    longint unsigned cnt_pred_train_branch;
+    longint unsigned cnt_pred_train_jal;
+    longint unsigned cnt_pred_train_jalr;
 
     // -- Frontend / FTQ breakdown --
     longint unsigned cnt_fe_bp0_fire;
@@ -175,7 +175,7 @@ module perf_monitor (
     longint unsigned cnt_raw_block;       // same-pair RAW dependency
     longint unsigned cnt_inst1_not_alu;   // slot1 not ALU type
     longint unsigned cnt_inst0_jump;      // slot0 is JAL/JALR
-    longint unsigned cnt_not_sequential;  // flush/redirect/bp_taken preventing dual
+    longint unsigned cnt_not_sequential;  // flush/redirect/pred_taken preventing dual
     longint unsigned cnt_dual_issued;     // actually dual-issued
 
     // -- Precise IF-accept dual issue diagnosis --
@@ -223,7 +223,7 @@ module perf_monitor (
 
     // -- skip_inst0 timing fix analysis --
     longint unsigned cnt_skip_inst0;          // cycles where skip_inst0_valid=1
-    longint unsigned cnt_skip_and_bp_taken;   // skip_inst0=1 AND bp_taken=1 (would mispredict)
+    longint unsigned cnt_skip_and_pred_taken; // skip_inst0=1 AND pred_taken=1 (would mispredict)
     longint unsigned cnt_predict_dual_err;    // predict_dual != can_dual (misprediction events)
 
     // ================================================================
@@ -276,8 +276,8 @@ module perf_monitor (
     wire        ex_is_branch    = tb_riscv_tests.u_cpu.ex_is_branch;
     wire        ex_is_jal       = tb_riscv_tests.u_cpu.ex_is_jal;
     wire        ex_is_jalr      = tb_riscv_tests.u_cpu.ex_is_jalr;
-    wire        ex_bp_taken_w   = tb_riscv_tests.u_cpu.ex_bp_taken;
-    wire [31:0] ex_bp_target_w  = tb_riscv_tests.u_cpu.ex_bp_target;
+    wire        ex_pred_taken_w   = tb_riscv_tests.u_cpu.ex_pred_taken;
+    wire [31:0] ex_pred_target_w  = tb_riscv_tests.u_cpu.ex_pred_target;
     wire        actual_taken_w  = tb_riscv_tests.u_cpu.actual_taken;
     wire [31:0] actual_target_w = tb_riscv_tests.u_cpu.actual_target;
 
@@ -296,7 +296,7 @@ module perf_monitor (
 
     // skip_inst0 analysis
     wire skip_inst0_w   = tb_riscv_tests.u_cpu.skip_inst0_valid;
-    wire bp_taken_w     = tb_riscv_tests.u_cpu.if_bp_taken_out;
+    wire pred_taken_w     = tb_riscv_tests.u_cpu.if_pred_taken_out;
     wire predict_dual_w = tb_riscv_tests.u_cpu.predict_dual;
 
     // Forwarding hit signals (slot0 rs1)
@@ -336,8 +336,8 @@ module perf_monitor (
     wire       mem_s1_is_cacheable_w = tb_riscv_tests.u_cpu.mem_s1_is_cacheable;
     wire       ex_s1_is_branch_w = tb_riscv_tests.u_cpu.ex_s1_is_branch;
     wire       ex_s1_is_jal_w    = tb_riscv_tests.u_cpu.ex_s1_is_jal;
-    wire       ex_s1_bp_taken_w  = tb_riscv_tests.u_cpu.ex_s1_bp_taken;
-    wire [31:0] ex_s1_bp_target_w = tb_riscv_tests.u_cpu.ex_s1_bp_target;
+    wire       ex_s1_pred_taken_w  = tb_riscv_tests.u_cpu.ex_s1_pred_taken;
+    wire [31:0] ex_s1_pred_target_w = tb_riscv_tests.u_cpu.ex_s1_pred_target;
     wire       ex_s1_actual_taken_w = tb_riscv_tests.u_cpu.ex_s1_actual_taken;
     wire [31:0] ex_s1_branch_target_w = tb_riscv_tests.u_cpu.ex_s1_branch_target;
     wire       ex_s1_branch_redirect_w = tb_riscv_tests.u_cpu.ex_s1_branch_redirect;
@@ -563,18 +563,18 @@ module perf_monitor (
                                  | raw_ready_branch_ex_event | raw_ready_jalr_ex_event
                                  | raw_ready_other_event;
 
-    wire bp_s0_ctrl_event = ex_valid & (ex_is_branch | ex_is_jal | ex_is_jalr);
-    wire bp_s0_dir_to_taken_event = branch_flush_w & actual_taken_w & ~ex_bp_taken_w;
-    wire bp_s0_dir_to_fallthrough_event = branch_flush_w & ~actual_taken_w & ex_bp_taken_w;
-    wire bp_s0_target_wrong_event = branch_flush_w & actual_taken_w & ex_bp_taken_w
-                                  & (actual_target_w != ex_bp_target_w);
-    wire bp_s1_ctrl_event = ex_s1_valid & (ex_s1_is_branch_w | ex_s1_is_jal_w)
+    wire pred_s0_ctrl_event = ex_valid & (ex_is_branch | ex_is_jal | ex_is_jalr);
+    wire pred_s0_dir_to_taken_event = branch_flush_w & actual_taken_w & ~ex_pred_taken_w;
+    wire pred_s0_dir_to_fallthrough_event = branch_flush_w & ~actual_taken_w & ex_pred_taken_w;
+    wire pred_s0_target_wrong_event = branch_flush_w & actual_taken_w & ex_pred_taken_w
+                                  & (actual_target_w != ex_pred_target_w);
+    wire pred_s1_ctrl_event = ex_s1_valid & (ex_s1_is_branch_w | ex_s1_is_jal_w)
                           & ex_ready_go_w & mem_allowin_w;
-    wire bp_s1_dir_wrong_event = bp_s1_ctrl_event & ex_s1_is_branch_w
-                               & (ex_s1_bp_taken_w != ex_s1_actual_taken_w);
-    wire bp_s1_target_wrong_event = bp_s1_ctrl_event
-                                  & ex_s1_bp_taken_w & ex_s1_actual_taken_w
-                                  & (ex_s1_bp_target_w != ex_s1_branch_target_w);
+    wire pred_s1_dir_wrong_event = pred_s1_ctrl_event & ex_s1_is_branch_w
+                               & (ex_s1_pred_taken_w != ex_s1_actual_taken_w);
+    wire pred_s1_target_wrong_event = pred_s1_ctrl_event
+                                  & ex_s1_pred_taken_w & ex_s1_actual_taken_w
+                                  & (ex_s1_pred_target_w != ex_s1_branch_target_w);
 
     // Frontend/FTQ profiling taps. These observe the local frontend state
     // without feeding back into the DUT.
@@ -725,30 +725,30 @@ module perf_monitor (
             cnt_branch_flush   <= 0;
             cnt_total_branch   <= 0;
             cnt_jcall_redirect <= 0;
-            cnt_bp_s0_ctrl <= 0;
-            cnt_bp_s0_branch <= 0;
-            cnt_bp_s0_jal <= 0;
-            cnt_bp_s0_jalr <= 0;
-            cnt_bp_s1_ctrl <= 0;
-            cnt_bp_s1_branch <= 0;
-            cnt_bp_s1_jal <= 0;
-            cnt_bp_s0_pred_taken <= 0;
-            cnt_bp_s0_actual_taken <= 0;
-            cnt_bp_s0_mispredict <= 0;
-            cnt_bp_s0_dir_to_taken <= 0;
-            cnt_bp_s0_dir_to_fallthrough <= 0;
-            cnt_bp_s0_target_wrong <= 0;
-            cnt_bp_s1_pred_taken <= 0;
-            cnt_bp_s1_actual_taken <= 0;
-            cnt_bp_s1_dir_wrong <= 0;
-            cnt_bp_s1_target_wrong <= 0;
-            cnt_bp_s1_redirect <= 0;
-            cnt_bp_train_total <= 0;
-            cnt_bp_train_s0 <= 0;
-            cnt_bp_train_s1 <= 0;
-            cnt_bp_train_branch <= 0;
-            cnt_bp_train_jal <= 0;
-            cnt_bp_train_jalr <= 0;
+            cnt_pred_s0_ctrl <= 0;
+            cnt_pred_s0_branch <= 0;
+            cnt_pred_s0_jal <= 0;
+            cnt_pred_s0_jalr <= 0;
+            cnt_pred_s1_ctrl <= 0;
+            cnt_pred_s1_branch <= 0;
+            cnt_pred_s1_jal <= 0;
+            cnt_pred_s0_pred_taken <= 0;
+            cnt_pred_s0_actual_taken <= 0;
+            cnt_pred_s0_mispredict <= 0;
+            cnt_pred_s0_dir_to_taken <= 0;
+            cnt_pred_s0_dir_to_fallthrough <= 0;
+            cnt_pred_s0_target_wrong <= 0;
+            cnt_pred_s1_pred_taken <= 0;
+            cnt_pred_s1_actual_taken <= 0;
+            cnt_pred_s1_dir_wrong <= 0;
+            cnt_pred_s1_target_wrong <= 0;
+            cnt_pred_s1_redirect <= 0;
+            cnt_pred_train_total <= 0;
+            cnt_pred_train_s0 <= 0;
+            cnt_pred_train_s1 <= 0;
+            cnt_pred_train_branch <= 0;
+            cnt_pred_train_jal <= 0;
+            cnt_pred_train_jalr <= 0;
             cnt_fe_bp0_fire <= 0;
             cnt_fe_bp0_block_ftq_full <= 0;
             cnt_fe_bp0_block_fq_credit <= 0;
@@ -817,7 +817,7 @@ module perf_monitor (
             cnt_fwd_s0_wb      <= 0;
             cnt_fwd_rf         <= 0;
             cnt_skip_inst0     <= 0;
-            cnt_skip_and_bp_taken <= 0;
+            cnt_skip_and_pred_taken <= 0;
             cnt_predict_dual_err <= 0;
         end else begin
             cnt_cycles <= cnt_cycles + 1;
@@ -966,45 +966,45 @@ module perf_monitor (
                 | (ex_s1_branch_redirect_w & ex_s1_valid & ex_s1_is_jal_w))
                 cnt_jcall_redirect <= cnt_jcall_redirect + 1;
 
-            if (bp_s0_ctrl_event) begin
-                cnt_bp_s0_ctrl <= cnt_bp_s0_ctrl + 1;
-                if (ex_is_branch) cnt_bp_s0_branch <= cnt_bp_s0_branch + 1;
-                if (ex_is_jal)    cnt_bp_s0_jal <= cnt_bp_s0_jal + 1;
-                if (ex_is_jalr)   cnt_bp_s0_jalr <= cnt_bp_s0_jalr + 1;
-                if (ex_bp_taken_w)   cnt_bp_s0_pred_taken <= cnt_bp_s0_pred_taken + 1;
-                if (actual_taken_w)  cnt_bp_s0_actual_taken <= cnt_bp_s0_actual_taken + 1;
+            if (pred_s0_ctrl_event) begin
+                cnt_pred_s0_ctrl <= cnt_pred_s0_ctrl + 1;
+                if (ex_is_branch) cnt_pred_s0_branch <= cnt_pred_s0_branch + 1;
+                if (ex_is_jal)    cnt_pred_s0_jal <= cnt_pred_s0_jal + 1;
+                if (ex_is_jalr)   cnt_pred_s0_jalr <= cnt_pred_s0_jalr + 1;
+                if (ex_pred_taken_w)   cnt_pred_s0_pred_taken <= cnt_pred_s0_pred_taken + 1;
+                if (actual_taken_w)  cnt_pred_s0_actual_taken <= cnt_pred_s0_actual_taken + 1;
             end
-            if (branch_flush_w) cnt_bp_s0_mispredict <= cnt_bp_s0_mispredict + 1;
-            if (bp_s0_dir_to_taken_event)
-                cnt_bp_s0_dir_to_taken <= cnt_bp_s0_dir_to_taken + 1;
-            if (bp_s0_dir_to_fallthrough_event)
-                cnt_bp_s0_dir_to_fallthrough <= cnt_bp_s0_dir_to_fallthrough + 1;
-            if (bp_s0_target_wrong_event)
-                cnt_bp_s0_target_wrong <= cnt_bp_s0_target_wrong + 1;
+            if (branch_flush_w) cnt_pred_s0_mispredict <= cnt_pred_s0_mispredict + 1;
+            if (pred_s0_dir_to_taken_event)
+                cnt_pred_s0_dir_to_taken <= cnt_pred_s0_dir_to_taken + 1;
+            if (pred_s0_dir_to_fallthrough_event)
+                cnt_pred_s0_dir_to_fallthrough <= cnt_pred_s0_dir_to_fallthrough + 1;
+            if (pred_s0_target_wrong_event)
+                cnt_pred_s0_target_wrong <= cnt_pred_s0_target_wrong + 1;
 
-            if (bp_s1_ctrl_event) begin
-                cnt_bp_s1_ctrl <= cnt_bp_s1_ctrl + 1;
-                if (ex_s1_is_branch_w) cnt_bp_s1_branch <= cnt_bp_s1_branch + 1;
-                if (ex_s1_is_jal_w)    cnt_bp_s1_jal <= cnt_bp_s1_jal + 1;
-                if (ex_s1_bp_taken_w) cnt_bp_s1_pred_taken <= cnt_bp_s1_pred_taken + 1;
-                if (ex_s1_actual_taken_w) cnt_bp_s1_actual_taken <= cnt_bp_s1_actual_taken + 1;
+            if (pred_s1_ctrl_event) begin
+                cnt_pred_s1_ctrl <= cnt_pred_s1_ctrl + 1;
+                if (ex_s1_is_branch_w) cnt_pred_s1_branch <= cnt_pred_s1_branch + 1;
+                if (ex_s1_is_jal_w)    cnt_pred_s1_jal <= cnt_pred_s1_jal + 1;
+                if (ex_s1_pred_taken_w) cnt_pred_s1_pred_taken <= cnt_pred_s1_pred_taken + 1;
+                if (ex_s1_actual_taken_w) cnt_pred_s1_actual_taken <= cnt_pred_s1_actual_taken + 1;
             end
-            if (bp_s1_dir_wrong_event) cnt_bp_s1_dir_wrong <= cnt_bp_s1_dir_wrong + 1;
-            if (bp_s1_target_wrong_event) cnt_bp_s1_target_wrong <= cnt_bp_s1_target_wrong + 1;
-            if (ex_s1_branch_redirect_w) cnt_bp_s1_redirect <= cnt_bp_s1_redirect + 1;
+            if (pred_s1_dir_wrong_event) cnt_pred_s1_dir_wrong <= cnt_pred_s1_dir_wrong + 1;
+            if (pred_s1_target_wrong_event) cnt_pred_s1_target_wrong <= cnt_pred_s1_target_wrong + 1;
+            if (ex_s1_branch_redirect_w) cnt_pred_s1_redirect <= cnt_pred_s1_redirect + 1;
 
-            if (tb_riscv_tests.u_cpu.bp_train_valid) begin
-                cnt_bp_train_total <= cnt_bp_train_total + 1;
-                if (tb_riscv_tests.u_cpu.bp_train_from_s1)
-                    cnt_bp_train_s1 <= cnt_bp_train_s1 + 1;
+            if (tb_riscv_tests.u_cpu.pred_train_valid) begin
+                cnt_pred_train_total <= cnt_pred_train_total + 1;
+                if (tb_riscv_tests.u_cpu.pred_train_from_s1)
+                    cnt_pred_train_s1 <= cnt_pred_train_s1 + 1;
                 else
-                    cnt_bp_train_s0 <= cnt_bp_train_s0 + 1;
-                if (tb_riscv_tests.u_cpu.bp_train_is_branch)
-                    cnt_bp_train_branch <= cnt_bp_train_branch + 1;
-                if (tb_riscv_tests.u_cpu.bp_train_is_jal)
-                    cnt_bp_train_jal <= cnt_bp_train_jal + 1;
-                if (tb_riscv_tests.u_cpu.bp_train_is_jalr)
-                    cnt_bp_train_jalr <= cnt_bp_train_jalr + 1;
+                    cnt_pred_train_s0 <= cnt_pred_train_s0 + 1;
+                if (tb_riscv_tests.u_cpu.pred_train_is_branch)
+                    cnt_pred_train_branch <= cnt_pred_train_branch + 1;
+                if (tb_riscv_tests.u_cpu.pred_train_is_jal)
+                    cnt_pred_train_jal <= cnt_pred_train_jal + 1;
+                if (tb_riscv_tests.u_cpu.pred_train_is_jalr)
+                    cnt_pred_train_jalr <= cnt_pred_train_jalr + 1;
             end
 
             if (fe_bp0_fire_w) cnt_fe_bp0_fire <= cnt_fe_bp0_fire + 1;
@@ -1104,7 +1104,7 @@ module perf_monitor (
 
             // skip_inst0 analysis
             if (skip_inst0_w)                     cnt_skip_inst0     <= cnt_skip_inst0 + 1;
-            if (skip_inst0_w & bp_taken_w)        cnt_skip_and_bp_taken <= cnt_skip_and_bp_taken + 1;
+            if (skip_inst0_w & pred_taken_w)        cnt_skip_and_pred_taken <= cnt_skip_and_pred_taken + 1;
             if (if_valid & !irom_held_valid & (predict_dual_w != can_dual_w))
                 cnt_predict_dual_err <= cnt_predict_dual_err + 1;
 
@@ -1270,22 +1270,22 @@ module perf_monitor (
             $display("[PERF]  J/CALL redirects: %0d", cnt_jcall_redirect);
             $display("[PERF]");
             $display("[PERF]  --- Stage-1 Prediction Detailed ---");
-            $display("[PERF]  BP resolved:   s0=%0d branch=%0d jal=%0d jalr=%0d s1=%0d s1_branch=%0d s1_jal=%0d",
-                     cnt_bp_s0_ctrl, cnt_bp_s0_branch, cnt_bp_s0_jal,
-                     cnt_bp_s0_jalr, cnt_bp_s1_ctrl, cnt_bp_s1_branch,
-                     cnt_bp_s1_jal);
-            $display("[PERF]  BP s0 pred:    pred_taken=%0d actual_taken=%0d",
-                     cnt_bp_s0_pred_taken, cnt_bp_s0_actual_taken);
-            $display("[PERF]  BP s0 miss:    total=%0d dir_to_taken=%0d dir_to_fallthrough=%0d target=%0d",
-                     cnt_bp_s0_mispredict, cnt_bp_s0_dir_to_taken,
-                     cnt_bp_s0_dir_to_fallthrough, cnt_bp_s0_target_wrong);
-            $display("[PERF]  BP s1 pred:    pred_taken=%0d actual_taken=%0d dir_wrong=%0d target_wrong=%0d redirect=%0d",
-                     cnt_bp_s1_pred_taken,
-                     cnt_bp_s1_actual_taken, cnt_bp_s1_dir_wrong,
-                     cnt_bp_s1_target_wrong, cnt_bp_s1_redirect);
-            $display("[PERF]  BP training:   total=%0d s0=%0d s1=%0d branch=%0d jal=%0d jalr=%0d",
-                     cnt_bp_train_total, cnt_bp_train_s0, cnt_bp_train_s1,
-                     cnt_bp_train_branch, cnt_bp_train_jal, cnt_bp_train_jalr);
+            $display("[PERF]  Pred resolved: s0=%0d branch=%0d jal=%0d jalr=%0d s1=%0d s1_branch=%0d s1_jal=%0d",
+                     cnt_pred_s0_ctrl, cnt_pred_s0_branch, cnt_pred_s0_jal,
+                     cnt_pred_s0_jalr, cnt_pred_s1_ctrl, cnt_pred_s1_branch,
+                     cnt_pred_s1_jal);
+            $display("[PERF]  Pred s0 pred:  pred_taken=%0d actual_taken=%0d",
+                     cnt_pred_s0_pred_taken, cnt_pred_s0_actual_taken);
+            $display("[PERF]  Pred s0 miss:  total=%0d dir_to_taken=%0d dir_to_fallthrough=%0d target=%0d",
+                     cnt_pred_s0_mispredict, cnt_pred_s0_dir_to_taken,
+                     cnt_pred_s0_dir_to_fallthrough, cnt_pred_s0_target_wrong);
+            $display("[PERF]  Pred s1 pred:  pred_taken=%0d actual_taken=%0d dir_wrong=%0d target_wrong=%0d redirect=%0d",
+                     cnt_pred_s1_pred_taken,
+                     cnt_pred_s1_actual_taken, cnt_pred_s1_dir_wrong,
+                     cnt_pred_s1_target_wrong, cnt_pred_s1_redirect);
+            $display("[PERF]  Pred training: total=%0d s0=%0d s1=%0d branch=%0d jal=%0d jalr=%0d",
+                     cnt_pred_train_total, cnt_pred_train_s0, cnt_pred_train_s1,
+                     cnt_pred_train_branch, cnt_pred_train_jal, cnt_pred_train_jalr);
             $display("[PERF]");
             $display("[PERF]  --- Frontend / FTQ Detailed ---");
             $display("[PERF]  FE BP0:        fire=%0d ftq_full=%0d fq_credit_block=%0d",
@@ -1395,7 +1395,7 @@ module perf_monitor (
             $display("[PERF]");
             $display("[PERF]  --- skip_inst0 Timing Fix Analysis ---");
             $display("[PERF]  skip_inst0=1:        %0d  (%0.2f%% of cycles)", cnt_skip_inst0, 100.0*cnt_skip_inst0/cnt_cycles);
-            $display("[PERF]  skip+bp_taken:       %0d  (%0.2f%% of cycles)", cnt_skip_and_bp_taken, 100.0*cnt_skip_and_bp_taken/cnt_cycles);
+            $display("[PERF]  skip+pred_taken:     %0d  (%0.2f%% of cycles)", cnt_skip_and_pred_taken, 100.0*cnt_skip_and_pred_taken/cnt_cycles);
             $display("[PERF]  predict_dual errors: %0d  (%0.2f%% of fetches)", cnt_predict_dual_err, cnt_fetch_valid > 0 ? 100.0*cnt_predict_dual_err/cnt_fetch_valid : 0.0);
             $display("[PERF] ================================================");
         end

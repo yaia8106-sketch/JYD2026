@@ -137,7 +137,7 @@ def classify(row: dict[str, Any]) -> tuple[str, str]:
     train = as_float(row, "train_coverage_pct")
     pht_per_branch = as_float(row, "stage1_pht_update_per_branch")
     s1_dir = as_float(row, "s1_dir_wrong_rate_pct")
-    s1_branch = as_float(row, "bp_s1_branch")
+    s1_branch = as_float(row, "pred_s1_branch")
     mispredict = as_float(row, "mispredict_rate_pct")
     dir_to_taken = as_float(row, "s0_dir_to_taken_pct")
     dir_to_fallthrough = as_float(row, "s0_dir_to_fallthrough_pct")
@@ -169,23 +169,23 @@ def classify(row: dict[str, Any]) -> tuple[str, str]:
 
 
 def derive(row: dict[str, Any]) -> dict[str, Any]:
-    s0_resolved = as_float(row, "bp_s0_resolved")
+    s0_resolved = as_float(row, "pred_s0_resolved")
     if s0_resolved == 0:
         s0_resolved = as_float(row, "total_branch")
 
     total_branch = as_float(row, "total_branch")
     mispredicts = as_float(row, "mispredicts")
-    s0_miss = as_float(row, "bp_s0_mispredict")
+    s0_miss = as_float(row, "pred_s0_mispredict")
     if s0_miss == 0:
         s0_miss = mispredicts
 
-    s1_branch = as_float(row, "bp_s1_branch")
-    s1_resolved = as_float(row, "bp_s1_resolved")
+    s1_branch = as_float(row, "pred_s1_branch")
+    s1_resolved = as_float(row, "pred_s1_resolved")
     s1_den = s1_branch or s1_resolved
 
-    train_total = as_float(row, "bp_train_total")
-    train_branch = as_float(row, "bp_train_branch")
-    resolved_total = as_float(row, "bp_s0_resolved") + as_float(row, "bp_s1_resolved")
+    train_total = as_float(row, "pred_train_total")
+    train_branch = as_float(row, "pred_train_branch")
+    resolved_total = as_float(row, "pred_s0_resolved") + as_float(row, "pred_s1_resolved")
 
     out = dict(row)
     out["cycles"] = int(as_float(row, "cycles"))
@@ -193,15 +193,15 @@ def derive(row: dict[str, Any]) -> dict[str, Any]:
     out["mispredicts"] = int(mispredicts)
     out["accuracy_pct"] = 100.0 - pct(mispredicts, total_branch)
     out["mispredict_rate_pct"] = as_float(row, "mispredict_rate_pct", pct(mispredicts, total_branch))
-    out["s0_pred_taken_rate_pct"] = pct(as_float(row, "bp_s0_pred_taken"), s0_resolved)
-    out["s0_actual_taken_rate_pct"] = pct(as_float(row, "bp_s0_actual_taken"), s0_resolved)
+    out["s0_pred_taken_rate_pct"] = pct(as_float(row, "pred_s0_pred_taken"), s0_resolved)
+    out["s0_actual_taken_rate_pct"] = pct(as_float(row, "pred_s0_actual_taken"), s0_resolved)
     out["s0_taken_gap_pct"] = out["s0_actual_taken_rate_pct"] - out["s0_pred_taken_rate_pct"]
-    out["s0_dir_to_taken_pct"] = pct(as_float(row, "bp_s0_dir_to_taken"), s0_miss)
-    out["s0_dir_to_fallthrough_pct"] = pct(as_float(row, "bp_s0_dir_to_fallthrough"), s0_miss)
-    out["s0_target_wrong_pct"] = pct(as_float(row, "bp_s0_target_wrong"), s0_miss)
-    out["s1_pred_taken_rate_pct"] = pct(as_float(row, "bp_s1_pred_taken"), s1_den)
-    out["s1_actual_taken_rate_pct"] = pct(as_float(row, "bp_s1_actual_taken"), s1_den)
-    out["s1_dir_wrong_rate_pct"] = pct(as_float(row, "bp_s1_dir_wrong"), s1_den)
+    out["s0_dir_to_taken_pct"] = pct(as_float(row, "pred_s0_dir_to_taken"), s0_miss)
+    out["s0_dir_to_fallthrough_pct"] = pct(as_float(row, "pred_s0_dir_to_fallthrough"), s0_miss)
+    out["s0_target_wrong_pct"] = pct(as_float(row, "pred_s0_target_wrong"), s0_miss)
+    out["s1_pred_taken_rate_pct"] = pct(as_float(row, "pred_s1_pred_taken"), s1_den)
+    out["s1_actual_taken_rate_pct"] = pct(as_float(row, "pred_s1_actual_taken"), s1_den)
+    out["s1_dir_wrong_rate_pct"] = pct(as_float(row, "pred_s1_dir_wrong"), s1_den)
     out["train_coverage_pct"] = pct(train_total, resolved_total)
     out["stage1_pht_update_per_branch"] = ratio(
         as_float(row, "stage1_pht_confirmed"), train_branch

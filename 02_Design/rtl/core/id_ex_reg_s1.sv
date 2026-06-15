@@ -34,8 +34,8 @@ module id_ex_reg_s1 (
     input  logic [ 2:0] id_branch_cond,
     input  logic        id_is_jal,
     input  logic        id_is_jalr,
-    input  logic        id_bp_taken,
-    input  logic [31:0] id_bp_target,
+    input  logic        id_pred_taken,
+    input  logic [31:0] id_pred_target,
     input  logic        id_pred_source_abtb,
     input  logic        id_stage1_branch_owned,
     input  logic        id_abtb_hit,
@@ -71,8 +71,8 @@ module id_ex_reg_s1 (
     output logic [ 2:0] ex_s1_branch_cond,
     output logic        ex_s1_is_jal,
     output logic        ex_s1_is_jalr,
-    output logic        ex_s1_bp_taken,
-    output logic [31:0] ex_s1_bp_target,
+    output logic        ex_s1_pred_taken,
+    output logic [31:0] ex_s1_pred_target,
     output logic        ex_s1_pred_source_abtb,
     output logic        ex_s1_stage1_branch_owned,
     // Shadow ABTB training consumes only hit/way plus decoded update
@@ -114,8 +114,8 @@ module id_ex_reg_s1 (
             ex_s1_branch_cond  <= 3'd0;
             ex_s1_is_jal       <= 1'b0;
             ex_s1_is_jalr      <= 1'b0;
-            ex_s1_bp_taken     <= 1'b0;
-            ex_s1_bp_target    <= 32'd0;
+            ex_s1_pred_taken     <= 1'b0;
+            ex_s1_pred_target    <= 32'd0;
             ex_s1_pred_source_abtb <= 1'b0;
             ex_s1_stage1_branch_owned <= 1'b0;
             ex_s1_abtb_hit         <= 1'b0;
@@ -130,7 +130,7 @@ module id_ex_reg_s1 (
             ex_s1_stage1_pht_counter <= 2'b01;
         end else if (ex_flush) begin
             ex_s1_valid        <= 1'b0;
-            ex_s1_bp_taken     <= 1'b0;
+            ex_s1_pred_taken     <= 1'b0;
             ex_s1_pred_source_abtb <= 1'b0;
             ex_s1_stage1_branch_owned <= 1'b0;
         end else if (ex_allowin) begin
@@ -156,8 +156,8 @@ module id_ex_reg_s1 (
             ex_s1_branch_cond  <= id_branch_cond;
             ex_s1_is_jal       <= id_is_jal & id_s1_valid;
             ex_s1_is_jalr      <= id_is_jalr & id_s1_valid;
-            ex_s1_bp_taken     <= id_bp_taken;
-            ex_s1_bp_target    <= id_bp_target;
+            ex_s1_pred_taken     <= id_pred_taken;
+            ex_s1_pred_target    <= id_pred_target;
             ex_s1_pred_source_abtb <= id_pred_source_abtb;
             ex_s1_stage1_branch_owned <= id_stage1_branch_owned;
             ex_s1_abtb_hit         <= id_abtb_hit;

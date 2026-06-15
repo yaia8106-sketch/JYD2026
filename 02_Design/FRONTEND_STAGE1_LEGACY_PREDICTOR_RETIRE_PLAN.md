@@ -34,10 +34,10 @@ RET/JALR 未命中时当前接受 fall through，由 EX redirect 修正。
 - `bp_btb_bht`
 - `bp_pht_cnt`
 - `bp_sel_cnt`
-- slot1 对应 `bp_s1_*` training metadata
+- slot1 对应 `pred_s1_*` training metadata
 - BP1 correction 或 registered BP1 redirect wrapper
 
-保留的 `bp_train_*` 名称只表示 confirmed EX CFI training arbitration，
+保留的 `pred_train_*` 名称只表示 confirmed EX CFI training arbitration，
 不是旧 predictor metadata。
 
 ## 已完成阶段
@@ -98,8 +98,8 @@ ABTB miss 不再回退 legacy `bp_taken/bp_target`。RET 和普通 indirect JALR
 | `bp_btb_bht` / `bp_pht_cnt` / `bp_sel_cnt` | 旧 predictor counter snapshot | 已删除 |
 | `bp_ghr_snap` | 旧 predictor update snapshot | 已删除 |
 | `bp_s1_*` | slot1 legacy training metadata | 已删除 |
-| `ex_bp_taken` / `ex_bp_target` | EX mispredict 比较，来源已是 Stage-1 canonical metadata | 后续建议改名为 `ex_pred_*` |
-| `bp_train_*` | confirmed EX update 仲裁 | 后续建议改名为 `stage1_train_*` |
+| `if/id/ex_pred_taken` / `if/id/ex_pred_target` | Stage-1 canonical prediction payload | 保留 |
+| `pred_train_*` | confirmed EX update 仲裁 | 保留 |
 | legacy RAS/JALR sidecar | 已随旧 predictor 删除；当前 Stage-1 不依赖 | 若要恢复性能，单独实现 uRAS |
 | `stage1_sequential_count` | ABTB/PHT 未选择 steering 时的 canonical sequential block 计数 | 保留 |
 

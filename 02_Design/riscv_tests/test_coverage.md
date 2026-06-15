@@ -178,9 +178,9 @@ VCS integration 覆盖计数为
 
 | 测试 | 诊断意图 |
 |------|----------|
-| `bp_s0_taken_loop` | 单个 S0 backward branch 的 taken 方向收敛，定位 high-BTB-hit 但持续 underpredict taken 的问题 |
-| `bp_s0_not_taken_loop` | 同一 S0 branch 反复 not-taken，观察 overpredict taken / dir_to_fallthrough |
-| `bp_s0_alternating` | 同一 S0 branch 交替 taken/not-taken，观察方向预测是否单边塌陷 |
+| `pred_s0_taken_loop` | 单个 S0 backward branch 的 taken 方向收敛，定位 high-BTB-hit 但持续 underpredict taken 的问题 |
+| `pred_s0_not_taken_loop` | 同一 S0 branch 反复 not-taken，观察 overpredict taken / dir_to_fallthrough |
+| `pred_s0_alternating` | 同一 S0 branch 交替 taken/not-taken，观察方向预测是否单边塌陷 |
 | `bp_btb_alias_pair` | 两个相隔 512B 的 taken branch 故意映射到同一 direct-mapped BTB index，隔离 alias/capacity 行为 |
 | `bp_wrongpath_pollution` | older taken branch 跳过 victim branch，随后正确路径 probe 同一 victim PC，配合 trace 检查 wrong-path update 污染 |
 

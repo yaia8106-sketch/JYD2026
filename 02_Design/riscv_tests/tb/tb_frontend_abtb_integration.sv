@@ -578,10 +578,10 @@ module tb_frontend_abtb_integration;
                         && dut.abtb_update_hit == expected_hit) begin
                         check(dut.abtb_update_cfi_type == expected_type,
                               "ABTB update CFI type mismatch");
-                        check(dut.bp_train_from_s1 == expected_from_s1,
+                        check(dut.pred_train_from_s1 == expected_from_s1,
                               $sformatf("ABTB update selected wrong EX slot pc=%08x expected_s1=%0d actual_s1=%0d",
                                         expected_pc, expected_from_s1,
-                                        dut.bp_train_from_s1));
+                                        dut.pred_train_from_s1));
                         observed_way = dut.abtb_update_way;
                         found = 1'b1;
                         disable wait_update_loop;
@@ -602,10 +602,10 @@ module tb_frontend_abtb_integration;
             begin : wait_not_taken_loop
                 for (cycle = 0; cycle < 200; cycle = cycle + 1) begin
                     @(negedge clk);
-                    if (dut.bp_train_valid
-                        && dut.bp_train_pc == expected_pc
-                        && dut.bp_train_is_branch
-                        && !dut.bp_train_actual_taken) begin
+                    if (dut.pred_train_valid
+                        && dut.pred_train_pc == expected_pc
+                        && dut.pred_train_is_branch
+                        && !dut.pred_train_actual_taken) begin
                         check(!dut.abtb_update_valid,
                               "not-taken branch attempted an ABTB write");
                         found = 1'b1;
@@ -626,9 +626,9 @@ module tb_frontend_abtb_integration;
             begin : wait_jalr_loop
                 for (cycle = 0; cycle < 240; cycle = cycle + 1) begin
                     @(negedge clk);
-                    if (dut.bp_train_valid
-                        && dut.bp_train_pc == expected_pc
-                        && dut.bp_train_is_jalr) begin
+                    if (dut.pred_train_valid
+                        && dut.pred_train_pc == expected_pc
+                        && dut.pred_train_is_jalr) begin
                         check(!dut.abtb_update_valid,
                               "ordinary indirect JALR attempted an ABTB write");
                         found = 1'b1;
@@ -717,7 +717,7 @@ module tb_frontend_abtb_integration;
                       && dut.if_s1_abtb_pred_taken_out == held_s1_pred_taken
                       && dut.if_s1_abtb_pred_target_out == held_s1_pred_target,
                       "slot1 ABTB metadata changed during FTQ/FQ stall");
-                check(!dut.bp_train_valid
+                check(!dut.pred_train_valid
                       && !dut.abtb_update_valid
                       && dut.abtb_ex_update_count == update_count,
                       "stalled EX instruction escaped the shared predictor fire qualification");
@@ -979,12 +979,12 @@ module tb_frontend_abtb_integration;
                 && dut.abtb_update_pc == wrong_path_pc)
                 fail("redirected wrong-path instruction trained ABTB");
             if (dut.abtb_update_valid) begin
-                check(dut.bp_train_valid
+                check(dut.pred_train_valid
                       && dut.ex_ready_go_w
                       && dut.mem_allowin
                       && !dut.mem_branch_flush,
                       "ABTB update escaped the existing EX fire/flush qualification");
-                if (dut.bp_train_from_s1)
+                if (dut.pred_train_from_s1)
                     check(ref_ex_s1_valid && ref_ex_s1_token != 0,
                           "ABTB update came from a slot1 instruction without an FQ token");
                 else
@@ -993,8 +993,8 @@ module tb_frontend_abtb_integration;
                 sidecar_update_token_checks =
                     sidecar_update_token_checks + 1;
             end
-            if (dut.s0_bp_update_valid_raw)
-                check(!dut.bp_train_from_s1,
+            if (dut.s0_pred_update_valid_raw)
+                check(!dut.pred_train_from_s1,
                       "younger slot1 update overrode an older slot0 CFI");
         end
     end
@@ -1087,7 +1087,7 @@ module tb_frontend_abtb_integration;
         wrong_path_watch = 1'b1;
         wait_abtb_update(BASE + TAKEN_BRANCH_INDEX * 4, 1'b0,
                          TYPE_BRANCH, 1'b0, 520, miss_way);
-        check(dut.branch_flush && dut.bp_train_actual_taken,
+        check(dut.branch_flush && dut.pred_train_actual_taken,
               "taken branch did not redirect and train together");
         check(dut.abtb_update_target
               == BASE + (TAKEN_BRANCH_INDEX + 2) * 4,

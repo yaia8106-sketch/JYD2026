@@ -20,10 +20,10 @@ module tb_frontend_ftq_pair;
     logic [31:0] if_inst0;
     logic [31:0] if_inst1;
     logic if_s1_valid;
-    logic if_bp_taken;
-    logic [31:0] if_bp_target;
-    logic if_s1_bp_taken;
-    logic [31:0] if_s1_bp_target;
+    logic if_pred_taken;
+    logic [31:0] if_pred_target;
+    logic if_s1_pred_taken;
+    logic [31:0] if_s1_pred_target;
     logic if_abtb_hit;
     logic if_abtb_way;
     logic [1:0] if_abtb_cfi_type;
@@ -85,12 +85,12 @@ module tb_frontend_ftq_pair;
         .if_inst0(if_inst0),
         .if_inst1(if_inst1),
         .if_s1_valid(if_s1_valid),
-        .if_bp_taken(if_bp_taken),
-        .if_bp_target(if_bp_target),
+        .if_pred_taken(if_pred_taken),
+        .if_pred_target(if_pred_target),
         .if_pred_source_abtb(),
         .if_stage1_branch_owned(),
-        .if_s1_bp_taken(if_s1_bp_taken),
-        .if_s1_bp_target(if_s1_bp_target),
+        .if_s1_pred_taken(if_s1_pred_taken),
+        .if_s1_pred_target(if_s1_pred_target),
         .if_s1_pred_source_abtb(),
         .if_s1_stage1_branch_owned(),
         .if_abtb_hit(if_abtb_hit),

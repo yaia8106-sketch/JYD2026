@@ -29,12 +29,12 @@ module tb_frontend_ftq_canonical;
 
     logic if_valid;
     logic if_s1_valid;
-    logic if_bp_taken;
-    logic [31:0] if_bp_target;
+    logic if_pred_taken;
+    logic [31:0] if_pred_target;
     logic if_pred_source_abtb;
     logic if_stage1_branch_owned;
-    logic if_s1_bp_taken;
-    logic [31:0] if_s1_bp_target;
+    logic if_s1_pred_taken;
+    logic [31:0] if_s1_pred_target;
     logic if_s1_pred_source_abtb;
     logic if_s1_stage1_branch_owned;
     logic [31:0] current_pc;
@@ -81,12 +81,12 @@ module tb_frontend_ftq_canonical;
         .if_inst0                    (),
         .if_inst1                    (),
         .if_s1_valid                 (if_s1_valid),
-        .if_bp_taken                 (if_bp_taken),
-        .if_bp_target                (if_bp_target),
+        .if_pred_taken                 (if_pred_taken),
+        .if_pred_target                (if_pred_target),
         .if_pred_source_abtb         (if_pred_source_abtb),
         .if_stage1_branch_owned      (if_stage1_branch_owned),
-        .if_s1_bp_taken              (if_s1_bp_taken),
-        .if_s1_bp_target             (if_s1_bp_target),
+        .if_s1_pred_taken              (if_s1_pred_taken),
+        .if_s1_pred_target             (if_s1_pred_target),
         .if_s1_pred_source_abtb      (if_s1_pred_source_abtb),
         .if_s1_stage1_branch_owned   (if_s1_stage1_branch_owned),
         .if_abtb_hit                 (),
@@ -245,10 +245,10 @@ module tb_frontend_ftq_canonical;
                   "bank1 ABTB steering was not selected");
             @(posedge clk);
             #1;
-            check(if_valid && !if_bp_taken && !if_pred_source_abtb
-                  && if_s1_valid && if_s1_bp_taken
+            check(if_valid && !if_pred_taken && !if_pred_source_abtb
+                  && if_s1_valid && if_s1_pred_taken
                   && if_s1_pred_source_abtb
-                  && if_s1_bp_target == bank1_target,
+                  && if_s1_pred_target == bank1_target,
                   "bank1 ABTB metadata was bound to the wrong FQ slot");
 
             // Stop creating new ABTB events, then wait until the blocked FQ
@@ -338,9 +338,9 @@ module tb_frontend_ftq_canonical;
                   "owned taken branch lost Stage-1 ownership");
             @(posedge clk);
             #1;
-            check(if_valid && if_bp_taken && if_pred_source_abtb
+            check(if_valid && if_pred_taken && if_pred_source_abtb
                   && if_stage1_branch_owned
-                  && if_bp_target == branch_target
+                  && if_pred_target == branch_target
                   && !if_s1_valid,
                   "owned taken branch metadata or slot kill was incorrect");
             pass_case("owned taken branch kills slot1");
@@ -365,12 +365,12 @@ module tb_frontend_ftq_canonical;
                   "owned not-taken branch lost Stage-1 ownership");
             @(posedge clk);
             #1;
-            check(if_valid && !if_bp_taken && !if_pred_source_abtb
+            check(if_valid && !if_pred_taken && !if_pred_source_abtb
                   && if_stage1_branch_owned
-                  && if_s1_valid && if_s1_bp_taken
+                  && if_s1_valid && if_s1_pred_taken
                   && if_s1_pred_source_abtb
                   && !if_s1_stage1_branch_owned
-                  && if_s1_bp_target == bank1_target,
+                  && if_s1_pred_target == bank1_target,
                   "owned branch NT did not expose younger bank1 direct metadata");
             pass_case("owned branch NT continues to younger bank1 direct");
         end
@@ -404,8 +404,8 @@ module tb_frontend_ftq_canonical;
                   "dual branch ownership was not captured with canonical PC");
             @(posedge clk);
             #1;
-            check(if_valid && !if_bp_taken && if_stage1_branch_owned
-                  && !if_s1_bp_taken && if_s1_stage1_branch_owned,
+            check(if_valid && !if_pred_taken && if_stage1_branch_owned
+                  && !if_s1_pred_taken && if_s1_stage1_branch_owned,
                   "dual owned NT metadata was not bound to both FQ entries");
             pass_case("dual owned NT branches retain per-slot ownership");
         end

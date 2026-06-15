@@ -88,30 +88,30 @@ SUMMARY_COLUMNS = [
     "stage1_pht_wrong",
     "stage1_pht_bank0",
     "stage1_pht_bank1",
-    "bp_s0_resolved",
-    "bp_s0_branch",
-    "bp_s0_jal",
-    "bp_s0_jalr",
-    "bp_s1_resolved",
-    "bp_s1_branch",
-    "bp_s1_jal",
-    "bp_s0_pred_taken",
-    "bp_s0_actual_taken",
-    "bp_s0_mispredict",
-    "bp_s0_dir_to_taken",
-    "bp_s0_dir_to_fallthrough",
-    "bp_s0_target_wrong",
-    "bp_s1_pred_taken",
-    "bp_s1_actual_taken",
-    "bp_s1_dir_wrong",
-    "bp_s1_target_wrong",
-    "bp_s1_redirect",
-    "bp_train_total",
-    "bp_train_s0",
-    "bp_train_s1",
-    "bp_train_branch",
-    "bp_train_jal",
-    "bp_train_jalr",
+    "pred_s0_resolved",
+    "pred_s0_branch",
+    "pred_s0_jal",
+    "pred_s0_jalr",
+    "pred_s1_resolved",
+    "pred_s1_branch",
+    "pred_s1_jal",
+    "pred_s0_pred_taken",
+    "pred_s0_actual_taken",
+    "pred_s0_mispredict",
+    "pred_s0_dir_to_taken",
+    "pred_s0_dir_to_fallthrough",
+    "pred_s0_target_wrong",
+    "pred_s1_pred_taken",
+    "pred_s1_actual_taken",
+    "pred_s1_dir_wrong",
+    "pred_s1_target_wrong",
+    "pred_s1_redirect",
+    "pred_train_total",
+    "pred_train_s0",
+    "pred_train_s1",
+    "pred_train_branch",
+    "pred_train_jal",
+    "pred_train_jalr",
     "fe_bp0_fire",
     "fe_bp0_ftq_full",
     "fe_bp0_fq_credit_block",
@@ -189,11 +189,11 @@ COMPARE_METRICS = [
     "stage1_pht_wrong",
     "stage1_pht_bank0",
     "stage1_pht_bank1",
-    "bp_s0_mispredict",
-    "bp_s0_dir_to_taken",
-    "bp_s0_dir_to_fallthrough",
-    "bp_s0_target_wrong",
-    "bp_s1_redirect",
+    "pred_s0_mispredict",
+    "pred_s0_dir_to_taken",
+    "pred_s0_dir_to_fallthrough",
+    "pred_s0_target_wrong",
+    "pred_s1_redirect",
     "fe_bp0_ftq_full",
     "fe_bp0_fq_credit_block",
     "fe_f0_ex_kill",
@@ -241,7 +241,7 @@ INT_PATTERNS = [
     ("if_block_s1_unsupported", r"^S1 unsupported:\s+(\d+)"),
     ("if_block_other", r"^other:\s+(\d+)"),
     ("skip_inst0", r"^skip_inst0=1:\s+(\d+)"),
-    ("skip_and_bp_taken", r"^skip\+bp_taken:\s+(\d+)"),
+    ("skip_and_pred_taken", r"^skip\+pred_taken:\s+(\d+)"),
     ("predict_dual_errors", r"^predict_dual errors:\s+(\d+)"),
 ]
 
@@ -404,48 +404,48 @@ def parse_perf_payload(payload: str, metrics: dict[str, Any]) -> None:
         metrics["lsu_mmio_store"] = values.get("mmio_store", 0)
         return
 
-    if payload.startswith("BP resolved:"):
+    if payload.startswith("Pred resolved:"):
         values = parse_value_pairs(payload)
-        metrics["bp_s0_resolved"] = values.get("s0", 0)
-        metrics["bp_s0_branch"] = values.get("branch", 0)
-        metrics["bp_s0_jal"] = values.get("jal", 0)
-        metrics["bp_s0_jalr"] = values.get("jalr", 0)
-        metrics["bp_s1_resolved"] = values.get("s1", 0)
-        metrics["bp_s1_branch"] = values.get("s1_branch", 0)
-        metrics["bp_s1_jal"] = values.get("s1_jal", 0)
+        metrics["pred_s0_resolved"] = values.get("s0", 0)
+        metrics["pred_s0_branch"] = values.get("branch", 0)
+        metrics["pred_s0_jal"] = values.get("jal", 0)
+        metrics["pred_s0_jalr"] = values.get("jalr", 0)
+        metrics["pred_s1_resolved"] = values.get("s1", 0)
+        metrics["pred_s1_branch"] = values.get("s1_branch", 0)
+        metrics["pred_s1_jal"] = values.get("s1_jal", 0)
         return
 
-    if payload.startswith("BP s0 pred:"):
+    if payload.startswith("Pred s0 pred:"):
         values = parse_value_pairs(payload)
-        metrics["bp_s0_pred_taken"] = values.get("pred_taken", 0)
-        metrics["bp_s0_actual_taken"] = values.get("actual_taken", 0)
+        metrics["pred_s0_pred_taken"] = values.get("pred_taken", 0)
+        metrics["pred_s0_actual_taken"] = values.get("actual_taken", 0)
         return
 
-    if payload.startswith("BP s0 miss:"):
+    if payload.startswith("Pred s0 miss:"):
         values = parse_value_pairs(payload)
-        metrics["bp_s0_mispredict"] = values.get("total", 0)
-        metrics["bp_s0_dir_to_taken"] = values.get("dir_to_taken", 0)
-        metrics["bp_s0_dir_to_fallthrough"] = values.get("dir_to_fallthrough", 0)
-        metrics["bp_s0_target_wrong"] = values.get("target", 0)
+        metrics["pred_s0_mispredict"] = values.get("total", 0)
+        metrics["pred_s0_dir_to_taken"] = values.get("dir_to_taken", 0)
+        metrics["pred_s0_dir_to_fallthrough"] = values.get("dir_to_fallthrough", 0)
+        metrics["pred_s0_target_wrong"] = values.get("target", 0)
         return
 
-    if payload.startswith("BP s1 pred:"):
+    if payload.startswith("Pred s1 pred:"):
         values = parse_value_pairs(payload)
-        metrics["bp_s1_pred_taken"] = values.get("pred_taken", 0)
-        metrics["bp_s1_actual_taken"] = values.get("actual_taken", 0)
-        metrics["bp_s1_dir_wrong"] = values.get("dir_wrong", 0)
-        metrics["bp_s1_target_wrong"] = values.get("target_wrong", 0)
-        metrics["bp_s1_redirect"] = values.get("redirect", 0)
+        metrics["pred_s1_pred_taken"] = values.get("pred_taken", 0)
+        metrics["pred_s1_actual_taken"] = values.get("actual_taken", 0)
+        metrics["pred_s1_dir_wrong"] = values.get("dir_wrong", 0)
+        metrics["pred_s1_target_wrong"] = values.get("target_wrong", 0)
+        metrics["pred_s1_redirect"] = values.get("redirect", 0)
         return
 
-    if payload.startswith("BP training:"):
+    if payload.startswith("Pred training:"):
         values = parse_value_pairs(payload)
-        metrics["bp_train_total"] = values.get("total", 0)
-        metrics["bp_train_s0"] = values.get("s0", 0)
-        metrics["bp_train_s1"] = values.get("s1", 0)
-        metrics["bp_train_branch"] = values.get("branch", 0)
-        metrics["bp_train_jal"] = values.get("jal", 0)
-        metrics["bp_train_jalr"] = values.get("jalr", 0)
+        metrics["pred_train_total"] = values.get("total", 0)
+        metrics["pred_train_s0"] = values.get("s0", 0)
+        metrics["pred_train_s1"] = values.get("s1", 0)
+        metrics["pred_train_branch"] = values.get("branch", 0)
+        metrics["pred_train_jal"] = values.get("jal", 0)
+        metrics["pred_train_jalr"] = values.get("jalr", 0)
         return
 
     if payload.startswith("FE BP0:"):

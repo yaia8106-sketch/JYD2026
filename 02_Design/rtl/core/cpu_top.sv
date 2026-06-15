@@ -83,9 +83,10 @@ module cpu_top (
     wire        skip_inst0_valid;
     wire        if_skip_inst0 = skip_inst0_valid;
     wire        if_buf_before_window;
-    // Keep inst_buf_before_window out of the BP lookup path.  Buffered-slot
-    // BP metadata is precomputed and stored beside inst_buf below.
-    wire [31:0] bp_pc_live = pc;
+    // Keep inst_buf_before_window out of the prediction lookup path.
+    // Buffered-slot prediction metadata is precomputed and stored beside
+    // inst_buf below.
+    wire [31:0] pred_pc_live = pc;
 
     // ---- Instruction hold register ----
     wire        irom_held_valid;
@@ -485,16 +486,16 @@ module cpu_top (
     // ================================================================
 
     // ID stage prediction (from IF/ID reg)
-    wire        id_bp_taken;
-    wire [31:0] id_bp_target;
-    wire        id_s1_bp_taken;
-    wire [31:0] id_s1_bp_target;
+    wire        id_pred_taken;
+    wire [31:0] id_pred_target;
+    wire        id_s1_pred_taken;
+    wire [31:0] id_s1_pred_target;
 
     // EX stage prediction (from ID/EX reg)
-    wire        ex_bp_taken;
-    wire [31:0] ex_bp_target;
-    wire        ex_s1_bp_taken;
-    wire [31:0] ex_s1_bp_target;
+    wire        ex_pred_taken;
+    wire [31:0] ex_pred_target;
+    wire        ex_s1_pred_taken;
+    wire [31:0] ex_s1_pred_target;
 
     // ABTB lookup/training metadata. ABTB/PHT owns Stage-1 J/CALL and branch
     // steering by default. Legacy predictor metadata has been retired.
@@ -613,16 +614,16 @@ module cpu_top (
     wire [31:0] stage1_steer_target;
     wire [31:0] stage1_steer_next_pc;
 
-    wire        s0_bp_update_valid_raw;
-    wire        s1_bp_update_valid_raw;
-    wire        bp_train_from_s1;
-    wire        bp_train_valid;
-    wire [31:0] bp_train_pc;
-    wire        bp_train_is_branch;
-    wire        bp_train_is_jal;
-    wire        bp_train_is_jalr;
-    wire        bp_train_actual_taken;
-    wire [31:0] bp_train_actual_target;
+    wire        s0_pred_update_valid_raw;
+    wire        s1_pred_update_valid_raw;
+    wire        pred_train_from_s1;
+    wire        pred_train_valid;
+    wire [31:0] pred_train_pc;
+    wire        pred_train_is_branch;
+    wire        pred_train_is_jal;
+    wire        pred_train_is_jalr;
+    wire        pred_train_actual_taken;
+    wire [31:0] pred_train_actual_target;
 
     // ================================================================
     //  Module instantiations
@@ -717,68 +718,68 @@ module cpu_top (
 
     // ==================== Branch Predictor ====================
 
-    assign s0_bp_update_valid_raw = ex_valid
+    assign s0_pred_update_valid_raw = ex_valid
                                   & (ex_is_branch | ex_is_jal | ex_is_jalr);
-    assign s1_bp_update_valid_raw = ex_s1_valid
+    assign s1_pred_update_valid_raw = ex_s1_valid
                                   & (ex_s1_is_branch | ex_s1_is_jal);
-    assign bp_train_from_s1 = ~s0_bp_update_valid_raw
-                            & s1_bp_update_valid_raw;
-    assign bp_train_valid = (s0_bp_update_valid_raw | s1_bp_update_valid_raw)
+    assign pred_train_from_s1 = ~s0_pred_update_valid_raw
+                            & s1_pred_update_valid_raw;
+    assign pred_train_valid = (s0_pred_update_valid_raw | s1_pred_update_valid_raw)
                           & ex_ready_go_w
                           & mem_allowin
                           & ~mem_branch_flush;
 
-    assign bp_train_pc            = bp_train_from_s1 ? ex_s1_pc
+    assign pred_train_pc            = pred_train_from_s1 ? ex_s1_pc
                                                      : ex_pc;
-    assign bp_train_is_branch     = bp_train_from_s1 ? ex_s1_is_branch
+    assign pred_train_is_branch     = pred_train_from_s1 ? ex_s1_is_branch
                                                      : ex_is_branch;
-    assign bp_train_is_jal        = bp_train_from_s1 ? ex_s1_is_jal
+    assign pred_train_is_jal        = pred_train_from_s1 ? ex_s1_is_jal
                                                      : ex_is_jal;
-    assign bp_train_is_jalr       = bp_train_from_s1 ? 1'b0
+    assign pred_train_is_jalr       = pred_train_from_s1 ? 1'b0
                                                      : ex_is_jalr;
-    assign bp_train_actual_taken  = bp_train_from_s1 ? ex_s1_actual_taken
+    assign pred_train_actual_taken  = pred_train_from_s1 ? ex_s1_actual_taken
                                                      : actual_taken;
-    assign bp_train_actual_target = bp_train_from_s1 ? ex_s1_branch_target
+    assign pred_train_actual_target = pred_train_from_s1 ? ex_s1_branch_target
                                                      : actual_target;
 
     // ABTB/PHT reuse the existing EX slot arbitration, unified pipeline-fire
     // qualification, and wrong-path suppression. A not-taken branch does not
     // write ABTB.
     wire abtb_train_update_qualified =
-        bp_train_from_s1 ? ex_s1_abtb_update_qualified
+        pred_train_from_s1 ? ex_s1_abtb_update_qualified
                          : ex_abtb_update_qualified;
     wire [1:0] abtb_train_update_cfi_type =
-        bp_train_from_s1 ? ex_s1_abtb_update_cfi_type
+        pred_train_from_s1 ? ex_s1_abtb_update_cfi_type
                          : ex_abtb_update_cfi_type;
     wire abtb_train_is_branch =
         abtb_train_update_cfi_type == ABTB_TYPE_BRANCH;
     wire abtb_train_write_qualified =
         abtb_train_update_qualified
-        & (!abtb_train_is_branch | bp_train_actual_taken);
+        & (!abtb_train_is_branch | pred_train_actual_taken);
 
-    assign abtb_update_valid = bp_train_valid
+    assign abtb_update_valid = pred_train_valid
                              & abtb_train_write_qualified;
-    assign abtb_update_hit = bp_train_from_s1 ? ex_s1_abtb_hit
+    assign abtb_update_hit = pred_train_from_s1 ? ex_s1_abtb_hit
                                                : ex_abtb_hit;
-    assign abtb_update_way = bp_train_from_s1 ? ex_s1_abtb_way
+    assign abtb_update_way = pred_train_from_s1 ? ex_s1_abtb_way
                                                : ex_abtb_way;
-    assign abtb_update_pc = bp_train_pc;
+    assign abtb_update_pc = pred_train_pc;
     assign abtb_update_cfi_type = abtb_train_update_cfi_type;
-    assign abtb_update_target = bp_train_actual_target;
+    assign abtb_update_target = pred_train_actual_target;
     assign stage1_direction_update_valid =
-        bp_train_valid && bp_train_is_branch;
+        pred_train_valid && pred_train_is_branch;
     assign stage1_direction_update_index =
-        bp_train_from_s1 ? ex_s1_stage1_pht_index
+        pred_train_from_s1 ? ex_s1_stage1_pht_index
                          : ex_stage1_pht_index;
     assign stage1_direction_update_counter =
-        bp_train_from_s1 ? ex_s1_stage1_pht_counter
+        pred_train_from_s1 ? ex_s1_stage1_pht_counter
                          : ex_stage1_pht_counter;
 
 `ifndef SYNTHESIS
 	    always @(posedge clk) begin
 	        if (rst_n && ex_s1_valid && ex_s1_is_jalr)
 	            $error("Slot1 JALR reached EX, but slot1 predictor training does not support JALR");
-	        if (rst_n && s0_bp_update_valid_raw && s1_bp_update_valid_raw)
+	        if (rst_n && s0_pred_update_valid_raw && s1_pred_update_valid_raw)
 	            $error("Single predictor update port saw simultaneous slot0 and slot1 control flow");
 	        if (rst_n && ex_valid && (ex_mem_read_en | ex_mem_write_en)
 	            && (ex_rs1_wb_repair | ex_rs2_wb_repair))
@@ -800,7 +801,7 @@ module cpu_top (
         .update_valid        (stage1_direction_update_valid),
         .update_index        (stage1_direction_update_index),
         .update_counter      (stage1_direction_update_counter),
-        .update_actual_taken (bp_train_actual_taken),
+        .update_actual_taken (pred_train_actual_taken),
         .committed_ghr       (stage1_committed_ghr)
     );
 
@@ -886,13 +887,13 @@ module cpu_top (
                                 && ex_ready_go_w
                                 && mem_allowin
                                 && !mem_branch_flush
-                                && !s0_bp_update_valid_raw;
+                                && !s0_pred_update_valid_raw;
     wire abtb_direct_s0_target_miss =
-        abtb_direct_s0_resolve && actual_taken && ex_bp_taken
-        && (actual_target != ex_bp_target);
+        abtb_direct_s0_resolve && actual_taken && ex_pred_taken
+        && (actual_target != ex_pred_target);
     wire abtb_direct_s1_target_miss =
-        abtb_direct_s1_resolve && ex_s1_actual_taken && ex_s1_bp_taken
-        && (ex_s1_branch_target != ex_s1_bp_target);
+        abtb_direct_s1_resolve && ex_s1_actual_taken && ex_s1_pred_taken
+        && (ex_s1_branch_target != ex_s1_pred_target);
     wire stage1_bank0_branch_lookup_event =
         abtb_lookup_accept
         && abtb_bank0_hit
@@ -996,7 +997,7 @@ module cpu_top (
                 stage1_confirmed_branch_count <=
                     stage1_confirmed_branch_count + 32'd1;
                 if (stage1_direction_update_counter[1]
-                    == bp_train_actual_taken)
+                    == pred_train_actual_taken)
                     stage1_pht_correct_count <=
                         stage1_pht_correct_count + 32'd1;
                 else
@@ -1129,10 +1130,10 @@ module cpu_top (
     wire [31:0] if_inst0_out;
     wire [31:0] if_inst1_out;
     wire [31:0] if_pc_out;
-    wire        if_bp_taken_out;
-    wire [31:0] if_bp_target_out;
-    wire        if_s1_bp_taken_out;
-    wire [31:0] if_s1_bp_target_out;
+    wire        if_pred_taken_out;
+    wire [31:0] if_pred_target_out;
+    wire        if_s1_pred_taken_out;
+    wire [31:0] if_s1_pred_target_out;
     wire        if_skip_out;
     wire        if_s1_valid;
     wire        if_sequential_fetch;
@@ -1144,7 +1145,7 @@ module cpu_top (
     assign can_dual_fetch = can_dual_issue;
     assign raw_inst1_is_alu_type = 1'b0;
     assign raw_inst0_is_jump = 1'b0;
-    assign if_sequential_fetch = ~if_bp_taken_out;
+    assign if_sequential_fetch = ~if_pred_taken_out;
     assign inst_buf_valid_next = 1'b0;
     assign inst_buf = 32'd0;
     assign inst_buf_pc = 32'd0;
@@ -1184,12 +1185,12 @@ module cpu_top (
         .if_inst0         (if_inst0_out),
         .if_inst1         (if_inst1_out),
         .if_s1_valid      (if_s1_valid),
-        .if_bp_taken      (if_bp_taken_out),
-        .if_bp_target     (if_bp_target_out),
+        .if_pred_taken      (if_pred_taken_out),
+        .if_pred_target     (if_pred_target_out),
         .if_pred_source_abtb(if_pred_source_abtb_out),
         .if_stage1_branch_owned(if_stage1_branch_owned_out),
-        .if_s1_bp_taken   (if_s1_bp_taken_out),
-        .if_s1_bp_target  (if_s1_bp_target_out),
+        .if_s1_pred_taken   (if_s1_pred_taken_out),
+        .if_s1_pred_target  (if_s1_pred_target_out),
         .if_s1_pred_source_abtb(if_s1_pred_source_abtb_out),
         .if_s1_stage1_branch_owned(if_s1_stage1_branch_owned_out),
         .if_abtb_hit         (if_abtb_hit_out),
@@ -1254,12 +1255,12 @@ module cpu_top (
         .id_inst1     (id_inst1),
         .id_s1_valid  (id_s1_valid),
         // Branch prediction passthrough
-        .if_bp_taken    (if_bp_taken_out),
-        .if_bp_target   (if_bp_target_out),
+        .if_pred_taken    (if_pred_taken_out),
+        .if_pred_target   (if_pred_target_out),
         .if_pred_source_abtb(if_pred_source_abtb_out),
         .if_stage1_branch_owned(if_stage1_branch_owned_out),
-        .if_s1_bp_taken    (if_s1_bp_taken_out),
-        .if_s1_bp_target   (if_s1_bp_target_out),
+        .if_s1_pred_taken    (if_s1_pred_taken_out),
+        .if_s1_pred_target   (if_s1_pred_target_out),
         .if_s1_pred_source_abtb(if_s1_pred_source_abtb_out),
         .if_s1_stage1_branch_owned(if_s1_stage1_branch_owned_out),
         .if_abtb_hit         (if_abtb_hit_out),
@@ -1278,12 +1279,12 @@ module cpu_top (
         .if_stage1_pht_counter(if_stage1_pht_counter),
         .if_s1_stage1_pht_index(if_s1_stage1_pht_index),
         .if_s1_stage1_pht_counter(if_s1_stage1_pht_counter),
-        .id_bp_taken    (id_bp_taken),
-        .id_bp_target   (id_bp_target),
+        .id_pred_taken    (id_pred_taken),
+        .id_pred_target   (id_pred_target),
         .id_pred_source_abtb(id_pred_source_abtb),
         .id_stage1_branch_owned(id_stage1_branch_owned),
-        .id_s1_bp_taken    (id_s1_bp_taken),
-        .id_s1_bp_target   (id_s1_bp_target),
+        .id_s1_pred_taken    (id_s1_pred_taken),
+        .id_s1_pred_target   (id_s1_pred_target),
         .id_s1_pred_source_abtb(id_s1_pred_source_abtb),
         .id_s1_stage1_branch_owned(id_s1_stage1_branch_owned),
         .id_abtb_hit         (id_abtb_hit),
@@ -1524,8 +1525,8 @@ module cpu_top (
         .id_is_muldiv     (dec_is_muldiv),
         .id_muldiv_op     (id_inst[14:12]),
         // Stage-1 canonical prediction passthrough.
-        .id_bp_taken      (id_bp_taken),
-        .id_bp_target     (id_bp_target),
+        .id_pred_taken      (id_pred_taken),
+        .id_pred_target     (id_pred_target),
         .id_pred_source_abtb(id_pred_source_abtb),
         .id_stage1_branch_owned(id_stage1_branch_owned),
         .id_abtb_hit         (id_abtb_hit),
@@ -1573,8 +1574,8 @@ module cpu_top (
         .ex_is_muldiv     (ex_is_muldiv),
         .ex_muldiv_op     (ex_muldiv_op),
         // Branch prediction out
-        .ex_bp_taken      (ex_bp_taken),
-        .ex_bp_target     (ex_bp_target),
+        .ex_pred_taken      (ex_pred_taken),
+        .ex_pred_target     (ex_pred_target),
         .ex_pred_source_abtb(ex_pred_source_abtb),
         .ex_stage1_branch_owned(ex_stage1_branch_owned),
         .ex_abtb_hit         (ex_abtb_hit),
@@ -1617,8 +1618,8 @@ module cpu_top (
         .id_branch_cond      (dec1_branch_cond),
         .id_is_jal           (dec1_is_jal),
         .id_is_jalr          (dec1_is_jalr),
-        .id_bp_taken         (id_s1_bp_taken),
-        .id_bp_target        (id_s1_bp_target),
+        .id_pred_taken         (id_s1_pred_taken),
+        .id_pred_target        (id_s1_pred_target),
         .id_pred_source_abtb (id_s1_pred_source_abtb),
         .id_stage1_branch_owned(id_s1_stage1_branch_owned),
         .id_abtb_hit         (id_s1_abtb_hit),
@@ -1653,8 +1654,8 @@ module cpu_top (
         .ex_s1_branch_cond   (ex_s1_branch_cond),
         .ex_s1_is_jal        (ex_s1_is_jal),
         .ex_s1_is_jalr       (ex_s1_is_jalr),
-        .ex_s1_bp_taken      (ex_s1_bp_taken),
-        .ex_s1_bp_target     (ex_s1_bp_target),
+        .ex_s1_pred_taken      (ex_s1_pred_taken),
+        .ex_s1_pred_target     (ex_s1_pred_target),
         .ex_s1_pred_source_abtb(ex_s1_pred_source_abtb),
         .ex_s1_stage1_branch_owned(ex_s1_stage1_branch_owned),
         .ex_s1_abtb_hit         (ex_s1_abtb_hit),
@@ -1694,8 +1695,8 @@ module cpu_top (
         .ex_s1_rs1_data             (ex_s1_rs1_data),
         .ex_s1_rs2_data             (ex_s1_rs2_data),
         .ex_s1_control_target       (ex_s1_control_target),
-        .ex_s1_predicted_taken      (ex_s1_bp_taken),
-        .ex_s1_predicted_target     (ex_s1_bp_target),
+        .ex_s1_predicted_taken      (ex_s1_pred_taken),
+        .ex_s1_predicted_target     (ex_s1_pred_target),
         .mem_branch_flush           (mem_branch_flush),
         .ex_ready_go                (ex_ready_go_w),
         .mem_allowin                (mem_allowin),
@@ -1798,8 +1799,8 @@ module cpu_top (
         .is_jal           (ex_is_jal),
         .is_jalr          (ex_is_jalr),
         .ex_valid         (ex_valid),
-        .predicted_taken  (ex_bp_taken),
-        .predicted_target (ex_bp_target),
+        .predicted_taken  (ex_pred_taken),
+        .predicted_target (ex_pred_target),
         .branch_flush     (branch_flush),
         .branch_target    (branch_target),
         .actual_taken     (actual_taken),

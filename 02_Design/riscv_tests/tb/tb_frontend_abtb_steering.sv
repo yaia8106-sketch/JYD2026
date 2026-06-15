@@ -374,7 +374,7 @@ module tb_frontend_abtb_steering;
                     if (!expected_slot1 && dut.if_valid
                         && dut.if_pc_out == expected_pc
                         && dut.if_pred_source_abtb_out) begin
-                        check(dut.if_bp_taken_out,
+                        check(dut.if_pred_taken_out,
                               "slot0 ABTB source was not canonical taken");
                         found = 1'b1;
                         disable wait_binding_loop;
@@ -383,8 +383,8 @@ module tb_frontend_abtb_steering;
                         && dut.if_pc_out + 32'd4 == expected_pc
                         && dut.if_s1_pred_source_abtb_out) begin
                         check(!dut.if_pred_source_abtb_out
-                              && !dut.if_bp_taken_out
-                              && dut.if_s1_bp_taken_out,
+                              && !dut.if_pred_taken_out
+                              && dut.if_s1_pred_taken_out,
                               "bank1 ABTB prediction was bound to the wrong slot");
                         found = 1'b1;
                         disable wait_binding_loop;
@@ -518,7 +518,7 @@ module tb_frontend_abtb_steering;
             saw_ordinary_jalr = 1'b0;
             for (cycle = 0; cycle < 620; cycle = cycle + 1) begin
                 @(negedge clk);
-                if (dut.bp_train_valid && dut.bp_train_pc == indirect_pc) begin
+                if (dut.pred_train_valid && dut.pred_train_pc == indirect_pc) begin
                     check(!dut.abtb_update_valid,
                           "ordinary indirect JALR wrote ABTB");
                     saw_ordinary_jalr = 1'b1;
@@ -551,7 +551,7 @@ module tb_frontend_abtb_steering;
                 for (cycle = 0; cycle < 480; cycle = cycle + 1) begin
                     @(negedge clk);
                     if (dut.if_valid && dut.if_pc_out == branch_pc
-                        && dut.if_bp_taken_out) begin
+                        && dut.if_pred_taken_out) begin
                         check(dut.if_pred_source_abtb_out
                               && dut.if_stage1_branch_owned_out,
                               "taken branch did not carry independent ownership");
@@ -694,9 +694,9 @@ module tb_frontend_abtb_steering;
             begin : branch_train_loop
                 for (cycle = 0; cycle < 320; cycle = cycle + 1) begin
                     @(negedge clk);
-                    if (dut.bp_train_valid && dut.bp_train_pc == test_pc
-                        && dut.bp_train_is_branch
-                        && !dut.bp_train_actual_taken) begin
+                    if (dut.pred_train_valid && dut.pred_train_pc == test_pc
+                        && dut.pred_train_is_branch
+                        && !dut.pred_train_actual_taken) begin
                         check(!dut.abtb_update_valid,
                               "not-taken branch overwrote the stale ABTB entry");
                         saw_branch_train = 1'b1;
@@ -835,15 +835,15 @@ module tb_frontend_abtb_steering;
                 for (cycle = 0; cycle < 900; cycle = cycle + 1) begin
                     @(negedge clk);
                     if (dut.stage1_direction_update_valid
-                        && dut.bp_train_pc == slot1_pc) begin
-                        check(dut.bp_train_from_s1,
+                        && dut.pred_train_pc == slot1_pc) begin
+                        check(dut.pred_train_from_s1,
                               "slot1 branch used slot0 update metadata");
                         check(dut.stage1_direction_update_index
                               == dut.ex_s1_stage1_pht_index
                               && dut.stage1_direction_update_counter
                                  == dut.ex_s1_stage1_pht_counter,
                               "slot1 PHT prediction-time metadata mismatch");
-                        check(dut.bp_train_actual_taken
+                        check(dut.pred_train_actual_taken
                               && dut.ex_s1_branch_redirect,
                               "slot1 taken branch did not redirect and train");
                         ghr_before =
@@ -884,12 +884,12 @@ module tb_frontend_abtb_steering;
                 for (cycle = 0; cycle < 1000; cycle = cycle + 1) begin
                     @(negedge clk);
                     if (dut.stage1_direction_update_valid
-                        && dut.bp_train_pc == younger_pc)
+                        && dut.pred_train_pc == younger_pc)
                         fail("wrong-path younger slot1 branch updated PHT/GHR");
                     if (dut.stage1_direction_update_valid
-                        && dut.bp_train_pc == older_pc) begin
-                        check(!dut.bp_train_from_s1
-                              && dut.bp_train_actual_taken
+                        && dut.pred_train_pc == older_pc) begin
+                        check(!dut.pred_train_from_s1
+                              && dut.pred_train_actual_taken
                               && dut.branch_flush,
                               "older slot0 branch update qualification mismatch");
                         found = 1'b1;
@@ -901,7 +901,7 @@ module tb_frontend_abtb_steering;
             repeat (40) begin
                 @(negedge clk);
                 check(!(dut.stage1_direction_update_valid
-                        && dut.bp_train_pc == younger_pc),
+                        && dut.pred_train_pc == younger_pc),
                       "redirected younger branch trained after flush");
             end
             pass_case("older slot0 redirect suppresses wrong-path slot1 PHT update");
@@ -979,7 +979,7 @@ module tb_frontend_abtb_steering;
             cache_ready = 1'b1;
             #1;
             found_update = dut.stage1_direction_update_valid
-                         && dut.bp_train_pc == branch_pc;
+                         && dut.pred_train_pc == branch_pc;
             check(found_update, "released branch did not update PHT/GHR");
             check(dut.stage1_confirmed_branch_count == updates_before,
                   "branch counter advanced before confirmed edge");
@@ -990,7 +990,7 @@ module tb_frontend_abtb_steering;
             repeat (12) begin
                 @(negedge clk);
                 check(!(dut.stage1_direction_update_valid
-                        && dut.bp_train_pc == branch_pc),
+                        && dut.pred_train_pc == branch_pc),
                       "released branch produced duplicate predictor update");
             end
             pass_case("backend stall holds branch metadata and updates once on fire");

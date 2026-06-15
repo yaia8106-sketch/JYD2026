@@ -54,9 +54,9 @@ backend/EX redirect path. The historical `bp_*` training metadata snapshots
 (`ghr_snap`, BTB hit/type/BHT, PHT counter, selector counter, and slot1 copies)
 are no longer carried through FTQ/FQ, IF/ID, ID/EX, or EX.
 
-Some signal names such as `if_bp_taken`, `id_bp_taken`, and `ex_bp_taken`
-remain for compatibility, but they now carry canonical Stage-1 prediction
-payload, not legacy predictor state.
+Pipeline prediction signals use `if/id/ex_pred_taken` and
+`if/id/ex_pred_target` naming. They carry canonical Stage-1 prediction payload,
+not legacy predictor state.
 
 ## Terminology
 

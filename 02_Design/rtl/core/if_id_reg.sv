@@ -31,12 +31,12 @@ module if_id_reg (
     output logic        id_s1_valid,   // registered slot1 issue valid
 
     // Branch prediction signals (IF → ID passthrough)
-    input  logic        if_bp_taken,
-    input  logic [31:0] if_bp_target,
+    input  logic        if_pred_taken,
+    input  logic [31:0] if_pred_target,
     input  logic        if_pred_source_abtb,
     input  logic        if_stage1_branch_owned,
-    input  logic        if_s1_bp_taken,
-    input  logic [31:0] if_s1_bp_target,
+    input  logic        if_s1_pred_taken,
+    input  logic [31:0] if_s1_pred_target,
     input  logic        if_s1_pred_source_abtb,
     input  logic        if_s1_stage1_branch_owned,
     input  logic        if_abtb_hit,
@@ -55,12 +55,12 @@ module if_id_reg (
     input  logic [ 1:0] if_stage1_pht_counter,
     input  logic [ 7:0] if_s1_stage1_pht_index,
     input  logic [ 1:0] if_s1_stage1_pht_counter,
-    output logic        id_bp_taken,
-    output logic [31:0] id_bp_target,
+    output logic        id_pred_taken,
+    output logic [31:0] id_pred_target,
     output logic        id_pred_source_abtb,
     output logic        id_stage1_branch_owned,
-    output logic        id_s1_bp_taken,
-    output logic [31:0] id_s1_bp_target,
+    output logic        id_s1_pred_taken,
+    output logic [31:0] id_s1_pred_target,
     output logic        id_s1_pred_source_abtb,
     output logic        id_s1_stage1_branch_owned,
     output logic        id_abtb_hit,
@@ -92,12 +92,12 @@ module if_id_reg (
             id_inst         <= 32'd0;
             id_inst1        <= 32'd0;
             id_s1_valid     <= 1'b0;
-            id_bp_taken     <= 1'b0;
-            id_bp_target    <= 32'd0;
+            id_pred_taken     <= 1'b0;
+            id_pred_target    <= 32'd0;
             id_pred_source_abtb <= 1'b0;
             id_stage1_branch_owned <= 1'b0;
-            id_s1_bp_taken    <= 1'b0;
-            id_s1_bp_target   <= 32'd0;
+            id_s1_pred_taken    <= 1'b0;
+            id_s1_pred_target   <= 32'd0;
             id_s1_pred_source_abtb <= 1'b0;
             id_s1_stage1_branch_owned <= 1'b0;
             id_abtb_hit         <= 1'b0;
@@ -121,7 +121,7 @@ module if_id_reg (
             id_s1_valid     <= 1'b0;
             id_pred_source_abtb <= 1'b0;
             id_stage1_branch_owned <= 1'b0;
-            id_s1_bp_taken  <= 1'b0;
+            id_s1_pred_taken  <= 1'b0;
             id_s1_pred_source_abtb <= 1'b0;
             id_s1_stage1_branch_owned <= 1'b0;
         end else if (id_allowin) begin
@@ -130,12 +130,12 @@ module if_id_reg (
             id_inst         <= if_inst;
             id_inst1        <= if_inst1;
             id_s1_valid     <= if_valid & if_ready_go & if_s1_valid;
-            id_bp_taken     <= if_bp_taken;
-            id_bp_target    <= if_bp_target;
+            id_pred_taken     <= if_pred_taken;
+            id_pred_target    <= if_pred_target;
             id_pred_source_abtb <= if_pred_source_abtb;
             id_stage1_branch_owned <= if_stage1_branch_owned;
-            id_s1_bp_taken    <= if_s1_bp_taken;
-            id_s1_bp_target   <= if_s1_bp_target;
+            id_s1_pred_taken    <= if_s1_pred_taken;
+            id_s1_pred_target   <= if_s1_pred_target;
             id_s1_pred_source_abtb <= if_s1_pred_source_abtb;
             id_s1_stage1_branch_owned <= if_s1_stage1_branch_owned;
             id_abtb_hit         <= if_abtb_hit;
