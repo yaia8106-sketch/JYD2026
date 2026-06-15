@@ -1,8 +1,9 @@
 # ================================================================
 # report_stage_timing.tcl
 #
-# 功能：报告五级流水线各级间寄存器之间的组合路径延迟
-#       （包括 BRAM 作为时序端点的路径）
+# 功能：报告五级流水线各级间寄存器/RAM 原语之间的组合路径延迟。
+#       手工分组之外的 sequential/RAM 单元会自动归入兜底组，
+#       避免新增模块后关键路径只出现在全局 Top-N 中。
 #
 # 使用方法：
 #   1. 在 Vivado 中打开已完成 Implementation 的工程
@@ -88,6 +89,8 @@ if {$TOP_HIER eq ""} {
 # 脚本会在该层级下搜索所有 IS_SEQUENTIAL=1 的 cell
 set PIPELINE_GROUPS [list \
     [list "Frontend"       "u_cpu/u_frontend_ftq"       ] \
+    [list "Stage1Dir"      "u_cpu/u_frontend_stage1_direction"] \
+    [list "ABTB"           "u_cpu/u_frontend_abtb"      ] \
     [list "IF/ID"          "u_cpu/u_if_id_reg"           ] \
     [list "ID/EX.S0"       "u_cpu/u_id_ex_reg"           ] \
     [list "ID/EX.S1"       "u_cpu/u_id_ex_reg_s1"        ] \
@@ -96,13 +99,14 @@ set PIPELINE_GROUPS [list \
     [list "MEM/WB.S0"      "u_cpu/u_mem_wb_reg"          ] \
     [list "MEM/WB.S1"      "u_cpu/u_mem_wb_reg_s1"       ] \
     [list "RegFile"        "u_cpu/u_regfile"             ] \
-    [list "BP(pred)"       "u_cpu/u_bp"                  ] \
-    [list "IROM_Data"      "u_irom"                      ] \
     [list "RedirectCtl"    "u_cpu/u_redirect_ctrl"       ] \
     [list "CSR/Trap"       "u_cpu/u_csr_trap_unit"       ] \
     [list "MulDiv"         "u_cpu/u_muldiv_unit"         ] \
     [list "DualCnt"        "u_cpu/u_dual_issue_counter"  ] \
     [list "DCache(FSM)"    "u_dcache"                    ] \
+    [list "DCacheBackend"  "u_dcache_bram_backend"       ] \
+    [list "DCacheAxi"      "u_dcache_axi_backend"        ] \
+    [list "AXIAdapter"     "u_dcache_axi_backend/u_axi_master_adapter"] \
     [list "MMIO"           "u_mmio"                      ] \
 ]
 
@@ -111,11 +115,16 @@ set PIPELINE_GROUPS [list \
 set EXTRA_SEQ_GROUPS [list \
 ]
 
-# ---- BRAM 组（特殊时序端点）----
-# BRAM 不是普通 FF，需要用 PRIMITIVE_TYPE 过滤
+# ---- RAM 组（特殊时序端点）----
+# BRAM/LUTRAM 不是普通 FF，需要用 PRIMITIVE_TYPE/REF_NAME 过滤。
+# ABTB/PHT 在 FPGA 上通常是 distributed RAM，因此也必须纳入。
 set BRAM_GROUPS [list \
-    [list "DRAM(BRAM)"   "u_dram"                ] \
-    [list "DC_Data(BRAM)" "u_dcache"             ] \
+    [list "IROM(RAM)"       "u_irom"                  ] \
+    [list "ABTB(RAM)"       "u_cpu/u_frontend_abtb"   ] \
+    [list "PHT(RAM)"        "u_cpu/u_frontend_stage1_direction"] \
+    [list "DRAM(RAM)"       "u_dram"                  ] \
+    [list "DC_Backend(RAM)" "u_dcache_bram_backend"   ] \
+    [list "DC_Data(RAM)"    "u_dcache"                ] \
 ]
 
 # ────────────────────────────────────────────────────────────────
@@ -159,14 +168,14 @@ proc find_misc_cells {hier_prefix known_groups} {
 }
 
 proc find_bram_cells {hier_prefix} {
-    # 查找指定层级下的 BRAM 原语
+    # 查找指定层级下的 RAM 原语，包括 BRAM 和 distributed RAM。
     set pattern "${hier_prefix}/*"
     set cells [get_cells -quiet -hierarchical \
-        -filter "PRIMITIVE_TYPE =~ BMEM.bram.* && NAME =~ $pattern"]
+        -filter "(PRIMITIVE_TYPE =~ BMEM.*.* || PRIMITIVE_TYPE =~ BLOCKRAM.* || PRIMITIVE_TYPE =~ LUTRAM.* || REF_NAME =~ RAMB* || REF_NAME =~ RAM*) && NAME =~ $pattern"]
     if {[llength $cells] == 0} {
-        # 有些 IP 会将 BRAM 例化在更深层级
+        # 有些综合版本不会完整填 PRIMITIVE_TYPE，REF_NAME 作为兜底。
         set cells [get_cells -quiet -hierarchical \
-            -filter "PRIMITIVE_TYPE =~ BMEM.*.* && NAME =~ $pattern"]
+            -filter "(REF_NAME =~ RAM* || REF_NAME =~ RAMB*) && NAME =~ $pattern"]
     }
     return $cells
 }
@@ -289,114 +298,141 @@ if {[llength $test_paths] == 0} {
     log_msg "  ✔ 验证通过：找到时序路径（worst slack = ${test_slack}ns）"
 }
 
-# ---- Step 1: 收集所有寄存器组 ----
-log_msg "\n\[Step 1\] 收集寄存器组...\n"
+# ---- Step 1: 收集所有 timing endpoint 组 ----
+log_msg "\n\[Step 1\] 收集 timing endpoint 组...\n"
 
+# all_groups entry: {显示名称 cell_object_list 类型}
 set all_groups {}
 set group_names {}
+array set grouped_seq_names {}
+array set grouped_bram_names {}
 
 foreach grp $PIPELINE_GROUPS {
     set name [lindex $grp 0]
     set hier [join_hier $TOP_HIER [lindex $grp 1]]
-    set filter "IS_SEQUENTIAL == 1 && NAME =~ ${hier}/*"
-    set cnt [llength [get_cells -quiet -hierarchical -filter $filter]]
-    log_msg [format "  %-14s : %4d cells  (pattern: %s/*)" $name $cnt $hier]
+    set cells [find_seq_cells $hier]
+    set cnt [llength $cells]
+    log_msg [format "  %-16s : %5d seq   (pattern: %s/*)" $name $cnt $hier]
     if {$cnt > 0} {
-        lappend all_groups [list $name $filter "seq"]
+        lappend all_groups [list $name $cells "seq"]
         lappend group_names $name
+        foreach c $cells {
+            set grouped_seq_names([get_property NAME $c]) 1
+        }
     } else {
-        log_msg "    ⚠ 未找到时序单元，请检查层级路径是否正确"
+        log_msg "    ⚠ 未找到时序单元；若该模块被综合优化或当前配置不存在，可以忽略"
     }
 }
 
 foreach grp $EXTRA_SEQ_GROUPS {
     set name [lindex $grp 0]
     set pattern [join_hier $TOP_HIER [lindex $grp 1]]
-    set filter "IS_SEQUENTIAL == 1 && NAME =~ ${pattern}"
-    set cnt [llength [get_cells -quiet -hierarchical -filter $filter]]
-    log_msg [format "  %-14s : %4d cells  (pattern: %s)" $name $cnt $pattern]
+    set cells [get_cells -quiet -hierarchical \
+        -filter "IS_SEQUENTIAL == 1 && NAME =~ ${pattern}"]
+    set cnt [llength $cells]
+    log_msg [format "  %-16s : %5d seq   (pattern: %s)" $name $cnt $pattern]
     if {$cnt > 0} {
-        lappend all_groups [list $name $filter "seq"]
+        lappend all_groups [list $name $cells "seq"]
         lappend group_names $name
+        foreach c $cells {
+            set grouped_seq_names([get_property NAME $c]) 1
+        }
     } else {
-        log_msg "    ⚠ 未找到时序单元，请检查层级路径是否正确"
+        log_msg "    ⚠ 未找到时序单元；请检查层级路径是否正确"
     }
 }
 
 foreach grp $BRAM_GROUPS {
     set name [lindex $grp 0]
     set hier [join_hier $TOP_HIER [lindex $grp 1]]
-    set filter "PRIMITIVE_TYPE =~ BMEM.*.* && NAME =~ ${hier}/*"
-    set cnt [llength [get_cells -quiet -hierarchical -filter $filter]]
-    log_msg [format "  %-14s : %4d cells  (pattern: %s/*)" $name $cnt $hier]
+    set cells [find_bram_cells $hier]
+    set cnt [llength $cells]
+    log_msg [format "  %-16s : %5d ram   (pattern: %s/*)" $name $cnt $hier]
     if {$cnt > 0} {
-        lappend all_groups [list $name $filter "bram"]
+        lappend all_groups [list $name $cells "bram"]
         lappend group_names $name
+        foreach c $cells {
+            set grouped_bram_names([get_property NAME $c]) 1
+        }
     } else {
-        log_msg "    ⚠ 未找到 BRAM 单元，请检查层级路径是否正确"
+        log_msg "    ⚠ 未找到 RAM 原语；若当前配置不用该 backend，可以忽略"
     }
 }
 
-set num_groups [llength $group_names]
-log_msg "\n  共 $num_groups 个有效组\n"
-
-if {$num_groups == 0} {
-    log_msg "\n✘ 未找到任何寄存器组，脚本退出。"
-    log_msg "  请检查 TOP_HIER 和层级路径配置是否与综合后的设计匹配。"
-    log_msg "  提示：使用 get_cells -hierarchical *frontend_ftq* 手动验证。"
-    close $report_file
-    return
-}
-
-# ---- Step 1b: 覆盖审计 ----
+# ---- Step 1b: 覆盖审计 + 自动兜底组 ----
 log_msg "\n\[Step 1b\] 分组覆盖审计...\n"
 
-array set grouped_seq_names {}
-foreach grp $PIPELINE_GROUPS {
-    set hier [join_hier $TOP_HIER [lindex $grp 1]]
-    set filter "IS_SEQUENTIAL == 1 && NAME =~ ${hier}/*"
-    foreach c [get_cells -quiet -hierarchical -filter $filter] {
-        set grouped_seq_names([get_property NAME $c]) 1
-    }
-}
-foreach grp $EXTRA_SEQ_GROUPS {
-    set pattern [join_hier $TOP_HIER [lindex $grp 1]]
-    set filter "IS_SEQUENTIAL == 1 && NAME =~ ${pattern}"
-    foreach c [get_cells -quiet -hierarchical -filter $filter] {
-        set grouped_seq_names([get_property NAME $c]) 1
-    }
-}
-foreach grp $BRAM_GROUPS {
-    set hier [join_hier $TOP_HIER [lindex $grp 1]]
-    set filter "PRIMITIVE_TYPE =~ BMEM.*.* && NAME =~ ${hier}/*"
-    foreach c [get_cells -quiet -hierarchical -filter $filter] {
-        set grouped_seq_names([get_property NAME $c]) 1
-    }
-}
-
 set all_seq_cells [get_design_seq_cells $TOP_HIER]
-set ungrouped_seq {}
+set ungrouped_seq_cells {}
+set ungrouped_seq_names {}
 foreach c $all_seq_cells {
     set cname [get_property NAME $c]
     if {![info exists grouped_seq_names($cname)]} {
-        lappend ungrouped_seq $cname
+        lappend ungrouped_seq_cells $c
+        lappend ungrouped_seq_names $cname
+    }
+}
+
+if {$TOP_HIER eq ""} {
+    set all_bram_cells [get_cells -quiet -hierarchical \
+        -filter "(PRIMITIVE_TYPE =~ BMEM.*.* || PRIMITIVE_TYPE =~ BLOCKRAM.* || PRIMITIVE_TYPE =~ LUTRAM.* || REF_NAME =~ RAMB* || REF_NAME =~ RAM*)"]
+} else {
+    set all_bram_cells [get_cells -quiet -hierarchical \
+        -filter "(PRIMITIVE_TYPE =~ BMEM.*.* || PRIMITIVE_TYPE =~ BLOCKRAM.* || PRIMITIVE_TYPE =~ LUTRAM.* || REF_NAME =~ RAMB* || REF_NAME =~ RAM*) && NAME =~ ${TOP_HIER}/*"]
+}
+set ungrouped_bram_cells {}
+set ungrouped_bram_names {}
+foreach c $all_bram_cells {
+    set cname [get_property NAME $c]
+    if {![info exists grouped_bram_names($cname)]} {
+        lappend ungrouped_bram_cells $c
+        lappend ungrouped_bram_names $cname
     }
 }
 
 log_msg [format "  当前设计 sequential cells : %5d" [llength $all_seq_cells]]
-log_msg [format "  已归类 sequential cells   : %5d" [array size grouped_seq_names]]
-log_msg [format "  未归类 sequential cells   : %5d" [llength $ungrouped_seq]]
-if {[llength $ungrouped_seq] > 0} {
-    log_msg "  未归类样例（最多 20 个）："
+log_msg [format "  手工归类 sequential cells : %5d" [array size grouped_seq_names]]
+log_msg [format "  自动兜底 sequential cells : %5d" [llength $ungrouped_seq_cells]]
+if {[llength $ungrouped_seq_cells] > 0} {
+    lappend all_groups [list "OtherSeq" $ungrouped_seq_cells "seq"]
+    lappend group_names "OtherSeq"
+    log_msg "  → 已加入 OtherSeq 兜底组，以下为样例（最多 20 个）："
     set sample_idx 0
-    foreach cname [lsort $ungrouped_seq] {
+    foreach cname [lsort $ungrouped_seq_names] {
         incr sample_idx
         log_msg "    $cname"
         if {$sample_idx >= 20} { break }
     }
-    log_msg "  ⚠ 若这些寄存器属于关键控制/数据路径，请把对应层级加入 PIPELINE_GROUPS。"
 } else {
-    log_msg "  ✔ 所有 sequential cells 都已落入 PIPELINE_GROUPS。"
+    log_msg "  ✔ 所有 sequential cells 都已落入手工分组。"
+}
+
+log_msg [format "  当前设计 RAM primitive    : %5d" [llength $all_bram_cells]]
+log_msg [format "  手工归类 RAM primitive    : %5d" [array size grouped_bram_names]]
+log_msg [format "  自动兜底 RAM primitive    : %5d" [llength $ungrouped_bram_cells]]
+if {[llength $ungrouped_bram_cells] > 0} {
+    lappend all_groups [list "OtherRAM" $ungrouped_bram_cells "ram"]
+    lappend group_names "OtherRAM"
+    log_msg "  → 已加入 OtherRAM 兜底组，以下为样例（最多 20 个）："
+    set sample_idx 0
+    foreach cname [lsort $ungrouped_bram_names] {
+        incr sample_idx
+        log_msg "    $cname"
+        if {$sample_idx >= 20} { break }
+    }
+} else {
+    log_msg "  ✔ 所有 RAM primitive 都已落入手工分组。"
+}
+
+set num_groups [llength $group_names]
+log_msg "\n  共 $num_groups 个有效 endpoint 组\n"
+
+if {$num_groups == 0} {
+    log_msg "\n✘ 未找到任何 timing endpoint 组，脚本退出。"
+    log_msg "  请检查 TOP_HIER 和层级路径配置是否与综合后的设计匹配。"
+    log_msg "  提示：使用 get_cells -hierarchical *frontend_ftq* 手动验证。"
+    close $report_file
+    return
 }
 
 # ---- Step 2: 逐对分析路径 ----
@@ -413,18 +449,14 @@ array set raw_levels_matrix {}
 
 foreach from_grp $all_groups {
     set from_name   [lindex $from_grp 0]
-    set from_filter [lindex $from_grp 1]
+    set from_cells  [lindex $from_grp 1]
 
     foreach to_grp $all_groups {
         set to_name   [lindex $to_grp 0]
-        set to_filter [lindex $to_grp 1]
+        set to_cells  [lindex $to_grp 1]
 
         # 跳过自身（对角线标记为 --- 但仍分析，以免遗漏组内关键路径）
         set is_self [expr {$from_name eq $to_name}]
-
-        # 每次重新查询 Vivado cell 集合（避免字符串化问题）
-        set from_cells [get_cells -quiet -hierarchical -filter $from_filter]
-        set to_cells   [get_cells -quiet -hierarchical -filter $to_filter]
 
         # 尝试获取时序路径
         set paths [get_timing_paths -quiet \
