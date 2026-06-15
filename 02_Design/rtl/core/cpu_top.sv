@@ -4,7 +4,7 @@
 // Rule: Keep behavior in stage/helper modules; cpu_top owns wiring and small glue.
 // IROM: 外部例化，通过端口访问
 // DRAM: 通过 DCache 访问（student_top 中例化）
-// Branch Prediction: Tournament (BTB+GShare+Selector+RAS)
+// Frontend Prediction: Stage-1 ABTB + PHT canonical steering
 // ============================================================
 
 `ifdef SYNTHESIS
@@ -481,104 +481,23 @@ module cpu_top (
     );
 
     // ================================================================
-    //  Branch prediction wires
+    //  Stage-1 prediction wires
     // ================================================================
-
-    // IF stage prediction outputs (L0: fast path)
-    wire        bp_taken;
-    wire [31:0] bp_target;
-    wire [11:0] bp_target_even_addr;
-    wire [11:0] bp_target_odd_addr;
-    wire        bp_target_fetch_odd;
-    wire [11:0] bp_target_plus4_even_addr;
-    wire [11:0] bp_target_plus4_odd_addr;
-    wire        bp_target_plus4_fetch_odd;
-    wire [11:0] bp_target_plus8_even_addr;
-    wire [11:0] bp_target_plus8_odd_addr;
-    wire        bp_target_plus8_fetch_odd;
-    wire [11:0] bp_target_plus12_even_addr;
-    wire [11:0] bp_target_plus12_odd_addr;
-    wire        bp_target_plus12_fetch_odd;
-    wire [ 7:0] bp_ghr_snap;
-    wire        bp_btb_hit;
-    wire [ 1:0] bp_btb_type;    // NLP: entry type for ID verification
-    wire [ 1:0] bp_btb_bht;
-    wire [ 1:0] bp_pht_cnt;
-    wire [ 1:0] bp_sel_cnt;
-
-    // Slot1 candidate prediction snapshot for FQ metadata.
-    wire        bp_s1_taken;
-    wire [31:0] bp_s1_target;
-    wire [ 7:0] bp_s1_ghr_snap;
-    wire        bp_s1_btb_hit;
-    wire [ 1:0] bp_s1_btb_type;
-    wire [ 1:0] bp_s1_btb_bht;
-    wire [ 1:0] bp_s1_pht_cnt;
-    wire [ 1:0] bp_s1_sel_cnt;
-
-    // Skip-inst0 lookahead prediction (for next-cycle buffered slot1 fetch)
-    wire        la_bp_taken;
-    wire [31:0] la_bp_target;
-    wire [11:0] la_bp_even_addr;
-    wire [11:0] la_bp_odd_addr;
-    wire        la_bp_fetch_odd;
-    wire [ 7:0] la_bp_ghr_snap;
-    wire        la_bp_btb_hit;
-    wire [ 1:0] la_bp_btb_type;
-    wire [ 1:0] la_bp_btb_bht;
-    wire [ 1:0] la_bp_pht_cnt;
-    wire [ 1:0] la_bp_sel_cnt;
-
-    // Buffered-slot prediction for inst_buf_pc = if_pc_out + 4.
-    wire [31:0] buf_bp_pc;
-    wire        buf_bp_taken;
-    wire [31:0] buf_bp_target;
-    wire [11:0] buf_bp_even_addr;
-    wire [11:0] buf_bp_odd_addr;
-    wire        buf_bp_fetch_odd;
-    wire [ 7:0] buf_bp_ghr_snap;
-    wire        buf_bp_btb_hit;
-    wire [ 1:0] buf_bp_btb_type;
-    wire [ 1:0] buf_bp_btb_bht;
-    wire [ 1:0] buf_bp_pht_cnt;
-    wire [ 1:0] buf_bp_sel_cnt;
 
     // ID stage prediction (from IF/ID reg)
     wire        id_bp_taken;
     wire [31:0] id_bp_target;
-    wire [ 7:0] id_bp_ghr_snap;
-    wire        id_bp_btb_hit;
-    wire [ 1:0] id_bp_btb_type; // NLP: entry type for ID verification
-    wire [ 1:0] id_bp_btb_bht;
-    wire [ 1:0] id_bp_pht_cnt;
-    wire [ 1:0] id_bp_sel_cnt;
     wire        id_s1_bp_taken;
     wire [31:0] id_s1_bp_target;
-    wire [ 7:0] id_s1_bp_ghr_snap;
-    wire        id_s1_bp_btb_hit;
-    wire [ 1:0] id_s1_bp_btb_type;
-    wire [ 1:0] id_s1_bp_btb_bht;
-    wire [ 1:0] id_s1_bp_pht_cnt;
-    wire [ 1:0] id_s1_bp_sel_cnt;
 
     // EX stage prediction (from ID/EX reg)
     wire        ex_bp_taken;
     wire [31:0] ex_bp_target;
-    wire [ 7:0] ex_bp_ghr_snap;
-    wire        ex_bp_btb_hit;
-    wire [ 1:0] ex_bp_btb_bht;
-    wire [ 1:0] ex_bp_pht_cnt;
-    wire [ 1:0] ex_bp_sel_cnt;
     wire        ex_s1_bp_taken;
     wire [31:0] ex_s1_bp_target;
-    wire [ 7:0] ex_s1_bp_ghr_snap;
-    wire        ex_s1_bp_btb_hit;
-    wire [ 1:0] ex_s1_bp_btb_bht;
-    wire [ 1:0] ex_s1_bp_pht_cnt;
-    wire [ 1:0] ex_s1_bp_sel_cnt;
 
     // ABTB lookup/training metadata. ABTB/PHT owns Stage-1 J/CALL and branch
-    // steering by default; legacy predictor metadata is still carried onward.
+    // steering by default. Legacy predictor metadata has been retired.
     wire        abtb_lookup_accept;
     wire        abtb_bank0_hit;
     wire        abtb_bank0_lookup_hit;
@@ -702,16 +621,8 @@ module cpu_top (
     wire        bp_train_is_branch;
     wire        bp_train_is_jal;
     wire        bp_train_is_jalr;
-    wire [ 4:0] bp_train_rd;
-    wire [ 4:0] bp_train_rs1_addr;
     wire        bp_train_actual_taken;
     wire [31:0] bp_train_actual_target;
-    wire        bp_train_btb_allocate;
-    wire [ 7:0] bp_train_ghr_snap;
-    wire        bp_train_btb_hit;
-    wire [ 1:0] bp_train_btb_bht;
-    wire [ 1:0] bp_train_pht_cnt;
-    wire [ 1:0] bp_train_sel_cnt;
 
     // ================================================================
     //  Module instantiations
@@ -825,35 +736,14 @@ module cpu_top (
                                                      : ex_is_jal;
     assign bp_train_is_jalr       = bp_train_from_s1 ? 1'b0
                                                      : ex_is_jalr;
-    assign bp_train_rd            = bp_train_from_s1 ? ex_s1_rd
-                                                     : ex_rd;
-    assign bp_train_rs1_addr      = bp_train_from_s1 ? ex_s1_rs1_addr
-                                                     : ex_rs1_addr;
     assign bp_train_actual_taken  = bp_train_from_s1 ? ex_s1_actual_taken
                                                      : actual_taken;
     assign bp_train_actual_target = bp_train_from_s1 ? ex_s1_branch_target
                                                      : actual_target;
-    // Slot1 conditional branches train PHT/GHR/selector only.  Allocating a
-    // taken-branch BTB entry would create frontend steering that this design
-    // does not yet resolve for slot1 predicted-taken/not-taken mismatches.
-    // Slot1 JAL still allocates BTB/RAS target state.
-    assign bp_train_btb_allocate  = ~bp_train_from_s1
-                                  | bp_train_is_jal
-                                  | bp_train_is_jalr;
-    assign bp_train_ghr_snap      = bp_train_from_s1 ? ex_s1_bp_ghr_snap
-                                                     : ex_bp_ghr_snap;
-    assign bp_train_btb_hit       = bp_train_from_s1 ? ex_s1_bp_btb_hit
-                                                     : ex_bp_btb_hit;
-    assign bp_train_btb_bht       = bp_train_from_s1 ? ex_s1_bp_btb_bht
-                                                     : ex_bp_btb_bht;
-    assign bp_train_pht_cnt       = bp_train_from_s1 ? ex_s1_bp_pht_cnt
-                                                     : ex_bp_pht_cnt;
-    assign bp_train_sel_cnt       = bp_train_from_s1 ? ex_s1_bp_sel_cnt
-                                                     : ex_bp_sel_cnt;
 
-    // Shadow ABTB reuses the legacy predictor's EX slot arbitration, unified
-    // pipeline-fire qualification, and wrong-path suppression. A not-taken
-    // branch does not write ABTB.
+    // ABTB/PHT reuse the existing EX slot arbitration, unified pipeline-fire
+    // qualification, and wrong-path suppression. A not-taken branch does not
+    // write ABTB.
     wire abtb_train_update_qualified =
         bp_train_from_s1 ? ex_s1_abtb_update_qualified
                          : ex_abtb_update_qualified;
@@ -895,95 +785,6 @@ module cpu_top (
 	            $error("LSU reached EX with late WB repair; DCache address uses unrepaired LSU address");
 	    end
 	`endif
-
-    branch_predictor u_bp (
-        .clk             (clk),
-        .rst_n           (rst_n),
-
-        // IF prediction (L0: fast path)
-        .if_pc           (pc),
-        .bp_taken        (bp_taken),
-        .bp_target       (bp_target),
-        .bp_even_addr    (bp_target_even_addr),
-        .bp_odd_addr     (bp_target_odd_addr),
-        .bp_fetch_odd    (bp_target_fetch_odd),
-        .bp_plus4_even_addr (bp_target_plus4_even_addr),
-        .bp_plus4_odd_addr  (bp_target_plus4_odd_addr),
-        .bp_plus4_fetch_odd (bp_target_plus4_fetch_odd),
-        .bp_plus8_even_addr (bp_target_plus8_even_addr),
-        .bp_plus8_odd_addr  (bp_target_plus8_odd_addr),
-        .bp_plus8_fetch_odd (bp_target_plus8_fetch_odd),
-        .bp_plus12_even_addr(bp_target_plus12_even_addr),
-        .bp_plus12_odd_addr (bp_target_plus12_odd_addr),
-        .bp_plus12_fetch_odd(bp_target_plus12_fetch_odd),
-        .bp_ghr_snap     (bp_ghr_snap),
-        .bp_btb_hit      (bp_btb_hit),
-        .bp_btb_type     (bp_btb_type),     // NLP
-        .bp_btb_bht      (bp_btb_bht),
-        .bp_pht_cnt      (bp_pht_cnt),
-        .bp_sel_cnt      (bp_sel_cnt),
-
-        // Slot1 candidate prediction snapshot for current fetch packet.
-        .s1_pc           (pc + 32'd4),
-        .s1_bp_taken     (bp_s1_taken),
-        .s1_bp_target    (bp_s1_target),
-        .s1_bp_ghr_snap  (bp_s1_ghr_snap),
-        .s1_bp_btb_hit   (bp_s1_btb_hit),
-        .s1_bp_btb_type  (bp_s1_btb_type),
-        .s1_bp_btb_bht   (bp_s1_btb_bht),
-        .s1_bp_pht_cnt   (bp_s1_pht_cnt),
-        .s1_bp_sel_cnt   (bp_s1_sel_cnt),
-
-        // Lookahead prediction for possible next-cycle skip_inst0 fetch.
-        // When current PC P was predicted single but actually dual-issues,
-        // next cycle issues P+8 from irom_inst1, so query P+8 now.
-        .la_pc           (pc + 32'd8),
-        .la_bp_taken     (la_bp_taken),
-        .la_bp_target    (la_bp_target),
-        .la_bp_even_addr (la_bp_even_addr),
-        .la_bp_odd_addr  (la_bp_odd_addr),
-        .la_bp_fetch_odd (la_bp_fetch_odd),
-        .la_bp_ghr_snap  (la_bp_ghr_snap),
-        .la_bp_btb_hit   (la_bp_btb_hit),
-        .la_bp_btb_type  (la_bp_btb_type),
-        .la_bp_btb_bht   (la_bp_btb_bht),
-        .la_bp_pht_cnt   (la_bp_pht_cnt),
-        .la_bp_sel_cnt   (la_bp_sel_cnt),
-
-        // Prediction for the instruction that may be stored in inst_buf.
-        .buf_pc           (pc + 32'd4),
-        .buf_bp_taken     (buf_bp_taken),
-        .buf_bp_target    (buf_bp_target),
-        .buf_bp_even_addr (buf_bp_even_addr),
-        .buf_bp_odd_addr  (buf_bp_odd_addr),
-        .buf_bp_fetch_odd (buf_bp_fetch_odd),
-        .buf_bp_ghr_snap  (buf_bp_ghr_snap),
-        .buf_bp_btb_hit   (buf_bp_btb_hit),
-        .buf_bp_btb_type  (buf_bp_btb_type),
-        .buf_bp_btb_bht   (buf_bp_btb_bht),
-        .buf_bp_pht_cnt   (buf_bp_pht_cnt),
-        .buf_bp_sel_cnt   (buf_bp_sel_cnt),
-
-        // EX update
-        // 250MHz: gate ex_valid with ~mem_branch_flush to prevent wrong-path
-        // instructions (that entered EX before registered flush) from corrupting
-        // predictor state (GHR, PHT, BTB, selector)
-        .ex_valid        (bp_train_valid),
-        .ex_pc           (bp_train_pc),
-        .ex_is_branch    (bp_train_is_branch),
-        .ex_is_jal       (bp_train_is_jal),
-        .ex_is_jalr      (bp_train_is_jalr),
-        .ex_rd           (bp_train_rd),
-        .ex_rs1_addr     (bp_train_rs1_addr),
-        .ex_actual_taken (bp_train_actual_taken),
-        .ex_actual_target(bp_train_actual_target),
-        .ex_btb_allocate (bp_train_btb_allocate),
-        .ex_ghr_snap     (bp_train_ghr_snap),
-        .ex_btb_hit      (bp_train_btb_hit),
-        .ex_btb_bht      (bp_train_btb_bht),
-        .ex_pht_cnt      (bp_train_pht_cnt),
-        .ex_sel_cnt      (bp_train_sel_cnt)
-    );
 
     frontend_stage1_direction u_frontend_stage1_direction (
         .clk                 (clk),
@@ -1330,20 +1131,8 @@ module cpu_top (
     wire [31:0] if_pc_out;
     wire        if_bp_taken_out;
     wire [31:0] if_bp_target_out;
-    wire [ 7:0] if_bp_ghr_snap_out;
-    wire        if_bp_btb_hit_out;
-    wire [ 1:0] if_bp_btb_type_out;
-    wire [ 1:0] if_bp_btb_bht_out;
-    wire [ 1:0] if_bp_pht_cnt_out;
-    wire [ 1:0] if_bp_sel_cnt_out;
     wire        if_s1_bp_taken_out;
     wire [31:0] if_s1_bp_target_out;
-    wire [ 7:0] if_s1_bp_ghr_snap_out;
-    wire        if_s1_bp_btb_hit_out;
-    wire [ 1:0] if_s1_bp_btb_type_out;
-    wire [ 1:0] if_s1_bp_btb_bht_out;
-    wire [ 1:0] if_s1_bp_pht_cnt_out;
-    wire [ 1:0] if_s1_bp_sel_cnt_out;
     wire        if_skip_out;
     wire        if_s1_valid;
     wire        if_sequential_fetch;
@@ -1371,22 +1160,6 @@ module cpu_top (
         .ex_redirect_target(frontend_branch_target),
         .irom_addr        (irom_addr),
         .irom_data        (irom_data),
-        .bp_taken         (bp_taken),
-        .bp_target        (bp_target),
-        .bp_ghr_snap      (bp_ghr_snap),
-        .bp_btb_hit       (bp_btb_hit),
-        .bp_btb_type      (bp_btb_type),
-        .bp_btb_bht       (bp_btb_bht),
-        .bp_pht_cnt       (bp_pht_cnt),
-        .bp_sel_cnt       (bp_sel_cnt),
-        .bp_s1_taken      (bp_s1_taken),
-        .bp_s1_target     (bp_s1_target),
-        .bp_s1_ghr_snap   (bp_s1_ghr_snap),
-        .bp_s1_btb_hit    (bp_s1_btb_hit),
-        .bp_s1_btb_type   (bp_s1_btb_type),
-        .bp_s1_btb_bht    (bp_s1_btb_bht),
-        .bp_s1_pht_cnt    (bp_s1_pht_cnt),
-        .bp_s1_sel_cnt    (bp_s1_sel_cnt),
         .abtb_bank0_lookup_hit  (abtb_bank0_lookup_hit),
         .abtb_bank0_hit         (abtb_bank0_hit),
         .abtb_bank0_way         (abtb_bank0_way),
@@ -1413,22 +1186,10 @@ module cpu_top (
         .if_s1_valid      (if_s1_valid),
         .if_bp_taken      (if_bp_taken_out),
         .if_bp_target     (if_bp_target_out),
-        .if_bp_ghr_snap   (if_bp_ghr_snap_out),
-        .if_bp_btb_hit    (if_bp_btb_hit_out),
-        .if_bp_btb_type   (if_bp_btb_type_out),
-        .if_bp_btb_bht    (if_bp_btb_bht_out),
-        .if_bp_pht_cnt    (if_bp_pht_cnt_out),
-        .if_bp_sel_cnt    (if_bp_sel_cnt_out),
         .if_pred_source_abtb(if_pred_source_abtb_out),
         .if_stage1_branch_owned(if_stage1_branch_owned_out),
         .if_s1_bp_taken   (if_s1_bp_taken_out),
         .if_s1_bp_target  (if_s1_bp_target_out),
-        .if_s1_bp_ghr_snap(if_s1_bp_ghr_snap_out),
-        .if_s1_bp_btb_hit (if_s1_bp_btb_hit_out),
-        .if_s1_bp_btb_type(if_s1_bp_btb_type_out),
-        .if_s1_bp_btb_bht (if_s1_bp_btb_bht_out),
-        .if_s1_bp_pht_cnt (if_s1_bp_pht_cnt_out),
-        .if_s1_bp_sel_cnt (if_s1_bp_sel_cnt_out),
         .if_s1_pred_source_abtb(if_s1_pred_source_abtb_out),
         .if_s1_stage1_branch_owned(if_s1_stage1_branch_owned_out),
         .if_abtb_hit         (if_abtb_hit_out),
@@ -1495,22 +1256,10 @@ module cpu_top (
         // Branch prediction passthrough
         .if_bp_taken    (if_bp_taken_out),
         .if_bp_target   (if_bp_target_out),
-        .if_bp_ghr_snap (if_bp_ghr_snap_out),
-        .if_bp_btb_hit  (if_bp_btb_hit_out),
-        .if_bp_btb_type (if_bp_btb_type_out),     // NLP: type for ID verification
-        .if_bp_btb_bht  (if_bp_btb_bht_out),
-        .if_bp_pht_cnt  (if_bp_pht_cnt_out),
-        .if_bp_sel_cnt  (if_bp_sel_cnt_out),
         .if_pred_source_abtb(if_pred_source_abtb_out),
         .if_stage1_branch_owned(if_stage1_branch_owned_out),
         .if_s1_bp_taken    (if_s1_bp_taken_out),
         .if_s1_bp_target   (if_s1_bp_target_out),
-        .if_s1_bp_ghr_snap (if_s1_bp_ghr_snap_out),
-        .if_s1_bp_btb_hit  (if_s1_bp_btb_hit_out),
-        .if_s1_bp_btb_type (if_s1_bp_btb_type_out),
-        .if_s1_bp_btb_bht  (if_s1_bp_btb_bht_out),
-        .if_s1_bp_pht_cnt  (if_s1_bp_pht_cnt_out),
-        .if_s1_bp_sel_cnt  (if_s1_bp_sel_cnt_out),
         .if_s1_pred_source_abtb(if_s1_pred_source_abtb_out),
         .if_s1_stage1_branch_owned(if_s1_stage1_branch_owned_out),
         .if_abtb_hit         (if_abtb_hit_out),
@@ -1531,22 +1280,10 @@ module cpu_top (
         .if_s1_stage1_pht_counter(if_s1_stage1_pht_counter),
         .id_bp_taken    (id_bp_taken),
         .id_bp_target   (id_bp_target),
-        .id_bp_ghr_snap (id_bp_ghr_snap),
-        .id_bp_btb_hit  (id_bp_btb_hit),
-        .id_bp_btb_type (id_bp_btb_type),  // NLP: type for ID verification
-        .id_bp_btb_bht  (id_bp_btb_bht),
-        .id_bp_pht_cnt  (id_bp_pht_cnt),
-        .id_bp_sel_cnt  (id_bp_sel_cnt),
         .id_pred_source_abtb(id_pred_source_abtb),
         .id_stage1_branch_owned(id_stage1_branch_owned),
         .id_s1_bp_taken    (id_s1_bp_taken),
         .id_s1_bp_target   (id_s1_bp_target),
-        .id_s1_bp_ghr_snap (id_s1_bp_ghr_snap),
-        .id_s1_bp_btb_hit  (id_s1_bp_btb_hit),
-        .id_s1_bp_btb_type (id_s1_bp_btb_type),
-        .id_s1_bp_btb_bht  (id_s1_bp_btb_bht),
-        .id_s1_bp_pht_cnt  (id_s1_bp_pht_cnt),
-        .id_s1_bp_sel_cnt  (id_s1_bp_sel_cnt),
         .id_s1_pred_source_abtb(id_s1_pred_source_abtb),
         .id_s1_stage1_branch_owned(id_s1_stage1_branch_owned),
         .id_abtb_hit         (id_abtb_hit),
@@ -1789,11 +1526,6 @@ module cpu_top (
         // Stage-1 canonical prediction passthrough.
         .id_bp_taken      (id_bp_taken),
         .id_bp_target     (id_bp_target),
-        .id_bp_ghr_snap   (id_bp_ghr_snap),
-        .id_bp_btb_hit    (id_bp_btb_hit),
-        .id_bp_btb_bht    (id_bp_btb_bht),
-        .id_bp_pht_cnt    (id_bp_pht_cnt),
-        .id_bp_sel_cnt    (id_bp_sel_cnt),
         .id_pred_source_abtb(id_pred_source_abtb),
         .id_stage1_branch_owned(id_stage1_branch_owned),
         .id_abtb_hit         (id_abtb_hit),
@@ -1840,14 +1572,9 @@ module cpu_top (
         .ex_is_mret       (ex_is_mret),
         .ex_is_muldiv     (ex_is_muldiv),
         .ex_muldiv_op     (ex_muldiv_op),
-        // Branch prediction out (NLP: removed btb_way)
+        // Branch prediction out
         .ex_bp_taken      (ex_bp_taken),
         .ex_bp_target     (ex_bp_target),
-        .ex_bp_ghr_snap   (ex_bp_ghr_snap),
-        .ex_bp_btb_hit    (ex_bp_btb_hit),
-        .ex_bp_btb_bht    (ex_bp_btb_bht),
-        .ex_bp_pht_cnt    (ex_bp_pht_cnt),
-        .ex_bp_sel_cnt    (ex_bp_sel_cnt),
         .ex_pred_source_abtb(ex_pred_source_abtb),
         .ex_stage1_branch_owned(ex_stage1_branch_owned),
         .ex_abtb_hit         (ex_abtb_hit),
@@ -1892,11 +1619,6 @@ module cpu_top (
         .id_is_jalr          (dec1_is_jalr),
         .id_bp_taken         (id_s1_bp_taken),
         .id_bp_target        (id_s1_bp_target),
-        .id_bp_ghr_snap      (id_s1_bp_ghr_snap),
-        .id_bp_btb_hit       (id_s1_bp_btb_hit),
-        .id_bp_btb_bht       (id_s1_bp_btb_bht),
-        .id_bp_pht_cnt       (id_s1_bp_pht_cnt),
-        .id_bp_sel_cnt       (id_s1_bp_sel_cnt),
         .id_pred_source_abtb (id_s1_pred_source_abtb),
         .id_stage1_branch_owned(id_s1_stage1_branch_owned),
         .id_abtb_hit         (id_s1_abtb_hit),
@@ -1933,11 +1655,6 @@ module cpu_top (
         .ex_s1_is_jalr       (ex_s1_is_jalr),
         .ex_s1_bp_taken      (ex_s1_bp_taken),
         .ex_s1_bp_target     (ex_s1_bp_target),
-        .ex_s1_bp_ghr_snap   (ex_s1_bp_ghr_snap),
-        .ex_s1_bp_btb_hit    (ex_s1_bp_btb_hit),
-        .ex_s1_bp_btb_bht    (ex_s1_bp_btb_bht),
-        .ex_s1_bp_pht_cnt    (ex_s1_bp_pht_cnt),
-        .ex_s1_bp_sel_cnt    (ex_s1_bp_sel_cnt),
         .ex_s1_pred_source_abtb(ex_s1_pred_source_abtb),
         .ex_s1_stage1_branch_owned(ex_s1_stage1_branch_owned),
         .ex_s1_abtb_hit         (ex_s1_abtb_hit),

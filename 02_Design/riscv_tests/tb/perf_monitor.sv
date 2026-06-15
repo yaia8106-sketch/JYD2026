@@ -120,7 +120,7 @@ module perf_monitor (
     longint unsigned cnt_total_branch;    // total branch instructions reaching EX
     longint unsigned cnt_jcall_redirect;  // JAL/JALR redirect from either slot
 
-    // -- Branch predictor breakdown --
+    // -- Stage-1 prediction breakdown --
     longint unsigned cnt_bp_s0_ctrl;
     longint unsigned cnt_bp_s0_branch;
     longint unsigned cnt_bp_s0_jal;
@@ -130,14 +130,11 @@ module perf_monitor (
     longint unsigned cnt_bp_s1_jal;
     longint unsigned cnt_bp_s0_pred_taken;
     longint unsigned cnt_bp_s0_actual_taken;
-    longint unsigned cnt_bp_s0_btb_hit;
-    longint unsigned cnt_bp_s0_btb_miss;
     longint unsigned cnt_bp_s0_mispredict;
     longint unsigned cnt_bp_s0_dir_to_taken;
     longint unsigned cnt_bp_s0_dir_to_fallthrough;
     longint unsigned cnt_bp_s0_target_wrong;
-    longint unsigned cnt_bp_s1_lookup_btb_hit;
-    longint unsigned cnt_bp_s1_lookup_taken;
+    longint unsigned cnt_bp_s1_pred_taken;
     longint unsigned cnt_bp_s1_actual_taken;
     longint unsigned cnt_bp_s1_dir_wrong;
     longint unsigned cnt_bp_s1_target_wrong;
@@ -148,17 +145,6 @@ module perf_monitor (
     longint unsigned cnt_bp_train_branch;
     longint unsigned cnt_bp_train_jal;
     longint unsigned cnt_bp_train_jalr;
-    longint unsigned cnt_bp_train_btb_hit;
-    longint unsigned cnt_bp_train_btb_miss;
-    longint unsigned cnt_bp_train_btb_alloc;
-    longint unsigned cnt_bp_btb_write;
-    longint unsigned cnt_bp_btb_alloc_write;
-    longint unsigned cnt_bp_pht_write;
-    longint unsigned cnt_bp_sel_write;
-    longint unsigned cnt_bp_ghr_write;
-    longint unsigned cnt_bp_ras_push;
-    longint unsigned cnt_bp_ras_pop;
-    longint unsigned cnt_bp_jalr_side_write;
 
     // -- Frontend / FTQ breakdown --
     longint unsigned cnt_fe_bp0_fire;
@@ -292,7 +278,6 @@ module perf_monitor (
     wire        ex_is_jalr      = tb_riscv_tests.u_cpu.ex_is_jalr;
     wire        ex_bp_taken_w   = tb_riscv_tests.u_cpu.ex_bp_taken;
     wire [31:0] ex_bp_target_w  = tb_riscv_tests.u_cpu.ex_bp_target;
-    wire        ex_bp_btb_hit_w = tb_riscv_tests.u_cpu.ex_bp_btb_hit;
     wire        actual_taken_w  = tb_riscv_tests.u_cpu.actual_taken;
     wire [31:0] actual_target_w = tb_riscv_tests.u_cpu.actual_target;
 
@@ -353,7 +338,6 @@ module perf_monitor (
     wire       ex_s1_is_jal_w    = tb_riscv_tests.u_cpu.ex_s1_is_jal;
     wire       ex_s1_bp_taken_w  = tb_riscv_tests.u_cpu.ex_s1_bp_taken;
     wire [31:0] ex_s1_bp_target_w = tb_riscv_tests.u_cpu.ex_s1_bp_target;
-    wire       ex_s1_bp_btb_hit_w = tb_riscv_tests.u_cpu.ex_s1_bp_btb_hit;
     wire       ex_s1_actual_taken_w = tb_riscv_tests.u_cpu.ex_s1_actual_taken;
     wire [31:0] ex_s1_branch_target_w = tb_riscv_tests.u_cpu.ex_s1_branch_target;
     wire       ex_s1_branch_redirect_w = tb_riscv_tests.u_cpu.ex_s1_branch_redirect;
@@ -750,14 +734,11 @@ module perf_monitor (
             cnt_bp_s1_jal <= 0;
             cnt_bp_s0_pred_taken <= 0;
             cnt_bp_s0_actual_taken <= 0;
-            cnt_bp_s0_btb_hit <= 0;
-            cnt_bp_s0_btb_miss <= 0;
             cnt_bp_s0_mispredict <= 0;
             cnt_bp_s0_dir_to_taken <= 0;
             cnt_bp_s0_dir_to_fallthrough <= 0;
             cnt_bp_s0_target_wrong <= 0;
-            cnt_bp_s1_lookup_btb_hit <= 0;
-            cnt_bp_s1_lookup_taken <= 0;
+            cnt_bp_s1_pred_taken <= 0;
             cnt_bp_s1_actual_taken <= 0;
             cnt_bp_s1_dir_wrong <= 0;
             cnt_bp_s1_target_wrong <= 0;
@@ -768,17 +749,6 @@ module perf_monitor (
             cnt_bp_train_branch <= 0;
             cnt_bp_train_jal <= 0;
             cnt_bp_train_jalr <= 0;
-            cnt_bp_train_btb_hit <= 0;
-            cnt_bp_train_btb_miss <= 0;
-            cnt_bp_train_btb_alloc <= 0;
-            cnt_bp_btb_write <= 0;
-            cnt_bp_btb_alloc_write <= 0;
-            cnt_bp_pht_write <= 0;
-            cnt_bp_sel_write <= 0;
-            cnt_bp_ghr_write <= 0;
-            cnt_bp_ras_push <= 0;
-            cnt_bp_ras_pop <= 0;
-            cnt_bp_jalr_side_write <= 0;
             cnt_fe_bp0_fire <= 0;
             cnt_fe_bp0_block_ftq_full <= 0;
             cnt_fe_bp0_block_fq_credit <= 0;
@@ -1003,8 +973,6 @@ module perf_monitor (
                 if (ex_is_jalr)   cnt_bp_s0_jalr <= cnt_bp_s0_jalr + 1;
                 if (ex_bp_taken_w)   cnt_bp_s0_pred_taken <= cnt_bp_s0_pred_taken + 1;
                 if (actual_taken_w)  cnt_bp_s0_actual_taken <= cnt_bp_s0_actual_taken + 1;
-                if (ex_bp_btb_hit_w) cnt_bp_s0_btb_hit <= cnt_bp_s0_btb_hit + 1;
-                else                 cnt_bp_s0_btb_miss <= cnt_bp_s0_btb_miss + 1;
             end
             if (branch_flush_w) cnt_bp_s0_mispredict <= cnt_bp_s0_mispredict + 1;
             if (bp_s0_dir_to_taken_event)
@@ -1018,8 +986,7 @@ module perf_monitor (
                 cnt_bp_s1_ctrl <= cnt_bp_s1_ctrl + 1;
                 if (ex_s1_is_branch_w) cnt_bp_s1_branch <= cnt_bp_s1_branch + 1;
                 if (ex_s1_is_jal_w)    cnt_bp_s1_jal <= cnt_bp_s1_jal + 1;
-                if (ex_s1_bp_btb_hit_w) cnt_bp_s1_lookup_btb_hit <= cnt_bp_s1_lookup_btb_hit + 1;
-                if (ex_s1_bp_taken_w) cnt_bp_s1_lookup_taken <= cnt_bp_s1_lookup_taken + 1;
+                if (ex_s1_bp_taken_w) cnt_bp_s1_pred_taken <= cnt_bp_s1_pred_taken + 1;
                 if (ex_s1_actual_taken_w) cnt_bp_s1_actual_taken <= cnt_bp_s1_actual_taken + 1;
             end
             if (bp_s1_dir_wrong_event) cnt_bp_s1_dir_wrong <= cnt_bp_s1_dir_wrong + 1;
@@ -1038,29 +1005,7 @@ module perf_monitor (
                     cnt_bp_train_jal <= cnt_bp_train_jal + 1;
                 if (tb_riscv_tests.u_cpu.bp_train_is_jalr)
                     cnt_bp_train_jalr <= cnt_bp_train_jalr + 1;
-                if (tb_riscv_tests.u_cpu.bp_train_btb_hit)
-                    cnt_bp_train_btb_hit <= cnt_bp_train_btb_hit + 1;
-                else
-                    cnt_bp_train_btb_miss <= cnt_bp_train_btb_miss + 1;
-                if (tb_riscv_tests.u_cpu.bp_train_btb_allocate)
-                    cnt_bp_train_btb_alloc <= cnt_bp_train_btb_alloc + 1;
             end
-            if (tb_riscv_tests.u_cpu.u_bp.ex_btb_write)
-                cnt_bp_btb_write <= cnt_bp_btb_write + 1;
-            if (tb_riscv_tests.u_cpu.u_bp.ex_btb_write_alloc_taken)
-                cnt_bp_btb_alloc_write <= cnt_bp_btb_alloc_write + 1;
-            if (tb_riscv_tests.u_cpu.u_bp.ex_pht_write)
-                cnt_bp_pht_write <= cnt_bp_pht_write + 1;
-            if (tb_riscv_tests.u_cpu.u_bp.ex_sel_write)
-                cnt_bp_sel_write <= cnt_bp_sel_write + 1;
-            if (tb_riscv_tests.u_cpu.u_bp.ex_ghr_write)
-                cnt_bp_ghr_write <= cnt_bp_ghr_write + 1;
-            if (tb_riscv_tests.u_cpu.u_bp.ex_ras_push)
-                cnt_bp_ras_push <= cnt_bp_ras_push + 1;
-            if (tb_riscv_tests.u_cpu.u_bp.ex_ras_pop)
-                cnt_bp_ras_pop <= cnt_bp_ras_pop + 1;
-            if (tb_riscv_tests.u_cpu.u_bp.ex_jalr_side_write)
-                cnt_bp_jalr_side_write <= cnt_bp_jalr_side_write + 1;
 
             if (fe_bp0_fire_w) cnt_fe_bp0_fire <= cnt_fe_bp0_fire + 1;
             if (fe_bp0_block_ftq_full_w)
@@ -1324,30 +1269,23 @@ module perf_monitor (
             $display("[PERF]  Mispredicts:   %0d  (%0.1f%%)", cnt_branch_flush, mispredict_rate);
             $display("[PERF]  J/CALL redirects: %0d", cnt_jcall_redirect);
             $display("[PERF]");
-            $display("[PERF]  --- Branch Predictor Detailed ---");
+            $display("[PERF]  --- Stage-1 Prediction Detailed ---");
             $display("[PERF]  BP resolved:   s0=%0d branch=%0d jal=%0d jalr=%0d s1=%0d s1_branch=%0d s1_jal=%0d",
                      cnt_bp_s0_ctrl, cnt_bp_s0_branch, cnt_bp_s0_jal,
                      cnt_bp_s0_jalr, cnt_bp_s1_ctrl, cnt_bp_s1_branch,
                      cnt_bp_s1_jal);
-            $display("[PERF]  BP s0 pred:    pred_taken=%0d actual_taken=%0d btb_hit=%0d btb_miss=%0d",
-                     cnt_bp_s0_pred_taken, cnt_bp_s0_actual_taken,
-                     cnt_bp_s0_btb_hit, cnt_bp_s0_btb_miss);
+            $display("[PERF]  BP s0 pred:    pred_taken=%0d actual_taken=%0d",
+                     cnt_bp_s0_pred_taken, cnt_bp_s0_actual_taken);
             $display("[PERF]  BP s0 miss:    total=%0d dir_to_taken=%0d dir_to_fallthrough=%0d target=%0d",
                      cnt_bp_s0_mispredict, cnt_bp_s0_dir_to_taken,
                      cnt_bp_s0_dir_to_fallthrough, cnt_bp_s0_target_wrong);
-            $display("[PERF]  BP s1 lookup:  btb_hit=%0d lookup_taken=%0d actual_taken=%0d dir_wrong=%0d target_wrong=%0d redirect=%0d",
-                     cnt_bp_s1_lookup_btb_hit, cnt_bp_s1_lookup_taken,
+            $display("[PERF]  BP s1 pred:    pred_taken=%0d actual_taken=%0d dir_wrong=%0d target_wrong=%0d redirect=%0d",
+                     cnt_bp_s1_pred_taken,
                      cnt_bp_s1_actual_taken, cnt_bp_s1_dir_wrong,
                      cnt_bp_s1_target_wrong, cnt_bp_s1_redirect);
-            $display("[PERF]  BP training:   total=%0d s0=%0d s1=%0d branch=%0d jal=%0d jalr=%0d btb_hit=%0d btb_miss=%0d alloc=%0d",
+            $display("[PERF]  BP training:   total=%0d s0=%0d s1=%0d branch=%0d jal=%0d jalr=%0d",
                      cnt_bp_train_total, cnt_bp_train_s0, cnt_bp_train_s1,
-                     cnt_bp_train_branch, cnt_bp_train_jal, cnt_bp_train_jalr,
-                     cnt_bp_train_btb_hit, cnt_bp_train_btb_miss,
-                     cnt_bp_train_btb_alloc);
-            $display("[PERF]  BP writes:     btb=%0d btb_alloc=%0d pht=%0d selector=%0d ghr=%0d ras_push=%0d ras_pop=%0d jalr_side=%0d",
-                     cnt_bp_btb_write, cnt_bp_btb_alloc_write, cnt_bp_pht_write,
-                     cnt_bp_sel_write, cnt_bp_ghr_write, cnt_bp_ras_push,
-                     cnt_bp_ras_pop, cnt_bp_jalr_side_write);
+                     cnt_bp_train_branch, cnt_bp_train_jal, cnt_bp_train_jalr);
             $display("[PERF]");
             $display("[PERF]  --- Frontend / FTQ Detailed ---");
             $display("[PERF]  FE BP0:        fire=%0d ftq_full=%0d fq_credit_block=%0d",

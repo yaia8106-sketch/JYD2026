@@ -8,7 +8,6 @@
 //       Branch redirect target/fallthrough are precomputed in ID to keep
 //       the EX mispredict redirect path off the 32-bit target adder.
 //       Branch prediction signals passed through for EX update.
-// NLP: removed bp_btb_way (no longer needed with direct-mapped BTB)
 // ============================================================
 
 module id_ex_reg (
@@ -65,11 +64,6 @@ module id_ex_reg (
     // Branch prediction (ID → EX passthrough)
     input  logic        id_bp_taken,
     input  logic [31:0] id_bp_target,
-    input  logic [ 7:0] id_bp_ghr_snap,
-    input  logic        id_bp_btb_hit,
-    input  logic [ 1:0] id_bp_btb_bht,
-    input  logic [ 1:0] id_bp_pht_cnt,
-    input  logic [ 1:0] id_bp_sel_cnt,
     input  logic        id_pred_source_abtb,
     input  logic        id_stage1_branch_owned,
     input  logic        id_abtb_hit,
@@ -122,11 +116,6 @@ module id_ex_reg (
     // Branch prediction out (to EX stage)
     output logic        ex_bp_taken,
     output logic [31:0] ex_bp_target,
-    output logic [ 7:0] ex_bp_ghr_snap,
-    output logic        ex_bp_btb_hit,
-    output logic [ 1:0] ex_bp_btb_bht,
-    output logic [ 1:0] ex_bp_pht_cnt,
-    output logic [ 1:0] ex_bp_sel_cnt,
     output logic        ex_pred_source_abtb,
     output logic        ex_stage1_branch_owned,
     // Shadow ABTB training consumes only hit/way plus decoded update
@@ -187,11 +176,6 @@ module id_ex_reg (
             ex_muldiv_op     <= 3'd0;
             ex_bp_taken      <= 1'b0;
             ex_bp_target     <= 32'd0;
-            ex_bp_ghr_snap   <= 8'd0;
-            ex_bp_btb_hit    <= 1'b0;
-            ex_bp_btb_bht    <= 2'd0;
-            ex_bp_pht_cnt    <= 2'd0;
-            ex_bp_sel_cnt    <= 2'd0;
             ex_pred_source_abtb <= 1'b0;
             ex_stage1_branch_owned <= 1'b0;
             ex_abtb_hit         <= 1'b0;
@@ -246,11 +230,6 @@ module id_ex_reg (
             ex_muldiv_op     <= id_muldiv_op;
             ex_bp_taken      <= id_bp_taken;
             ex_bp_target     <= id_bp_target;
-            ex_bp_ghr_snap   <= id_bp_ghr_snap;
-            ex_bp_btb_hit    <= id_bp_btb_hit;
-            ex_bp_btb_bht    <= id_bp_btb_bht;
-            ex_bp_pht_cnt    <= id_bp_pht_cnt;
-            ex_bp_sel_cnt    <= id_bp_sel_cnt;
             ex_pred_source_abtb <= id_pred_source_abtb;
             ex_stage1_branch_owned <= id_stage1_branch_owned;
             ex_abtb_hit         <= id_abtb_hit;

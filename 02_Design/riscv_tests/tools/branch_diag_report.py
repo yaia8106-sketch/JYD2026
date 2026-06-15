@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate branch-predictor-focused diagnostics from perf summaries."""
+"""Generate Stage-1 frontend prediction diagnostics from perf summaries."""
 
 from __future__ import annotations
 
@@ -19,21 +19,18 @@ BRANCH_COLUMNS = [
     "mispredicts",
     "accuracy_pct",
     "mispredict_rate_pct",
-    "s0_btb_hit_rate_pct",
     "s0_pred_taken_rate_pct",
     "s0_actual_taken_rate_pct",
     "s0_taken_gap_pct",
     "s0_dir_to_taken_pct",
     "s0_dir_to_fallthrough_pct",
     "s0_target_wrong_pct",
-    "s1_lookup_taken_rate_pct",
+    "s1_pred_taken_rate_pct",
     "s1_actual_taken_rate_pct",
     "s1_dir_wrong_rate_pct",
     "train_coverage_pct",
-    "pht_write_per_branch",
-    "selector_write_per_branch",
+    "stage1_pht_update_per_branch",
     "cpi_redirect_pct",
-    "ras_push_pop_delta",
     "issue_class",
     "direction_bias",
 ]
@@ -41,7 +38,6 @@ BRANCH_COLUMNS = [
 COMPARE_METRICS = [
     "accuracy_pct",
     "mispredict_rate_pct",
-    "s0_btb_hit_rate_pct",
     "s0_pred_taken_rate_pct",
     "s0_actual_taken_rate_pct",
     "s0_taken_gap_pct",
@@ -136,11 +132,10 @@ def classify(row: dict[str, Any]) -> tuple[str, str]:
     if total == 0:
         return "no_branch_activity", "n/a"
 
-    btb_hit = as_float(row, "s0_btb_hit_rate_pct")
     target = as_float(row, "s0_target_wrong_pct")
     gap = as_float(row, "s0_taken_gap_pct")
     train = as_float(row, "train_coverage_pct")
-    pht_per_branch = as_float(row, "pht_write_per_branch")
+    pht_per_branch = as_float(row, "stage1_pht_update_per_branch")
     s1_dir = as_float(row, "s1_dir_wrong_rate_pct")
     s1_branch = as_float(row, "bp_s1_branch")
     mispredict = as_float(row, "mispredict_rate_pct")
@@ -156,13 +151,11 @@ def classify(row: dict[str, Any]) -> tuple[str, str]:
 
     if mispredict < 5.0:
         return "ok_or_warmup_only", bias
-    if btb_hit < 70.0 and as_float(row, "s0_actual_taken_rate_pct") > 20.0:
-        return "btb_miss_alias_or_capacity", bias
     if target > 10.0:
-        return "target_ras_or_jalr", bias
+        return "target_or_jalr_fallthrough", bias
     if s1_branch > 0 and s1_dir > 25.0 and s1_dir >= dir_to_taken:
         return "slot1_direction_or_training", bias
-    if btb_hit > 80.0 and target < 5.0 and abs(gap) > 20.0:
+    if target < 5.0 and abs(gap) > 20.0:
         if gap > 0:
             return "direction_underpredict_taken", bias
         return "direction_overpredict_taken", bias
@@ -177,11 +170,8 @@ def classify(row: dict[str, Any]) -> tuple[str, str]:
 
 def derive(row: dict[str, Any]) -> dict[str, Any]:
     s0_resolved = as_float(row, "bp_s0_resolved")
-    s0_btb_hit = as_float(row, "bp_s0_btb_hit")
-    s0_btb_miss = as_float(row, "bp_s0_btb_miss")
-    s0_lookup = s0_btb_hit + s0_btb_miss
     if s0_resolved == 0:
-        s0_resolved = s0_lookup
+        s0_resolved = as_float(row, "total_branch")
 
     total_branch = as_float(row, "total_branch")
     mispredicts = as_float(row, "mispredicts")
@@ -203,21 +193,20 @@ def derive(row: dict[str, Any]) -> dict[str, Any]:
     out["mispredicts"] = int(mispredicts)
     out["accuracy_pct"] = 100.0 - pct(mispredicts, total_branch)
     out["mispredict_rate_pct"] = as_float(row, "mispredict_rate_pct", pct(mispredicts, total_branch))
-    out["s0_btb_hit_rate_pct"] = pct(s0_btb_hit, s0_lookup)
     out["s0_pred_taken_rate_pct"] = pct(as_float(row, "bp_s0_pred_taken"), s0_resolved)
     out["s0_actual_taken_rate_pct"] = pct(as_float(row, "bp_s0_actual_taken"), s0_resolved)
     out["s0_taken_gap_pct"] = out["s0_actual_taken_rate_pct"] - out["s0_pred_taken_rate_pct"]
     out["s0_dir_to_taken_pct"] = pct(as_float(row, "bp_s0_dir_to_taken"), s0_miss)
     out["s0_dir_to_fallthrough_pct"] = pct(as_float(row, "bp_s0_dir_to_fallthrough"), s0_miss)
     out["s0_target_wrong_pct"] = pct(as_float(row, "bp_s0_target_wrong"), s0_miss)
-    out["s1_lookup_taken_rate_pct"] = pct(as_float(row, "bp_s1_lookup_taken"), s1_den)
+    out["s1_pred_taken_rate_pct"] = pct(as_float(row, "bp_s1_pred_taken"), s1_den)
     out["s1_actual_taken_rate_pct"] = pct(as_float(row, "bp_s1_actual_taken"), s1_den)
     out["s1_dir_wrong_rate_pct"] = pct(as_float(row, "bp_s1_dir_wrong"), s1_den)
     out["train_coverage_pct"] = pct(train_total, resolved_total)
-    out["pht_write_per_branch"] = ratio(as_float(row, "bp_write_pht"), train_branch)
-    out["selector_write_per_branch"] = ratio(as_float(row, "bp_write_selector"), train_branch)
+    out["stage1_pht_update_per_branch"] = ratio(
+        as_float(row, "stage1_pht_confirmed"), train_branch
+    )
     out["cpi_redirect_pct"] = pct(as_float(row, "cpi_stack_redirect"), as_float(row, "cycles"))
-    out["ras_push_pop_delta"] = int(as_float(row, "bp_write_ras_push") - as_float(row, "bp_write_ras_pop"))
     out["issue_class"], out["direction_bias"] = classify(out)
     return out
 
@@ -244,7 +233,7 @@ def markdown_report(path: Path, rows: list[dict[str, Any]], inputs: list[tuple[s
         classes.setdefault(str(row.get("issue_class")), []).append(str(row.get("test")))
 
     lines = [
-        "# Branch Predictor Diagnosis",
+        "# Stage-1 Frontend Prediction Diagnosis",
         "",
         "## Inputs",
         "",
@@ -256,17 +245,16 @@ def markdown_report(path: Path, rows: list[dict[str, Any]], inputs: list[tuple[s
         "",
         "## Top Rows",
         "",
-        "| suite | test | status | acc% | btb% | predT% | actualT% | gap% | miss% | class |",
-        "|---|---|---:|---:|---:|---:|---:|---:|---:|---|",
+        "| suite | test | status | acc% | predT% | actualT% | gap% | miss% | class |",
+        "|---|---|---:|---:|---:|---:|---:|---:|---|",
     ]
     for row in suspicious[:20]:
         lines.append(
-            "| {suite} | {test} | {status} | {acc} | {btb} | {pred} | {actual} | {gap} | {miss} | {klass} |".format(
+            "| {suite} | {test} | {status} | {acc} | {pred} | {actual} | {gap} | {miss} | {klass} |".format(
                 suite=row.get("suite", ""),
                 test=row.get("test", ""),
                 status=row.get("status", ""),
                 acc=fmt(row.get("accuracy_pct", 0.0)),
-                btb=fmt(row.get("s0_btb_hit_rate_pct", 0.0)),
                 pred=fmt(row.get("s0_pred_taken_rate_pct", 0.0)),
                 actual=fmt(row.get("s0_actual_taken_rate_pct", 0.0)),
                 gap=fmt(row.get("s0_taken_gap_pct", 0.0)),

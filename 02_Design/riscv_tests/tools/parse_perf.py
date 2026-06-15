@@ -97,14 +97,11 @@ SUMMARY_COLUMNS = [
     "bp_s1_jal",
     "bp_s0_pred_taken",
     "bp_s0_actual_taken",
-    "bp_s0_btb_hit",
-    "bp_s0_btb_miss",
     "bp_s0_mispredict",
     "bp_s0_dir_to_taken",
     "bp_s0_dir_to_fallthrough",
     "bp_s0_target_wrong",
-    "bp_s1_lookup_btb_hit",
-    "bp_s1_lookup_taken",
+    "bp_s1_pred_taken",
     "bp_s1_actual_taken",
     "bp_s1_dir_wrong",
     "bp_s1_target_wrong",
@@ -115,17 +112,6 @@ SUMMARY_COLUMNS = [
     "bp_train_branch",
     "bp_train_jal",
     "bp_train_jalr",
-    "bp_train_btb_hit",
-    "bp_train_btb_miss",
-    "bp_train_btb_alloc",
-    "bp_write_btb",
-    "bp_write_btb_alloc",
-    "bp_write_pht",
-    "bp_write_selector",
-    "bp_write_ghr",
-    "bp_write_ras_push",
-    "bp_write_ras_pop",
-    "bp_write_jalr_side",
     "fe_bp0_fire",
     "fe_bp0_ftq_full",
     "fe_bp0_fq_credit_block",
@@ -208,10 +194,6 @@ COMPARE_METRICS = [
     "bp_s0_dir_to_fallthrough",
     "bp_s0_target_wrong",
     "bp_s1_redirect",
-    "bp_train_btb_miss",
-    "bp_write_btb",
-    "bp_write_pht",
-    "bp_write_selector",
     "fe_bp0_ftq_full",
     "fe_bp0_fq_credit_block",
     "fe_f0_ex_kill",
@@ -437,8 +419,6 @@ def parse_perf_payload(payload: str, metrics: dict[str, Any]) -> None:
         values = parse_value_pairs(payload)
         metrics["bp_s0_pred_taken"] = values.get("pred_taken", 0)
         metrics["bp_s0_actual_taken"] = values.get("actual_taken", 0)
-        metrics["bp_s0_btb_hit"] = values.get("btb_hit", 0)
-        metrics["bp_s0_btb_miss"] = values.get("btb_miss", 0)
         return
 
     if payload.startswith("BP s0 miss:"):
@@ -449,10 +429,9 @@ def parse_perf_payload(payload: str, metrics: dict[str, Any]) -> None:
         metrics["bp_s0_target_wrong"] = values.get("target", 0)
         return
 
-    if payload.startswith("BP s1 lookup:"):
+    if payload.startswith("BP s1 pred:"):
         values = parse_value_pairs(payload)
-        metrics["bp_s1_lookup_btb_hit"] = values.get("btb_hit", 0)
-        metrics["bp_s1_lookup_taken"] = values.get("lookup_taken", 0)
+        metrics["bp_s1_pred_taken"] = values.get("pred_taken", 0)
         metrics["bp_s1_actual_taken"] = values.get("actual_taken", 0)
         metrics["bp_s1_dir_wrong"] = values.get("dir_wrong", 0)
         metrics["bp_s1_target_wrong"] = values.get("target_wrong", 0)
@@ -467,21 +446,6 @@ def parse_perf_payload(payload: str, metrics: dict[str, Any]) -> None:
         metrics["bp_train_branch"] = values.get("branch", 0)
         metrics["bp_train_jal"] = values.get("jal", 0)
         metrics["bp_train_jalr"] = values.get("jalr", 0)
-        metrics["bp_train_btb_hit"] = values.get("btb_hit", 0)
-        metrics["bp_train_btb_miss"] = values.get("btb_miss", 0)
-        metrics["bp_train_btb_alloc"] = values.get("alloc", 0)
-        return
-
-    if payload.startswith("BP writes:"):
-        values = parse_value_pairs(payload)
-        metrics["bp_write_btb"] = values.get("btb", 0)
-        metrics["bp_write_btb_alloc"] = values.get("btb_alloc", 0)
-        metrics["bp_write_pht"] = values.get("pht", 0)
-        metrics["bp_write_selector"] = values.get("selector", 0)
-        metrics["bp_write_ghr"] = values.get("ghr", 0)
-        metrics["bp_write_ras_push"] = values.get("ras_push", 0)
-        metrics["bp_write_ras_pop"] = values.get("ras_pop", 0)
-        metrics["bp_write_jalr_side"] = values.get("jalr_side", 0)
         return
 
     if payload.startswith("FE BP0:"):

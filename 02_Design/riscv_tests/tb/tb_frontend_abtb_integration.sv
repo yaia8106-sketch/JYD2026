@@ -1030,8 +1030,8 @@ module tb_frontend_abtb_integration;
         redirect_clear_observe = 1'b0;
         killed_pc_refetch_pending = 1'b0;
         killed_pc_for_coverage = 32'd0;
-        // Each scenario uses a distinct PC because the legacy predictor's
-        // LUTRAM valid bits intentionally do not reset between subtests.
+        // Each scenario uses a distinct PC because ABTB/PHT state intentionally
+        // persists between subtests.
         // Slot0 JAL: cold allocation, redirect+train, hit metadata, and stall.
         clear_program();
         irom[JAL_INDEX] = enc_jal(5'd0, 0);

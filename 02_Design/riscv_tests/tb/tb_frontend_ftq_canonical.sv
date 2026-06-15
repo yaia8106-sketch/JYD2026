@@ -14,23 +14,6 @@ module tb_frontend_ftq_canonical;
     logic [11:0] irom_addr;
     logic [63:0] irom_data;
 
-    logic bp_taken;
-    logic [31:0] bp_target;
-    logic [7:0] bp_ghr_snap;
-    logic bp_btb_hit;
-    logic [1:0] bp_btb_type;
-    logic [1:0] bp_btb_bht;
-    logic [1:0] bp_pht_cnt;
-    logic [1:0] bp_sel_cnt;
-    logic bp_s1_taken;
-    logic [31:0] bp_s1_target;
-    logic [7:0] bp_s1_ghr_snap;
-    logic bp_s1_btb_hit;
-    logic [1:0] bp_s1_btb_type;
-    logic [1:0] bp_s1_btb_bht;
-    logic [1:0] bp_s1_pht_cnt;
-    logic [1:0] bp_s1_sel_cnt;
-
     logic abtb_bank0_hit;
     logic abtb_bank0_way;
     logic [1:0] abtb_bank0_cfi_type;
@@ -74,22 +57,6 @@ module tb_frontend_ftq_canonical;
         .ex_redirect_target          (ex_redirect_target),
         .irom_addr                   (irom_addr),
         .irom_data                   (irom_data),
-        .bp_taken                    (bp_taken),
-        .bp_target                   (bp_target),
-        .bp_ghr_snap                 (bp_ghr_snap),
-        .bp_btb_hit                  (bp_btb_hit),
-        .bp_btb_type                 (bp_btb_type),
-        .bp_btb_bht                  (bp_btb_bht),
-        .bp_pht_cnt                  (bp_pht_cnt),
-        .bp_sel_cnt                  (bp_sel_cnt),
-        .bp_s1_taken                 (bp_s1_taken),
-        .bp_s1_target                (bp_s1_target),
-        .bp_s1_ghr_snap              (bp_s1_ghr_snap),
-        .bp_s1_btb_hit               (bp_s1_btb_hit),
-        .bp_s1_btb_type              (bp_s1_btb_type),
-        .bp_s1_btb_bht               (bp_s1_btb_bht),
-        .bp_s1_pht_cnt               (bp_s1_pht_cnt),
-        .bp_s1_sel_cnt               (bp_s1_sel_cnt),
         .abtb_bank0_lookup_hit       (abtb_bank0_hit),
         .abtb_bank0_hit              (abtb_bank0_hit),
         .abtb_bank0_way              (abtb_bank0_way),
@@ -116,22 +83,10 @@ module tb_frontend_ftq_canonical;
         .if_s1_valid                 (if_s1_valid),
         .if_bp_taken                 (if_bp_taken),
         .if_bp_target                (if_bp_target),
-        .if_bp_ghr_snap              (),
-        .if_bp_btb_hit               (),
-        .if_bp_btb_type              (),
-        .if_bp_btb_bht               (),
-        .if_bp_pht_cnt               (),
-        .if_bp_sel_cnt               (),
         .if_pred_source_abtb         (if_pred_source_abtb),
         .if_stage1_branch_owned      (if_stage1_branch_owned),
         .if_s1_bp_taken              (if_s1_bp_taken),
         .if_s1_bp_target             (if_s1_bp_target),
-        .if_s1_bp_ghr_snap           (),
-        .if_s1_bp_btb_hit            (),
-        .if_s1_bp_btb_type           (),
-        .if_s1_bp_btb_bht            (),
-        .if_s1_bp_pht_cnt            (),
-        .if_s1_bp_sel_cnt            (),
         .if_s1_pred_source_abtb      (if_s1_pred_source_abtb),
         .if_s1_stage1_branch_owned   (if_s1_stage1_branch_owned),
         .if_abtb_hit                 (),
@@ -188,22 +143,6 @@ module tb_frontend_ftq_canonical;
             ex_redirect_valid = 1'b0;
             ex_redirect_target = 32'd0;
             irom_data = {32'h0000_0013, 32'h0000_0013};
-            bp_taken = 1'b0;
-            bp_target = BASE + 32'h40;
-            bp_ghr_snap = 8'd0;
-            bp_btb_hit = 1'b1;
-            bp_btb_type = TYPE_BRANCH;
-            bp_btb_bht = 2'b01;
-            bp_pht_cnt = 2'b01;
-            bp_sel_cnt = 2'b00;
-            bp_s1_taken = 1'b0;
-            bp_s1_target = 32'd0;
-            bp_s1_ghr_snap = 8'd0;
-            bp_s1_btb_hit = 1'b0;
-            bp_s1_btb_type = 2'd0;
-            bp_s1_btb_bht = 2'b01;
-            bp_s1_pht_cnt = 2'b01;
-            bp_s1_sel_cnt = 2'b00;
             abtb_bank0_hit = 1'b0;
             abtb_bank0_way = 1'b0;
             abtb_bank0_cfi_type = 2'd0;
@@ -271,42 +210,30 @@ module tb_frontend_ftq_canonical;
         end
     endtask
 
-    task automatic scenario_cold_miss_ignores_legacy_taken;
-        logic [31:0] branch_target;
+    task automatic scenario_cold_miss_fetches_sequential;
         logic [31:0] seq_target;
         begin
             drive_defaults();
-            branch_target = BASE + 32'h40;
             seq_target = BASE + 32'd8;
-            bp_taken = 1'b1;
-            bp_target = branch_target;
-            bp_btb_bht = 2'b01;
-            bp_pht_cnt = 2'b10;
             abtb_bank1_hit = 1'b0;
             reset_dut();
 
             accept_sequential_and_check(seq_target);
             check(!dut.f0_final_taken
                   && dut.f0_final_next_pc == seq_target,
-                  "legacy cold-miss metadata changed canonical sequential result");
-            pass_case("cold miss ignores legacy taken and fetches sequentially");
+                  "ABTB cold miss changed canonical sequential result");
+            pass_case("cold miss fetches sequentially");
         end
     endtask
 
-    task automatic scenario_legacy_taken_does_not_suppress_bank1;
-        logic [31:0] branch_target;
+    task automatic scenario_bank1_abtb_selected_under_stall;
         logic [31:0] bank1_target;
         logic [31:0] held_pc;
         logic held_s1_source;
         begin
             drive_defaults();
             id_allowin = 1'b0;
-            branch_target = BASE + 32'h40;
             bank1_target = BASE + 32'h80;
-            bp_taken = 1'b1;
-            bp_target = branch_target;
-            bp_btb_bht = 2'b10;
-            bp_pht_cnt = 2'b01;
             abtb_bank1_pred_target = bank1_target;
             reset_dut();
 
@@ -315,7 +242,7 @@ module tb_frontend_ftq_canonical;
                   && dut.f0_final_source_abtb
                   && dut.f0_final_bank
                   && dut.f0_final_next_pc == bank1_target,
-                  "legacy taken suppressed younger bank1 ABTB steering");
+                  "bank1 ABTB steering was not selected");
             @(posedge clk);
             #1;
             check(if_valid && !if_bp_taken && !if_pred_source_abtb
@@ -327,8 +254,6 @@ module tb_frontend_ftq_canonical;
             // Stop creating new ABTB events, then wait until the blocked FQ
             // consumes all remaining credits and any accepted F0 request has
             // drained before checking the actual hold interval.
-            bp_btb_hit = 1'b0;
-            bp_taken = 1'b0;
             abtb_bank0_hit = 1'b0;
             abtb_bank0_pred_taken = 1'b0;
             abtb_bank1_hit = 1'b0;
@@ -345,11 +270,11 @@ module tb_frontend_ftq_canonical;
                       && if_s1_pred_source_abtb == held_s1_source,
                       "frontend stall changed canonical PC or FQ metadata");
             end
-            pass_case("legacy taken does not suppress younger bank1 ABTB under stall");
+            pass_case("bank1 ABTB remains canonical under stall");
         end
     endtask
 
-    task automatic scenario_first_abtb_ignores_legacy_metadata;
+    task automatic scenario_first_abtb_direct_priority;
         logic [31:0] abtb_target;
         begin
             drive_defaults();
@@ -361,17 +286,14 @@ module tb_frontend_ftq_canonical;
             // direction result low to prove it cannot gate canonical steering.
             abtb_bank0_pred_taken = 1'b0;
             abtb_bank0_pred_target = abtb_target;
-            bp_taken = 1'b0;
-            bp_btb_bht = 2'b01;
-            bp_pht_cnt = 2'b10;
             reset_dut();
 
             accept_taken_and_check(1'b1, 1'b0, abtb_target);
             check(dut.f0_final_source_abtb
                   && dut.f0_final_bank == 1'b0
                   && dut.f0_final_next_pc == abtb_target,
-                  "legacy metadata overrode first ABTB direct");
-            pass_case("first ABTB direct ignores legacy metadata");
+                  "first ABTB direct was not canonical");
+            pass_case("first ABTB direct is canonical");
         end
     endtask
 
@@ -409,9 +331,6 @@ module tb_frontend_ftq_canonical;
             abtb_bank0_target = branch_target;
             abtb_bank0_pred_taken = 1'b1;
             abtb_bank0_pred_target = branch_target;
-            bp_taken = 1'b0;
-            bp_btb_bht = 2'b10;
-            bp_pht_cnt = 2'b01;
             reset_dut();
 
             accept_taken_and_check(1'b1, 1'b0, branch_target);
@@ -424,7 +343,7 @@ module tb_frontend_ftq_canonical;
                   && if_bp_target == branch_target
                   && !if_s1_valid,
                   "owned taken branch metadata or slot kill was incorrect");
-            pass_case("owned taken branch ignores legacy and kills slot1");
+            pass_case("owned taken branch kills slot1");
         end
     endtask
 
@@ -439,9 +358,6 @@ module tb_frontend_ftq_canonical;
             abtb_bank0_target = BASE + 32'h40;
             abtb_bank0_pred_taken = 1'b0;
             abtb_bank0_pred_target = BASE + 32'h40;
-            bp_taken = 1'b1;
-            bp_btb_bht = 2'b10;
-            bp_pht_cnt = 2'b01;
             reset_dut();
 
             accept_taken_and_check(1'b1, 1'b1, bank1_target);
@@ -472,9 +388,6 @@ module tb_frontend_ftq_canonical;
             abtb_bank1_cfi_type = TYPE_BRANCH;
             abtb_bank1_target = BASE + 32'h80;
             abtb_bank1_pred_taken = 1'b0;
-            bp_taken = 1'b1;
-            bp_btb_bht = 2'b01;
-            bp_pht_cnt = 2'b10;
             reset_dut();
 
             #1;
@@ -504,9 +417,9 @@ module tb_frontend_ftq_canonical;
         case_count = 0;
         drive_defaults();
 
-        scenario_cold_miss_ignores_legacy_taken();
-        scenario_legacy_taken_does_not_suppress_bank1();
-        scenario_first_abtb_ignores_legacy_metadata();
+        scenario_cold_miss_fetches_sequential();
+        scenario_bank1_abtb_selected_under_stall();
+        scenario_first_abtb_direct_priority();
         scenario_ex_redirect_priority();
 
         scenario_branch_owned_taken();

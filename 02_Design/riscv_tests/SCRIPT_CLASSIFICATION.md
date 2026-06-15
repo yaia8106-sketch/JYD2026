@@ -15,7 +15,7 @@
 | `functional/frontend/run_direction.sh` | 8-bit committed GHR 与 256-entry PHT 的 VCS 单模块测试，由 `run_all.sh` 自动调用，覆盖 index/hash、四状态饱和、GHR、alias 和无 bypass 可见周期 | 修改 Stage-1 direction 表或更新策略后 |
 | `functional/frontend/run_integration.sh` | 真实 `cpu_top` 指令流下的 ABTB shadow metadata、EX 训练、stall/redirect/sidecar 泄漏集成测试，由 `run_all.sh` 自动调用 | 修改前端队列、流水寄存器或 ABTB 训练链路后 |
 | `functional/frontend/run_pair.sh` | `frontend_ftq` pair-policy VCS 定向测试，由 `run_all.sh` 自动调用，覆盖同包/跨包 pair、RAW、force-single、pred-taken、slot kill、stall、redirect 和 wrap-around | 修改 FTQ pair eligibility、FQ entry metadata 或双发策略后 |
-| `functional/frontend/run_canonical.sh` | 默认 branch steering 下 canonical snapshot VCS 测试，覆盖 legacy `bp_taken/bp_target` 不再 steering、bank1 ABTB 选择、first ABTB 权威性、branch ownership、stall 和 EX redirect 优先级 | 修改 canonical steering 或 legacy 隔离规则后 |
+| `functional/frontend/run_canonical.sh` | 默认 branch steering 下 canonical snapshot VCS 测试，覆盖 ABTB miss 顺序取指、bank1 ABTB 选择、first ABTB 权威性、branch ownership、stall 和 EX redirect 优先级 | 修改 canonical steering 或 Stage-1 metadata 绑定规则后 |
 | `functional/frontend/run_steering.sh` | 默认 ABTB/PHT branch steering 集成 VCS 定向测试，覆盖程序顺序、slot metadata、sequential cold miss、EX correction、stall/redirect/wrap、slot1 branch、wrong-path 抑制和 confirmed update | 修改 branch steering、PHT metadata 或训练资格后 |
 
 ### A2. Special / Temporary Correctness Smoke
@@ -35,17 +35,16 @@
 - 默认 build 就是 ABTB + PHT branch steering。TYPE_JAL/TYPE_CALL 永远参与
   canonical Stage-1 steering；TYPE_BRANCH ABTB hit 永远进入 Stage-1 ownership。
   J/CALL 候选使用 ABTB raw tag hit/type/target；branch 候选使用 ABTB raw tag
-  hit/type/target 和 Stage-1 PHT 方向。ABTB miss 顺序取指，不回退到 legacy
-  `bp_taken/bp_target`。RET/普通间接 JALR 在当前阶段 fall through 后由 EX
-  redirect 修正。
+  hit/type/target 和 Stage-1 PHT 方向。ABTB miss 顺序取指。RET/普通间接 JALR
+  在当前阶段 fall through 后由 EX redirect 修正。
 - 历史 direct/branch/registered steering wrapper 已删除。不要在 RTL、
   testbench、functional 脚本或 performance 脚本里重新添加旧 steering define。
 - per-slot `stage1_branch_owned` 表达“Stage-1 拥有该 branch 的方向预测”，
   taken 时使用 ABTB target，not-taken 时继续检查更年轻 bank1 CFI 或顺序 PC。
   `pred_source_abtb` 仍只表示最终 taken next-PC 来源，不能作为 branch ownership
   的替代信号。
-- 没有 frontend legacy correction 版本；frontend redirect 只来自后端/EX
-  redirect，旧 predictor metadata 仅用于后续 confirmed training 清理前的兼容。
+- 没有 frontend legacy correction 版本，也没有 registered BP1 配置；frontend
+  redirect 只来自后端/EX redirect。旧 predictor metadata 管线已删除。
 - FTQ pair-policy 定向测试只验证现有双发资格语义。它不得通过禁止
   cross-packet pairing、降低双发能力或推迟 pair 生效周期来换取 PASS。
 - 上述 VCS 脚本必须真正获得 license 并完成仿真后才能记为 PASS。若 license

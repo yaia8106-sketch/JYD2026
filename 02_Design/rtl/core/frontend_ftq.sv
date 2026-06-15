@@ -36,24 +36,6 @@ module frontend_ftq
     output logic [11:0] irom_addr,
     input  logic [63:0] irom_data,
 
-    // BP0 lookup and result.
-    input  logic        bp_taken,
-    input  logic [31:0] bp_target,
-    input  logic [ 7:0] bp_ghr_snap,
-    input  logic        bp_btb_hit,
-    input  logic [ 1:0] bp_btb_type,
-    input  logic [ 1:0] bp_btb_bht,
-    input  logic [ 1:0] bp_pht_cnt,
-    input  logic [ 1:0] bp_sel_cnt,
-    input  logic        bp_s1_taken,
-    input  logic [31:0] bp_s1_target,
-    input  logic [ 7:0] bp_s1_ghr_snap,
-    input  logic        bp_s1_btb_hit,
-    input  logic [ 1:0] bp_s1_btb_type,
-    input  logic [ 1:0] bp_s1_btb_bht,
-    input  logic [ 1:0] bp_s1_pht_cnt,
-    input  logic [ 1:0] bp_s1_sel_cnt,
-
     // Shadow ABTB metadata for the physical fetch-block banks. These fields
     // are captured only when abtb_lookup_accept is asserted.
     input  logic        abtb_bank0_lookup_hit,
@@ -88,22 +70,10 @@ module frontend_ftq
     output logic        if_s1_valid,
     output logic        if_bp_taken,
     output logic [31:0] if_bp_target,
-    output logic [ 7:0] if_bp_ghr_snap,
-    output logic        if_bp_btb_hit,
-    output logic [ 1:0] if_bp_btb_type,
-    output logic [ 1:0] if_bp_btb_bht,
-    output logic [ 1:0] if_bp_pht_cnt,
-    output logic [ 1:0] if_bp_sel_cnt,
     output logic        if_pred_source_abtb,
     output logic        if_stage1_branch_owned,
     output logic        if_s1_bp_taken,
     output logic [31:0] if_s1_bp_target,
-    output logic [ 7:0] if_s1_bp_ghr_snap,
-    output logic        if_s1_bp_btb_hit,
-    output logic [ 1:0] if_s1_bp_btb_type,
-    output logic [ 1:0] if_s1_bp_btb_bht,
-    output logic [ 1:0] if_s1_bp_pht_cnt,
-    output logic [ 1:0] if_s1_bp_sel_cnt,
     output logic        if_s1_pred_source_abtb,
     output logic        if_s1_stage1_branch_owned,
     output logic        if_abtb_hit,
@@ -161,12 +131,6 @@ module frontend_ftq
         logic        pred_source_abtb;
         logic        stage1_branch_owned;
         logic [ 1:0] pred_cfi_type;
-        logic [ 7:0] bp_ghr_snap;
-        logic        bp_btb_hit;
-        logic [ 1:0] bp_btb_type;
-        logic [ 1:0] bp_btb_bht;
-        logic [ 1:0] bp_pht_cnt;
-        logic [ 1:0] bp_sel_cnt;
         logic [ 7:0] stage1_pht_index;
         logic [ 1:0] stage1_pht_counter;
 
@@ -352,18 +316,6 @@ module frontend_ftq
     logic [1:0] f0_epoch_r;
     logic [31:0] f0_start_pc_r;
     logic [1:0]  f0_base_mask_r;
-    logic [ 7:0] f0_bp_ghr_snap_r;
-    logic        f0_bp_btb_hit_r;
-    logic [ 1:0] f0_bp_btb_type_r;
-    logic [ 1:0] f0_bp_btb_bht_r;
-    logic [ 1:0] f0_bp_pht_cnt_r;
-    logic [ 1:0] f0_bp_sel_cnt_r;
-    logic [ 7:0] f0_s1_bp_ghr_snap_r;
-    logic        f0_s1_bp_btb_hit_r;
-    logic [ 1:0] f0_s1_bp_btb_type_r;
-    logic [ 1:0] f0_s1_bp_btb_bht_r;
-    logic [ 1:0] f0_s1_bp_pht_cnt_r;
-    logic [ 1:0] f0_s1_bp_sel_cnt_r;
     logic        f0_steer_taken_r;
     logic        f0_steer_source_abtb_r;
     logic        f0_steer_bank_r;
@@ -656,12 +608,6 @@ module frontend_ftq
                                 : f0_slot0_pred_taken
                                 ? f0_final_cfi_type
                                 : 2'd0;
-        f0_entry0.bp_ghr_snap = f0_bp_ghr_snap_r;
-        f0_entry0.bp_btb_hit = f0_bp_btb_hit_r;
-        f0_entry0.bp_btb_type = f0_bp_btb_type_r;
-        f0_entry0.bp_btb_bht = f0_bp_btb_bht_r;
-        f0_entry0.bp_pht_cnt = f0_bp_pht_cnt_r;
-        f0_entry0.bp_sel_cnt = f0_bp_sel_cnt_r;
         f0_entry0.stage1_pht_index = f0_slot0_stage1_pht_index;
         f0_entry0.stage1_pht_counter = f0_slot0_stage1_pht_counter;
         f0_entry0.is_branch = f0_slot0_branch;
@@ -695,12 +641,6 @@ module frontend_ftq
                                 : f0_slot1_pred_taken
                                 ? f0_final_cfi_type
                                 : 2'd0;
-        f0_entry1.bp_ghr_snap = f0_s1_bp_ghr_snap_r;
-        f0_entry1.bp_btb_hit = f0_s1_bp_btb_hit_r;
-        f0_entry1.bp_btb_type = f0_s1_bp_btb_type_r;
-        f0_entry1.bp_btb_bht = f0_s1_bp_btb_bht_r;
-        f0_entry1.bp_pht_cnt = f0_s1_bp_pht_cnt_r;
-        f0_entry1.bp_sel_cnt = f0_s1_bp_sel_cnt_r;
         f0_entry1.stage1_pht_index = f0_slot1_stage1_pht_index;
         f0_entry1.stage1_pht_counter = f0_slot1_stage1_pht_counter;
         f0_entry1.is_branch = f0_slot1_branch;
@@ -926,22 +866,10 @@ module frontend_ftq
     assign if_inst1 = fq_head1.inst;
     assign if_bp_taken    = fq_head0.pred_taken;
     assign if_bp_target   = fq_head0.pred_target;
-    assign if_bp_ghr_snap = fq_head0.bp_ghr_snap;
-    assign if_bp_btb_hit  = fq_head0.bp_btb_hit;
-    assign if_bp_btb_type = fq_head0.bp_btb_type;
-    assign if_bp_btb_bht  = fq_head0.bp_btb_bht;
-    assign if_bp_pht_cnt  = fq_head0.bp_pht_cnt;
-    assign if_bp_sel_cnt  = fq_head0.bp_sel_cnt;
     assign if_pred_source_abtb = fq_head0.pred_source_abtb;
     assign if_stage1_branch_owned = fq_head0.stage1_branch_owned;
     assign if_s1_bp_taken    = fq_head1.pred_taken;
     assign if_s1_bp_target   = fq_head1.pred_target;
-    assign if_s1_bp_ghr_snap = fq_head1.bp_ghr_snap;
-    assign if_s1_bp_btb_hit  = fq_head1.bp_btb_hit;
-    assign if_s1_bp_btb_type = fq_head1.bp_btb_type;
-    assign if_s1_bp_btb_bht  = fq_head1.bp_btb_bht;
-    assign if_s1_bp_pht_cnt  = fq_head1.bp_pht_cnt;
-    assign if_s1_bp_sel_cnt  = fq_head1.bp_sel_cnt;
     assign if_s1_pred_source_abtb = fq_head1.pred_source_abtb;
     assign if_s1_stage1_branch_owned = fq_head1.stage1_branch_owned;
     assign if_stage1_pht_index = fq_head0.stage1_pht_index;
@@ -1093,18 +1021,6 @@ module frontend_ftq
             f0_epoch_r <= 2'd0;
             f0_start_pc_r <= 32'd0;
             f0_base_mask_r <= 2'd0;
-            f0_bp_ghr_snap_r <= 8'd0;
-            f0_bp_btb_hit_r <= 1'b0;
-            f0_bp_btb_type_r <= 2'd0;
-            f0_bp_btb_bht_r <= 2'd0;
-            f0_bp_pht_cnt_r <= 2'd0;
-            f0_bp_sel_cnt_r <= 2'd0;
-            f0_s1_bp_ghr_snap_r <= 8'd0;
-            f0_s1_bp_btb_hit_r <= 1'b0;
-            f0_s1_bp_btb_type_r <= 2'd0;
-            f0_s1_bp_btb_bht_r <= 2'd0;
-            f0_s1_bp_pht_cnt_r <= 2'd0;
-            f0_s1_bp_sel_cnt_r <= 2'd0;
             f0_steer_taken_r <= 1'b0;
             f0_steer_source_abtb_r <= 1'b0;
             f0_steer_bank_r <= 1'b0;
@@ -1141,18 +1057,6 @@ module frontend_ftq
                 f0_epoch_r <= frontend_epoch;
                 f0_start_pc_r <= current_pc;
                 f0_base_mask_r <= bp0_base_mask;
-                f0_bp_ghr_snap_r <= bp_ghr_snap;
-                f0_bp_btb_hit_r <= bp_btb_hit;
-                f0_bp_btb_type_r <= bp_btb_type;
-                f0_bp_btb_bht_r <= bp_btb_bht;
-                f0_bp_pht_cnt_r <= bp_pht_cnt;
-                f0_bp_sel_cnt_r <= bp_sel_cnt;
-                f0_s1_bp_ghr_snap_r <= bp_s1_ghr_snap;
-                f0_s1_bp_btb_hit_r <= bp_s1_btb_hit;
-                f0_s1_bp_btb_type_r <= bp_s1_btb_type;
-                f0_s1_bp_btb_bht_r <= bp_s1_btb_bht;
-                f0_s1_bp_pht_cnt_r <= bp_s1_pht_cnt;
-                f0_s1_bp_sel_cnt_r <= bp_s1_sel_cnt;
                 f0_steer_taken_r <= stage1_steer_taken;
                 f0_steer_source_abtb_r <= stage1_steer_source_abtb;
                 f0_steer_bank_r <= stage1_steer_bank;

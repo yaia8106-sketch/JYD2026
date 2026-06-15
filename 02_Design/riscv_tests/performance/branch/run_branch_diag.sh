@@ -271,7 +271,6 @@ RTL_FILES="
     $RTL_DIR/core/id_stage_derive.sv
     $RTL_DIR/core/ex_stage_ctrl.sv
     $RTL_DIR/core/branch_unit.sv
-    $RTL_DIR/core/branch_predictor.sv
     $RTL_DIR/core/frontend_stage1_direction.sv
     $RTL_DIR/core/frontend_abtb.sv
     $RTL_DIR/core/frontend_ftq.sv

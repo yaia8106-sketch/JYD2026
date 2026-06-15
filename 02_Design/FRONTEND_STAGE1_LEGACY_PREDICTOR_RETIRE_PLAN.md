@@ -18,14 +18,15 @@ EX redirect final correction
 - J/CALL-only direct steering 版本。
 - registered frontend correction wrapper。
 - legacy frontend correction 机制。
+- 旧 `branch_predictor` 实例和源文件编译入口。
+- 旧 `bp_*` training metadata 管线。
 
-当前 `branch_predictor.sv` 仍实例化，但不再决定 frontend next PC。它暂时只为旧训练 metadata、历史 RAS/JALR plumbing 和统计路径保留，下一阶段再移除实例和对应 metadata 管线。
+当前 Stage-1 prediction 只由 ABTB/PHT/FTQ 产生。ABTB miss 顺序取指；
+RET/JALR 未命中时当前接受 fall through，由 EX redirect 修正。
 
 ## 核心原则
 
-不要在阶段 3 一次性删除 `branch_predictor.sv`。
-
-原因是旧 predictor 仍提供若干 EX update 所需 metadata：
+旧 predictor retirement 已完成。后续不要恢复以下机制：
 
 - `bp_ghr_snap`
 - `bp_btb_hit`
@@ -33,9 +34,11 @@ EX redirect final correction
 - `bp_btb_bht`
 - `bp_pht_cnt`
 - `bp_sel_cnt`
-- slot1 对应 `bp_s1_*` 训练 metadata
+- slot1 对应 `bp_s1_*` training metadata
+- BP1 correction 或 registered BP1 redirect wrapper
 
-这些字段仍从 FTQ/FQ 进入 IF/ID、ID/EX，并供旧 predictor 的 confirmed EX training 使用。它们下一阶段与 `branch_predictor` 实例一起删除。
+保留的 `bp_train_*` 名称只表示 confirmed EX CFI training arbitration，
+不是旧 predictor metadata。
 
 ## 已完成阶段
 
@@ -72,38 +75,35 @@ ABTB miss 不再回退 legacy `bp_taken/bp_target`。RET 和普通 indirect JALR
 
 阶段 3 后，frontend redirect 来源只剩后端/EX redirect。`id_flush` 不再由 ID correction 产生，slot1 有效性只由 FQ/pair-policy/flush 控制。
 
+### 阶段 4：移除旧 predictor 实例和 metadata 管线
+
+已完成：
+
+- `cpu_top.sv` 不再实例化旧 predictor。
+- 编译脚本不再包含旧 predictor RTL。
+- `frontend_ftq.sv`、`if_id_reg.sv`、`id_ex_reg.sv`、`id_ex_reg_s1.sv`
+  不再携带旧 `bp_*` training metadata。
+- 性能 monitor/parser 删除旧 BTB/PHT/selector/RAS 写口统计。
+- ABTB update 仍由 confirmed EX CFI 仲裁驱动：taken branch/J/CALL/RET
+  写 ABTB，not-taken branch 不写 ABTB。
+- PHT/GHR update 仍只在 confirmed conditional branch 上使用
+  prediction-time `stage1_pht_index/stage1_pht_counter`。
+
 ## 旧 Predictor Metadata 处理表
 
 | 旧信号或概念 | 当前用途 | 后续处理 |
 |---|---|---|
-| `bp_taken` / `bp_target` | 旧 predictor 输出；不再 steering | 随旧 predictor 实例删除 |
-| `bp_btb_hit` / `bp_btb_type` | 旧 predictor training metadata | 随旧 predictor 实例删除 |
-| `bp_btb_bht` / `bp_pht_cnt` / `bp_sel_cnt` | 旧 predictor counter snapshot | 随旧 predictor 实例删除 |
-| `bp_ghr_snap` | 旧 predictor update snapshot | 随旧 predictor 实例删除 |
-| `bp_s1_*` | slot1 legacy training metadata | 随旧 predictor 实例删除 |
+| `bp_taken` / `bp_target` | 旧 predictor 输出 | 已删除 |
+| `bp_btb_hit` / `bp_btb_type` | 旧 predictor training metadata | 已删除 |
+| `bp_btb_bht` / `bp_pht_cnt` / `bp_sel_cnt` | 旧 predictor counter snapshot | 已删除 |
+| `bp_ghr_snap` | 旧 predictor update snapshot | 已删除 |
+| `bp_s1_*` | slot1 legacy training metadata | 已删除 |
 | `ex_bp_taken` / `ex_bp_target` | EX mispredict 比较，来源已是 Stage-1 canonical metadata | 后续建议改名为 `ex_pred_*` |
-| `bp_train_*` | confirmed EX update 管线 | 后续建议改名为 `stage1_train_*` |
-| legacy RAS/JALR sidecar | 暂留于旧 predictor；当前 Stage-1 不依赖 | 删除后若要恢复性能，单独实现 uRAS |
+| `bp_train_*` | confirmed EX update 仲裁 | 后续建议改名为 `stage1_train_*` |
+| legacy RAS/JALR sidecar | 已随旧 predictor 删除；当前 Stage-1 不依赖 | 若要恢复性能，单独实现 uRAS |
 | `stage1_sequential_count` | ABTB/PHT 未选择 steering 时的 canonical sequential block 计数 | 保留 |
 
 ## 下一阶段
-
-### 阶段 4：移除 `branch_predictor` 实例和旧 metadata 管线
-
-目标：
-
-```text
-cpu_top 不再实例化 branch_predictor。
-旧 bp_* metadata 不再贯穿 FTQ/FQ、IF/ID、ID/EX。
-```
-
-建议步骤：
-
-1. 从 `cpu_top.sv` 删除 `u_bp` 实例。
-2. 从编译脚本 RTL 文件列表删除 `branch_predictor.sv`。
-3. 从 `frontend_ftq.sv`、`if_id_reg.sv`、`id_ex_reg.sv`、`id_ex_reg_s1.sv` 删除旧 `bp_*` 训练端口。
-4. 将仍有功能含义的 prediction 字段改名为 `pred_*` 或 `stage1_*`。
-5. 重新跑定向前端测试和 CPU 81 项回归。
 
 ### 阶段 5：确认 RET/JALR fall-through 策略
 
@@ -149,6 +149,6 @@ bash -n 02_Design/riscv_tests/performance/branch/run_branch_diag.sh
 - 不新增 speculative GHR recovery。
 - 不优化时序。
 - 不实现 uRAS。
-- 不删除 `branch_predictor.sv` 或旧 predictor 实例。
 
-不要把阶段 3 和阶段 4 合成一个大改。阶段 3 的目标是删除死 correction 机制，同时保持旧 predictor training metadata 可回归。
+不要把 RET/JALR 性能恢复和旧 predictor retirement 混成一个大改。阶段 4
+只删除旧 predictor 与 metadata，RET/JALR 未命中 fall-through 是当前接受行为。

@@ -6,7 +6,8 @@ You are working on the stage-1 frontend predictor of the CPU in this repository.
 Read the existing RTL before editing, especially:
 
 - `02_Design/rtl/core/frontend_ftq.sv`
-- `02_Design/rtl/core/branch_predictor.sv`
+- `02_Design/rtl/core/frontend_abtb.sv`
+- `02_Design/rtl/core/frontend_stage1_direction.sv`
 - `02_Design/rtl/core/cpu_top.sv`
 - `02_Design/rtl/core/id_stage_derive.sv`
 - `02_Design/rtl/core/redirect_ctrl.sv`
@@ -37,6 +38,25 @@ The primary goals are:
 3. Keep target prediction independent from global branch history.
 4. Avoid speculative predictor-state recovery in the first implementation.
 5. Allow redirect recovery fetch and predictor restart to begin in parallel.
+
+## Current Implementation Boundary
+
+The legacy predictor has been retired from the active frontend. Stage-1
+prediction is produced by:
+
+- `frontend_abtb.sv`
+- `frontend_stage1_direction.sv`
+- `frontend_ftq.sv`
+
+ABTB miss fetches the sequential PC. There is no BP1 correction path and no
+registered BP1 configuration. The only frontend correction source is the
+backend/EX redirect path. The historical `bp_*` training metadata snapshots
+(`ghr_snap`, BTB hit/type/BHT, PHT counter, selector counter, and slot1 copies)
+are no longer carried through FTQ/FQ, IF/ID, ID/EX, or EX.
+
+Some signal names such as `if_bp_taken`, `id_bp_taken`, and `ex_bp_taken`
+remain for compatibility, but they now carry canonical Stage-1 prediction
+payload, not legacy predictor state.
 
 ## Terminology
 
@@ -317,11 +337,13 @@ way metadata. The update bank is always recomputed from the resolved CFI PC:
 update_bank = update_pc[2]
 ```
 
-### Shadow Integration Boundary
+### FTQ Metadata and Training Boundary
 
-The first whole-frontend integration keeps the legacy `branch_predictor` as the
-only steering source. `frontend_abtb.pred_next_pc` must not drive `current_pc`,
-IROM addressing, redirect selection, or FTQ/FQ ready/valid control.
+The first whole-frontend integration was shadow-only. The current frontend uses
+ABTB/PHT as the Stage-1 steering source, but still does not use the standalone
+`frontend_abtb.pred_next_pc` output. `frontend_ftq` consumes the ABTB raw
+per-bank hit/type/target metadata and the parallel Stage-1 PHT direction to
+build one canonical prediction.
 
 An ABTB lookup is consumed only when the frontend accepts a new BP0 block:
 
@@ -378,18 +400,18 @@ JALR x0, 0(x1/x5):         write RET
 other indirect JALR:       no ABTB write
 ```
 
-The EX update must reuse one common predictor slot arbitration, pipeline-fire,
-and wrong-path-suppression signal for both the legacy predictor and ABTB. CFI
-candidate selection must remain independent of `mem_allowin`; the final shared
-`train_valid` applies `ex_ready_go && mem_allowin && !older_flush`. A redirecting
-CFI may redirect and train in the same cycle. An older slot0 CFI prevents a
-younger slot1 CFI from using the single update port.
+The EX update must reuse one common confirmed CFI slot arbitration,
+pipeline-fire qualification, and wrong-path-suppression signal for ABTB and
+Stage-1 PHT/GHR updates. CFI candidate selection must remain independent of
+`mem_allowin`; the final shared `train_valid` applies
+`ex_ready_go && mem_allowin && !older_flush`. A redirecting CFI may redirect and
+train in the same cycle. An older slot0 CFI prevents a younger slot1 CFI from
+using the single update port.
 
 Historical shadow-convergence snapshot from 2026-06-12: ABTB remained in shadow
 mode and `frontend_abtb.pred_next_pc` was intentionally not connected to the
 real PC mux, IROM address, redirect path, or FTQ steering control. The current
-2026-06-13 direct-steering status is recorded under
-`Current Implementation Status` below.
+status is recorded under `Current Implementation Status` below.
 
 Verification status must distinguish configured coverage from executed
 simulation. If VCS cannot check out a license, do not report the standalone ABTB
@@ -575,7 +597,7 @@ flush range, or performance accounting.
 
 ## Current Implementation Status
 
-As of 2026-06-14 after Stage 3, the frontend has one supported build-time mode:
+As of 2026-06-14 after Stage 4, the frontend has one supported build-time mode:
 
 - ABTB + PHT owns Stage-1 steering for `TYPE_JAL`, `TYPE_CALL`, and
   `TYPE_BRANCH`.
@@ -586,11 +608,10 @@ The historical shadow-only, J/CALL-only, branch-wrapper, and registered frontend
 correction variants have been retired. Do not reintroduce old steering defines
 in RTL, testbench, functional scripts, or performance scripts.
 
-The frontend still instantiates the legacy `branch_predictor` in Stage 1. In
-this phase it remains only for legacy training metadata, RAS/JALR/RET residual
-plumbing, and update/statistics wiring. Its `bp_taken/bp_target` output must
-not decide the Stage-1 next PC. Removing the instance and the IF/ID or ID/EX
-`bp_*` metadata is a later phase.
+The old predictor instance, source-file compile entry, and legacy `bp_*`
+training metadata pipe have been retired. Stage-1 steering and training now use
+ABTB, Stage-1 PHT/GHR, canonical `pred_taken/pred_target`, ABTB hit/way/type,
+and prediction-time `stage1_pht_index/stage1_pht_counter`.
 
 The canonical Stage-1 result is:
 
@@ -620,15 +641,13 @@ else sequential PC
 ```
 
 When `current_pc[2] == 1`, bank1 is the first instruction and bank0 is
-ineligible. For the same instruction, ABTB/PHT ownership replaces the legacy
-direction decision. Legacy `bp_taken/bp_target` must not suppress a younger
-bank1 ABTB CFI and must not select the first-instruction next PC on an ABTB
-miss.
+ineligible. For the same instruction, ABTB/PHT ownership is the Stage-1
+direction decision. ABTB miss selects the sequential PC.
 
 At `bp0_fire`, F0 locks the complete canonical result and uses that snapshot as
-its sole prediction source. F0 does not rerun arbitration against legacy
-predictor outputs. ID/EX receives the canonical `pred_taken/pred_target`
-metadata directly; no ID-stage redirect can override it.
+its sole prediction source. ID/EX receives the canonical
+`pred_taken/pred_target` metadata directly; no ID-stage redirect can override
+it.
 
 The ABTB exposes a continuous per-bank raw tag-hit result separately from its
 accepted `hit` metadata. J/CALL candidates use raw hit, CFI type, and stored
@@ -643,8 +662,6 @@ the PHT prediction is taken or not-taken.
 - If the owned branch is predicted not-taken, the first instruction remains
   owned by Stage 1, and program order continues to a younger bank1 CFI if it is
   eligible or otherwise to the sequential PC.
-- Legacy prediction metadata must not override the same owned branch.
-- Legacy prediction metadata must not override any Stage-1 steering decision.
 - `pred_source_abtb` remains a taken-source marker for the selected next PC; it
   must not be used as an ownership proxy.
 - `stage1_abtb_owned_count` counts canonical fetch blocks with an ABTB-owned or
@@ -658,7 +675,7 @@ selected physical instruction:
 - bank1 taken ABTB result from an aligned block binds to slot1;
 - a fetch beginning at `pc[2] == 1` binds bank1 to slot0;
 - sequential fallback binds not-taken metadata to the first physical slot and
-  does not consume legacy `bp_taken/bp_target`.
+  carries the sequential target.
 
 ABTB update continues to use prediction-time `hit/way` metadata and never
 performs an update-side tag/payload reread. Stale way metadata may overwrite a
@@ -730,7 +747,7 @@ Add counters sufficient to answer:
 - PHT prediction count and direction misprediction count per bank;
 - Stage-1 ABTB-owned prediction count and ABTB-owned not-taken branch count.
 - Stage-1 sequential fallback count; it must exclude ABTB-owned not-taken
-  branches and must not imply legacy `bp_taken/bp_target` selected the next PC.
+  branches.
 - target misprediction count;
 - ABTB type mismatch count;
 - uRAS RET prediction count, valid count, invalid count, and target miss count;

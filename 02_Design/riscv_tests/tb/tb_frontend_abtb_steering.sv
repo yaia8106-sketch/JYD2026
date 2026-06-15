@@ -684,8 +684,9 @@ module tb_frontend_abtb_steering;
             reset_cpu();
             wait_direct(test_pc, 1'b0, TYPE_JAL, test_pc + 32'd8, 1080);
 
-            // A not-taken branch hit updates the legacy BTB target, while ABTB
-            // correctly performs no write and retains the old ABTB entry.
+            // A same-PC not-taken branch must not allocate/update ABTB, so the
+            // old direct ABTB entry can remain until replaced by a qualified
+            // taken CFI update. EX redirect corrects this stale predictor state.
             irom[OVERRIDE_INDEX] =
                 enc_branch(3'b001, 5'd0, 5'd0, 12);
             irom[OVERRIDE_INDEX + 1] = enc_jal(5'd0, -4);
@@ -704,7 +705,7 @@ module tb_frontend_abtb_steering;
                 end
             end
             check(saw_branch_train,
-                  "same-PC not-taken branch did not train legacy BTB");
+                  "same-PC not-taken branch did not reach confirmed training");
 
             saw_divergence = 1'b0;
             begin : divergence_loop
@@ -713,7 +714,6 @@ module tb_frontend_abtb_steering;
                     if (dut.pc == test_pc
                         && dut.stage1_steer_valid
                         && dut.stage1_steer_source_abtb
-                        && dut.bp_target == test_pc + 32'd12
                         && dut.stage1_steer_target == test_pc + 32'd8) begin
                         saw_divergence = 1'b1;
                         disable divergence_loop;
@@ -721,8 +721,8 @@ module tb_frontend_abtb_steering;
                 end
             end
             check(saw_divergence,
-                  "did not observe ABTB overriding legacy on the same instruction");
-            pass_case("same-instruction ABTB target ignores a different legacy target");
+                  "did not observe stale direct ABTB target after NT branch");
+            pass_case("same-instruction NT branch does not overwrite direct ABTB target");
         end
     endtask
 

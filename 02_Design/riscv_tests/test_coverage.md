@@ -41,9 +41,9 @@
   non-control+branch、不支持 pair 类型、slot0 JAL/JALR/system kill slot1、
   stall 后 pair 信息保持、redirect 清除旧 pair 信息、FQ wrap-around、
   同 PC redirect 后合法 refetch、enqueue/dequeue 同周期，以及
-	  cross-packet follower 被后续 overwrite。
-- 1 个 canonical steering 定向测试：ABTB miss 顺序取指、legacy metadata 不压制
-  bank1 ABTB、first ABTB direct 权威性、EX redirect 优先级、branch ownership
+  cross-packet follower 被后续 overwrite。
+- 1 个 canonical steering 定向测试：ABTB miss 顺序取指、bank1 ABTB 选择、
+  first ABTB direct 权威性、EX redirect 优先级、branch ownership
   taken/not-taken 和双 owned not-taken。
 - 1 个 ABTB/PHT steering 集成定向测试：冷启动顺序 fallback、训练后 hit、
   direct/CALL/RET/JALR 分类、branch ownership、slot1 PHT metadata、stall、
@@ -59,6 +59,11 @@
 `functional/run_all.sh` 中 ABTB standalone、Stage-1 direction、ABTB shadow
 integration、FTQ pair-policy、canonical steering 和 ABTB/PHT steering 定向测试
 均 PASS，CPU functional regression 为 81/81 PASS。
+
+2026-06-14 阶段 4 legacy predictor retirement 记录：VCS 实际运行
+`functional/frontend/run_abtb.sh`、`run_direction.sh`、`run_integration.sh`、
+`run_pair.sh`、`run_canonical.sh`、`run_steering.sh` 均 PASS；随后
+`functional/run_all.sh` 完整 CPU functional regression 为 81/81 PASS。
 
 VCS integration 覆盖计数为
 64 次 slot1 kill、35 次 JAL、3 次 JALR、1 次 taken branch、195 次偶 head、
@@ -193,7 +198,7 @@ training 建表，不层次化强写 ABTB/PHT/FQ 数组。默认 Stage-2 branch 
 - per-slot `stage1_branch_owned` 表达 Stage-1 branch 方向所有权，不等同于仅表示
   taken next-PC 来源的 `pred_source_abtb`；
 - owned bank0 branch 在程序顺序上压制 bank1 ABTB；
-- 同指令 ABTB target 忽略不同的 legacy target、stale target redirect/retrain；
+- 同 PC not-taken branch 不覆盖旧 direct ABTB target、stale target redirect/retrain；
 - 正确 target 不产生多余 redirect、slot0 kill slot1、slot1 metadata 绑定；
 - stall、redirect 后同 PC 合法 refetch、FQ wrap-around；
 - redirect 与 ABTB update 同周期、older slot0 抑制 younger slot1；
@@ -203,17 +208,16 @@ training 建表，不层次化强写 ABTB/PHT/FQ 数组。默认 Stage-2 branch 
 - backend stall 保持 branch metadata，释放时只训练一次。
 
 `tb_frontend_ftq_canonical.sv` 的 7 个默认 case 专门覆盖 canonical
-单一事实源：ABTB miss 即使 legacy `bp_taken=1` 也顺序取指、legacy taken 不压制
-younger bank1 ABTB、first-instruction ABTB direct 忽略 legacy metadata、EX
-redirect 仍高于 Stage-1 steering、owned taken branch 忽略 legacy metadata 并 kill
-slot1、owned not-taken branch 继续选择 younger bank1 ABTB、双 owned not-taken
-branch 保持 per-slot ownership。first-instruction direct 场景还把 shadow
+单一事实源：ABTB miss 顺序取指、younger bank1 ABTB 选择、first-instruction
+ABTB direct 权威性、EX redirect 仍高于 Stage-1 steering、owned taken branch
+kill slot1、owned not-taken branch 继续选择 younger bank1 ABTB、双 owned
+not-taken branch 保持 per-slot ownership。first-instruction direct 场景还把 shadow
 `pred_taken` 固定为 0，证明 J/CALL steering 只依赖 raw tag hit/type/target，不依赖
 PHT direction。
 
 默认 build 就是 ABTB + PHT branch steering。历史 shadow-only、J/CALL-only 和
-registered correction wrapper 均已删除；legacy predictor metadata 不再参与
-frontend next-PC steering。
+registered correction wrapper 均已删除；旧 predictor 实例和 legacy predictor
+metadata 管线也已删除。frontend redirect 只来自后端/EX redirect。
 
 验证入口：
 
@@ -223,8 +227,8 @@ frontend next-PC steering。
 2026-06-14 阶段 1 之前的 branch steering 结果：branch VCS 29 cases PASS；
 canonical branch VCS 7 cases PASS；PHT/GHR VCS 9 cases PASS；branch steering CPU
 `81/81 PASS`。阶段 1 后同一覆盖集由默认 build 运行；阶段 3 后 canonical case
-验证 legacy predictor 和旧 frontend correction 都不再参与 Stage-1 next-PC
-steering。
+验证旧 frontend correction 不再参与 Stage-1 next-PC steering；阶段 4 后旧
+predictor metadata 管线已删除，canonical case 不再依赖 legacy 输入。
 
 2026-06-14 branch-focused profiling 使用
 `performance/short/run_perf.sh --set branch_diag` 跑 19 个 RV32UI/微基准：
