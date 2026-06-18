@@ -103,6 +103,7 @@ module student_top_axi #(
     logic [31:0] dmem_rd_data;
     logic        dmem_rd_last;
     logic [ 1:0] dmem_rd_resp;
+    logic        dmem_rd_cancel;
     logic        dmem_wr_valid;
     logic        dmem_wr_ready;
     logic [ 1:0] dmem_wr_resp;
@@ -178,6 +179,7 @@ module student_top_axi #(
         .mem_rd_data   (dmem_rd_data),
         .mem_rd_last   (dmem_rd_last),
         .mem_rd_resp   (dmem_rd_resp),
+        .mem_rd_cancel (dmem_rd_cancel),
         .mem_wr_valid  (dmem_wr_valid),
         .mem_wr_ready  (dmem_wr_ready),
         .mem_wr_resp   (dmem_wr_resp)

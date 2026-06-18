@@ -62,6 +62,7 @@ module tb_riscv_tests;
     wire [31:0] dmem_rd_data;
     wire        dmem_rd_last;
     wire [ 1:0] dmem_rd_resp;
+    wire        dmem_rd_cancel;
     wire        dmem_wr_valid;
     wire        dmem_wr_ready;
     wire [ 1:0] dmem_wr_resp;
@@ -104,7 +105,9 @@ module tb_riscv_tests;
     // ================================================================
     //  DCache
     // ================================================================
-    dcache u_dcache (
+    dcache #(
+        .BACKEND_CANCEL (1'b1)
+    ) u_dcache (
         .clk         (clk),
         .rst_n       (rst_n),
         .cpu_req     (cache_req),
@@ -128,6 +131,7 @@ module tb_riscv_tests;
         .mem_rd_data   (dmem_rd_data),
         .mem_rd_last   (dmem_rd_last),
         .mem_rd_resp   (dmem_rd_resp),
+        .mem_rd_cancel (dmem_rd_cancel),
         .mem_wr_valid  (dmem_wr_valid),
         .mem_wr_ready  (dmem_wr_ready),
         .mem_wr_resp   (dmem_wr_resp)
@@ -148,6 +152,7 @@ module tb_riscv_tests;
         .mem_rd_data   (dmem_rd_data),
         .mem_rd_last   (dmem_rd_last),
         .mem_rd_resp   (dmem_rd_resp),
+        .mem_rd_cancel (dmem_rd_cancel),
         .mem_wr_valid  (dmem_wr_valid),
         .mem_wr_ready  (dmem_wr_ready),
         .mem_wr_resp   (dmem_wr_resp),
@@ -184,15 +189,14 @@ module tb_riscv_tests;
     assign irom_data = irom_data_r;
 
     // ================================================================
-    //  DRAM Model — Simple Dual Port, WITH Output Register (DOB_REG=1)
+    //  DRAM Model — Simple Dual Port, no extra output register
     //   Write port (Port A): dram_wr_addr + dram_wea + dram_wdata
-    //   Read port (Port B):  dram_rd_addr → dram_rdata (2 cycle: BRAM + output reg)
+    //   Read port (Port B):  dram_rd_addr -> dram_rdata (1-cycle sync read)
     //  65536 x 32-bit words = 256KB
-    //  NOTE: Must match actual DRAM4MyOwn IP config (DOB_REG=1, 2-cycle read latency)
+    //  NOTE: Must match actual DRAM4MyOwn IP config (DOB_REG=0 / no output reg)
     // ================================================================
     reg [31:0] dram [0:65535];
-    reg [31:0] dram_dout_raw;       // BRAM read (1st cycle)
-    reg [31:0] dram_dout;           // Output register (2nd cycle, matches DOB_REG=1)
+    reg [31:0] dram_dout;
 
     always @(posedge clk) begin
         // Write port (from DCache store buffer drain)
@@ -200,9 +204,8 @@ module tb_riscv_tests;
         if (dram_wea[1]) dram[dram_wr_addr][15: 8] <= dram_wdata[15: 8];
         if (dram_wea[2]) dram[dram_wr_addr][23:16] <= dram_wdata[23:16];
         if (dram_wea[3]) dram[dram_wr_addr][31:24] <= dram_wdata[31:24];
-        // Read port: 2-cycle latency (BRAM + output register, matches DRAM4MyOwn DOB_REG=1)
-        dram_dout_raw <= dram[dram_rd_addr];
-        dram_dout     <= dram_dout_raw;
+        // Read port: 1-cycle synchronous read.
+        dram_dout <= dram[dram_rd_addr];
     end
 
     assign dram_rdata_w = dram_dout;

@@ -10,7 +10,11 @@
 //   local BRAM model/IP.
 // ============================================================
 
-module dcache_bram_backend (
+module dcache_bram_backend #(
+    // 1: BRAM output changes in the cycle after the address-sampling edge
+    // 2: BRAM has an additional output register enabled.
+    parameter integer READ_LATENCY = 1
+) (
     input  logic        clk,
     input  logic        rst_n,
 
@@ -27,6 +31,7 @@ module dcache_bram_backend (
     output logic [31:0] mem_rd_data,
     output logic        mem_rd_last,
     output logic [ 1:0] mem_rd_resp,
+    input  logic        mem_rd_cancel,
 
     output logic        mem_wr_valid,
     input  logic        mem_wr_ready,
@@ -68,9 +73,12 @@ module dcache_bram_backend (
     assign dram_wea     = (state == B_WR_ISSUE) ? wstrb_r : 4'd0;
     assign dram_wdata   = wdata_r;
 
-    assign mem_rd_valid = (state == B_RD_BURST) & rd_valid_pipe[1];
+    wire rd_valid_out = (READ_LATENCY == 2) ? rd_valid_pipe[1] : rd_valid_pipe[0];
+    wire rd_last_out  = (READ_LATENCY == 2) ? rd_last_pipe[1]  : rd_last_pipe[0];
+
+    assign mem_rd_valid = (state == B_RD_BURST) & rd_valid_out;
     assign mem_rd_data  = dram_rdata;
-    assign mem_rd_last  = rd_last_pipe[1];
+    assign mem_rd_last  = rd_last_out;
     assign mem_rd_resp  = 2'b00;
 
     assign mem_wr_valid = (state == B_WR_RESP);
@@ -87,7 +95,12 @@ module dcache_bram_backend (
             rd_valid_pipe <= 2'b00;
             rd_last_pipe <= 2'b00;
         end else begin
-            case (state)
+            if (mem_rd_cancel) begin
+                state <= B_IDLE;
+                rd_valid_pipe <= 2'b00;
+                rd_last_pipe <= 2'b00;
+                beat_r <= 8'd0;
+            end else case (state)
                 B_IDLE: begin
                     if (req_fire) begin
                         addr_r  <= mem_req_addr[17:2];

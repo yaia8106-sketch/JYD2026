@@ -477,8 +477,8 @@ module perf_monitor (
                        & tb_riscv_tests.u_dcache.sb_full;
     wire dc_store_forward_hit_w = dc_hit_accept_w
                                 & ~tb_riscv_tests.u_dcache.mem_wr
-                                & (tb_riscv_tests.u_dcache.fwd_hit_w0
-                                 | tb_riscv_tests.u_dcache.fwd_hit_w1);
+                                & (tb_riscv_tests.u_dcache.store_fwd_hit_w0
+                                 | tb_riscv_tests.u_dcache.store_fwd_hit_w1);
 
     wire lsu_s0_load_done = mem_valid & mem_ready_go_w & mem_mem_read_w;
     wire lsu_s0_store_done = mem_valid & mem_ready_go_w & (|mem_store_wea_w);
@@ -909,7 +909,7 @@ module perf_monitor (
             if (dc_load_miss_w)                    cnt_dc_load_miss <= cnt_dc_load_miss + 1;
             if (dc_store_miss_w)                   cnt_dc_store_miss <= cnt_dc_store_miss + 1;
             if (dc_refill_cycle_w)                 cnt_dc_refill_cycles <= cnt_dc_refill_cycles + 1;
-            if (tb_riscv_tests.u_dcache.refill_wr) cnt_dc_refill_words <= cnt_dc_refill_words + 1;
+            if (tb_riscv_tests.u_dcache.refill_cache_write) cnt_dc_refill_words <= cnt_dc_refill_words + 1;
             if (dc_refill_abort_w)                 cnt_dc_refill_aborts <= cnt_dc_refill_aborts + 1;
             if (tb_riscv_tests.u_dcache.sb_store_enqueue) cnt_dc_sb_enqueue <= cnt_dc_sb_enqueue + 1;
             if (dc_sb_drain_w)                     cnt_dc_sb_drain <= cnt_dc_sb_drain + 1;
