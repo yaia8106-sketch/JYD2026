@@ -2,7 +2,8 @@
 // Module: mem_wb_reg
 // Description: MEM/WB pipeline register
 // Note: load_rdata comes from DCache (cacheable) or MMIO (uncacheable).
-//       Captured here for WB-stage byte extraction.
+//       Captured here for WB-stage byte extraction. Load format controls are
+//       predecoded here to keep raw mem_size compare logic out of WB repair.
 // ============================================================
 
 module mem_wb_reg (
@@ -34,9 +35,12 @@ module mem_wb_reg (
     output logic        wb_reg_write_en,
     output logic [ 1:0] wb_wb_sel,
     output logic        wb_is_load,
-    output logic [ 1:0] wb_mem_size,
-    output logic        wb_mem_unsigned,
-    output logic [ 1:0] wb_addr_low,
+    output logic [ 4:0] wb_load_shift,
+    output logic        wb_load_byte_signed,
+    output logic        wb_load_byte_unsigned,
+    output logic        wb_load_half_signed,
+    output logic        wb_load_half_unsigned,
+    output logic        wb_load_word,
     output logic [31:0] wb_load_rdata      // registered load data for WB stage
 );
 
@@ -54,9 +58,12 @@ module mem_wb_reg (
             wb_reg_write_en  <= 1'b0;
             wb_wb_sel        <= 2'd0;
             wb_is_load       <= 1'b0;
-            wb_mem_size      <= 2'd0;
-            wb_mem_unsigned  <= 1'b0;
-            wb_addr_low      <= 2'd0;
+            wb_load_shift    <= 5'd0;
+            wb_load_byte_signed   <= 1'b0;
+            wb_load_byte_unsigned <= 1'b0;
+            wb_load_half_signed   <= 1'b0;
+            wb_load_half_unsigned <= 1'b0;
+            wb_load_word          <= 1'b0;
             wb_load_rdata    <= 32'd0;
         end else if (wb_allowin) begin
             wb_valid         <= mem_valid & mem_ready_go;
@@ -66,9 +73,21 @@ module mem_wb_reg (
             wb_reg_write_en  <= mem_reg_write_en;
             wb_wb_sel        <= mem_wb_sel;
             wb_is_load       <= mem_mem_read_en;
-            wb_mem_size      <= mem_mem_size;
-            wb_mem_unsigned  <= mem_mem_unsigned;
-            wb_addr_low      <= mem_addr_low;
+            wb_load_shift    <= {mem_addr_low, 3'b0};
+            wb_load_byte_signed   <= mem_mem_read_en
+                                   & (mem_mem_size == 2'b00)
+                                   & ~mem_mem_unsigned;
+            wb_load_byte_unsigned <= mem_mem_read_en
+                                   & (mem_mem_size == 2'b00)
+                                   & mem_mem_unsigned;
+            wb_load_half_signed   <= mem_mem_read_en
+                                   & (mem_mem_size == 2'b01)
+                                   & ~mem_mem_unsigned;
+            wb_load_half_unsigned <= mem_mem_read_en
+                                   & (mem_mem_size == 2'b01)
+                                   & mem_mem_unsigned;
+            wb_load_word          <= mem_mem_read_en
+                                   & (mem_mem_size == 2'b10);
             wb_load_rdata    <= mem_load_rdata;
         end
     end

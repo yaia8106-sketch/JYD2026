@@ -2,8 +2,7 @@
 
 #define DUAL_CNT_ADDR 0x80200060
 
-// Test: Slot0 ordinary ALU + Slot1 JAL shares the existing delayed
-// control redirect path. JALR is intentionally not enabled in Slot1 yet.
+// Test: Slot1 JAL shares the existing delayed control redirect path.
 
 RVTEST_RV32U
 RVTEST_CODE_BEGIN
@@ -59,8 +58,8 @@ s1_jal_target:
     la    t4, s1_jal_fallthrough
     bne   t0, t4, fail
 
-    // S0 LSU + S1 JAL remains outside the enabled pairing policy. The JAL
-    // still has to execute correctly after serialization.
+    // S0 LSU + S1 JAL is legal under the relaxed pairing policy. This section
+    // checks redirect/link correctness; the counter check above covers pairing.
     .align 3
     lw    t5, 0(t6)
     jal   t0, s0_lsu_s1_jal_target

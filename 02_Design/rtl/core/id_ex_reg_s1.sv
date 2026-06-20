@@ -17,12 +17,17 @@ module id_ex_reg_s1 (
     input  logic [31:0] id_inst,
     input  logic [31:0] id_alu_src1,
     input  logic [31:0] id_alu_src2,
-    input  logic [31:0] id_control_target,
     input  logic [31:0] id_rs1_data,
     input  logic [31:0] id_rs2_data,
+    input  logic        id_rs1_wb_repair,
+    input  logic        id_rs2_wb_repair,
+    input  logic        id_rs1_wb_repair_s1,
+    input  logic        id_rs2_wb_repair_s1,
     input  logic [ 4:0] id_rd,
     input  logic [ 4:0] id_rs1_addr,
     input  logic [ 4:0] id_rs2_addr,
+    input  logic        id_alu_src1_is_rs1,
+    input  logic        id_alu_src2_is_rs2,
     input  logic [ 3:0] id_alu_op,
     input  logic        id_reg_write_en,
     input  logic [ 1:0] id_wb_sel,
@@ -54,12 +59,17 @@ module id_ex_reg_s1 (
     output logic [31:0] ex_s1_inst,
     output logic [31:0] ex_s1_alu_src1,
     output logic [31:0] ex_s1_alu_src2,
-    output logic [31:0] ex_s1_control_target,
     output logic [31:0] ex_s1_rs1_data,
     output logic [31:0] ex_s1_rs2_data,
+    output logic        ex_s1_rs1_wb_repair,
+    output logic        ex_s1_rs2_wb_repair,
+    output logic        ex_s1_rs1_wb_repair_s1,
+    output logic        ex_s1_rs2_wb_repair_s1,
     output logic [ 4:0] ex_s1_rd,
     output logic [ 4:0] ex_s1_rs1_addr,
     output logic [ 4:0] ex_s1_rs2_addr,
+    output logic        ex_s1_alu_src1_is_rs1,
+    output logic        ex_s1_alu_src2_is_rs2,
     output logic [ 3:0] ex_s1_alu_op,
     output logic        ex_s1_reg_write_en,
     output logic [ 1:0] ex_s1_wb_sel,
@@ -90,19 +100,24 @@ module id_ex_reg_s1 (
     output logic [ 1:0] ex_s1_stage1_pht_counter
 );
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             ex_s1_valid        <= 1'b0;
             ex_s1_pc           <= 32'd0;
             ex_s1_inst         <= 32'd0;
             ex_s1_alu_src1     <= 32'd0;
             ex_s1_alu_src2     <= 32'd0;
-            ex_s1_control_target <= 32'd0;
             ex_s1_rs1_data     <= 32'd0;
             ex_s1_rs2_data     <= 32'd0;
+            ex_s1_rs1_wb_repair <= 1'b0;
+            ex_s1_rs2_wb_repair <= 1'b0;
+            ex_s1_rs1_wb_repair_s1 <= 1'b0;
+            ex_s1_rs2_wb_repair_s1 <= 1'b0;
             ex_s1_rd           <= 5'd0;
             ex_s1_rs1_addr     <= 5'd0;
             ex_s1_rs2_addr     <= 5'd0;
+            ex_s1_alu_src1_is_rs1 <= 1'b0;
+            ex_s1_alu_src2_is_rs2 <= 1'b0;
             ex_s1_alu_op       <= 4'd0;
             ex_s1_reg_write_en <= 1'b0;
             ex_s1_wb_sel       <= 2'd0;
@@ -130,6 +145,10 @@ module id_ex_reg_s1 (
             ex_s1_stage1_pht_counter <= 2'b01;
         end else if (ex_flush) begin
             ex_s1_valid        <= 1'b0;
+            ex_s1_rs1_wb_repair <= 1'b0;
+            ex_s1_rs2_wb_repair <= 1'b0;
+            ex_s1_rs1_wb_repair_s1 <= 1'b0;
+            ex_s1_rs2_wb_repair_s1 <= 1'b0;
             ex_s1_pred_taken     <= 1'b0;
             ex_s1_pred_source_abtb <= 1'b0;
             ex_s1_stage1_branch_owned <= 1'b0;
@@ -139,12 +158,17 @@ module id_ex_reg_s1 (
             ex_s1_inst         <= id_inst;
             ex_s1_alu_src1     <= id_alu_src1;
             ex_s1_alu_src2     <= id_alu_src2;
-            ex_s1_control_target <= id_control_target;
             ex_s1_rs1_data     <= id_rs1_data;
             ex_s1_rs2_data     <= id_rs2_data;
+            ex_s1_rs1_wb_repair <= id_rs1_wb_repair & id_s1_valid;
+            ex_s1_rs2_wb_repair <= id_rs2_wb_repair & id_s1_valid;
+            ex_s1_rs1_wb_repair_s1 <= id_rs1_wb_repair_s1 & id_s1_valid;
+            ex_s1_rs2_wb_repair_s1 <= id_rs2_wb_repair_s1 & id_s1_valid;
             ex_s1_rd           <= id_rd;
             ex_s1_rs1_addr     <= id_rs1_addr;
             ex_s1_rs2_addr     <= id_rs2_addr;
+            ex_s1_alu_src1_is_rs1 <= id_alu_src1_is_rs1;
+            ex_s1_alu_src2_is_rs2 <= id_alu_src2_is_rs2;
             ex_s1_alu_op       <= id_alu_op;
             ex_s1_reg_write_en <= id_reg_write_en & id_s1_valid;
             ex_s1_wb_sel       <= id_wb_sel;

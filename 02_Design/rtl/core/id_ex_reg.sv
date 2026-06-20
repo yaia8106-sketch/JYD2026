@@ -3,10 +3,7 @@
 // Description: ID/EX pipeline register
 // Note: ALU operands (alu_src1/alu_src2) are pre-selected in ID stage
 //       to reduce EX critical path. Raw rs1/rs2 still carried for
-//       store data. Branch compare is precomputed in ID and carried as
-//       a 1-bit result to keep the EX redirect path short.
-//       Branch redirect target/fallthrough are precomputed in ID to keep
-//       the EX mispredict redirect path off the 32-bit target adder.
+//       store data and EX-stage branch comparison.
 //       Branch prediction signals passed through for EX update.
 // ============================================================
 
@@ -33,8 +30,8 @@ module id_ex_reg (
     input  logic [31:0] id_rs2_data,       // raw rs2 (for branch comparison + store)
     input  logic        id_rs1_wb_repair,
     input  logic        id_rs2_wb_repair,
-    input  logic [31:0] id_branch_target,  // precomputed taken target
-    input  logic [31:0] id_fallthrough_pc, // precomputed PC + 4
+    input  logic        id_rs1_wb_repair_s1,
+    input  logic        id_rs2_wb_repair_s1,
     input  logic [ 4:0] id_rd,
     input  logic [ 4:0] id_rs1_addr,
     input  logic [ 4:0] id_rs2_addr,
@@ -49,7 +46,6 @@ module id_ex_reg (
     input  logic        id_mem_unsigned,
     input  logic        id_is_branch,
     input  logic [ 2:0] id_branch_cond,
-    input  logic        id_branch_taken,
     input  logic        id_is_jal,
     input  logic        id_is_jalr,
     input  logic        id_is_csr,
@@ -85,8 +81,8 @@ module id_ex_reg (
     output logic [31:0] ex_rs2_data,
     output logic        ex_rs1_wb_repair,
     output logic        ex_rs2_wb_repair,
-    output logic [31:0] ex_branch_target,
-    output logic [31:0] ex_fallthrough_pc,
+    output logic        ex_rs1_wb_repair_s1,
+    output logic        ex_rs2_wb_repair_s1,
     output logic [ 4:0] ex_rd,
     output logic [ 4:0] ex_rs1_addr,
     output logic [ 4:0] ex_rs2_addr,
@@ -101,7 +97,6 @@ module id_ex_reg (
     output logic        ex_mem_unsigned,
     output logic        ex_is_branch,
     output logic [ 2:0] ex_branch_cond,
-    output logic        ex_branch_taken,
     output logic        ex_is_jal,
     output logic        ex_is_jalr,
     output logic        ex_is_csr,
@@ -137,7 +132,7 @@ module id_ex_reg (
     assign ex_allowin = !ex_valid || (ex_ready_go & mem_allowin);
 
     // ---- Pipeline register ----
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             ex_valid         <= 1'b0;
             ex_pc            <= 32'd0;
@@ -147,8 +142,8 @@ module id_ex_reg (
             ex_rs2_data      <= 32'd0;
             ex_rs1_wb_repair <= 1'b0;
             ex_rs2_wb_repair <= 1'b0;
-            ex_branch_target <= 32'd0;
-            ex_fallthrough_pc <= 32'd0;
+            ex_rs1_wb_repair_s1 <= 1'b0;
+            ex_rs2_wb_repair_s1 <= 1'b0;
             ex_rd            <= 5'd0;
             ex_rs1_addr      <= 5'd0;
             ex_rs2_addr      <= 5'd0;
@@ -163,7 +158,6 @@ module id_ex_reg (
             ex_mem_unsigned  <= 1'b0;
             ex_is_branch     <= 1'b0;
             ex_branch_cond   <= 3'd0;
-            ex_branch_taken  <= 1'b0;
             ex_is_jal        <= 1'b0;
             ex_is_jalr       <= 1'b0;
             ex_is_csr        <= 1'b0;
@@ -190,6 +184,10 @@ module id_ex_reg (
             ex_stage1_pht_counter <= 2'b01;
         end else if (ex_flush) begin
             ex_valid         <= 1'b0;
+            ex_rs1_wb_repair <= 1'b0;
+            ex_rs2_wb_repair <= 1'b0;
+            ex_rs1_wb_repair_s1 <= 1'b0;
+            ex_rs2_wb_repair_s1 <= 1'b0;
             ex_pred_source_abtb <= 1'b0;
             ex_stage1_branch_owned <= 1'b0;
         end else if (ex_allowin) begin
@@ -201,8 +199,8 @@ module id_ex_reg (
             ex_rs2_data      <= id_rs2_data;
             ex_rs1_wb_repair <= id_rs1_wb_repair;
             ex_rs2_wb_repair <= id_rs2_wb_repair;
-            ex_branch_target <= id_branch_target;
-            ex_fallthrough_pc <= id_fallthrough_pc;
+            ex_rs1_wb_repair_s1 <= id_rs1_wb_repair_s1;
+            ex_rs2_wb_repair_s1 <= id_rs2_wb_repair_s1;
             ex_rd            <= id_rd;
             ex_rs1_addr      <= id_rs1_addr;
             ex_rs2_addr      <= id_rs2_addr;
@@ -217,7 +215,6 @@ module id_ex_reg (
             ex_mem_unsigned  <= id_mem_unsigned;
             ex_is_branch     <= id_is_branch;
             ex_branch_cond   <= id_branch_cond;
-            ex_branch_taken  <= id_branch_taken;
             ex_is_jal        <= id_is_jal;
             ex_is_jalr       <= id_is_jalr;
             ex_is_csr        <= id_is_csr;

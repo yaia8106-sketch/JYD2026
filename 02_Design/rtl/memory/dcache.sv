@@ -113,7 +113,7 @@ module dcache #(
     // mem_allowin path). Both must stall/advance together.
     wire pipeline_advance = ~pipeline_stall;
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             mem_req   <= 1'b0;
             mem_tag   <= '0;
@@ -180,7 +180,7 @@ module dcache #(
     logic [TAG_W-1:0] mem_tag_rd [WAYS-1:0];
     logic             mem_tag_vld [WAYS-1:0];
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             mem_tag_rd[0]  <= '0;  mem_tag_vld[0] <= 1'b0;
             mem_tag_rd[1]  <= '0;  mem_tag_vld[1] <= 1'b0;
@@ -203,7 +203,7 @@ module dcache #(
     logic [TAG_W-1:0]   refill_tag_fwd_tag;
     logic [INDEX_W-1:0] refill_tag_fwd_index;
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             refill_tag_fwd_valid <= 1'b0;
             refill_tag_fwd_way   <= 1'b0;
@@ -372,7 +372,7 @@ module dcache #(
     assign sb_data_n[0] = sb_push_slot0 ? mem_wdata : sb_after_pop_data0;
     assign sb_data_n[1] = sb_push_slot1 ? mem_wdata : sb_after_pop_data1;
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             for (int e = 0; e < SB_DEPTH; e++) begin
                 refill_merge_valid[e] <= 1'b0;
@@ -404,7 +404,7 @@ module dcache #(
     // ================================================================
     //  FSM - variable-latency refill/store backend
     // ================================================================
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n)
             state <= S_IDLE;
         else
@@ -482,7 +482,7 @@ module dcache #(
         endcase
     end
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             refill_beat <= '0;
             refill_way      <= 1'b0;
@@ -548,7 +548,7 @@ module dcache #(
     assign bram_wdata[1] = refill_w1 ? refill_write_data  : store_w1 ? store_cache_write_data : 32'd0;
 
     // Store forward register: capture store info at clock edge
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             store_fwd_valid <= 1'b0;
             store_fwd_way   <= 1'b0;
@@ -567,7 +567,7 @@ module dcache #(
     // ================================================================
     //  Tag RAM write
     // ================================================================
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             for (int w = 0; w < WAYS; w++)
                 for (int s = 0; s < SETS; s++) begin
@@ -591,7 +591,7 @@ module dcache #(
     // ================================================================
     //  LRU update
     // ================================================================
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n)
             lru <= '0;
         else begin
@@ -608,7 +608,7 @@ module dcache #(
     // Drain SB to memory backend when S_SB_DRAIN_REQ/RESP or when IDLE.
     // Enqueue on accepted store hit or store miss. Store miss is WNA and does
     // not allocate/update the cache line.
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             sb_valid_q <= '0;
             for (int e = 0; e < SB_DEPTH; e++) begin

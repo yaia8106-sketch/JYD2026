@@ -148,20 +148,22 @@ module cpu_top (
     // ---- Forwarding ----
     wire [31:0] fwd_rs1_data;
     wire [31:0] fwd_rs2_data;
-    wire [31:0] fwd_branch_rs1_data;
-    wire [31:0] fwd_branch_rs2_data;
-    wire [31:0] fwd_rs1_jalr_data;
     wire [31:0] fwd_s1_rs1_data;
     wire [31:0] fwd_s1_rs2_data;
     wire        fwd_rs1_wb_repair;
     wire        fwd_rs2_wb_repair;
+    wire        fwd_s1_rs1_wb_repair;
+    wire        fwd_s1_rs2_wb_repair;
+    wire        fwd_rs1_wb_repair_s1;
+    wire        fwd_rs2_wb_repair_s1;
+    wire        fwd_s1_rs1_wb_repair_s1;
+    wire        fwd_s1_rs2_wb_repair_s1;
 
     // ---- ALU src MUX (in ID stage) ----
     wire [31:0] id_alu_src1;
     wire [31:0] id_alu_src2;
     wire [31:0] id_s1_alu_src1;
     wire [31:0] id_s1_alu_src2;
-    wire [31:0] id_s1_control_target;
 
     // ---- ID/EX ----
     wire        ex_valid;
@@ -171,8 +173,8 @@ module cpu_top (
     wire [31:0] ex_rs1_data, ex_rs2_data;   // raw, for branch/store
     wire        ex_rs1_wb_repair;
     wire        ex_rs2_wb_repair;
-    wire [31:0] ex_branch_target_pre;        // ID-precomputed taken target
-    wire [31:0] ex_fallthrough_pc;           // ID-precomputed PC+4
+    wire        ex_rs1_wb_repair_s1;
+    wire        ex_rs2_wb_repair_s1;
     wire [ 4:0] ex_rd, ex_rs1_addr, ex_rs2_addr;
     wire        ex_alu_src1_is_rs1, ex_alu_src2_is_rs2;
     wire [ 3:0] ex_alu_op;
@@ -212,29 +214,36 @@ module cpu_top (
     wire        ex_s1_is_jal;
     wire        ex_s1_is_jalr;
     wire [31:0] ex_s1_alu_src1, ex_s1_alu_src2;
-    wire [31:0] ex_s1_control_target;
     wire [31:0] ex_s1_rs1_data, ex_s1_rs2_data;
+    wire        ex_s1_rs1_wb_repair;
+    wire        ex_s1_rs2_wb_repair;
+    wire        ex_s1_rs1_wb_repair_s1;
+    wire        ex_s1_rs2_wb_repair_s1;
+    wire        ex_s1_alu_src1_is_rs1;
+    wire        ex_s1_alu_src2_is_rs2;
 
     // ---- ALU ----
     wire [31:0] alu_result;
     wire [31:0] alu_sum;               // ALU 加法器直出（跳过 output MUX）
     wire [31:0] alu_addr;              // FIX-A: 独立地址加法器（不依赖 alu_op）
-    wire [31:0] alu_forward_result;     // unrepaired copy for ID forwarding only
-    wire [31:0] alu_forward_sum;
-    wire [31:0] alu_forward_addr;
     wire [31:0] alu_s1_result;
     wire [31:0] alu_s1_sum;
     wire [31:0] alu_s1_addr;
     wire [31:0] ex_alu_src1_repair;
     wire [31:0] ex_alu_src2_repair;
-    wire        ex_result_late;
+    wire [31:0] ex_s1_alu_src1_repair;
+    wire [31:0] ex_s1_alu_src2_repair;
+    wire [31:0] ex_rs1_data_repair;
+    wire [31:0] ex_rs2_data_repair;
+    wire [31:0] ex_s1_rs1_data_repair;
+    wire [31:0] ex_s1_rs2_data_repair;
 
     // ---- Branch ----
     wire        branch_flush;          // EX stage combinational (for predictor update)
     wire [31:0] branch_target;         // EX stage combinational
     wire        actual_taken;          // for predictor update
     wire [31:0] actual_target;         // for predictor update
-    wire        ex_branch_taken_pre;   // ID-precomputed branch compare result
+    wire [31:0] ex_control_target;     // EX-computed target for Slot 0 CFI
     wire        ex_branch_registered_flush;
     wire        ex_s1_branch_redirect; // Slot1 branch delayed frontend redirect
     wire [31:0] ex_s1_branch_target;
@@ -320,9 +329,12 @@ module cpu_top (
     wire        wb_reg_write_en;
     wire [ 1:0] wb_wb_sel;
     wire        wb_is_load;
-    wire [ 1:0] wb_mem_size;
-    wire        wb_mem_unsigned;
-    wire [ 1:0] wb_addr_low;
+    wire [ 4:0] wb_load_shift;
+    wire        wb_load_byte_signed;
+    wire        wb_load_byte_unsigned;
+    wire        wb_load_half_signed;
+    wire        wb_load_half_unsigned;
+    wire        wb_load_word;
     wire [31:0] wb_load_rdata;  // registered cache/mmio output (captured in MEM/WB)
 
     // ---- Slot 1 shadow WB ----
@@ -335,9 +347,12 @@ module cpu_top (
     wire        wb_s1_reg_write_en;
     wire [ 1:0] wb_s1_wb_sel;
     wire        wb_s1_is_load;
-    wire [ 1:0] wb_s1_mem_size;
-    wire        wb_s1_mem_unsigned;
-    wire [ 1:0] wb_s1_addr_low;
+    wire [ 4:0] wb_s1_load_shift;
+    wire        wb_s1_load_byte_signed;
+    wire        wb_s1_load_byte_unsigned;
+    wire        wb_s1_load_half_signed;
+    wire        wb_s1_load_half_unsigned;
+    wire        wb_s1_load_word;
     wire [31:0] wb_s1_load_rdata;
 
     // ---- WB ----
@@ -403,20 +418,21 @@ module cpu_top (
     wire [31:0] id_s1_pc;
     wire [ 2:0] id_csr_cmd;
     wire [11:0] id_csr_addr;
-    wire [31:0] id_branch_target_pre;
+    wire        id_alu_src1_is_rs1;
+    wire        id_alu_src2_is_rs2;
+    wire        id_s1_alu_src1_is_rs1;
+    wire        id_s1_alu_src2_is_rs2;
     wire        id_rs1_used;
     wire        id_rs2_used;
     wire        id_s1_rs1_used;
     wire        id_s1_rs2_used;
     wire        id_s0_alu_only;
-    wire        id_branch_taken_pre;
+    wire        id_s1_repair_ok;
     memory_access_unit u_memory_access_unit (
         .ex_valid            (ex_valid),
         .ex_mem_read_en      (ex_mem_read_en),
         .ex_mem_write_en     (ex_mem_write_en),
-        // LSU consumers are stalled until their operands are available in ID, so
-        // the DCache/MMIO address path does not need the late WB repair mux.
-        .ex_alu_addr         (alu_forward_addr),
+        .ex_alu_addr         (alu_addr),
         .ex_store_wea        (dram_wea),
         .ex_store_data       (store_data_shifted),
         .ex_s1_valid         (ex_s1_valid),
@@ -545,6 +561,8 @@ module cpu_top (
     wire [31:0] id_abtb_pred_target;
     wire        id_pred_source_abtb;
     wire        id_stage1_branch_owned;
+    wire        id_abtb_update_qualified_w;
+    wire [ 1:0] id_abtb_update_cfi_type_w;
     wire        id_s1_abtb_hit;
     wire        id_s1_abtb_way;
     wire [ 1:0] id_s1_abtb_cfi_type;
@@ -553,6 +571,8 @@ module cpu_top (
     wire [31:0] id_s1_abtb_pred_target;
     wire        id_s1_pred_source_abtb;
     wire        id_s1_stage1_branch_owned;
+    wire        id_s1_abtb_update_qualified_w;
+    wire [ 1:0] id_s1_abtb_update_cfi_type_w;
 
     wire        ex_abtb_hit;
     wire        ex_abtb_way;
@@ -633,7 +653,6 @@ module cpu_top (
         .id_pc             (id_pc),
         .id_inst           (id_inst),
         .id_inst1          (id_inst1),
-        .id_imm            (id_imm),
         .dec_alu_src1_sel  (dec_alu_src1_sel),
         .dec_alu_src2_sel  (dec_alu_src2_sel),
         .dec_reg_write_en  (dec_reg_write_en),
@@ -641,7 +660,6 @@ module cpu_top (
         .dec_mem_read_en   (dec_mem_read_en),
         .dec_mem_write_en  (dec_mem_write_en),
         .dec_is_branch     (dec_is_branch),
-        .dec_branch_cond   (dec_branch_cond),
         .dec_is_jal        (dec_is_jal),
         .dec_is_jalr       (dec_is_jalr),
         .dec_is_csr        (dec_is_csr),
@@ -649,14 +667,12 @@ module cpu_top (
         .dec_is_muldiv     (dec_is_muldiv),
         .dec1_alu_src1_sel (dec1_alu_src1_sel),
         .dec1_alu_src2_sel (dec1_alu_src2_sel),
+        .dec1_mem_read_en  (dec1_mem_read_en),
         .dec1_mem_write_en (dec1_mem_write_en),
         .dec1_is_branch    (dec1_is_branch),
+        .dec1_is_jal       (dec1_is_jal),
+        .dec1_is_jalr      (dec1_is_jalr),
         .dec1_csr_uses_rs1 (dec1_csr_uses_rs1),
-        .fwd_rs1_data      (fwd_rs1_data),
-        .fwd_rs2_data      (fwd_rs2_data),
-        .fwd_branch_rs1_data(fwd_branch_rs1_data),
-        .fwd_branch_rs2_data(fwd_branch_rs2_data),
-        .fwd_rs1_jalr_data (fwd_rs1_jalr_data),
         .id_rs1_addr       (id_rs1_addr),
         .id_rs2_addr       (id_rs2_addr),
         .id_rd_addr        (id_rd_addr),
@@ -667,61 +683,29 @@ module cpu_top (
         .id_s1_pc          (id_s1_pc),
         .id_csr_cmd        (id_csr_cmd),
         .id_csr_addr       (id_csr_addr),
-        .id_branch_target_pre(id_branch_target_pre),
+        .id_alu_src1_is_rs1(id_alu_src1_is_rs1),
+        .id_alu_src2_is_rs2(id_alu_src2_is_rs2),
+        .id_s1_alu_src1_is_rs1(id_s1_alu_src1_is_rs1),
+        .id_s1_alu_src2_is_rs2(id_s1_alu_src2_is_rs2),
         .id_rs1_used       (id_rs1_used),
         .id_rs2_used       (id_rs2_used),
         .id_s1_rs1_used    (id_s1_rs1_used),
         .id_s1_rs2_used    (id_s1_rs2_used),
         .id_s0_alu_only    (id_s0_alu_only),
-        .id_branch_taken_pre(id_branch_taken_pre)
+        .id_s1_repair_ok   (id_s1_repair_ok),
+        .id_abtb_update_qualified(id_abtb_update_qualified_w),
+        .id_abtb_update_cfi_type (id_abtb_update_cfi_type_w),
+        .id_s1_abtb_update_qualified(id_s1_abtb_update_qualified_w),
+        .id_s1_abtb_update_cfi_type (id_s1_abtb_update_cfi_type_w)
     );
-
-    // Decode-time ABTB classification. Carry the confirmed type to EX so RET
-    // recognition uses the full JALR immediate instead of guessing from the
-    // reduced EX control signals.
-    wire id_rd_is_link = (id_rd_addr == 5'd1) | (id_rd_addr == 5'd5);
-    wire id_rs1_is_link = (id_rs1_addr == 5'd1) | (id_rs1_addr == 5'd5);
-    wire id_abtb_is_call = (dec_is_jal | dec_is_jalr) & id_rd_is_link;
-    wire id_abtb_is_ret = dec_is_jalr
-                        & (id_rd_addr == 5'd0)
-                        & id_rs1_is_link
-                        & (id_inst[31:20] == 12'd0);
-    wire id_abtb_update_qualified_w = dec_is_branch
-                                    | dec_is_jal
-                                    | id_abtb_is_call
-                                    | id_abtb_is_ret;
-    wire [1:0] id_abtb_update_cfi_type_w =
-        id_abtb_is_ret  ? ABTB_TYPE_RET :
-        id_abtb_is_call ? ABTB_TYPE_CALL :
-        dec_is_branch   ? ABTB_TYPE_BRANCH :
-                          ABTB_TYPE_JAL;
-
-    wire id_s1_rd_is_link = (id_s1_rd_addr == 5'd1)
-                          | (id_s1_rd_addr == 5'd5);
-    wire id_s1_rs1_is_link = (id_s1_rs1_addr == 5'd1)
-                           | (id_s1_rs1_addr == 5'd5);
-    wire id_s1_abtb_is_call = (dec1_is_jal | dec1_is_jalr)
-                            & id_s1_rd_is_link;
-    wire id_s1_abtb_is_ret = dec1_is_jalr
-                           & (id_s1_rd_addr == 5'd0)
-                           & id_s1_rs1_is_link
-                           & (id_inst1[31:20] == 12'd0);
-    wire id_s1_abtb_update_qualified_w = dec1_is_branch
-                                       | dec1_is_jal
-                                       | id_s1_abtb_is_call
-                                       | id_s1_abtb_is_ret;
-    wire [1:0] id_s1_abtb_update_cfi_type_w =
-        id_s1_abtb_is_ret  ? ABTB_TYPE_RET :
-        id_s1_abtb_is_call ? ABTB_TYPE_CALL :
-        dec1_is_branch     ? ABTB_TYPE_BRANCH :
-                             ABTB_TYPE_JAL;
 
     // ==================== Branch Predictor ====================
 
     assign s0_pred_update_valid_raw = ex_valid
                                   & (ex_is_branch | ex_is_jal | ex_is_jalr);
     assign s1_pred_update_valid_raw = ex_s1_valid
-                                  & (ex_s1_is_branch | ex_s1_is_jal);
+                                  & (ex_s1_is_branch | ex_s1_is_jal
+                                   | ex_s1_is_jalr);
     assign pred_train_from_s1 = ~s0_pred_update_valid_raw
                             & s1_pred_update_valid_raw;
     assign pred_train_valid = (s0_pred_update_valid_raw | s1_pred_update_valid_raw)
@@ -735,8 +719,8 @@ module cpu_top (
                                                      : ex_is_branch;
     assign pred_train_is_jal        = pred_train_from_s1 ? ex_s1_is_jal
                                                      : ex_is_jal;
-    assign pred_train_is_jalr       = pred_train_from_s1 ? 1'b0
-                                                     : ex_is_jalr;
+    assign pred_train_is_jalr       = pred_train_from_s1 ? ex_s1_is_jalr
+                                                         : ex_is_jalr;
     assign pred_train_actual_taken  = pred_train_from_s1 ? ex_s1_actual_taken
                                                      : actual_taken;
     assign pred_train_actual_target = pred_train_from_s1 ? ex_s1_branch_target
@@ -776,16 +760,11 @@ module cpu_top (
                          : ex_stage1_pht_counter;
 
 `ifndef SYNTHESIS
-	    always @(posedge clk) begin
-	        if (rst_n && ex_s1_valid && ex_s1_is_jalr)
-	            $error("Slot1 JALR reached EX, but slot1 predictor training does not support JALR");
-	        if (rst_n && s0_pred_update_valid_raw && s1_pred_update_valid_raw)
-	            $error("Single predictor update port saw simultaneous slot0 and slot1 control flow");
-	        if (rst_n && ex_valid && (ex_mem_read_en | ex_mem_write_en)
-	            && (ex_rs1_wb_repair | ex_rs2_wb_repair))
-	            $error("LSU reached EX with late WB repair; DCache address uses unrepaired LSU address");
-	    end
-	`endif
+    always @(posedge clk) begin
+        if (rst_n && s0_pred_update_valid_raw && s1_pred_update_valid_raw)
+            $error("Single predictor update port saw simultaneous slot0 and slot1 control flow");
+    end
+`endif
 
     frontend_stage1_direction u_frontend_stage1_direction (
         .clk                 (clk),
@@ -1394,6 +1373,8 @@ module cpu_top (
         .id_s0_alu_only (id_s0_alu_only),
         .id_s0_jalr     (dec_is_jalr),
         .id_s0_branch   (dec_is_branch),
+        .id_s0_mem_read (dec_mem_read_en),
+        .id_s0_mem_write(dec_mem_write_en),
         .rf_rs1_data    (rf_rs1_data),
         .rf_rs2_data    (rf_rs2_data),
         .id_s1_valid    (id_s1_valid),
@@ -1401,6 +1382,7 @@ module cpu_top (
         .id_s1_rs2_addr (id_s1_rs2_addr),
         .id_s1_rs1_used (id_s1_rs1_used),
         .id_s1_rs2_used (id_s1_rs2_used),
+        .id_s1_repair_ok(id_s1_repair_ok),
         .rf_s1_rs1_data (rf_s1_rs1_data),
         .rf_s1_rs2_data (rf_s1_rs2_data),
         .ex_valid       (ex_valid),
@@ -1410,7 +1392,6 @@ module cpu_top (
         .ex_alu_result  (ex_forward_result),
         .ex_pc_plus_4   (ex_pc_plus_4),
         .ex_wb_sel      (ex_wb_sel),
-        .ex_wb_repair   (ex_result_late),
         .ex_s1_valid       (ex_s1_valid),
         .ex_s1_reg_write   (ex_s1_reg_write_en),
         .ex_s1_mem_read    (ex_s1_mem_read_en),
@@ -1443,13 +1424,16 @@ module cpu_top (
         .wb_s1_write_data  (wb_s1_write_data),
         .id_rs1_data    (fwd_rs1_data),
         .id_rs2_data    (fwd_rs2_data),
-        .id_branch_rs1_data(fwd_branch_rs1_data),
-        .id_branch_rs2_data(fwd_branch_rs2_data),
-        .id_rs1_jalr_data(fwd_rs1_jalr_data),
         .id_s1_rs1_data (fwd_s1_rs1_data),
         .id_s1_rs2_data (fwd_s1_rs2_data),
         .id_rs1_wb_repair(fwd_rs1_wb_repair),
         .id_rs2_wb_repair(fwd_rs2_wb_repair),
+        .id_rs1_wb_repair_s1(fwd_rs1_wb_repair_s1),
+        .id_rs2_wb_repair_s1(fwd_rs2_wb_repair_s1),
+        .id_s1_rs1_wb_repair(fwd_s1_rs1_wb_repair),
+        .id_s1_rs2_wb_repair(fwd_s1_rs2_wb_repair),
+        .id_s1_rs1_wb_repair_s1(fwd_s1_rs1_wb_repair_s1),
+        .id_s1_rs2_wb_repair_s1(fwd_s1_rs2_wb_repair_s1),
         .id_ready_go    (id_ready_go_raw)
     );
 
@@ -1476,8 +1460,6 @@ module cpu_top (
         .alu_src2      (id_s1_alu_src2)
     );
 
-    assign id_s1_control_target = id_s1_pc + id_s1_imm;
-
     // ==================== ID/EX ====================
 
     id_ex_reg u_id_ex_reg (
@@ -1497,13 +1479,13 @@ module cpu_top (
         .id_rs2_data      (fwd_rs2_data),
         .id_rs1_wb_repair (fwd_rs1_wb_repair),
         .id_rs2_wb_repair (fwd_rs2_wb_repair),
-        .id_branch_target (id_branch_target_pre),
-        .id_fallthrough_pc(id_pc_plus_4),
+        .id_rs1_wb_repair_s1(fwd_rs1_wb_repair_s1),
+        .id_rs2_wb_repair_s1(fwd_rs2_wb_repair_s1),
         .id_rd            (id_rd_addr),
         .id_rs1_addr      (id_rs1_addr),
         .id_rs2_addr      (id_rs2_addr),
-        .id_alu_src1_is_rs1(dec_alu_src1_sel == 2'b00),
-        .id_alu_src2_is_rs2(~dec_alu_src2_sel),
+        .id_alu_src1_is_rs1(id_alu_src1_is_rs1),
+        .id_alu_src2_is_rs2(id_alu_src2_is_rs2),
         .id_alu_op        (dec_alu_op),
         .id_reg_write_en  (dec_reg_write_en),
         .id_wb_sel        (dec_wb_sel),
@@ -1513,7 +1495,6 @@ module cpu_top (
         .id_mem_unsigned  (dec_mem_unsigned),
         .id_is_branch     (dec_is_branch),
         .id_branch_cond   (dec_branch_cond),
-        .id_branch_taken  (id_branch_taken_pre),
         .id_is_jal        (dec_is_jal),
         .id_is_jalr       (dec_is_jalr),
         .id_is_csr        (dec_is_csr),
@@ -1546,8 +1527,8 @@ module cpu_top (
         .ex_rs2_data      (ex_rs2_data),
         .ex_rs1_wb_repair (ex_rs1_wb_repair),
         .ex_rs2_wb_repair (ex_rs2_wb_repair),
-        .ex_branch_target (ex_branch_target_pre),
-        .ex_fallthrough_pc(ex_fallthrough_pc),
+        .ex_rs1_wb_repair_s1(ex_rs1_wb_repair_s1),
+        .ex_rs2_wb_repair_s1(ex_rs2_wb_repair_s1),
         .ex_rd            (ex_rd),
         .ex_rs1_addr      (ex_rs1_addr),
         .ex_rs2_addr      (ex_rs2_addr),
@@ -1562,7 +1543,6 @@ module cpu_top (
         .ex_mem_unsigned  (ex_mem_unsigned),
         .ex_is_branch     (ex_is_branch),
         .ex_branch_cond   (ex_branch_cond),
-        .ex_branch_taken  (ex_branch_taken_pre),
         .ex_is_jal        (ex_is_jal),
         .ex_is_jalr       (ex_is_jalr),
         .ex_is_csr        (ex_is_csr),
@@ -1601,12 +1581,17 @@ module cpu_top (
         .id_inst             (id_inst1),
         .id_alu_src1         (id_s1_alu_src1),
         .id_alu_src2         (id_s1_alu_src2),
-        .id_control_target   (id_s1_control_target),
         .id_rs1_data         (fwd_s1_rs1_data),
         .id_rs2_data         (fwd_s1_rs2_data),
+        .id_rs1_wb_repair    (fwd_s1_rs1_wb_repair),
+        .id_rs2_wb_repair    (fwd_s1_rs2_wb_repair),
+        .id_rs1_wb_repair_s1 (fwd_s1_rs1_wb_repair_s1),
+        .id_rs2_wb_repair_s1 (fwd_s1_rs2_wb_repair_s1),
         .id_rd               (id_s1_rd_addr),
         .id_rs1_addr         (id_s1_rs1_addr),
         .id_rs2_addr         (id_s1_rs2_addr),
+        .id_alu_src1_is_rs1  (id_s1_alu_src1_is_rs1),
+        .id_alu_src2_is_rs2  (id_s1_alu_src2_is_rs2),
         .id_alu_op           (dec1_alu_op),
         .id_reg_write_en     (dec1_reg_write_en),
         .id_wb_sel           (dec1_wb_sel),
@@ -1637,12 +1622,17 @@ module cpu_top (
         .ex_s1_inst          (ex_s1_inst),
         .ex_s1_alu_src1      (ex_s1_alu_src1),
         .ex_s1_alu_src2      (ex_s1_alu_src2),
-        .ex_s1_control_target(ex_s1_control_target),
         .ex_s1_rs1_data      (ex_s1_rs1_data),
         .ex_s1_rs2_data      (ex_s1_rs2_data),
+        .ex_s1_rs1_wb_repair (ex_s1_rs1_wb_repair),
+        .ex_s1_rs2_wb_repair (ex_s1_rs2_wb_repair),
+        .ex_s1_rs1_wb_repair_s1(ex_s1_rs1_wb_repair_s1),
+        .ex_s1_rs2_wb_repair_s1(ex_s1_rs2_wb_repair_s1),
         .ex_s1_rd            (ex_s1_rd),
         .ex_s1_rs1_addr      (ex_s1_rs1_addr),
         .ex_s1_rs2_addr      (ex_s1_rs2_addr),
+        .ex_s1_alu_src1_is_rs1(ex_s1_alu_src1_is_rs1),
+        .ex_s1_alu_src2_is_rs2(ex_s1_alu_src2_is_rs2),
         .ex_s1_alu_op        (ex_s1_alu_op),
         .ex_s1_reg_write_en  (ex_s1_reg_write_en),
         .ex_s1_wb_sel        (ex_s1_wb_sel),
@@ -1671,30 +1661,48 @@ module cpu_top (
     );
 
     // ==================== EX stage ====================
-    // MEM-ready load consumers repair their S0 ALU operands from WB here.
-    // A separate unrepaired ALU feeds ID forwarding so this late path cannot
-    // become WB->ALU->ID/IF in static timing.
+    // MEM-ready load consumers repair their operands from WB here. The
+    // repaired result is allowed to feed younger ID consumers after moving CFI
+    // target/compare work out of ID.
     ex_stage_ctrl u_ex_stage_ctrl (
         .ex_pc                      (ex_pc),
         .ex_s1_pc                   (ex_s1_pc),
+        .ex_valid                   (ex_valid),
         .ex_rs1_wb_repair           (ex_rs1_wb_repair),
         .ex_rs2_wb_repair           (ex_rs2_wb_repair),
-        .wb_write_data              (wb_write_data),
+        .ex_rs1_wb_repair_s1        (ex_rs1_wb_repair_s1),
+        .ex_rs2_wb_repair_s1        (ex_rs2_wb_repair_s1),
+        .wb_load_data               (wb_load_data),
+        .wb_s1_load_data            (wb_s1_load_data),
         .ex_alu_src1                (ex_alu_src1),
         .ex_alu_src2                (ex_alu_src2),
+        .ex_alu_src1_is_rs1         (ex_alu_src1_is_rs1),
+        .ex_alu_src2_is_rs2         (ex_alu_src2_is_rs2),
+        .ex_rs1_data                (ex_rs1_data),
+        .ex_rs2_data                (ex_rs2_data),
+        .ex_is_branch               (ex_is_branch),
+        .ex_is_jal                  (ex_is_jal),
+        .ex_is_jalr                 (ex_is_jalr),
         .ex_is_csr                  (ex_is_csr),
         .ex_csr_rdata               (ex_csr_rdata),
         .ex_is_muldiv               (ex_is_muldiv),
         .ex_muldiv_result           (muldiv_result),
-        .alu_forward_result         (alu_forward_result),
         .alu_result                 (alu_result),
         .ex_s1_valid                (ex_s1_valid),
         .ex_s1_is_branch            (ex_s1_is_branch),
         .ex_s1_is_jal               (ex_s1_is_jal),
+        .ex_s1_is_jalr              (ex_s1_is_jalr),
         .ex_s1_branch_cond          (ex_s1_branch_cond),
+        .ex_s1_rs1_wb_repair        (ex_s1_rs1_wb_repair),
+        .ex_s1_rs2_wb_repair        (ex_s1_rs2_wb_repair),
+        .ex_s1_rs1_wb_repair_s1     (ex_s1_rs1_wb_repair_s1),
+        .ex_s1_rs2_wb_repair_s1     (ex_s1_rs2_wb_repair_s1),
+        .ex_s1_alu_src1             (ex_s1_alu_src1),
+        .ex_s1_alu_src2             (ex_s1_alu_src2),
+        .ex_s1_alu_src1_is_rs1      (ex_s1_alu_src1_is_rs1),
+        .ex_s1_alu_src2_is_rs2      (ex_s1_alu_src2_is_rs2),
         .ex_s1_rs1_data             (ex_s1_rs1_data),
         .ex_s1_rs2_data             (ex_s1_rs2_data),
-        .ex_s1_control_target       (ex_s1_control_target),
         .ex_s1_predicted_taken      (ex_s1_pred_taken),
         .ex_s1_predicted_target     (ex_s1_pred_target),
         .mem_branch_flush           (mem_branch_flush),
@@ -1708,23 +1716,20 @@ module cpu_top (
         .ex_s1_pc_plus_4            (ex_s1_pc_plus_4),
         .ex_alu_src1_repair         (ex_alu_src1_repair),
         .ex_alu_src2_repair         (ex_alu_src2_repair),
+        .ex_s1_alu_src1_repair      (ex_s1_alu_src1_repair),
+        .ex_s1_alu_src2_repair      (ex_s1_alu_src2_repair),
+        .ex_rs1_data_repair         (ex_rs1_data_repair),
+        .ex_rs2_data_repair         (ex_rs2_data_repair),
+        .ex_s1_rs1_data_repair      (ex_s1_rs1_data_repair),
+        .ex_s1_rs2_data_repair      (ex_s1_rs2_data_repair),
         .ex_forward_result          (ex_forward_result),
         .ex_pipe_alu_result         (ex_pipe_alu_result),
-        .ex_result_late             (ex_result_late),
+        .ex_control_target          (ex_control_target),
         .ex_s1_branch_target        (ex_s1_branch_target),
         .ex_s1_actual_taken         (ex_s1_actual_taken),
         .ex_s1_branch_redirect      (ex_s1_branch_redirect),
         .ex_registered_branch_flush (ex_registered_branch_flush),
         .ex_registered_branch_target(ex_registered_branch_target)
-    );
-
-    alu u_alu_forward (
-        .alu_op     (ex_alu_op),
-        .alu_src1   (ex_alu_src1),
-        .alu_src2   (ex_alu_src2),
-        .alu_result (alu_forward_result),
-        .alu_sum    (alu_forward_sum),
-        .alu_addr   (alu_forward_addr)
     );
 
     alu u_alu (
@@ -1738,8 +1743,8 @@ module cpu_top (
 
     alu u_alu_s1 (
         .alu_op     (ex_s1_alu_op),
-        .alu_src1   (ex_s1_alu_src1),
-        .alu_src2   (ex_s1_alu_src2),
+        .alu_src1   (ex_s1_alu_src1_repair),
+        .alu_src2   (ex_s1_alu_src2_repair),
         .alu_result (alu_s1_result),
         .alu_sum    (alu_s1_sum),
         .alu_addr   (alu_s1_addr)
@@ -1792,10 +1797,12 @@ module cpu_top (
     );
 
     branch_unit u_branch_unit (
-        .target_pc        (ex_branch_target_pre),
-        .fallthrough_pc   (ex_fallthrough_pc),
+        .target_pc        (ex_control_target),
+        .fallthrough_pc   (ex_pc_plus_4),
+        .rs1_data         (ex_rs1_data_repair),
+        .rs2_data         (ex_rs2_data_repair),
         .is_branch        (ex_is_branch),
-        .branch_taken_pre (ex_branch_taken_pre),
+        .branch_cond      (ex_branch_cond),
         .is_jal           (ex_is_jal),
         .is_jalr          (ex_is_jalr),
         .ex_valid         (ex_valid),
@@ -1812,15 +1819,18 @@ module cpu_top (
         // Store side (EX stage)
         .store_valid     (ex_valid),
         .store_en        (ex_mem_write_en),
-        .store_addr_low  (alu_forward_addr[1:0]),
+        .store_addr_low  (alu_addr[1:0]),
         .store_mem_size  (ex_mem_size),
-        .store_data_in   (ex_rs2_data),
+        .store_data_in   (ex_rs2_data_repair),
         .store_wea       (dram_wea),
         .store_data_out  (store_data_shifted),
         // Load side (WB stage)
-        .load_addr_low   (wb_addr_low),
-        .load_mem_size   (wb_mem_size),
-        .load_unsigned   (wb_mem_unsigned),
+        .load_shift      (wb_load_shift),
+        .load_byte_signed(wb_load_byte_signed),
+        .load_byte_unsigned(wb_load_byte_unsigned),
+        .load_half_signed(wb_load_half_signed),
+        .load_half_unsigned(wb_load_half_unsigned),
+        .load_word       (wb_load_word),
         .load_dram_dout  (wb_load_rdata),   // from MEM/WB register (cache or mmio)
         .load_data_out   (wb_load_data)
     );
@@ -1831,13 +1841,16 @@ module cpu_top (
         .store_en        (ex_s1_mem_write_en),
         .store_addr_low  (alu_s1_addr[1:0]),
         .store_mem_size  (ex_s1_mem_size),
-        .store_data_in   (ex_s1_rs2_data),
+        .store_data_in   (ex_s1_rs2_data_repair),
         .store_wea       (dram_wea_s1),
         .store_data_out  (s1_store_data_shifted),
         // Load side (WB stage)
-        .load_addr_low   (wb_s1_addr_low),
-        .load_mem_size   (wb_s1_mem_size),
-        .load_unsigned   (wb_s1_mem_unsigned),
+        .load_shift      (wb_s1_load_shift),
+        .load_byte_signed(wb_s1_load_byte_signed),
+        .load_byte_unsigned(wb_s1_load_byte_unsigned),
+        .load_half_signed(wb_s1_load_half_signed),
+        .load_half_unsigned(wb_s1_load_half_unsigned),
+        .load_word       (wb_s1_load_word),
         .load_dram_dout  (wb_s1_load_rdata),
         .load_data_out   (wb_s1_load_data)
     );
@@ -1952,9 +1965,12 @@ module cpu_top (
         .wb_reg_write_en  (wb_reg_write_en),
         .wb_wb_sel        (wb_wb_sel),
         .wb_is_load       (wb_is_load),
-        .wb_mem_size      (wb_mem_size),
-        .wb_mem_unsigned  (wb_mem_unsigned),
-        .wb_addr_low      (wb_addr_low),
+        .wb_load_shift    (wb_load_shift),
+        .wb_load_byte_signed(wb_load_byte_signed),
+        .wb_load_byte_unsigned(wb_load_byte_unsigned),
+        .wb_load_half_signed(wb_load_half_signed),
+        .wb_load_half_unsigned(wb_load_half_unsigned),
+        .wb_load_word     (wb_load_word),
         .mem_load_rdata   (mem_load_data),   // from DCache (cacheable) or MMIO
         .wb_load_rdata    (wb_load_rdata)    // registered for WB stage
     );
@@ -1986,9 +2002,12 @@ module cpu_top (
         .wb_s1_reg_write_en  (wb_s1_reg_write_en),
         .wb_s1_wb_sel        (wb_s1_wb_sel),
         .wb_s1_is_load       (wb_s1_is_load),
-        .wb_s1_mem_size      (wb_s1_mem_size),
-        .wb_s1_mem_unsigned  (wb_s1_mem_unsigned),
-        .wb_s1_addr_low      (wb_s1_addr_low),
+        .wb_s1_load_shift    (wb_s1_load_shift),
+        .wb_s1_load_byte_signed(wb_s1_load_byte_signed),
+        .wb_s1_load_byte_unsigned(wb_s1_load_byte_unsigned),
+        .wb_s1_load_half_signed(wb_s1_load_half_signed),
+        .wb_s1_load_half_unsigned(wb_s1_load_half_unsigned),
+        .wb_s1_load_word     (wb_s1_load_word),
         .wb_s1_load_rdata    (wb_s1_load_rdata)
     );
 

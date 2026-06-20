@@ -1,7 +1,6 @@
 #include "riscv_test.h"
 
-// Test: branch condition precompute with forwarding/stall/flush coverage.
-// The CPU compares branch operands in ID and latches the 1-bit result into EX.
+// Test: EX-stage branch compare with forwarding/stall/flush coverage.
 
 RVTEST_RV32U
 RVTEST_CODE_BEGIN

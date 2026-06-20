@@ -67,9 +67,8 @@ s1_taken:
     bne   t2, t3, fail_taken_count
     bnez  t4, fail_taken
 
-    // Part 3: slot0 LSU + slot1 branch is intentionally not dual-issued in
-    // V1. The branch should execute later as slot0, and the counter must not
-    // increase for this pair.
+    // Part 3: slot0 LSU + slot1 branch is now legal. The taken slot1 branch
+    // must redirect and the fall-through instruction must not execute.
     addi  t4, x0, 0
 
     .align 3
@@ -91,7 +90,8 @@ lsu_s1_branch_target:
     addi  s1, s1, 0
     addi  s1, s1, 0
     sub   t2, s1, s0
-    bnez  t2, fail_lsu_count
+    li    t3, 1
+    bne   t2, t3, fail_lsu_count
     bnez  t4, fail_lsu_count
 
 pass:

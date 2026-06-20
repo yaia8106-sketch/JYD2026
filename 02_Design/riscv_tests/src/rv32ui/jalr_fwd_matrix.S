@@ -1,8 +1,6 @@
 #include "riscv_test.h"
 
-// Test: JALR rs1 forwarding and late-load stall behavior.
-// JALR target precompute must be allowed to consume ordinary EX/MEM/WB
-// forwarded operands, while load-produced targets still wait until ready.
+// Test: EX-stage JALR target forwarding and late-load stall behavior.
 
 RVTEST_RV32U
 RVTEST_CODE_BEGIN

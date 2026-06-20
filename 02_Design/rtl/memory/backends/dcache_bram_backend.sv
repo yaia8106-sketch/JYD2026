@@ -84,7 +84,7 @@ module dcache_bram_backend #(
     assign mem_wr_valid = (state == B_WR_RESP);
     assign mem_wr_resp  = 2'b00;
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             state   <= B_IDLE;
             addr_r  <= 16'd0;

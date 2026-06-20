@@ -38,7 +38,8 @@
 - 1 个 `frontend_ftq` pair-policy 定向测试：同 fetch block 双发、
   cross-packet pairing、slot0/slot1 RAW（rs1/rs2）、`rd=x0` 不形成 RAW、
   force-single、pred-taken 抑制、ALU+ALU、ALU+load、ALU+store、ALU+JAL、
-  non-control+branch、不支持 pair 类型、slot0 JAL/JALR/system kill slot1、
+  LSU+JAL/JALR、non-control+branch、不支持 pair 类型、
+  slot0 JAL/JALR/system kill slot1、
   stall 后 pair 信息保持、redirect 清除旧 pair 信息、FQ wrap-around、
   同 PC redirect 后合法 refetch、enqueue/dequeue 同周期，以及
   cross-packet follower 被后续 overwrite。
@@ -51,7 +52,7 @@
 - 38 个基础 RV32I/smoke 测试：`simple` + 官方 `rv32ui` 指令测试（不包含 `fence_i`）。
 - 2 个综合访存测试：`ld_st`、`st_ld`。
 - 4 个压力测试：`dcache_stress`、`axi_backend_stress`、`counter_stress`、`bp_stress`。
-- 27 个双发射、分支预测、DCache、RAS 相关测试。
+- 28 个双发射、分支预测、DCache、RAS 相关测试。
 - 1 个 RV32M 覆盖测试：`m_ext`。
 - 9 个 Zicsr / Trap / Timer 测试：`zicsr_basic`、`zicsr_edge`、`csr_forwarding`、`csr_trap_stall`、`trap_mret`、`trap_slot1`、`trap_flush`、`trap_nested`、`timer_irq_basic`。
 
@@ -254,7 +255,7 @@ correction 实验，应使用新命名、新测试和新文档，不复用已删
 | `branch_dual_flush` | Slot0 branch 误预测时，同包 Slot1 被同拍清除 |
 | `branch_fwd_matrix` | 分支比较操作数来自 S0/S1 各级前递时的方向判断 |
 | `branch_dual_edge` | 连续 branch/ALU 组合、taken/not-taken 切换、指令缓冲交互 |
-| `slot1_branch` | Slot0 ALU + Slot1 branch 的 taken/not-taken；Slot0 LSU + Slot1 branch 退化单发 |
+| `slot1_branch` | Slot0 ALU/LSU + Slot1 branch 的 taken/not-taken、fall-through flush 和双发计数 |
 | `waw` | 同周期 WAW 下 Slot1 写回优先 |
 | `loaduse_dual` | Slot0 load + 独立 Slot1 ALU 双发，以及后续 load-use stall |
 | `inst_buffer` | 单发时 Slot1 进入指令缓冲，并在后续周期作为 Slot0 执行 |
@@ -269,6 +270,8 @@ correction 实验，应使用新命名、新测试和新文档，不复用已删
 | `slot1_load` | Slot0 普通 ALU + Slot1 load 共享单端口 LSU，覆盖 LB/LBU/LH/LHU/LW、双发计数和后续 load-use stall |
 | `slot1_store` | Slot0 普通 ALU + Slot1 store 共享单端口 LSU，覆盖 SB/SH/SW、同包 RAW 顺序化、load-use stall、S0 LSU 顺序化和 MMIO store |
 | `slot1_jal` | Slot0 普通 ALU + Slot1 JAL 共享延迟重定向路径，覆盖链接地址、fall-through flush、双发计数和 S0 LSU + S1 JAL 顺序化 |
+| `slot1_jump` | Slot0 ALU + Slot1 JAL/JALR，覆盖链接地址、JALR bit0 清零和 wrong-path flush |
+| `slot1_cfi_matrix` | Slot0 ALU/load/store + Slot1 branch/JAL/JALR 组合，覆盖双发计数、redirect/link、load/store hit 与 wrong-path flush |
 
 ### 指令缓冲与 Flush
 
@@ -340,6 +343,7 @@ Zicsr / Trap 测试覆盖 M 模式下的最小 CSR、同步异常与机器定时
 | Slot1 load 共享 LSU | `slot1_load` |
 | Slot1 store 共享 LSU | `slot1_store` |
 | Slot1 JAL 延迟重定向 | `slot1_jal` |
+| Slot1 JAL/JALR 跳转矩阵 | `slot1_jump`、`slot1_cfi_matrix` |
 | LUI/AUIPC 在 S1 | `lui_auipc_s1` |
 | DCache miss + 双发射 stall | `dcache_dual` |
 | WT+WNA store miss/refill merge 边界 | `dcache_wna_edge` |

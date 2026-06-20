@@ -436,13 +436,61 @@ module tb_frontend_ftq_pair;
                       r_add(5'd1, 5'd0, 5'd0),
                       jal_inst(5'd1),
                       1'b1);
+        run_pair_case("ALU+JALR",
+                      r_add(5'd1, 5'd0, 5'd0),
+                      jalr_inst(5'd0, 5'd5),
+                      1'b1);
         run_pair_case("non-control+branch",
                       r_add(5'd1, 5'd0, 5'd0),
                       beq_inst(5'd2, 5'd3),
                       1'b1);
+        run_pair_case("load+branch",
+                      lw_inst(5'd1, 5'd0),
+                      beq_inst(5'd2, 5'd3),
+                      1'b1);
+        run_pair_case("store+branch",
+                      sw_inst(5'd2, 5'd3),
+                      beq_inst(5'd4, 5'd5),
+                      1'b1);
+        run_pair_case("branch+load",
+                      beq_inst(5'd2, 5'd3),
+                      lw_inst(5'd1, 5'd4),
+                      1'b1);
+        run_pair_case("branch+store",
+                      beq_inst(5'd2, 5'd3),
+                      sw_inst(5'd4, 5'd5),
+                      1'b1);
+        run_pair_case("load+JAL",
+                      lw_inst(5'd1, 5'd0),
+                      jal_inst(5'd2),
+                      1'b1);
+        run_pair_case("load+JALR",
+                      lw_inst(5'd1, 5'd0),
+                      jalr_inst(5'd2, 5'd3),
+                      1'b1);
+        run_pair_case("store+JAL",
+                      sw_inst(5'd2, 5'd3),
+                      jal_inst(5'd1),
+                      1'b1);
+        run_pair_case("store+JALR",
+                      sw_inst(5'd2, 5'd3),
+                      jalr_inst(5'd1, 5'd4),
+                      1'b1);
         run_pair_case("unsupported load+load",
                       lw_inst(5'd1, 5'd0),
                       lw_inst(5'd2, 5'd0),
+                      1'b0);
+        run_pair_case("unsupported store+load",
+                      sw_inst(5'd2, 5'd3),
+                      lw_inst(5'd1, 5'd4),
+                      1'b0);
+        run_pair_case("unsupported branch+JAL",
+                      beq_inst(5'd1, 5'd2),
+                      jal_inst(5'd3),
+                      1'b0);
+        run_pair_case("unsupported branch+JALR",
+                      beq_inst(5'd1, 5'd2),
+                      jalr_inst(5'd3, 5'd4),
                       1'b0);
         run_pair_case("slot0 JAL kills slot1",
                       jal_inst(5'd1),

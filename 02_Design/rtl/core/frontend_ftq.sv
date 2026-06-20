@@ -154,6 +154,28 @@ module frontend_ftq
     } fq_entry_t;
 
     typedef struct packed {
+        logic        is_branch;
+        logic        is_jal;
+        logic        is_jalr;
+        logic        is_system;
+        logic        is_fence;
+        logic        is_illegal;
+        logic        is_muldiv;
+        logic        is_load;
+        logic        is_store;
+        logic        is_alu_type;
+        logic        writes_rd;
+        logic        uses_rs1;
+        logic        uses_rs2;
+        logic        is_jump;
+        logic        is_control;
+        logic        is_lsu;
+        logic        is_cfi;
+        logic        force_single_slot0;
+        logic        force_single_slot1;
+    } f0_predecode_t;
+
+    typedef struct packed {
         logic        hit;
         logic        way;
 `ifdef FRONTEND_FTQ_ABTB_WIDE_META
@@ -167,12 +189,9 @@ module frontend_ftq
     typedef struct packed {
         logic        pred_taken;
         logic        force_single;
-        logic        allow_alu_follow;
-        logic        allow_mem_jal_follow;
-        logic        allow_branch_follow;
-        logic        follow_alu;
-        logic        follow_mem_jal;
-        logic        follow_branch;
+        logic        is_alu_type;
+        logic        is_lsu;
+        logic        is_cfi;
         logic        writes_rd;
         logic        uses_rs1;
         logic        uses_rs2;
@@ -192,11 +211,24 @@ module frontend_ftq
 
     function automatic logic fq_pair_supported(input fq_pair_meta_t head0,
                                                input fq_pair_meta_t head1);
+        logic head0_supported;
+        logic head1_supported;
+        logic both_lsu;
+        logic both_cfi;
         begin
-            fq_pair_supported =
-                (head1.follow_alu && head0.allow_alu_follow)
-             || (head1.follow_mem_jal && head0.allow_mem_jal_follow)
-             || (head1.follow_branch && head0.allow_branch_follow);
+            head0_supported = head0.is_alu_type | head0.is_lsu
+                            | head0.is_cfi;
+            head1_supported = head1.is_alu_type | head1.is_lsu
+                            | head1.is_cfi;
+            both_lsu = head0.is_lsu & head1.is_lsu;
+            both_cfi = head0.is_cfi & head1.is_cfi;
+
+            // ALU has no extra exclusion. LSU conflicts only with LSU; CFI
+            // conflicts only with CFI.
+            fq_pair_supported = head0_supported
+                              & head1_supported
+                              & ~both_lsu
+                              & ~both_cfi;
         end
     endfunction
 
@@ -304,6 +336,120 @@ module frontend_ftq
             inst_uses_rs2 = (op == OP_R_TYPE)
                           || (op == OP_STORE)
                           || (op == OP_BRANCH);
+        end
+    endfunction
+
+    function automatic f0_predecode_t f0_predecode_inst(input logic [31:0] inst);
+        begin
+            f0_predecode_inst = '0;
+            f0_predecode_inst.is_branch = inst_is_branch(inst);
+            f0_predecode_inst.is_jal = inst_is_jal(inst);
+            f0_predecode_inst.is_jalr = inst_is_jalr(inst);
+            f0_predecode_inst.is_system = inst_is_system(inst);
+            f0_predecode_inst.is_fence = inst_is_fence(inst);
+            f0_predecode_inst.is_illegal = inst_is_illegal(inst);
+            f0_predecode_inst.is_muldiv = inst_is_muldiv(inst);
+            f0_predecode_inst.is_load = inst_is_load(inst);
+            f0_predecode_inst.is_store = inst_is_store(inst);
+            f0_predecode_inst.is_alu_type = inst_is_alu_type(inst);
+            f0_predecode_inst.writes_rd = inst_writes_rd(inst);
+            f0_predecode_inst.uses_rs1 = inst_uses_rs1(inst);
+            f0_predecode_inst.uses_rs2 = inst_uses_rs2(inst);
+            f0_predecode_inst.is_jump = f0_predecode_inst.is_jal
+                                      | f0_predecode_inst.is_jalr
+                                      | f0_predecode_inst.is_system;
+            f0_predecode_inst.is_control = f0_predecode_inst.is_branch
+                                         | f0_predecode_inst.is_jal
+                                         | f0_predecode_inst.is_jalr
+                                         | f0_predecode_inst.is_system;
+            f0_predecode_inst.is_lsu = f0_predecode_inst.is_load
+                                     | f0_predecode_inst.is_store;
+            f0_predecode_inst.is_cfi = f0_predecode_inst.is_branch
+                                     | f0_predecode_inst.is_jal
+                                     | f0_predecode_inst.is_jalr;
+            f0_predecode_inst.force_single_slot0 =
+                f0_predecode_inst.is_jalr
+                | f0_predecode_inst.is_system
+                | f0_predecode_inst.is_fence
+                | f0_predecode_inst.is_illegal
+                | f0_predecode_inst.is_muldiv;
+            f0_predecode_inst.force_single_slot1 =
+                f0_predecode_inst.is_system
+                | f0_predecode_inst.is_fence
+                | f0_predecode_inst.is_illegal
+                | f0_predecode_inst.is_muldiv;
+        end
+    endfunction
+
+    function automatic fq_entry_t f0_make_entry(
+        input logic          valid,
+        input logic [31:0]   pc,
+        input logic [31:0]   inst,
+        input f0_predecode_t dec,
+        input logic          force_single,
+        input logic          pred_taken,
+        input logic [31:0]   pred_target,
+        input logic          pred_source_abtb,
+        input logic          stage1_branch_owned,
+        input logic [ 1:0]   final_cfi_type,
+        input logic [ 7:0]   stage1_pht_index,
+        input logic [ 1:0]   stage1_pht_counter
+    );
+        begin
+            f0_make_entry = '0;
+            f0_make_entry.valid = valid;
+            f0_make_entry.pc = pc;
+            f0_make_entry.inst = inst;
+            f0_make_entry.pred_taken = pred_taken;
+            f0_make_entry.pred_target = pred_target;
+            f0_make_entry.pred_source_abtb = pred_source_abtb;
+            f0_make_entry.stage1_branch_owned = stage1_branch_owned;
+            f0_make_entry.pred_cfi_type = stage1_branch_owned
+                                        ? ABTB_TYPE_BRANCH
+                                        : pred_taken
+                                        ? final_cfi_type
+                                        : 2'd0;
+            f0_make_entry.stage1_pht_index = stage1_pht_index;
+            f0_make_entry.stage1_pht_counter = stage1_pht_counter;
+            f0_make_entry.is_branch = dec.is_branch;
+            f0_make_entry.is_jal = dec.is_jal;
+            f0_make_entry.is_jalr = dec.is_jalr;
+            f0_make_entry.is_system = dec.is_system;
+            f0_make_entry.is_fence = dec.is_fence;
+            f0_make_entry.is_illegal = dec.is_illegal;
+            f0_make_entry.is_muldiv = dec.is_muldiv;
+            f0_make_entry.is_load = dec.is_load;
+            f0_make_entry.is_store = dec.is_store;
+            f0_make_entry.is_alu_type = dec.is_alu_type;
+            f0_make_entry.writes_rd = dec.writes_rd;
+            f0_make_entry.uses_rs1 = dec.uses_rs1;
+            f0_make_entry.uses_rs2 = dec.uses_rs2;
+            f0_make_entry.is_jump = dec.is_jump;
+            f0_make_entry.is_control = dec.is_control;
+            f0_make_entry.is_lsu = dec.is_lsu;
+            f0_make_entry.force_single = force_single;
+        end
+    endfunction
+
+    function automatic fq_pair_meta_t f0_make_pair_meta(
+        input logic [31:0]   inst,
+        input f0_predecode_t dec,
+        input logic          pred_taken,
+        input logic          force_single
+    );
+        begin
+            f0_make_pair_meta = '0;
+            f0_make_pair_meta.pred_taken = pred_taken;
+            f0_make_pair_meta.force_single = force_single;
+            f0_make_pair_meta.is_alu_type = dec.is_alu_type;
+            f0_make_pair_meta.is_lsu = dec.is_lsu;
+            f0_make_pair_meta.is_cfi = dec.is_cfi;
+            f0_make_pair_meta.writes_rd = dec.writes_rd;
+            f0_make_pair_meta.uses_rs1 = dec.uses_rs1;
+            f0_make_pair_meta.uses_rs2 = dec.uses_rs2;
+            f0_make_pair_meta.rd = inst[11:7];
+            f0_make_pair_meta.rs1 = inst[19:15];
+            f0_make_pair_meta.rs2 = inst[24:20];
         end
     endfunction
 
@@ -468,59 +614,23 @@ module frontend_ftq
     wire [31:0] f0_slot0_pc = f0_start_pc_r;
     wire [31:0] f0_slot1_pc = f0_start_pc_r + 32'd4;
 
-    wire f0_slot0_branch = inst_is_branch(f0_slot0_inst);
-    wire f0_slot0_jal    = inst_is_jal(f0_slot0_inst);
-    wire f0_slot0_jalr   = inst_is_jalr(f0_slot0_inst);
-    wire f0_slot0_system = inst_is_system(f0_slot0_inst);
-    wire f0_slot0_fence  = inst_is_fence(f0_slot0_inst);
-    wire f0_slot0_illegal = inst_is_illegal(f0_slot0_inst);
-    wire f0_slot0_muldiv = inst_is_muldiv(f0_slot0_inst);
-    wire f0_slot0_load = inst_is_load(f0_slot0_inst);
-    wire f0_slot0_store = inst_is_store(f0_slot0_inst);
-    wire f0_slot0_alu_type = inst_is_alu_type(f0_slot0_inst);
-    wire f0_slot0_writes_rd = inst_writes_rd(f0_slot0_inst);
-    wire f0_slot0_uses_rs1 = inst_uses_rs1(f0_slot0_inst);
-    wire f0_slot0_uses_rs2 = inst_uses_rs2(f0_slot0_inst);
-    wire f0_slot0_jump = f0_slot0_jal || f0_slot0_jalr || f0_slot0_system;
-    wire f0_slot0_control = f0_slot0_branch || f0_slot0_jal
-                           || f0_slot0_jalr || f0_slot0_system;
-    wire f0_slot0_lsu = f0_slot0_load || f0_slot0_store;
-    wire f0_slot0_force_single = f0_slot0_jalr
-                                || f0_slot0_system
-                                || f0_slot0_fence
-                                || f0_slot0_illegal
-                                || f0_slot0_muldiv;
-    wire f0_slot0_system_redirect = f0_slot0_system && (f0_slot0_inst[14:12] == 3'b000);
-
-    wire f0_slot1_branch = inst_is_branch(f0_slot1_inst);
-    wire f0_slot1_jal    = inst_is_jal(f0_slot1_inst);
-    wire f0_slot1_jalr   = inst_is_jalr(f0_slot1_inst);
-    wire f0_slot1_system = inst_is_system(f0_slot1_inst);
-    wire f0_slot1_fence  = inst_is_fence(f0_slot1_inst);
-    wire f0_slot1_illegal = inst_is_illegal(f0_slot1_inst);
-    wire f0_slot1_muldiv = inst_is_muldiv(f0_slot1_inst);
-    wire f0_slot1_load = inst_is_load(f0_slot1_inst);
-    wire f0_slot1_store = inst_is_store(f0_slot1_inst);
-    wire f0_slot1_alu_type = inst_is_alu_type(f0_slot1_inst);
-    wire f0_slot1_writes_rd = inst_writes_rd(f0_slot1_inst);
-    wire f0_slot1_uses_rs1 = inst_uses_rs1(f0_slot1_inst);
-    wire f0_slot1_uses_rs2 = inst_uses_rs2(f0_slot1_inst);
-    wire f0_slot1_jump = f0_slot1_jal || f0_slot1_jalr || f0_slot1_system;
-    wire f0_slot1_control = f0_slot1_branch || f0_slot1_jal
-                           || f0_slot1_jalr || f0_slot1_system;
-    wire f0_slot1_lsu = f0_slot1_load || f0_slot1_store;
-    wire f0_slot1_force_single = f0_slot1_jalr
-                                || f0_slot1_system
-                                || f0_slot1_fence
-                                || f0_slot1_illegal
-                                || f0_slot1_muldiv;
+    wire f0_predecode_t f0_slot0_dec = f0_predecode_inst(f0_slot0_inst);
+    wire f0_predecode_t f0_slot1_dec = f0_predecode_inst(f0_slot1_inst);
+    // Compatibility aliases for existing directed-test hierarchy probes.
+    wire f0_slot0_branch = f0_slot0_dec.is_branch;
+    wire f0_slot0_jal = f0_slot0_dec.is_jal;
+    wire f0_slot0_jalr = f0_slot0_dec.is_jalr;
+    wire f0_slot0_force_single = f0_slot0_dec.force_single_slot0;
+    wire f0_slot1_force_single = f0_slot1_dec.force_single_slot1;
+    wire f0_slot0_system_redirect =
+        f0_slot0_dec.is_system && (f0_slot0_inst[14:12] == 3'b000);
 
     wire f0_slot0_stage1_branch_owned =
-        f0_slot0_branch
+        f0_slot0_dec.is_branch
         && (f0_start_pc_r[2] ? f0_stage1_bank1_branch_owned_r
                              : f0_stage1_bank0_branch_owned_r);
     wire f0_slot1_stage1_branch_owned =
-        f0_slot1_branch
+        f0_slot1_dec.is_branch
         && !f0_start_pc_r[2]
         && f0_stage1_bank1_branch_owned_r;
 
@@ -577,8 +687,8 @@ module frontend_ftq
     wire redirect_valid = ex_redirect_valid;
     wire [31:0] redirect_target = ex_redirect_target;
 
-    wire f0_kill_after_slot0 = f0_slot0_jal
-                             || f0_slot0_jalr
+    wire f0_kill_after_slot0 = f0_slot0_dec.is_jal
+                             || f0_slot0_dec.is_jalr
                              || f0_slot0_system_redirect
                              || f0_slot0_pred_taken;
     wire f0_enq0_payload = f0_accept_base && f0_base_mask_r[0];
@@ -595,111 +705,53 @@ module frontend_ftq
     fq_pair_meta_t f0_pair_meta1;
 
     always @* begin
-        f0_entry0 = '0;
-        f0_entry0.valid = f0_enq0_valid;
-        f0_entry0.pc = f0_slot0_pc;
-        f0_entry0.inst = f0_slot0_inst;
-        f0_entry0.pred_taken = f0_slot0_pred_taken;
-        f0_entry0.pred_target = f0_slot0_pred_target;
-        f0_entry0.pred_source_abtb = f0_slot0_pred_source_abtb;
-        f0_entry0.stage1_branch_owned = f0_slot0_stage1_branch_owned;
-        f0_entry0.pred_cfi_type = f0_slot0_stage1_branch_owned
-                                ? ABTB_TYPE_BRANCH
-                                : f0_slot0_pred_taken
-                                ? f0_final_cfi_type
-                                : 2'd0;
-        f0_entry0.stage1_pht_index = f0_slot0_stage1_pht_index;
-        f0_entry0.stage1_pht_counter = f0_slot0_stage1_pht_counter;
-        f0_entry0.is_branch = f0_slot0_branch;
-        f0_entry0.is_jal = f0_slot0_jal;
-        f0_entry0.is_jalr = f0_slot0_jalr;
-        f0_entry0.is_system = f0_slot0_system;
-        f0_entry0.is_fence = f0_slot0_fence;
-        f0_entry0.is_illegal = f0_slot0_illegal;
-        f0_entry0.is_muldiv = f0_slot0_muldiv;
-        f0_entry0.is_load = f0_slot0_load;
-        f0_entry0.is_store = f0_slot0_store;
-        f0_entry0.is_alu_type = f0_slot0_alu_type;
-        f0_entry0.writes_rd = f0_slot0_writes_rd;
-        f0_entry0.uses_rs1 = f0_slot0_uses_rs1;
-        f0_entry0.uses_rs2 = f0_slot0_uses_rs2;
-        f0_entry0.is_jump = f0_slot0_jump;
-        f0_entry0.is_control = f0_slot0_control;
-        f0_entry0.is_lsu = f0_slot0_lsu;
-        f0_entry0.force_single = f0_slot0_force_single;
+        f0_entry0 = f0_make_entry(
+            f0_enq0_valid,
+            f0_slot0_pc,
+            f0_slot0_inst,
+            f0_slot0_dec,
+            f0_slot0_force_single,
+            f0_slot0_pred_taken,
+            f0_slot0_pred_target,
+            f0_slot0_pred_source_abtb,
+            f0_slot0_stage1_branch_owned,
+            f0_final_cfi_type,
+            f0_slot0_stage1_pht_index,
+            f0_slot0_stage1_pht_counter
+        );
 
-        f0_entry1 = '0;
-        f0_entry1.valid = f0_enq1_valid;
-        f0_entry1.pc = f0_slot1_pc;
-        f0_entry1.inst = f0_slot1_inst;
-        f0_entry1.pred_taken = f0_slot1_pred_taken;
-        f0_entry1.pred_target = f0_slot1_pred_target;
-        f0_entry1.pred_source_abtb = f0_slot1_pred_source_abtb;
-        f0_entry1.stage1_branch_owned = f0_slot1_stage1_branch_owned;
-        f0_entry1.pred_cfi_type = f0_slot1_stage1_branch_owned
-                                ? ABTB_TYPE_BRANCH
-                                : f0_slot1_pred_taken
-                                ? f0_final_cfi_type
-                                : 2'd0;
-        f0_entry1.stage1_pht_index = f0_slot1_stage1_pht_index;
-        f0_entry1.stage1_pht_counter = f0_slot1_stage1_pht_counter;
-        f0_entry1.is_branch = f0_slot1_branch;
-        f0_entry1.is_jal = f0_slot1_jal;
-        f0_entry1.is_jalr = f0_slot1_jalr;
-        f0_entry1.is_system = f0_slot1_system;
-        f0_entry1.is_fence = f0_slot1_fence;
-        f0_entry1.is_illegal = f0_slot1_illegal;
-        f0_entry1.is_muldiv = f0_slot1_muldiv;
-        f0_entry1.is_load = f0_slot1_load;
-        f0_entry1.is_store = f0_slot1_store;
-        f0_entry1.is_alu_type = f0_slot1_alu_type;
-        f0_entry1.writes_rd = f0_slot1_writes_rd;
-        f0_entry1.uses_rs1 = f0_slot1_uses_rs1;
-        f0_entry1.uses_rs2 = f0_slot1_uses_rs2;
-        f0_entry1.is_jump = f0_slot1_jump;
-        f0_entry1.is_control = f0_slot1_control;
-        f0_entry1.is_lsu = f0_slot1_lsu;
-        f0_entry1.force_single = f0_slot1_force_single;
+        f0_entry1 = f0_make_entry(
+            f0_enq1_valid,
+            f0_slot1_pc,
+            f0_slot1_inst,
+            f0_slot1_dec,
+            f0_slot1_force_single,
+            f0_slot1_pred_taken,
+            f0_slot1_pred_target,
+            f0_slot1_pred_source_abtb,
+            f0_slot1_stage1_branch_owned,
+            f0_final_cfi_type,
+            f0_slot1_stage1_pht_index,
+            f0_slot1_stage1_pht_counter
+        );
     end
 
     always_comb begin
-        f0_pair_meta0 = '0;
-        f0_pair_meta0.pred_taken = f0_slot0_pred_taken;
-        f0_pair_meta0.force_single = f0_slot0_force_single;
-        f0_pair_meta0.allow_alu_follow = !f0_slot0_jump;
-        f0_pair_meta0.allow_mem_jal_follow = f0_slot0_alu_type;
-        f0_pair_meta0.allow_branch_follow =
-            !f0_slot0_control && !f0_slot0_lsu;
-        f0_pair_meta0.follow_alu = f0_slot0_alu_type;
-        f0_pair_meta0.follow_mem_jal =
-            f0_slot0_load || f0_slot0_store || f0_slot0_jal;
-        f0_pair_meta0.follow_branch = f0_slot0_branch;
-        f0_pair_meta0.writes_rd = f0_slot0_writes_rd;
-        f0_pair_meta0.uses_rs1 = f0_slot0_uses_rs1;
-        f0_pair_meta0.uses_rs2 = f0_slot0_uses_rs2;
-        f0_pair_meta0.rd = f0_slot0_inst[11:7];
-        f0_pair_meta0.rs1 = f0_slot0_inst[19:15];
-        f0_pair_meta0.rs2 = f0_slot0_inst[24:20];
+        f0_pair_meta0 = f0_make_pair_meta(
+            f0_slot0_inst,
+            f0_slot0_dec,
+            f0_slot0_pred_taken,
+            f0_slot0_force_single
+        );
 
-        f0_pair_meta1 = '0;
         // A taken slot1 may issue as this pair's follower, but it cannot lead a
         // later cross-packet pair.
-        f0_pair_meta1.pred_taken = f0_slot1_pred_taken;
-        f0_pair_meta1.force_single = f0_slot1_force_single;
-        f0_pair_meta1.allow_alu_follow = !f0_slot1_jump;
-        f0_pair_meta1.allow_mem_jal_follow = f0_slot1_alu_type;
-        f0_pair_meta1.allow_branch_follow =
-            !f0_slot1_control && !f0_slot1_lsu;
-        f0_pair_meta1.follow_alu = f0_slot1_alu_type;
-        f0_pair_meta1.follow_mem_jal =
-            f0_slot1_load || f0_slot1_store || f0_slot1_jal;
-        f0_pair_meta1.follow_branch = f0_slot1_branch;
-        f0_pair_meta1.writes_rd = f0_slot1_writes_rd;
-        f0_pair_meta1.uses_rs1 = f0_slot1_uses_rs1;
-        f0_pair_meta1.uses_rs2 = f0_slot1_uses_rs2;
-        f0_pair_meta1.rd = f0_slot1_inst[11:7];
-        f0_pair_meta1.rs1 = f0_slot1_inst[19:15];
-        f0_pair_meta1.rs2 = f0_slot1_inst[24:20];
+        f0_pair_meta1 = f0_make_pair_meta(
+            f0_slot1_inst,
+            f0_slot1_dec,
+            f0_slot1_pred_taken,
+            f0_slot1_force_single
+        );
     end
 
     // ================================================================
