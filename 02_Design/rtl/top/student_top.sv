@@ -9,8 +9,7 @@
 //           ├── cpu_top         (自研 RV32I 五级流水线)
 //           ├── IROM            (BRAM ROM, 无 output register, 1 拍)
 //           ├── dcache          (2KB 2-way WT+WNA data cache)
-//           │     └── dcache_bram_backend
-//           │           └── DRAM (BRAM RAM, SDP, 65536×32)
+//           │     └── DRAM (BRAM RAM, SDP, 65536×32)
 //           └── mmio_bridge     (LED/SEG/SW/KEY/CNT)
 //
 // 复位约定:
@@ -80,6 +79,7 @@ module student_top #(
     logic [ 1:0] dmem_wr_resp;
 
     // BRAM backend ↔ DRAM BRAM
+    logic        dram_rd_en;
     logic [15:0] dram_rd_addr;
     logic [31:0] dram_rdata;
     logic [15:0] dram_wr_addr;
@@ -159,7 +159,9 @@ module student_top #(
     //  DCache (2KB, 2-way, WT+WNA, 16B line)
     // ================================================================
     dcache #(
-        .BACKEND_CANCEL (1'b1)
+        .BACKEND_CANCEL       (1'b1),
+        .DIRECT_BRAM          (1'b1),
+        .CRITICAL_WORD_FIRST  (1'b1)
     ) u_dcache (
         .clk         (w_cpu_clk),
         .rst_n       (cpu_rst_n),
@@ -181,47 +183,27 @@ module student_top #(
 
         // Memory backend interface
         .mem_req_valid (dmem_req_valid),
-        .mem_req_ready (dmem_req_ready),
+        .mem_req_ready (1'b0),
         .mem_req_write (dmem_req_write),
         .mem_req_addr  (dmem_req_addr),
         .mem_req_len   (dmem_req_len),
         .mem_req_wdata (dmem_req_wdata),
         .mem_req_wstrb (dmem_req_wstrb),
-        .mem_rd_valid  (dmem_rd_valid),
+        .mem_rd_valid  (1'b0),
         .mem_rd_ready  (dmem_rd_ready),
-        .mem_rd_data   (dmem_rd_data),
-        .mem_rd_last   (dmem_rd_last),
-        .mem_rd_resp   (dmem_rd_resp),
+        .mem_rd_data   (32'd0),
+        .mem_rd_last   (1'b0),
+        .mem_rd_resp   (2'b00),
         .mem_rd_cancel (dmem_rd_cancel),
-        .mem_wr_valid  (dmem_wr_valid),
+        .mem_wr_valid  (1'b0),
         .mem_wr_ready  (dmem_wr_ready),
-        .mem_wr_resp   (dmem_wr_resp)
-    );
-
-    dcache_bram_backend u_dcache_bram_backend (
-        .clk           (w_cpu_clk),
-        .rst_n         (cpu_rst_n),
-        .mem_req_valid (dmem_req_valid),
-        .mem_req_ready (dmem_req_ready),
-        .mem_req_write (dmem_req_write),
-        .mem_req_addr  (dmem_req_addr),
-        .mem_req_len   (dmem_req_len),
-        .mem_req_wdata (dmem_req_wdata),
-        .mem_req_wstrb (dmem_req_wstrb),
-        .mem_rd_valid  (dmem_rd_valid),
-        .mem_rd_ready  (dmem_rd_ready),
-        .mem_rd_data   (dmem_rd_data),
-        .mem_rd_last   (dmem_rd_last),
-        .mem_rd_resp   (dmem_rd_resp),
-        .mem_rd_cancel (dmem_rd_cancel),
-        .mem_wr_valid  (dmem_wr_valid),
-        .mem_wr_ready  (dmem_wr_ready),
-        .mem_wr_resp   (dmem_wr_resp),
-        .dram_rd_addr  (dram_rd_addr),
-        .dram_rdata    (dram_rdata),
-        .dram_wr_addr  (dram_wr_addr),
-        .dram_wea      (dram_wea),
-        .dram_wdata    (dram_wdata)
+        .mem_wr_resp   (2'b00),
+        .bram_rd_en    (dram_rd_en),
+        .bram_rd_addr  (dram_rd_addr),
+        .bram_rd_data  (dram_rdata),
+        .bram_wr_addr  (dram_wr_addr),
+        .bram_wea      (dram_wea),
+        .bram_wdata    (dram_wdata)
     );
 
     // ================================================================
@@ -239,7 +221,7 @@ module student_top #(
 
         // 读端口 (Port B)
         .clkb  (w_cpu_clk),
-        .enb   (1'b1),
+        .enb   (dram_rd_en),
         .addrb (dram_rd_addr),
         .doutb (dram_rdata)
     );

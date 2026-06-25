@@ -60,15 +60,40 @@ module dcache_bram_backend #(
     logic [ 3:0] wstrb_r;
     logic [1:0]  rd_valid_pipe;
     logic [1:0]  rd_last_pipe;
+    logic        rd_wrap_line_r;
 
     wire req_fire = mem_req_valid & mem_req_ready;
     wire rd_fire  = mem_rd_valid & mem_rd_ready;
     wire wr_fire  = mem_wr_valid & mem_wr_ready;
-    wire rd_issue = (state == B_RD_BURST) & (beat_r <= len_r);
+    wire rd_req_fire = req_fire & ~mem_req_write;
+
+    function automatic [15:0] rd_burst_addr (
+        input logic [15:0] start_addr,
+        input logic [ 7:0] beat,
+        input logic        wrap_line
+    );
+        begin
+            if (wrap_line)
+                rd_burst_addr = {start_addr[15:2], start_addr[1:0] + beat[1:0]};
+            else
+                rd_burst_addr = start_addr + {8'd0, beat};
+        end
+    endfunction
+
+    wire rd_wrap_line_req = (mem_req_len == 8'd3);
+    wire rd_issue_idle    = rd_req_fire;
+    wire rd_issue_burst   = (state == B_RD_BURST) & (beat_r <= len_r);
+    wire rd_issue         = rd_issue_idle | rd_issue_burst;
+    wire rd_issue_last    = rd_issue_idle
+                           ? (mem_req_len == 8'd0)
+                           : (beat_r == len_r);
+    wire [15:0] rd_addr_idle  = rd_burst_addr(mem_req_addr[17:2], 8'd0, rd_wrap_line_req);
+    wire [15:0] rd_addr_burst = rd_burst_addr(addr_r, beat_r, rd_wrap_line_r);
 
     assign mem_req_ready = (state == B_IDLE);
 
-    assign dram_rd_addr = rd_issue ? addr_r : 16'd0;
+    assign dram_rd_addr = rd_issue_idle  ? rd_addr_idle  :
+                          rd_issue_burst ? rd_addr_burst : 16'd0;
     assign dram_wr_addr = (state == B_WR_ISSUE) ? addr_r : 16'd0;
     assign dram_wea     = (state == B_WR_ISSUE) ? wstrb_r : 4'd0;
     assign dram_wdata   = wdata_r;
@@ -92,6 +117,7 @@ module dcache_bram_backend #(
             beat_r  <= 8'd0;
             wdata_r <= 32'd0;
             wstrb_r <= 4'd0;
+            rd_wrap_line_r <= 1'b0;
             rd_valid_pipe <= 2'b00;
             rd_last_pipe <= 2'b00;
         end else begin
@@ -105,11 +131,12 @@ module dcache_bram_backend #(
                     if (req_fire) begin
                         addr_r  <= mem_req_addr[17:2];
                         len_r   <= mem_req_write ? 8'd0 : mem_req_len;
-                        beat_r  <= 8'd0;
+                        beat_r  <= mem_req_write ? 8'd0 : 8'd1;
                         wdata_r <= mem_req_wdata;
                         wstrb_r <= mem_req_wstrb;
-                        rd_valid_pipe <= 2'b00;
-                        rd_last_pipe <= 2'b00;
+                        rd_wrap_line_r <= rd_wrap_line_req;
+                        rd_valid_pipe <= mem_req_write ? 2'b00 : {1'b0, rd_issue_idle};
+                        rd_last_pipe <= mem_req_write ? 2'b00 : {1'b0, rd_issue_last};
                         state   <= mem_req_write ? B_WR_ISSUE : B_RD_BURST;
                     end
                 end
@@ -125,7 +152,6 @@ module dcache_bram_backend #(
 
                         if (rd_issue) begin
                             beat_r <= beat_r + 8'd1;
-                            addr_r <= addr_r + 16'd1;
                         end
                     end
                 end

@@ -182,7 +182,13 @@ module student_top_axi #(
         .mem_rd_cancel (dmem_rd_cancel),
         .mem_wr_valid  (dmem_wr_valid),
         .mem_wr_ready  (dmem_wr_ready),
-        .mem_wr_resp   (dmem_wr_resp)
+        .mem_wr_resp   (dmem_wr_resp),
+        .bram_rd_en    (),
+        .bram_rd_addr  (),
+        .bram_rd_data  (32'd0),
+        .bram_wr_addr  (),
+        .bram_wea      (),
+        .bram_wdata    ()
     );
 
     dcache_axi_backend u_dcache_axi_backend (

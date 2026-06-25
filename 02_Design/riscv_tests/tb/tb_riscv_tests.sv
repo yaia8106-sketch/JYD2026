@@ -67,7 +67,8 @@ module tb_riscv_tests;
     wire        dmem_wr_ready;
     wire [ 1:0] dmem_wr_resp;
 
-    // BRAM backend ↔ DRAM
+    // Direct DCache BRAM interface ↔ DRAM
+    wire        dram_rd_en;
     wire [15:0] dram_rd_addr;
     wire [31:0] dram_rdata_w;
     wire [15:0] dram_wr_addr;
@@ -106,7 +107,9 @@ module tb_riscv_tests;
     //  DCache
     // ================================================================
     dcache #(
-        .BACKEND_CANCEL (1'b1)
+        .BACKEND_CANCEL       (1'b1),
+        .DIRECT_BRAM          (1'b1),
+        .CRITICAL_WORD_FIRST  (1'b1)
     ) u_dcache (
         .clk         (clk),
         .rst_n       (rst_n),
@@ -120,47 +123,27 @@ module tb_riscv_tests;
         .pipeline_stall (cache_pipeline_stall),
         .flush       (cache_flush),      // pipeline flush → abort refill
         .mem_req_valid (dmem_req_valid),
-        .mem_req_ready (dmem_req_ready),
+        .mem_req_ready (1'b0),
         .mem_req_write (dmem_req_write),
         .mem_req_addr  (dmem_req_addr),
         .mem_req_len   (dmem_req_len),
         .mem_req_wdata (dmem_req_wdata),
         .mem_req_wstrb (dmem_req_wstrb),
-        .mem_rd_valid  (dmem_rd_valid),
+        .mem_rd_valid  (1'b0),
         .mem_rd_ready  (dmem_rd_ready),
-        .mem_rd_data   (dmem_rd_data),
-        .mem_rd_last   (dmem_rd_last),
-        .mem_rd_resp   (dmem_rd_resp),
+        .mem_rd_data   (32'd0),
+        .mem_rd_last   (1'b0),
+        .mem_rd_resp   (2'b00),
         .mem_rd_cancel (dmem_rd_cancel),
-        .mem_wr_valid  (dmem_wr_valid),
+        .mem_wr_valid  (1'b0),
         .mem_wr_ready  (dmem_wr_ready),
-        .mem_wr_resp   (dmem_wr_resp)
-    );
-
-    dcache_bram_backend u_dcache_bram_backend (
-        .clk           (clk),
-        .rst_n         (rst_n),
-        .mem_req_valid (dmem_req_valid),
-        .mem_req_ready (dmem_req_ready),
-        .mem_req_write (dmem_req_write),
-        .mem_req_addr  (dmem_req_addr),
-        .mem_req_len   (dmem_req_len),
-        .mem_req_wdata (dmem_req_wdata),
-        .mem_req_wstrb (dmem_req_wstrb),
-        .mem_rd_valid  (dmem_rd_valid),
-        .mem_rd_ready  (dmem_rd_ready),
-        .mem_rd_data   (dmem_rd_data),
-        .mem_rd_last   (dmem_rd_last),
-        .mem_rd_resp   (dmem_rd_resp),
-        .mem_rd_cancel (dmem_rd_cancel),
-        .mem_wr_valid  (dmem_wr_valid),
-        .mem_wr_ready  (dmem_wr_ready),
-        .mem_wr_resp   (dmem_wr_resp),
-        .dram_rd_addr  (dram_rd_addr),
-        .dram_rdata    (dram_rdata_w),
-        .dram_wr_addr  (dram_wr_addr),
-        .dram_wea      (dram_wea),
-        .dram_wdata    (dram_wdata)
+        .mem_wr_resp   (2'b00),
+        .bram_rd_en    (dram_rd_en),
+        .bram_rd_addr  (dram_rd_addr),
+        .bram_rd_data  (dram_rdata_w),
+        .bram_wr_addr  (dram_wr_addr),
+        .bram_wea      (dram_wea),
+        .bram_wdata    (dram_wdata)
     );
 
     // ================================================================
@@ -205,7 +188,8 @@ module tb_riscv_tests;
         if (dram_wea[2]) dram[dram_wr_addr][23:16] <= dram_wdata[23:16];
         if (dram_wea[3]) dram[dram_wr_addr][31:24] <= dram_wdata[31:24];
         // Read port: 1-cycle synchronous read.
-        dram_dout <= dram[dram_rd_addr];
+        if (dram_rd_en)
+            dram_dout <= dram[dram_rd_addr];
     end
 
     assign dram_rdata_w = dram_dout;
