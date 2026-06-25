@@ -41,7 +41,9 @@ module muldiv_unit
     (* use_dsp = "yes" *) logic signed [65:0] mul_product_r;
     logic [31:0] result_r;
 
-    logic [31:0] div_divisor;
+    logic [33:0] div_divisor_1x_r;
+    logic [33:0] div_divisor_2x_r;
+    logic [33:0] div_divisor_3x_r;
     logic [32:0] div_remainder;
     logic [31:0] div_quotient;
     logic [ 5:0] div_count;
@@ -67,21 +69,50 @@ module muldiv_unit
     wire [31:0] req_special_result = req_div_by_zero ? (req_is_rem ? req_div_rs1 : 32'hffff_ffff) :
                                      req_div_overflow ? (req_is_rem ? 32'd0 : 32'h8000_0000) :
                                                         32'd0;
+    wire        req_div_fast_lt = (req_abs_rs1 < req_abs_rs2);
+    wire        req_div_fast_one = (req_abs_rs2 == 32'd1);
+    wire        req_div_fast_valid = ~req_is_mul
+                                   & ~req_div_by_zero
+                                   & ~req_div_overflow
+                                   & (req_div_fast_lt | req_div_fast_one);
+    wire [31:0] req_div_fast_quot_one = (req_is_signed_div
+                                      & (req_div_rs1[31] ^ req_div_rs2[31]))
+                                      ? (~req_abs_rs1 + 32'd1)
+                                      : req_abs_rs1;
+    wire [31:0] req_div_fast_quot = req_div_fast_one
+                                  ? req_div_fast_quot_one
+                                  : 32'd0;
+    wire [31:0] req_div_fast_rem = req_div_fast_one
+                                 ? 32'd0
+                                 : req_div_rs1;
+    wire [31:0] req_div_fast_result = req_is_rem
+                                    ? req_div_fast_rem
+                                    : req_div_fast_quot;
 
-    wire [32:0] div_divisor_ext = {1'b0, div_divisor};
-    wire [32:0] div_rem_shift = {div_remainder[31:0], div_quotient[31]};
-    wire        div_sub_ok = (div_rem_shift >= div_divisor_ext);
-    wire [32:0] div_rem_next = div_sub_ok ? (div_rem_shift - div_divisor_ext)
-                                          : div_rem_shift;
-    wire [31:0] div_quot_next = {div_quotient[30:0], div_sub_ok};
+    wire [33:0] req_divisor_1x = {2'b00, req_abs_rs2};
+    wire [33:0] req_divisor_2x = {1'b0, req_abs_rs2, 1'b0};
+    wire [33:0] req_divisor_3x = req_divisor_1x + req_divisor_2x;
+    wire [33:0] div_rem_shift = {div_remainder[31:0], div_quotient[31:30]};
+    wire [34:0] div_rem_sub_1x = {1'b0, div_rem_shift} - {1'b0, div_divisor_1x_r};
+    wire [34:0] div_rem_sub_2x = {1'b0, div_rem_shift} - {1'b0, div_divisor_2x_r};
+    wire [34:0] div_rem_sub_3x = {1'b0, div_rem_shift} - {1'b0, div_divisor_3x_r};
+    wire        div_ge_1x = ~div_rem_sub_1x[34];
+    wire        div_ge_2x = ~div_rem_sub_2x[34];
+    wire        div_ge_3x = ~div_rem_sub_3x[34];
+    wire [ 1:0] div_quot_digit = div_ge_3x ? 2'd3 :
+                                  div_ge_2x ? 2'd2 :
+                                  div_ge_1x ? 2'd1 :
+                                              2'd0;
+    wire [33:0] div_rem_next_wide = div_ge_3x ? div_rem_sub_3x[33:0] :
+                                     div_ge_2x ? div_rem_sub_2x[33:0] :
+                                     div_ge_1x ? div_rem_sub_1x[33:0] :
+                                                 div_rem_shift;
+    wire [32:0] div_rem_next = div_rem_next_wide[32:0];
+    wire [31:0] div_quot_next = {div_quotient[29:0], div_quot_digit};
     wire [31:0] div_quot_signed_next = div_quot_neg ? (~div_quot_next + 32'd1)
                                                      : div_quot_next;
     wire [31:0] div_rem_signed_next = div_rem_neg ? (~div_rem_next[31:0] + 32'd1)
                                                    : div_rem_next[31:0];
-
-    assign busy = (state != S_IDLE) & (state != S_DONE);
-    assign done = (state == S_DONE);
-    assign result = result_r;
 
     function automatic logic [31:0] mul_result_select(
         input logic [2:0] op,
@@ -98,6 +129,14 @@ module muldiv_unit
         end
     endfunction
 
+    wire        mul_done_w = (state == S_MUL_DONE);
+    wire        done_w = (state == S_DONE) | mul_done_w;
+    wire [31:0] mul_result_w = mul_result_select(op_r, mul_product_r);
+
+    assign busy = (state != S_IDLE) & ~done_w;
+    assign done = done_w;
+    assign result = mul_done_w ? mul_result_w : result_r;
+
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             state         <= S_IDLE;
@@ -106,7 +145,9 @@ module muldiv_unit
             mul_b_r       <= 33'd0;
             mul_product_r <= '0;
             result_r      <= 32'd0;
-            div_divisor   <= 32'd0;
+            div_divisor_1x_r <= 34'd0;
+            div_divisor_2x_r <= 34'd0;
+            div_divisor_3x_r <= 34'd0;
             div_remainder <= 33'd0;
             div_quotient  <= 32'd0;
             div_count     <= 6'd0;
@@ -131,11 +172,16 @@ module muldiv_unit
                         end else if (req_div_by_zero | req_div_overflow) begin
                             result_r <= req_special_result;
                             state <= S_DONE;
+                        end else if (req_div_fast_valid) begin
+                            result_r <= req_div_fast_result;
+                            state <= S_DONE;
                         end else begin
-                            div_divisor   <= req_abs_rs2;
+                            div_divisor_1x_r <= req_divisor_1x;
+                            div_divisor_2x_r <= req_divisor_2x;
+                            div_divisor_3x_r <= req_divisor_3x;
                             div_remainder <= 33'd0;
                             div_quotient  <= req_abs_rs1;
-                            div_count     <= 6'd32;
+                            div_count     <= 6'd16;
                             div_quot_neg  <= req_is_signed_div & (req_div_rs1[31] ^ req_div_rs2[31]);
                             div_rem_neg   <= req_is_signed_div & req_div_rs1[31];
                             state         <= S_DIV_RUN;
@@ -149,8 +195,8 @@ module muldiv_unit
                 end
 
                 S_MUL_DONE: begin
-                    result_r <= mul_result_select(op_r, mul_product_r);
-                    state <= S_DONE;
+                    if (consume | !req_valid)
+                        state <= S_IDLE;
                 end
 
                 S_DIV_RUN: begin
