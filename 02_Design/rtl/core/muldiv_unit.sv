@@ -67,6 +67,25 @@ module muldiv_unit
     wire [31:0] req_special_result = req_div_by_zero ? (req_is_rem ? req_div_rs1 : 32'hffff_ffff) :
                                      req_div_overflow ? (req_is_rem ? 32'd0 : 32'h8000_0000) :
                                                         32'd0;
+    wire        req_div_fast_lt = (req_abs_rs1 < req_abs_rs2);
+    wire        req_div_fast_one = (req_abs_rs2 == 32'd1);
+    wire        req_div_fast_valid = ~req_is_mul
+                                   & ~req_div_by_zero
+                                   & ~req_div_overflow
+                                   & (req_div_fast_lt | req_div_fast_one);
+    wire [31:0] req_div_fast_quot_one = (req_is_signed_div
+                                      & (req_div_rs1[31] ^ req_div_rs2[31]))
+                                      ? (~req_abs_rs1 + 32'd1)
+                                      : req_abs_rs1;
+    wire [31:0] req_div_fast_quot = req_div_fast_one
+                                  ? req_div_fast_quot_one
+                                  : 32'd0;
+    wire [31:0] req_div_fast_rem = req_div_fast_one
+                                 ? 32'd0
+                                 : req_div_rs1;
+    wire [31:0] req_div_fast_result = req_is_rem
+                                    ? req_div_fast_rem
+                                    : req_div_fast_quot;
 
     wire [32:0] div_divisor_ext = {1'b0, div_divisor};
     wire [32:0] div_rem_shift = {div_remainder[31:0], div_quotient[31]};
@@ -78,10 +97,6 @@ module muldiv_unit
                                                      : div_quot_next;
     wire [31:0] div_rem_signed_next = div_rem_neg ? (~div_rem_next[31:0] + 32'd1)
                                                    : div_rem_next[31:0];
-
-    assign busy = (state != S_IDLE) & (state != S_DONE);
-    assign done = (state == S_DONE);
-    assign result = result_r;
 
     function automatic logic [31:0] mul_result_select(
         input logic [2:0] op,
@@ -97,6 +112,14 @@ module muldiv_unit
             endcase
         end
     endfunction
+
+    wire        mul_done_w = (state == S_MUL_DONE);
+    wire        done_w = (state == S_DONE) | mul_done_w;
+    wire [31:0] mul_result_w = mul_result_select(op_r, mul_product_r);
+
+    assign busy = (state != S_IDLE) & ~done_w;
+    assign done = done_w;
+    assign result = mul_done_w ? mul_result_w : result_r;
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -131,6 +154,9 @@ module muldiv_unit
                         end else if (req_div_by_zero | req_div_overflow) begin
                             result_r <= req_special_result;
                             state <= S_DONE;
+                        end else if (req_div_fast_valid) begin
+                            result_r <= req_div_fast_result;
+                            state <= S_DONE;
                         end else begin
                             div_divisor   <= req_abs_rs2;
                             div_remainder <= 33'd0;
@@ -149,8 +175,8 @@ module muldiv_unit
                 end
 
                 S_MUL_DONE: begin
-                    result_r <= mul_result_select(op_r, mul_product_r);
-                    state <= S_DONE;
+                    if (consume | !req_valid)
+                        state <= S_IDLE;
                 end
 
                 S_DIV_RUN: begin
