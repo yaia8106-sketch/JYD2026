@@ -309,8 +309,9 @@ module dcache #(
     wire  [31:0] refill_write_data;
     logic        refill_target_valid;
     logic [31:0] refill_target_data;
-    logic        direct_rd_valid_q;
-    logic        direct_rd_last_q;
+    logic [1:0]  direct_rd_valid_pipe;
+    logic [1:0]  direct_rd_last_pipe;
+    logic [WORD_W:0] direct_rd_issue_count;
 
     // Capture the pending store-buffer entry once when a refill starts.
     // The line compare is resolved up front; each refill beat then only
@@ -419,23 +420,25 @@ module dcache #(
 
     // ================================================================
     //  Direct BRAM backend datapath
-    //  In direct mode, the DCache issues BRAM read addresses itself and uses
-    //  a one-cycle valid pipeline to match simple-dual-port BRAM latency.
+    //  DRAM4MyOwn has a primitive output register, so read data appears two
+    //  clocks after the address edge. Request issue and response acceptance
+    //  use independent counters to keep the four-word refill back-to-back.
     // ================================================================
-    wire [WORD_W-1:0] refill_beat_plus1 = refill_beat + WORD_W'(1);
-    wire [WORD_W-1:0] direct_rd_issue_beat = state_refill_req ? '0 : refill_beat_plus1;
+    wire [WORD_W-1:0] direct_rd_issue_beat = direct_rd_issue_count[WORD_W-1:0];
     wire [WORD_W-1:0] direct_rd_issue_word = CRITICAL_WORD_FIRST
                                            ? (refill_target_word + direct_rd_issue_beat)
                                            : direct_rd_issue_beat;
     wire direct_rd_issue_en = DIRECT_BRAM
                             & ~flush
                             & (state_refill_req
-                             | (state_refill_data
-                              & (refill_beat != WORD_W'(LINE_WORDS - 1))));
+                             | state_refill_data)
+                            & (direct_rd_issue_count < (WORD_W + 1)'(LINE_WORDS));
     wire direct_rd_issue_last = direct_rd_issue_en
                               & (direct_rd_issue_beat == WORD_W'(LINE_WORDS - 1));
 
-    assign bram_rd_en   = direct_rd_issue_en;
+    // Keep ENB active while responses remain in the BRAM/output-register
+    // pipeline. Otherwise the final word never reaches doutb.
+    assign bram_rd_en   = direct_rd_issue_en | (|direct_rd_valid_pipe);
     assign bram_rd_addr = direct_rd_issue_en
                         ? {refill_fetch_addr[17:4], direct_rd_issue_word}
                         : 16'd0;
@@ -445,21 +448,27 @@ module dcache #(
 
     always_ff @(posedge clk) begin
         if (!rst_n) begin
-            direct_rd_valid_q <= 1'b0;
-            direct_rd_last_q  <= 1'b0;
+            direct_rd_valid_pipe <= 2'b00;
+            direct_rd_last_pipe  <= 2'b00;
+            direct_rd_issue_count <= '0;
         end else if (DIRECT_BRAM) begin
-            direct_rd_valid_q <= direct_rd_issue_en;
-            direct_rd_last_q  <= direct_rd_issue_last;
+            direct_rd_valid_pipe <= {direct_rd_valid_pipe[0], direct_rd_issue_en};
+            direct_rd_last_pipe  <= {direct_rd_last_pipe[0], direct_rd_issue_last};
+            if (refill_start || flush)
+                direct_rd_issue_count <= '0;
+            else if (direct_rd_issue_en)
+                direct_rd_issue_count <= direct_rd_issue_count + 1'b1;
         end else begin
-            direct_rd_valid_q <= 1'b0;
-            direct_rd_last_q  <= 1'b0;
+            direct_rd_valid_pipe <= 2'b00;
+            direct_rd_last_pipe  <= 2'b00;
+            direct_rd_issue_count <= '0;
         end
     end
 
     wire        backend_req_ready = DIRECT_BRAM ? 1'b1 : mem_req_ready;
-    wire        backend_rd_valid  = DIRECT_BRAM ? direct_rd_valid_q : mem_rd_valid;
+    wire        backend_rd_valid  = DIRECT_BRAM ? direct_rd_valid_pipe[1] : mem_rd_valid;
     wire [31:0] backend_rd_data   = DIRECT_BRAM ? bram_rd_data      : mem_rd_data;
-    wire        backend_rd_last   = DIRECT_BRAM ? direct_rd_last_q  : mem_rd_last;
+    wire        backend_rd_last   = DIRECT_BRAM ? direct_rd_last_pipe[1] : mem_rd_last;
     wire        backend_rd_ready  = state_refill_data | state_refill_drop;
     wire        backend_wr_valid  = DIRECT_BRAM ? state_sb_drain_resp : mem_wr_valid;
     wire        backend_wr_ready  = state_sb_drain_resp;
