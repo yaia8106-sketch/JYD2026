@@ -99,7 +99,7 @@ module csr_trap_unit (
                           (ex_csr_addr == CSR_MIP)      ? csr_mip :
                                                           32'd0;
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             csr_mstatus  <= 32'd0;
             csr_mie      <= 32'd0;

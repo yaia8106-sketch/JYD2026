@@ -10,7 +10,7 @@ module dual_issue_counter (
     output logic [31:0] dual_issue_count
 );
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n)
             dual_issue_count <= 32'd0;
         else if (wb_s1_valid)

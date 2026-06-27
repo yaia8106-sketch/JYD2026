@@ -85,7 +85,7 @@ module if_id_reg (
     assign id_allowin = !id_valid || (id_ready_go & ex_allowin);
 
     // ---- Pipeline register ----
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             id_valid        <= 1'b0;
             id_pc           <= 32'd0;

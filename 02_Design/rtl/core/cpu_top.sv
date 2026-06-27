@@ -392,7 +392,7 @@ module cpu_top (
                                 & ~ex_s1_valid & ~mem_s1_valid & ~wb_s1_valid;
     assign timer_irq_take = timer_irq_hold & id_valid & timer_irq_pipe_empty;
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n)
             timer_irq_hold <= 1'b0;
         else if (timer_irq_take)
@@ -882,7 +882,7 @@ module cpu_top (
         && abtb_bank1_hit
         && (abtb_bank1_cfi_type == ABTB_TYPE_BRANCH);
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             abtb_lookup_block_count <= 32'd0;
             abtb_bank0_hit_count <= 32'd0;
@@ -1088,7 +1088,7 @@ module cpu_top (
     (* dont_touch = "true" *)
     logic [ABTB_MEASUREMENT_SINK_W-1:0] abtb_measurement_sink_q;
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n)
             abtb_measurement_sink_q <= '0;
         else

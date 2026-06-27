@@ -49,7 +49,7 @@ module mem_wb_reg (
     assign wb_allowin = !wb_valid || wb_ready_go;   // simplifies to 1
 
     // ---- Pipeline register (no flush) ----
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             wb_valid         <= 1'b0;
             wb_alu_result    <= 32'd0;

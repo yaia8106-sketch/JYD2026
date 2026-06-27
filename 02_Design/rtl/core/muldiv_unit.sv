@@ -137,7 +137,7 @@ module muldiv_unit
     assign done = done_w;
     assign result = mul_done_w ? mul_result_w : result_r;
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             state         <= S_IDLE;
             op_r          <= 3'd0;

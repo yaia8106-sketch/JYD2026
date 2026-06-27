@@ -45,7 +45,7 @@ module mem_wb_reg_s1 (
     output logic [31:0] wb_s1_load_rdata
 );
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             wb_s1_valid        <= 1'b0;
             wb_s1_pc           <= 32'd0;

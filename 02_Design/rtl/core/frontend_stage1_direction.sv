@@ -70,7 +70,7 @@ module frontend_stage1_direction (
             pht[pht_i] = 2'b01;
     end
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n)
             ghr <= 8'd0;
         else if (update_valid)

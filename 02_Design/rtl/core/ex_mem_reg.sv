@@ -67,7 +67,7 @@ module ex_mem_reg (
     // 250MHz: when mem_branch_flush fires, the instruction in EX is spurious
     // (it entered EX one cycle before the registered flush could stop it).
     // Must prevent it from entering MEM with valid=1.
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             mem_valid         <= 1'b0;
             mem_alu_result    <= 32'd0;
@@ -108,7 +108,7 @@ module ex_mem_reg (
 
     // 250MHz: branch_flush/target registered unconditionally
     // Must NOT be gated by mem_allowin — flush must propagate immediately
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             mem_branch_flush  <= 1'b0;
             mem_branch_target <= 32'd0;

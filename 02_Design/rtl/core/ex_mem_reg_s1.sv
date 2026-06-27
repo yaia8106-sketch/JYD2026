@@ -48,7 +48,7 @@ module ex_mem_reg_s1 (
 
     wire s1_flush = ex_branch_flush | mem_branch_flush;
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             mem_s1_valid        <= 1'b0;
             mem_s1_pc           <= 32'd0;

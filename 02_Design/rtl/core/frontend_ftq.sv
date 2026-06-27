@@ -1055,7 +1055,7 @@ module frontend_ftq
     // ================================================================
     integer fq_i;
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             current_pc <= RESET_PC;
             frontend_epoch <= 2'd0;
@@ -1067,7 +1067,7 @@ module frontend_ftq
         end
     end
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             f0_valid_r <= 1'b0;
             f0_epoch_r <= 2'd0;
@@ -1143,7 +1143,7 @@ module frontend_ftq
         end
     end
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             ftq_count <= '0;
         end else if (ex_redirect_valid) begin
@@ -1157,7 +1157,7 @@ module frontend_ftq
         end
     end
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             fq_head <= '0;
             fq_tail <= '0;

@@ -310,7 +310,7 @@ module frontend_abtb (
     wire update_selected_way = update_hit ? update_way : update_alloc_way;
 
     integer set_i;
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             for (set_i = 0; set_i < SETS; set_i = set_i + 1) begin
                 bank0_way0_valid[set_i] <= 1'b0;

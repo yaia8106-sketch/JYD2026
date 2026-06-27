@@ -43,7 +43,7 @@ module regfile (
     assign rs2_data_s1 = (rs2_addr_s1 == 5'd0) ? 32'd0 : regs[rs2_addr_s1];
 
     // ---- Write (posedge, x0 guard). Slot 1 wins WAW by assigning last. ----
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             for (int i = 1; i < 32; i++) begin
                 regs[i] <= 32'd0;

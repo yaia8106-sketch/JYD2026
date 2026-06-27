@@ -36,7 +36,7 @@ module redirect_ctrl (
     assign frontend_branch_target = mem_branch_replay ? mem_branch_target
                                                       : ex_fast_redirect_target;
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    always_ff @(posedge clk) begin
         if (!rst_n)
             fast_branch_redirect_r <= 1'b0;
         else
