@@ -172,13 +172,14 @@ module tb_riscv_tests;
     assign irom_data = irom_data_r;
 
     // ================================================================
-    //  DRAM Model — Simple Dual Port, no extra output register
+    //  DRAM Model — Simple Dual Port with primitive output register
     //   Write port (Port A): dram_wr_addr + dram_wea + dram_wdata
-    //   Read port (Port B):  dram_rd_addr -> dram_rdata (1-cycle sync read)
+    //   Read port (Port B):  dram_rd_addr -> dram_rdata (2-cycle sync read)
     //  65536 x 32-bit words = 256KB
-    //  NOTE: Must match actual DRAM4MyOwn IP config (DOB_REG=0 / no output reg)
+    //  NOTE: Must match actual DRAM4MyOwn IP config (primitive output reg).
     // ================================================================
     reg [31:0] dram [0:65535];
+    reg [31:0] dram_dout_mem;
     reg [31:0] dram_dout;
 
     always @(posedge clk) begin
@@ -187,9 +188,11 @@ module tb_riscv_tests;
         if (dram_wea[1]) dram[dram_wr_addr][15: 8] <= dram_wdata[15: 8];
         if (dram_wea[2]) dram[dram_wr_addr][23:16] <= dram_wdata[23:16];
         if (dram_wea[3]) dram[dram_wr_addr][31:24] <= dram_wdata[31:24];
-        // Read port: 1-cycle synchronous read.
-        if (dram_rd_en)
-            dram_dout <= dram[dram_rd_addr];
+        // Read port: memory array followed by the primitive output register.
+        if (dram_rd_en) begin
+            dram_dout_mem <= dram[dram_rd_addr];
+            dram_dout <= dram_dout_mem;
+        end
     end
 
     assign dram_rdata_w = dram_dout;
@@ -479,7 +482,7 @@ module tb_riscv_tests;
                      led_write_count, u_cpu.pc, last_wb0_pc, last_wb1_pc,
                      cycle_cnt);
         end else if (cycle_limit_done && cycle_timeout_enable && cycle_cnt >= max_cycles) begin
-            $display("[DONE] %0s  reached cycle_limit=%0d commits=%0d first_led=0x%08x last_led=0x%08x led_writes=%0d pc=0x%08x last_wb0_pc=0x%08x last_wb1_pc=0x%08x  (%0d cycles)",
+            $display("[SAMPLED] %0s  reached cycle_limit=%0d commits=%0d first_led=0x%08x last_led=0x%08x led_writes=%0d pc=0x%08x last_wb0_pc=0x%08x last_wb1_pc=0x%08x  (%0d cycles)",
                      test_name_r, max_cycles, commit_cnt, tohost_value,
                      last_tohost_value, led_write_count, u_cpu.pc,
                      last_wb0_pc, last_wb1_pc, cycle_cnt);
@@ -604,11 +607,26 @@ module tb_riscv_tests;
 
     // ================================================================
     //  Optional: waveform dump (for VCD-based tools)
+    //  Usage:
+    //    ./simv +dump                    → riscv_test.vcd, full hierarchy
+    //    ./simv +dump +dump_file=add.vcd → custom filename
+    //    ./simv +dump +dump_scope=1      → depth 1 (this module + 1 level down)
+    //    ./simv +dump +dump_scope=0      → full (default)
     // ================================================================
+    reg [256*8-1:0] dump_file_r;
+    integer         dump_scope = 0;
     initial begin
         if ($test$plusargs("dump")) begin
-            $dumpfile("riscv_test.vcd");
-            $dumpvars(0, tb_riscv_tests);
+            if ($value$plusargs("dump_file=%s", dump_file_r))
+                $dumpfile(dump_file_r);
+            else
+                $dumpfile("riscv_test.vcd");
+            if ($value$plusargs("dump_scope=%d", dump_scope)) begin
+                $dumpvars(dump_scope, tb_riscv_tests);
+            end else begin
+                $dumpvars(0, tb_riscv_tests);
+            end
+            $display("[VCD] Dumping to %0s (scope=%0d)", dump_file_r, dump_scope);
         end
     end
 

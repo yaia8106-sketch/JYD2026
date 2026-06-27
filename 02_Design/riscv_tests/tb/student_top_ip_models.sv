@@ -4,7 +4,7 @@
 // These models match the ports and latency assumptions used by student_top:
 // - IROM64: 2048x64 synchronous ROM, 1-cycle read.
 // - IROMEven32/IROMOdd32: legacy 4096x32 synchronous ROMs.
-// - DRAM4MyOwn: 65536x32 SDP RAM with byte writes and 1-cycle read latency.
+// - DRAM4MyOwn: 65536x32 SDP RAM with byte writes and 2-cycle read latency.
 // ============================================================
 
 module IROMEven32 (
@@ -122,6 +122,7 @@ module DRAM4MyOwn (
     output reg  [31:0] doutb
 );
     reg [31:0] mem [0:65535];
+    reg [31:0] doutb_mem;
     reg [1023:0] file_name;
     integer i;
 
@@ -134,6 +135,7 @@ module DRAM4MyOwn (
             $finish;
         end
         $readmemh(file_name, mem);
+        doutb_mem = 32'd0;
         doutb = 32'd0;
     end
 
@@ -146,7 +148,8 @@ module DRAM4MyOwn (
 
     always @(posedge clkb) begin
         if (enb) begin
-            doutb <= mem[addrb];
+            doutb_mem <= mem[addrb];
+            doutb <= doutb_mem;
         end
     end
 endmodule

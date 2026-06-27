@@ -231,4 +231,17 @@ module tb_student_top_axi;
         end
     end
 
+    // ---- VCD dump (opt-in with +dump) ----
+    reg [256*8-1:0] dump_file_r;
+    initial begin
+        if ($test$plusargs("dump")) begin
+            if ($value$plusargs("dump_file=%s", dump_file_r))
+                $dumpfile(dump_file_r);
+            else
+                $dumpfile("student_top_axi.vcd");
+            $dumpvars(0, tb_student_top_axi);
+            $display("[VCD] Dumping to %0s", dump_file_r);
+        end
+    end
+
 endmodule

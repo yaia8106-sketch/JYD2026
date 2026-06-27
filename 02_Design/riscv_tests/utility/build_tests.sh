@@ -24,7 +24,8 @@ LDFLAGS="-T$RISCV_TESTS_DIR/env/link.ld"
 # RV32IM 指令测试 (去掉 fence_i).
 # Includes diagnostic-only microbenchmarks used by performance/branch; those
 # are built here but intentionally not added to functional/run_all.sh.
-TESTS="simple \
+TESTS="app_calc \
+       simple \
        add addi sub \
        and andi or ori xor xori \
        sll slli srl srli sra srai \
@@ -43,7 +44,7 @@ TESTS="simple \
        fwd_s1 waw_fwd flush_instbuf pc_align loaduse_cross fwd_repair_lsu slot1_load slot1_store slot1_jal slot1_jump slot1_cfi_matrix lui_auipc_s1 \
 	       dcache_dual dcache_wna_edge instbuf_stall bp_dual slot1_bp_update \
        sb_stress ras_overflow \
-       m_ext \
+       m_ext m_dcache_edge \
        zicsr_basic zicsr_edge csr_forwarding csr_trap_stall trap_mret trap_slot1 trap_flush trap_nested timer_irq_basic"
 
 mkdir -p "$HEX_DIR"
