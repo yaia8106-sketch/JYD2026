@@ -30,8 +30,6 @@ module id_ex_reg (
     input  logic [31:0] id_rs2_data,       // raw rs2 (for branch comparison + store)
     input  logic        id_rs1_wb_repair,
     input  logic        id_rs2_wb_repair,
-    input  logic        id_rs1_wb_repair_s1,
-    input  logic        id_rs2_wb_repair_s1,
     input  logic [ 4:0] id_rd,
     input  logic [ 4:0] id_rs1_addr,
     input  logic [ 4:0] id_rs2_addr,
@@ -81,8 +79,6 @@ module id_ex_reg (
     output logic [31:0] ex_rs2_data,
     output logic        ex_rs1_wb_repair,
     output logic        ex_rs2_wb_repair,
-    output logic        ex_rs1_wb_repair_s1,
-    output logic        ex_rs2_wb_repair_s1,
     output logic [ 4:0] ex_rd,
     output logic [ 4:0] ex_rs1_addr,
     output logic [ 4:0] ex_rs2_addr,
@@ -142,8 +138,6 @@ module id_ex_reg (
             ex_rs2_data      <= 32'd0;
             ex_rs1_wb_repair <= 1'b0;
             ex_rs2_wb_repair <= 1'b0;
-            ex_rs1_wb_repair_s1 <= 1'b0;
-            ex_rs2_wb_repair_s1 <= 1'b0;
             ex_rd            <= 5'd0;
             ex_rs1_addr      <= 5'd0;
             ex_rs2_addr      <= 5'd0;
@@ -186,8 +180,6 @@ module id_ex_reg (
             ex_valid         <= 1'b0;
             ex_rs1_wb_repair <= 1'b0;
             ex_rs2_wb_repair <= 1'b0;
-            ex_rs1_wb_repair_s1 <= 1'b0;
-            ex_rs2_wb_repair_s1 <= 1'b0;
             ex_pred_source_abtb <= 1'b0;
             ex_stage1_branch_owned <= 1'b0;
         end else if (ex_allowin) begin
@@ -199,8 +191,6 @@ module id_ex_reg (
             ex_rs2_data      <= id_rs2_data;
             ex_rs1_wb_repair <= id_rs1_wb_repair;
             ex_rs2_wb_repair <= id_rs2_wb_repair;
-            ex_rs1_wb_repair_s1 <= id_rs1_wb_repair_s1;
-            ex_rs2_wb_repair_s1 <= id_rs2_wb_repair_s1;
             ex_rd            <= id_rd;
             ex_rs1_addr      <= id_rs1_addr;
             ex_rs2_addr      <= id_rs2_addr;

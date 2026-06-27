@@ -1,9 +1,8 @@
 // ============================================================
 // Module: mem_wb_reg
 // Description: MEM/WB pipeline register
-// Note: load_rdata comes from DCache (cacheable) or MMIO (uncacheable).
-//       Captured here for WB-stage byte extraction. Load format controls are
-//       predecoded here to keep raw mem_size compare logic out of WB repair.
+// Note: load_data is extracted and extended in MEM, then captured here so the
+//       WB forwarding path starts from a registered 32-bit architectural value.
 // ============================================================
 
 module mem_wb_reg (
@@ -23,10 +22,8 @@ module mem_wb_reg (
     input  logic        mem_reg_write_en,
     input  logic [ 1:0] mem_wb_sel,
     input  logic        mem_mem_read_en,    // is_load flag, needed for WB forwarding
-    input  logic [ 1:0] mem_mem_size,       // needed for WB byte extraction
-    input  logic        mem_mem_unsigned,   // needed for WB sign/zero extension
-    input  logic [ 1:0] mem_addr_low,       // ALU_result[1:0], needed for WB byte extraction
-    input  logic [31:0] mem_load_rdata,     // from DCache (cacheable) or MMIO bridge
+    input  logic        mem_load_valid,     // either slot completes a load this cycle
+    input  logic [31:0] mem_load_data,      // extracted/extended MEM-stage load value
 
     // Data out (to WB stage)
     output logic [31:0] wb_alu_result,
@@ -35,13 +32,7 @@ module mem_wb_reg (
     output logic        wb_reg_write_en,
     output logic [ 1:0] wb_wb_sel,
     output logic        wb_is_load,
-    output logic [ 4:0] wb_load_shift,
-    output logic        wb_load_byte_signed,
-    output logic        wb_load_byte_unsigned,
-    output logic        wb_load_half_signed,
-    output logic        wb_load_half_unsigned,
-    output logic        wb_load_word,
-    output logic [31:0] wb_load_rdata      // registered load data for WB stage
+    output logic [31:0] wb_load_data        // registered load data for WB/repair
 );
 
     // ---- Handshake (WB is last stage, no downstream backpressure) ----
@@ -58,13 +49,7 @@ module mem_wb_reg (
             wb_reg_write_en  <= 1'b0;
             wb_wb_sel        <= 2'd0;
             wb_is_load       <= 1'b0;
-            wb_load_shift    <= 5'd0;
-            wb_load_byte_signed   <= 1'b0;
-            wb_load_byte_unsigned <= 1'b0;
-            wb_load_half_signed   <= 1'b0;
-            wb_load_half_unsigned <= 1'b0;
-            wb_load_word          <= 1'b0;
-            wb_load_rdata    <= 32'd0;
+            wb_load_data     <= 32'd0;
         end else if (wb_allowin) begin
             wb_valid         <= mem_valid & mem_ready_go;
             wb_alu_result    <= mem_alu_result;
@@ -73,22 +58,8 @@ module mem_wb_reg (
             wb_reg_write_en  <= mem_reg_write_en;
             wb_wb_sel        <= mem_wb_sel;
             wb_is_load       <= mem_mem_read_en;
-            wb_load_shift    <= {mem_addr_low, 3'b0};
-            wb_load_byte_signed   <= mem_mem_read_en
-                                   & (mem_mem_size == 2'b00)
-                                   & ~mem_mem_unsigned;
-            wb_load_byte_unsigned <= mem_mem_read_en
-                                   & (mem_mem_size == 2'b00)
-                                   & mem_mem_unsigned;
-            wb_load_half_signed   <= mem_mem_read_en
-                                   & (mem_mem_size == 2'b01)
-                                   & ~mem_mem_unsigned;
-            wb_load_half_unsigned <= mem_mem_read_en
-                                   & (mem_mem_size == 2'b01)
-                                   & mem_mem_unsigned;
-            wb_load_word          <= mem_mem_read_en
-                                   & (mem_mem_size == 2'b10);
-            wb_load_rdata    <= mem_load_rdata;
+            if (mem_load_valid & mem_ready_go)
+                wb_load_data <= mem_load_data;
         end
     end
 

@@ -103,10 +103,10 @@ module forwarding (
     output logic        id_ready_go
 );
 
-    // Timing experiment: disable the MEM-ready load -> EX WB-repair fast path.
-    // Ordinary WB forwarding remains enabled; consumers wait one cycle until
-    // the load reaches WB, then take the value through the normal WB path.
-    localparam logic ENABLE_MEM_LOAD_WB_REPAIR = 1'b0;
+    // A ready MEM load is registered as an extended value in MEM/WB while the
+    // dependent instruction advances. Its EX operands select that WB value in
+    // the following cycle, avoiding a second load-use stall.
+    localparam logic ENABLE_MEM_LOAD_WB_REPAIR = 1'b1;
 
     // ================================================================
     //  Forwarding value computation
@@ -283,8 +283,8 @@ module forwarding (
     wire load_in_s1_ex = ex_s1_valid & ex_s1_mem_read & (ex_s1_rd != 5'd0)
                        & (id_s0_uses_s1_ex_load | id_s1_uses_s1_ex_load);
 
-    // Load in MEM: data is one cycle away. With MEM-load WB repair disabled,
-    // consumers wait until the load reaches WB and use ordinary WB forwarding.
+    // Load in MEM: when the response is ready, a supported consumer advances
+    // with a repair tag and selects the registered load value in EX next cycle.
     wire id_s0_uses_s0_mem_load = s0_rs1_uses_s0_mem_load
                                 | s0_rs2_uses_s0_mem_load;
     wire id_s1_uses_s0_mem_load = s1_rs1_uses_s0_mem_load

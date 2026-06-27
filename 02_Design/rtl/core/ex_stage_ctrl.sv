@@ -10,10 +10,7 @@ module ex_stage_ctrl (
 
     input  logic        ex_rs1_wb_repair,
     input  logic        ex_rs2_wb_repair,
-    input  logic        ex_rs1_wb_repair_s1,
-    input  logic        ex_rs2_wb_repair_s1,
     input  logic [31:0] wb_load_data,
-    input  logic [31:0] wb_s1_load_data,
     input  logic [31:0] ex_alu_src1,
     input  logic [31:0] ex_alu_src2,
     input  logic        ex_alu_src1_is_rs1,
@@ -37,8 +34,6 @@ module ex_stage_ctrl (
     input  logic [ 2:0] ex_s1_branch_cond,
     input  logic        ex_s1_rs1_wb_repair,
     input  logic        ex_s1_rs2_wb_repair,
-    input  logic        ex_s1_rs1_wb_repair_s1,
-    input  logic        ex_s1_rs2_wb_repair_s1,
     input  logic [31:0] ex_s1_alu_src1,
     input  logic [31:0] ex_s1_alu_src2,
     input  logic        ex_s1_alu_src1_is_rs1,
@@ -83,38 +78,25 @@ module ex_stage_ctrl (
     assign ex_pc_plus_4 = ex_pc + 32'd4;
     assign ex_s1_pc_plus_4 = ex_s1_pc + 32'd4;
 
-    wire [31:0] ex_rs1_wb_repair_data = ex_rs1_wb_repair_s1
-                                       ? wb_s1_load_data
-                                       : wb_load_data;
-    wire [31:0] ex_rs2_wb_repair_data = ex_rs2_wb_repair_s1
-                                       ? wb_s1_load_data
-                                       : wb_load_data;
-    wire [31:0] ex_s1_rs1_wb_repair_data = ex_s1_rs1_wb_repair_s1
-                                          ? wb_s1_load_data
-                                          : wb_load_data;
-    wire [31:0] ex_s1_rs2_wb_repair_data = ex_s1_rs2_wb_repair_s1
-                                          ? wb_s1_load_data
-                                          : wb_load_data;
-
     assign ex_alu_src1_repair = (ex_rs1_wb_repair & ex_alu_src1_is_rs1)
-                              ? ex_rs1_wb_repair_data
+                              ? wb_load_data
                               : ex_alu_src1;
     assign ex_alu_src2_repair = (ex_rs2_wb_repair & ex_alu_src2_is_rs2)
-                              ? ex_rs2_wb_repair_data
+                              ? wb_load_data
                               : ex_alu_src2;
     assign ex_s1_alu_src1_repair =
-        (ex_s1_rs1_wb_repair & ex_s1_alu_src1_is_rs1) ? ex_s1_rs1_wb_repair_data :
+        (ex_s1_rs1_wb_repair & ex_s1_alu_src1_is_rs1) ? wb_load_data :
                                                          ex_s1_alu_src1;
     assign ex_s1_alu_src2_repair =
-        (ex_s1_rs2_wb_repair & ex_s1_alu_src2_is_rs2) ? ex_s1_rs2_wb_repair_data :
+        (ex_s1_rs2_wb_repair & ex_s1_alu_src2_is_rs2) ? wb_load_data :
                                                          ex_s1_alu_src2;
-    assign ex_rs1_data_repair = ex_rs1_wb_repair ? ex_rs1_wb_repair_data :
+    assign ex_rs1_data_repair = ex_rs1_wb_repair ? wb_load_data :
                                                     ex_rs1_data;
-    assign ex_rs2_data_repair = ex_rs2_wb_repair ? ex_rs2_wb_repair_data :
+    assign ex_rs2_data_repair = ex_rs2_wb_repair ? wb_load_data :
                                                     ex_rs2_data;
-    assign ex_s1_rs1_data_repair = ex_s1_rs1_wb_repair ? ex_s1_rs1_wb_repair_data :
+    assign ex_s1_rs1_data_repair = ex_s1_rs1_wb_repair ? wb_load_data :
                                                            ex_s1_rs1_data;
-    assign ex_s1_rs2_data_repair = ex_s1_rs2_wb_repair ? ex_s1_rs2_wb_repair_data :
+    assign ex_s1_rs2_data_repair = ex_s1_rs2_wb_repair ? wb_load_data :
                                                            ex_s1_rs2_data;
     assign ex_forward_result = ex_is_csr    ? ex_csr_rdata :
                                ex_is_muldiv ? ex_muldiv_result :

@@ -21,8 +21,6 @@ module id_ex_reg_s1 (
     input  logic [31:0] id_rs2_data,
     input  logic        id_rs1_wb_repair,
     input  logic        id_rs2_wb_repair,
-    input  logic        id_rs1_wb_repair_s1,
-    input  logic        id_rs2_wb_repair_s1,
     input  logic [ 4:0] id_rd,
     input  logic [ 4:0] id_rs1_addr,
     input  logic [ 4:0] id_rs2_addr,
@@ -63,8 +61,6 @@ module id_ex_reg_s1 (
     output logic [31:0] ex_s1_rs2_data,
     output logic        ex_s1_rs1_wb_repair,
     output logic        ex_s1_rs2_wb_repair,
-    output logic        ex_s1_rs1_wb_repair_s1,
-    output logic        ex_s1_rs2_wb_repair_s1,
     output logic [ 4:0] ex_s1_rd,
     output logic [ 4:0] ex_s1_rs1_addr,
     output logic [ 4:0] ex_s1_rs2_addr,
@@ -111,8 +107,6 @@ module id_ex_reg_s1 (
             ex_s1_rs2_data     <= 32'd0;
             ex_s1_rs1_wb_repair <= 1'b0;
             ex_s1_rs2_wb_repair <= 1'b0;
-            ex_s1_rs1_wb_repair_s1 <= 1'b0;
-            ex_s1_rs2_wb_repair_s1 <= 1'b0;
             ex_s1_rd           <= 5'd0;
             ex_s1_rs1_addr     <= 5'd0;
             ex_s1_rs2_addr     <= 5'd0;
@@ -147,8 +141,6 @@ module id_ex_reg_s1 (
             ex_s1_valid        <= 1'b0;
             ex_s1_rs1_wb_repair <= 1'b0;
             ex_s1_rs2_wb_repair <= 1'b0;
-            ex_s1_rs1_wb_repair_s1 <= 1'b0;
-            ex_s1_rs2_wb_repair_s1 <= 1'b0;
             ex_s1_pred_taken     <= 1'b0;
             ex_s1_pred_source_abtb <= 1'b0;
             ex_s1_stage1_branch_owned <= 1'b0;
@@ -162,8 +154,6 @@ module id_ex_reg_s1 (
             ex_s1_rs2_data     <= id_rs2_data;
             ex_s1_rs1_wb_repair <= id_rs1_wb_repair & id_s1_valid;
             ex_s1_rs2_wb_repair <= id_rs2_wb_repair & id_s1_valid;
-            ex_s1_rs1_wb_repair_s1 <= id_rs1_wb_repair_s1 & id_s1_valid;
-            ex_s1_rs2_wb_repair_s1 <= id_rs2_wb_repair_s1 & id_s1_valid;
             ex_s1_rd           <= id_rd;
             ex_s1_rs1_addr     <= id_rs1_addr;
             ex_s1_rs2_addr     <= id_rs2_addr;

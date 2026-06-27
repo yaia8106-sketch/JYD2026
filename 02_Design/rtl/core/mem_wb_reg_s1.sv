@@ -2,8 +2,7 @@
 // Module: mem_wb_reg_s1
 // Description: Slot 1 MEM/WB shadow register.
 // Phase 2 carries the Slot 1 datapath; until Phase 3, mem_s1_valid stays 0.
-// Load format controls are predecoded here to keep raw mem_size compare logic
-// out of WB repair.
+// Load data is held by the shared Slot0 MEM/WB load register (single LSU).
 // ============================================================
 
 module mem_wb_reg_s1 (
@@ -22,10 +21,6 @@ module mem_wb_reg_s1 (
     input  logic        mem_s1_reg_write_en,
     input  logic [ 1:0] mem_s1_wb_sel,
     input  logic        mem_s1_mem_read_en,
-    input  logic [ 1:0] mem_s1_mem_size,
-    input  logic        mem_s1_mem_unsigned,
-    input  logic [ 1:0] mem_s1_addr_low,
-    input  logic [31:0] mem_s1_load_rdata,
 
     output logic        wb_s1_valid,
     output logic [31:0] wb_s1_pc,
@@ -35,14 +30,7 @@ module mem_wb_reg_s1 (
     output logic [ 4:0] wb_s1_rd,
     output logic        wb_s1_reg_write_en,
     output logic [ 1:0] wb_s1_wb_sel,
-    output logic        wb_s1_is_load,
-    output logic [ 4:0] wb_s1_load_shift,
-    output logic        wb_s1_load_byte_signed,
-    output logic        wb_s1_load_byte_unsigned,
-    output logic        wb_s1_load_half_signed,
-    output logic        wb_s1_load_half_unsigned,
-    output logic        wb_s1_load_word,
-    output logic [31:0] wb_s1_load_rdata
+    output logic        wb_s1_is_load
 );
 
     always_ff @(posedge clk) begin
@@ -56,13 +44,6 @@ module mem_wb_reg_s1 (
             wb_s1_reg_write_en <= 1'b0;
             wb_s1_wb_sel       <= 2'd0;
             wb_s1_is_load      <= 1'b0;
-            wb_s1_load_shift    <= 5'd0;
-            wb_s1_load_byte_signed   <= 1'b0;
-            wb_s1_load_byte_unsigned <= 1'b0;
-            wb_s1_load_half_signed   <= 1'b0;
-            wb_s1_load_half_unsigned <= 1'b0;
-            wb_s1_load_word          <= 1'b0;
-            wb_s1_load_rdata   <= 32'd0;
         end else if (wb_allowin) begin
             wb_s1_valid        <= mem_s1_valid & mem_ready_go;
             wb_s1_pc           <= mem_s1_pc;
@@ -73,22 +54,6 @@ module mem_wb_reg_s1 (
             wb_s1_reg_write_en <= mem_s1_reg_write_en & mem_s1_valid;
             wb_s1_wb_sel       <= mem_s1_wb_sel;
             wb_s1_is_load      <= mem_s1_mem_read_en;
-            wb_s1_load_shift   <= {mem_s1_addr_low, 3'b0};
-            wb_s1_load_byte_signed   <= mem_s1_mem_read_en
-                                      & (mem_s1_mem_size == 2'b00)
-                                      & ~mem_s1_mem_unsigned;
-            wb_s1_load_byte_unsigned <= mem_s1_mem_read_en
-                                      & (mem_s1_mem_size == 2'b00)
-                                      & mem_s1_mem_unsigned;
-            wb_s1_load_half_signed   <= mem_s1_mem_read_en
-                                      & (mem_s1_mem_size == 2'b01)
-                                      & ~mem_s1_mem_unsigned;
-            wb_s1_load_half_unsigned <= mem_s1_mem_read_en
-                                      & (mem_s1_mem_size == 2'b01)
-                                      & mem_s1_mem_unsigned;
-            wb_s1_load_word          <= mem_s1_mem_read_en
-                                      & (mem_s1_mem_size == 2'b10);
-            wb_s1_load_rdata   <= mem_s1_load_rdata;
         end
     end
 
