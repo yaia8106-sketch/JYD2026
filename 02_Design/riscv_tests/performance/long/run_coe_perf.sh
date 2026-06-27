@@ -12,8 +12,8 @@
 # (jal x0, 0 / 0000006f) after startup calls. By default it runs until stop_pc;
 # --max-cycles can cap each program for sampled profiling.
 #
-# The output directory is replaced at the start of each run, so it contains
-# only the latest result.
+# Default output is written to a timestamped run directory first.  The
+# latest/coe pointer is updated only after the run is validated.
 # ============================================================
 
 set -e
@@ -33,6 +33,8 @@ VCS_ENV="${VCS_ENV:-/home/anokyai/synopsys/env.sh}"
 VCS_SHIM="$RISCV_TESTS_DIR/tools/vcs_pthread_yield.c"
 source "$RISCV_TESTS_DIR/tools/perf_output.sh"
 OUT_DIR=""
+FINAL_OUT_DIR=""
+UPDATE_LATEST=0
 NO_COMPILE=0
 VERBOSE=0
 MAX_CYCLES="${MAX_CYCLES:-0}"
@@ -44,6 +46,12 @@ CONTEST_PROGRAMS=(current src0 src1 src2 new_without_Mext new_with_Mext)
 REQUESTED_TESTS=()
 TESTS=("${CONTEST_PROGRAMS[@]}")
 ORIGINAL_ARGS=("$@")
+RUN_ID="$(date +%Y%m%d_%H%M%S)"
+START_TIMESTAMP="$(date -Iseconds)"
+RUN_STATUS_FILE=""
+RUN_RESULT="running"
+SAMPLE_MODE=0
+declare -A STOP_PC_BY_TEST
 
 usage() {
     cat <<'EOF'
@@ -52,9 +60,10 @@ Usage:
 
 Options:
   --out <dir>             Output directory. Default: work/perf/latest/coe.
-                          Existing contents are replaced before the run.
+                          Default latest is updated only after a validated run.
   --max-cycles <n>        Stop each program after n simulated cycles. Default: 0
-                          means run until stop_pc / watchdog.
+                          means run until stop_pc / watchdog. Nonzero values
+                          produce sampled, not full-run, data.
   --progress-cycles <n>   Print [PROGRESS] every n simulated cycles. Default: 0 (disabled).
                           Can also be set with PROGRESS_CYCLES=<n>.
   --parallel              Accepted for compatibility; COE programs always run in parallel.
@@ -128,15 +137,81 @@ if ! [[ "$MAX_CYCLES" =~ ^[0-9]+$ ]]; then
     echo "ERROR: --max-cycles / MAX_CYCLES must be a non-negative integer"
     exit 1
 fi
+if [ "$MAX_CYCLES" -gt 0 ]; then
+    SAMPLE_MODE=1
+fi
 
 mkdir -p "$WORK_DIR" "$HEX_DIR"
 
+DEFAULT_OUT_DIR="$WORK_DIR/perf/latest/coe"
 if [ -z "$OUT_DIR" ]; then
-    OUT_DIR="$WORK_DIR/perf/latest/coe"
+    FINAL_OUT_DIR="$DEFAULT_OUT_DIR"
+    OUT_DIR="$WORK_DIR/perf/runs/coe/$RUN_ID"
+    UPDATE_LATEST=1
+elif [ "$(realpath -m -- "$OUT_DIR")" = "$(realpath -m -- "$DEFAULT_OUT_DIR")" ]; then
+    FINAL_OUT_DIR="$DEFAULT_OUT_DIR"
+    OUT_DIR="$WORK_DIR/perf/runs/coe/$RUN_ID"
+    UPDATE_LATEST=1
+else
+    FINAL_OUT_DIR="$OUT_DIR"
+    UPDATE_LATEST=0
+    prepare_perf_output_dir "$OUT_DIR"
 fi
-prepare_perf_output_dir "$OUT_DIR"
 LOG_DIR="$OUT_DIR/logs"
 mkdir -p "$LOG_DIR"
+
+write_run_status() {
+    local status="$1"
+    local complete="$2"
+    local exit_code="${3:-0}"
+
+    [ -n "$RUN_STATUS_FILE" ] || return 0
+    {
+        printf "run_id=%s\n" "$RUN_ID"
+        printf "start_timestamp=%s\n" "$START_TIMESTAMP"
+        printf "end_timestamp=%s\n" "$(date -Iseconds)"
+        printf "status=%s\n" "$status"
+        printf "complete=%s\n" "$complete"
+        printf "sampled=%s\n" "$SAMPLE_MODE"
+        printf "exit_code=%s\n" "$exit_code"
+        printf "out_dir=%s\n" "$OUT_DIR"
+        printf "final_out_dir=%s\n" "$FINAL_OUT_DIR"
+        printf "tests=%s\n" "${TESTS[*]}"
+    } > "$RUN_STATUS_FILE"
+}
+
+on_exit() {
+    local code=$?
+    if [ "$RUN_RESULT" = "running" ]; then
+        write_run_status "aborted" 0 "$code"
+    fi
+}
+trap on_exit EXIT
+
+RUN_STATUS_FILE="$OUT_DIR/run_status.env"
+write_run_status "running" 0 0
+
+publish_latest() {
+    local latest_parent tmp_link target_rel
+
+    [ "$UPDATE_LATEST" -eq 1 ] || return 0
+    latest_parent="$(dirname "$FINAL_OUT_DIR")"
+    mkdir -p "$latest_parent"
+    tmp_link="$latest_parent/.coe_latest_${RUN_ID}_$$"
+    target_rel="$(realpath --relative-to="$latest_parent" "$OUT_DIR" 2>/dev/null || realpath -m -- "$OUT_DIR")"
+    ln -sfn "$target_rel" "$tmp_link"
+    rm -rf -- "$FINAL_OUT_DIR"
+    mv -Tf "$tmp_link" "$FINAL_OUT_DIR"
+}
+
+hash_file() {
+    local file="$1"
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$file"
+    else
+        shasum -a 256 "$file"
+    fi
+}
 
 coe_to_hex() {
     local in_file="$1"
@@ -200,7 +275,8 @@ RTL_FILES="
 "
 
 {
-    printf "timestamp=%s\n" "$(date -Iseconds)"
+    printf "run_id=%s\n" "$RUN_ID"
+    printf "timestamp=%s\n" "$START_TIMESTAMP"
     printf "git_commit=%s\n" "$(git rev-parse HEAD 2>/dev/null || echo nogit)"
     if [ -n "$(git status --short 2>/dev/null)" ]; then
         printf "git_dirty=1\n"
@@ -209,6 +285,7 @@ RTL_FILES="
     fi
     printf "coe_root=%s\n" "$COE_ROOT"
     printf "tests=%s\n" "${TESTS[*]}"
+    printf "sampled=%s\n" "$SAMPLE_MODE"
     printf "stop_pc_source=entry_fallthrough_self_loop_0000006f\n"
     printf "stop_pc_entry_bytes=%s\n" "$COE_STOP_ENTRY_BYTES"
     if [ "$MAX_CYCLES" -gt 0 ]; then
@@ -226,12 +303,64 @@ RTL_FILES="
     printf "vcs_extra_opts=%s\n" "$VCS_EXTRA_OPTS"
     printf "vcs_env=%s\n" "$VCS_ENV"
     printf "verbose=%s\n" "$VERBOSE"
+    printf "out_dir=%s\n" "$OUT_DIR"
+    printf "final_out_dir=%s\n" "$FINAL_OUT_DIR"
 } > "$OUT_DIR/run_meta.env"
 
+printf "%s\n" "${TESTS[@]}" > "$OUT_DIR/expected_tests.txt"
 git rev-parse HEAD > "$OUT_DIR/git_commit.txt" 2>/dev/null || true
 git status --short > "$OUT_DIR/git_status.txt" 2>/dev/null || true
+git diff --stat > "$OUT_DIR/git_diff_stat.txt" 2>/dev/null || true
+git diff > "$OUT_DIR/git_diff.patch" 2>/dev/null || true
 printf "%q " "$0" "${ORIGINAL_ARGS[@]}" > "$OUT_DIR/command.txt"
 printf "\n" >> "$OUT_DIR/command.txt"
+
+preflight_coe_inputs() {
+    local test_name coe_dir slot0_coe slot1_coe dram_coe
+    local slot0_hex slot1_hex dram_hex stop_pc
+    local failures=0
+
+    : > "$OUT_DIR/stop_pc.txt"
+    : > "$OUT_DIR/coe_inputs.sha256"
+    : > "$OUT_DIR/coe_inputs.stat"
+
+    for test_name in "${TESTS[@]}"; do
+        coe_dir="$COE_ROOT/$test_name"
+        slot0_coe="$coe_dir/irom_slot0.coe"
+        slot1_coe="$coe_dir/irom_slot1.coe"
+        dram_coe="$coe_dir/dram.coe"
+        slot0_hex="$HEX_DIR/$test_name.irom_slot0.hex"
+        slot1_hex="$HEX_DIR/$test_name.irom_slot1.hex"
+        dram_hex="$HEX_DIR/$test_name.dram.hex"
+
+        if [ ! -f "$slot0_coe" ] || [ ! -f "$slot1_coe" ] || [ ! -f "$dram_coe" ]; then
+            echo "[ERROR] $test_name COE not found"
+            printf "%s missing\n" "$test_name" > "$LOG_DIR/$test_name.log"
+            failures=1
+            continue
+        fi
+
+        coe_to_hex "$slot0_coe" "$slot0_hex"
+        coe_to_hex "$slot1_coe" "$slot1_hex"
+        coe_to_hex "$dram_coe" "$dram_hex"
+
+        if ! stop_pc="$(derive_stop_pc "$slot0_hex" "$slot1_hex")"; then
+            echo "[ERROR] $test_name stop_pc derivation failed"
+            printf "[FAIL] %s stop_pc derivation failed\n" "$test_name" > "$LOG_DIR/$test_name.log"
+            failures=1
+            continue
+        fi
+
+        STOP_PC_BY_TEST["$test_name"]="$stop_pc"
+        printf "%s stop_pc=0x%s\n" "$test_name" "$stop_pc" >> "$OUT_DIR/stop_pc.txt"
+        hash_file "$slot0_coe" >> "$OUT_DIR/coe_inputs.sha256"
+        hash_file "$slot1_coe" >> "$OUT_DIR/coe_inputs.sha256"
+        hash_file "$dram_coe" >> "$OUT_DIR/coe_inputs.sha256"
+        stat --printf '%n size=%s mtime=%Y\n' "$slot0_coe" "$slot1_coe" "$dram_coe" >> "$OUT_DIR/coe_inputs.stat" 2>/dev/null || true
+    done
+
+    return "$failures"
+}
 
 echo "========================================================"
 echo " full COE performance profiling"
@@ -251,7 +380,16 @@ else
 fi
 echo "[INFO] Parallel:       enabled (${#TESTS[@]} sim jobs)"
 echo "[INFO] Output dir:     $OUT_DIR"
+if [ "$UPDATE_LATEST" -eq 1 ]; then
+    echo "[INFO] Latest target:  $FINAL_OUT_DIR"
+fi
 echo ""
+
+if ! preflight_coe_inputs; then
+    write_run_status "input_error" 0 1
+    RUN_RESULT="failed"
+    exit 1
+fi
 
 SIM_BIN="$WORK_DIR/coe_perf_simv"
 COMPILE_LOG="$OUT_DIR/coe_perf_vcs.log"
@@ -264,6 +402,8 @@ if [ "$NO_COMPILE" -eq 0 ]; then
     fi
     if ! command -v vcs >/dev/null 2>&1; then
         echo "ERROR: vcs not found in PATH. Source Synopsys env or set VCS_ENV=<setup.sh>."
+        write_run_status "compile_env_error" 0 1
+        RUN_RESULT="failed"
         exit 1
     fi
 
@@ -272,6 +412,8 @@ if [ "$NO_COMPILE" -eq 0 ]; then
     if ! vcs $VCS_OPTS $VCS_EXTRA_OPTS -top tb_riscv_tests -Mdir="$WORK_DIR/coe_perf_vcs.csrc" -o "$SIM_BIN" $RTL_FILES "$VCS_SHIM" >"$COMPILE_LOG" 2>&1; then
         echo "ERROR: VCS compilation failed"
         head -80 "$COMPILE_LOG"
+        write_run_status "compile_failed" 0 1
+        RUN_RESULT="failed"
         exit 1
     fi
     head -20 "$COMPILE_LOG"
@@ -280,14 +422,26 @@ if [ "$NO_COMPILE" -eq 0 ]; then
 else
     if [ ! -f "$SIM_BIN" ]; then
         echo "ERROR: --no-compile requested but $SIM_BIN does not exist"
+        write_run_status "missing_sim_binary" 0 1
+        RUN_RESULT="failed"
         exit 1
     fi
-    echo "[INFO] Reusing $SIM_BIN"
+    echo "[WARN] Reusing existing simulator binary with --no-compile: $SIM_BIN"
     echo ""
 fi
 
+{
+    printf "sim_bin=%s\n" "$SIM_BIN"
+    stat --printf 'sim_bin_size=%s\nsim_bin_mtime=%Y\n' "$SIM_BIN" 2>/dev/null || true
+    if command -v sha256sum >/dev/null 2>&1; then
+        printf "sim_bin_sha256=%s\n" "$(sha256sum "$SIM_BIN" | awk '{print $1}')"
+    else
+        printf "sim_bin_sha256=%s\n" "$(shasum -a 256 "$SIM_BIN" | awk '{print $1}')"
+    fi
+    printf "no_compile=%s\n" "$NO_COMPILE"
+} > "$OUT_DIR/sim_binary.env"
+
 read -r -a GUARD_ARGS <<< "$SIM_GUARD_ARGS"
-: > "$OUT_DIR/stop_pc.txt"
 
 run_one_test() {
     local test_name="$1"
@@ -308,23 +462,13 @@ run_one_test() {
     echo " COE Profiling: $test_name"
     echo "========================================================"
 
-    if [ ! -f "$slot0_coe" ] || [ ! -f "$slot1_coe" ] || [ ! -f "$dram_coe" ]; then
-        echo "[SKIP] $test_name COE not found" | tee "$log_file"
+    stop_pc="${STOP_PC_BY_TEST[$test_name]:-}"
+    if [ -z "$stop_pc" ]; then
+        echo "[FAIL] $test_name stop_pc missing after preflight" | tee "$log_file"
         echo ""
-        return 0
+        return 1
     fi
 
-    coe_to_hex "$slot0_coe" "$slot0_hex"
-    coe_to_hex "$slot1_coe" "$slot1_hex"
-    coe_to_hex "$dram_coe" "$dram_hex"
-
-    if ! stop_pc="$(derive_stop_pc "$slot0_hex" "$slot1_hex")"; then
-        echo "[FAIL] $test_name stop_pc derivation failed" | tee "$log_file"
-        echo ""
-        return 0
-    fi
-
-    printf "%s stop_pc=0x%s\n" "$test_name" "$stop_pc" >> "$OUT_DIR/stop_pc.txt"
     echo "[INFO] stop_pc:      0x$stop_pc"
 
     RUN_ARGS=(
@@ -352,9 +496,9 @@ run_one_test() {
     set +e
     if [ "$PROGRESS_CYCLES" -gt 0 ]; then
         if [ "$VERBOSE" -eq 1 ]; then
-            live_pattern="^\\[(PASS|FAIL|TIMEOUT|DONE|PROGRESS|PERF)\\]"
+            live_pattern="^\\[(PASS|FAIL|TIMEOUT|DONE|SAMPLED|PROGRESS|PERF)\\]"
         else
-            live_pattern="^\\[(PASS|FAIL|TIMEOUT|DONE|PROGRESS)\\]"
+            live_pattern="^\\[(PASS|FAIL|TIMEOUT|DONE|SAMPLED|PROGRESS)\\]"
         fi
         "$SIM_BIN" "${RUN_ARGS[@]}" 2>&1 | tee "$log_file" | grep --line-buffered -E "$live_pattern"
         pipe_status=("${PIPESTATUS[@]}")
@@ -368,9 +512,9 @@ run_one_test() {
 
     if [ "$PROGRESS_CYCLES" -eq 0 ]; then
         if [ "$VERBOSE" -eq 1 ]; then
-            grep -E "^\[(PASS|FAIL|TIMEOUT|DONE|PERF)\]" "$log_file" || true
+            grep -E "^\[(PASS|FAIL|TIMEOUT|DONE|SAMPLED|PERF)\]" "$log_file" || true
         else
-            grep -E "^\[(PASS|FAIL|TIMEOUT|DONE)\]" "$log_file" || true
+            grep -E "^\[(PASS|FAIL|TIMEOUT|DONE|SAMPLED)\]" "$log_file" || true
         fi
     fi
     echo ""
@@ -389,21 +533,46 @@ for pid in "${PIDS[@]}"; do
     fi
 done
 
-python3 "$RISCV_TESTS_DIR/tools/parse_perf.py" --run-dir "$OUT_DIR"
+PARSER_ARGS=(--run-dir "$OUT_DIR" --expected-tests-file "$OUT_DIR/expected_tests.txt")
+if [ "$SAMPLE_MODE" -eq 0 ]; then
+    PARSER_ARGS+=(--require-complete)
+fi
+if ! python3 "$RISCV_TESTS_DIR/tools/parse_perf.py" "${PARSER_ARGS[@]}"; then
+    RUN_FAILED=1
+fi
 
 echo ""
 echo "[INFO] Summary CSV:  $OUT_DIR/summary.csv"
 echo "[INFO] Summary JSON: $OUT_DIR/summary.json"
+echo "[INFO] Manifest:     $OUT_DIR/manifest.json"
 echo "[INFO] stop_pc map:  $OUT_DIR/stop_pc.txt"
 
-if grep -R -E "^\[(FAIL|TIMEOUT)\]" "$LOG_DIR" >/dev/null 2>&1; then
-    exit 1
+if grep -R -E "^\[(FAIL|TIMEOUT|SKIP)\]" "$LOG_DIR" >/dev/null 2>&1; then
+    RUN_FAILED=1
 fi
 
 if grep -R -E "^\[INFO\] sim_exit=([1-9][0-9]*)" "$LOG_DIR" >/dev/null 2>&1; then
-    exit 1
+    RUN_FAILED=1
 fi
 
 if [ "$RUN_FAILED" -ne 0 ]; then
+    write_run_status "failed" 0 1
+    RUN_RESULT="failed"
     exit 1
+fi
+
+if [ "$SAMPLE_MODE" -eq 1 ]; then
+    write_run_status "sampled" 0 0
+    RUN_RESULT="sampled"
+else
+    if ! publish_latest; then
+        write_run_status "publish_failed" 0 1
+        RUN_RESULT="failed"
+        exit 1
+    fi
+    write_run_status "complete" 1 0
+    RUN_RESULT="complete"
+    if [ "$UPDATE_LATEST" -eq 1 ]; then
+        echo "[INFO] Latest updated: $FINAL_OUT_DIR -> $OUT_DIR"
+    fi
 fi

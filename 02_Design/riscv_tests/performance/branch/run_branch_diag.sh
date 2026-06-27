@@ -523,9 +523,9 @@ run_one_coe() {
     set +e
     if [ "$COE_PROGRESS_CYCLES" -gt 0 ]; then
         if [ "$VERBOSE" -eq 1 ]; then
-            live_pattern="^\\[(PASS|FAIL|TIMEOUT|DONE|PROGRESS|PERF)\\]"
+            live_pattern="^\\[(PASS|FAIL|TIMEOUT|DONE|SAMPLED|PROGRESS|PERF)\\]"
         else
-            live_pattern="^\\[(PASS|FAIL|TIMEOUT|DONE|PROGRESS)\\]"
+            live_pattern="^\\[(PASS|FAIL|TIMEOUT|DONE|SAMPLED|PROGRESS)\\]"
         fi
         "$SIM_BIN" "${RUN_ARGS[@]}" 2>&1 | tee "$log_file" | grep --line-buffered -E "$live_pattern"
         pipe_status=("${PIPESTATUS[@]}")
@@ -539,9 +539,9 @@ run_one_coe() {
 
     if [ "$COE_PROGRESS_CYCLES" -eq 0 ]; then
         if [ "$VERBOSE" -eq 1 ]; then
-            grep -E "^\[(PASS|FAIL|TIMEOUT|DONE|PERF)\]" "$log_file" || true
+            grep -E "^\[(PASS|FAIL|TIMEOUT|DONE|SAMPLED|PERF)\]" "$log_file" || true
         else
-            grep -E "^\[(PASS|FAIL|TIMEOUT|DONE|SKIP)\]" "$log_file" || true
+            grep -E "^\[(PASS|FAIL|TIMEOUT|DONE|SAMPLED|SKIP)\]" "$log_file" || true
         fi
     fi
     echo ""

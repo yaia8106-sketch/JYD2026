@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Parse run_perf.sh logs into stable CSV/JSON summaries."""
+"""Parse performance logs into stable CSV/JSON summaries."""
 
 from __future__ import annotations
 
@@ -12,10 +12,24 @@ from pathlib import Path
 from typing import Any
 
 
+SCHEMA_VERSION = 3
+FULL_RUN_REASONS = {"stop_pc", "tohost_pass"}
+OK_FULL_STATUSES = {"PASS", "DONE"}
+
 SUMMARY_COLUMNS = [
+    "schema_version",
     "test",
     "status",
+    "completion_reason",
+    "is_full_run",
+    "consistency_error_count",
+    "log_has_error",
     "sim_exit",
+    "status_cycles",
+    "status_commits",
+    "status_pc",
+    "status_stop_pc",
+    "status_cycle_limit",
     "cycles",
     "total_insts",
     "s0_commits",
@@ -23,6 +37,15 @@ SUMMARY_COLUMNS = [
     "cpi",
     "ipc",
     "dual_issue_pct",
+    "commit0_cycles",
+    "commit1_cycles",
+    "commit2_cycles",
+    "commit_cycle_total",
+    "ideal_slots",
+    "retired_slots",
+    "lost_slots",
+    "lost_no_commit_slots",
+    "lost_single_issue_slots",
     "cpi_stack_retire",
     "cpi_stack_redirect",
     "cpi_stack_dcache",
@@ -32,6 +55,35 @@ SUMMARY_COLUMNS = [
     "cpi_stack_frontend_empty",
     "cpi_stack_other_no_commit",
     "cpi_stack_total",
+    "other_id_not_ready",
+    "other_id_downstream",
+    "other_ex_not_ready",
+    "other_ex_downstream",
+    "other_mem_not_ready",
+    "other_mem_downstream",
+    "other_flush_recovery",
+    "other_frontend_backpressure",
+    "other_pipeline_fill_drain",
+    "other_unknown",
+    "other_breakdown_total",
+    "other_original",
+    "other_mismatch",
+    "other_occ_0000",
+    "other_occ_0001",
+    "other_occ_0010",
+    "other_occ_0011",
+    "other_occ_0100",
+    "other_occ_0101",
+    "other_occ_0110",
+    "other_occ_0111",
+    "other_occ_1000",
+    "other_occ_1001",
+    "other_occ_1010",
+    "other_occ_1011",
+    "other_occ_1100",
+    "other_occ_1101",
+    "other_occ_1110",
+    "other_occ_1111",
     "load_use",
     "repair_wait",
     "jalr_ex_wait",
@@ -153,6 +205,14 @@ COMPARE_METRICS = [
     "cpi",
     "ipc",
     "dual_issue_pct",
+    "commit0_cycles",
+    "commit1_cycles",
+    "commit2_cycles",
+    "ideal_slots",
+    "retired_slots",
+    "lost_slots",
+    "lost_no_commit_slots",
+    "lost_single_issue_slots",
     "cpi_stack_redirect",
     "cpi_stack_dcache",
     "cpi_stack_muldiv",
@@ -160,6 +220,16 @@ COMPARE_METRICS = [
     "cpi_stack_raw_ready_no_fwd",
     "cpi_stack_frontend_empty",
     "cpi_stack_other_no_commit",
+    "other_id_not_ready",
+    "other_id_downstream",
+    "other_ex_not_ready",
+    "other_ex_downstream",
+    "other_mem_not_ready",
+    "other_mem_downstream",
+    "other_flush_recovery",
+    "other_frontend_backpressure",
+    "other_pipeline_fill_drain",
+    "other_unknown",
     "dcache_miss_stall",
     "dc_requests",
     "dc_hits",
@@ -253,7 +323,7 @@ FLOAT_PATTERNS = [
 
 def parse_value_pairs(text: str) -> dict[str, int]:
     values: dict[str, int] = {}
-    for key, raw_value in re.findall(r"([A-Za-z0-9_()/-]+)=([0-9]+)", text):
+    for key, raw_value in re.findall(r"([A-Za-z0-9_()/-]+)=(-?[0-9]+)", text):
         clean_key = (
             key.lower()
             .replace("(", "_")
@@ -270,9 +340,10 @@ def parse_status_line(line: str, metrics: dict[str, Any]) -> None:
     if skip_match:
         metrics["test"] = skip_match.group(1)
         metrics["status"] = "SKIP"
+        metrics["completion_reason"] = "skip"
         return
 
-    match = re.match(r"^\[(PASS|FAIL|TIMEOUT|DONE)\]\s+(\S+)\s*(.*)$", line)
+    match = re.match(r"^\[(PASS|FAIL|TIMEOUT|DONE|SAMPLED)\]\s+(\S+)\s*(.*)$", line)
     if not match:
         return
 
@@ -280,10 +351,39 @@ def parse_status_line(line: str, metrics: dict[str, Any]) -> None:
     metrics["test"] = match.group(2)
     rest = match.group(3)
 
+    if "reached stop_pc" in rest:
+        metrics["completion_reason"] = "stop_pc"
+    elif "reached cycle_limit=" in rest:
+        metrics["completion_reason"] = "cycle_limit"
+    elif re.search(r"reached\s+\d+\s+commits", rest):
+        metrics["completion_reason"] = "commit_limit"
+    elif "PC_OUT_OF_RANGE" in rest:
+        metrics["completion_reason"] = "pc_guard"
+    elif "no pipeline progress" in rest:
+        metrics["completion_reason"] = "watchdog"
+    elif metrics["status"] == "PASS":
+        metrics["completion_reason"] = "tohost_pass"
+    elif metrics["status"] == "SAMPLED":
+        metrics["completion_reason"] = "cycle_limit"
+    elif metrics["status"] == "TIMEOUT":
+        metrics["completion_reason"] = "timeout"
+    elif metrics["status"] == "FAIL":
+        metrics["completion_reason"] = "fail"
+    else:
+        metrics.setdefault("completion_reason", "unknown")
+
     cycle_match = re.search(r"\((>?)(\d+) cycles\)", line)
     if cycle_match:
         metrics["status_cycles_over_limit"] = cycle_match.group(1) == ">"
         metrics["status_cycles"] = int(cycle_match.group(2))
+
+    stop_pc_match = re.search(r"stop_pc=0x([0-9a-fA-F]+)", rest)
+    if stop_pc_match:
+        metrics["status_stop_pc"] = f"0x{stop_pc_match.group(1).lower()}"
+
+    cycle_limit_match = re.search(r"cycle_limit=(\d+)", rest)
+    if cycle_limit_match:
+        metrics["status_cycle_limit"] = int(cycle_limit_match.group(1))
 
     for key in [
         "commits",
@@ -340,6 +440,49 @@ def parse_perf_payload(payload: str, metrics: dict[str, Any]) -> None:
         metrics["cpi_stack_frontend_empty"] = values.get("frontend_empty", 0)
         metrics["cpi_stack_other_no_commit"] = values.get("other_no_commit", 0)
         metrics["cpi_stack_total"] = values.get("total", 0)
+        return
+
+    if payload.startswith("Other no-commit:"):
+        values = parse_value_pairs(payload)
+        for key in [
+            "id_not_ready",
+            "id_downstream",
+            "ex_not_ready",
+            "ex_downstream",
+            "mem_not_ready",
+            "mem_downstream",
+            "flush_recovery",
+            "frontend_backpressure",
+            "pipeline_fill_drain",
+            "unknown",
+        ]:
+            metrics[f"other_{key}"] = values.get(key, 0)
+        metrics["other_breakdown_total"] = values.get("total", 0)
+        metrics["other_original"] = values.get("original", 0)
+        metrics["other_mismatch"] = values.get("mismatch", 0)
+        return
+
+    if payload.startswith("Other occupancy:"):
+        values = parse_value_pairs(payload)
+        for key, value in values.items():
+            metrics[f"other_occ_{key}"] = value
+        return
+
+    if payload.startswith("Commit cycles:"):
+        values = parse_value_pairs(payload)
+        metrics["commit0_cycles"] = values.get("commit0", 0)
+        metrics["commit1_cycles"] = values.get("commit1", 0)
+        metrics["commit2_cycles"] = values.get("commit2", 0)
+        metrics["commit_cycle_total"] = values.get("total", 0)
+        return
+
+    if payload.startswith("Issue slots:"):
+        values = parse_value_pairs(payload)
+        metrics["ideal_slots"] = values.get("ideal", 0)
+        metrics["retired_slots"] = values.get("retired", 0)
+        metrics["lost_slots"] = values.get("lost", 0)
+        metrics["lost_no_commit_slots"] = values.get("no_commit_lost", 0)
+        metrics["lost_single_issue_slots"] = values.get("single_issue_lost", 0)
         return
 
     if payload.startswith("S1 accepted type:"):
@@ -524,8 +667,13 @@ def parse_perf_payload(payload: str, metrics: dict[str, Any]) -> None:
 
 
 def finalize_metrics(metrics: dict[str, Any], fallback_test: str) -> dict[str, Any]:
+    metrics["schema_version"] = SCHEMA_VERSION
     metrics.setdefault("test", fallback_test)
     metrics.setdefault("status", "UNKNOWN")
+    metrics.setdefault("completion_reason", "unknown")
+
+    if metrics.get("signal") and metrics["completion_reason"] == "unknown":
+        metrics["completion_reason"] = f"signal_{str(metrics['signal']).lower()}"
 
     cycles = metrics.get("perf_cycles", metrics.get("status_cycles"))
     if cycles is not None:
@@ -539,15 +687,78 @@ def finalize_metrics(metrics: dict[str, Any], fallback_test: str) -> dict[str, A
             total_insts = int(s0 or 0) + int(s1 or 0)
             metrics["total_insts"] = total_insts
 
+    cycles = metrics.get("cycles")
+    total_insts = metrics.get("total_insts")
     if cycles and total_insts:
         metrics["ipc"] = float(total_insts) / float(cycles)
-        metrics.setdefault("cpi", float(cycles) / float(total_insts))
+        metrics["cpi"] = float(cycles) / float(total_insts)
+
+    s0 = metrics.get("s0_commits")
+    s1 = metrics.get("s1_commits")
+    if s0 is not None and s1 is not None:
+        if int(s0) > 0:
+            metrics["dual_issue_pct"] = 100.0 * float(s1) / float(s0)
+        if cycles is not None:
+            metrics.setdefault("ideal_slots", int(cycles) * 2)
+            metrics.setdefault("retired_slots", int(s0) + int(s1))
+
+    if "ideal_slots" in metrics and "retired_slots" in metrics:
+        metrics.setdefault(
+            "lost_slots",
+            int(metrics["ideal_slots"]) - int(metrics["retired_slots"]),
+        )
+
+    if "commit0_cycles" in metrics:
+        metrics.setdefault("lost_no_commit_slots", int(metrics["commit0_cycles"]) * 2)
+    if "commit1_cycles" in metrics:
+        metrics.setdefault("lost_single_issue_slots", int(metrics["commit1_cycles"]))
+    if all(key in metrics for key in ["commit0_cycles", "commit1_cycles", "commit2_cycles"]):
+        metrics.setdefault(
+            "commit_cycle_total",
+            int(metrics["commit0_cycles"])
+            + int(metrics["commit1_cycles"])
+            + int(metrics["commit2_cycles"]),
+        )
+
+    metrics["is_full_run"] = (
+        metrics.get("status") in OK_FULL_STATUSES
+        and metrics.get("completion_reason") in FULL_RUN_REASONS
+    )
+
+    consistency_errors: list[str] = []
+    if metrics.get("sim_exit") not in (None, 0):
+        consistency_errors.append("sim_exit_nonzero")
+    if cycles is not None and "commit_cycle_total" in metrics:
+        if int(metrics["commit_cycle_total"]) != int(cycles):
+            consistency_errors.append("commit_cycle_total_ne_cycles")
+    if total_insts is not None and s0 is not None and s1 is not None:
+        if int(total_insts) != int(s0) + int(s1):
+            consistency_errors.append("total_insts_ne_s0_plus_s1")
+    if cycles is not None and "cpi_stack_total" in metrics:
+        if int(metrics["cpi_stack_total"]) != int(cycles):
+            consistency_errors.append("cpi_stack_total_ne_cycles")
+    if "other_breakdown_total" in metrics and "cpi_stack_other_no_commit" in metrics:
+        if int(metrics["other_breakdown_total"]) != int(metrics["cpi_stack_other_no_commit"]):
+            consistency_errors.append("other_breakdown_total_ne_other_no_commit")
+    if "other_original" in metrics and "cpi_stack_other_no_commit" in metrics:
+        if int(metrics["other_original"]) != int(metrics["cpi_stack_other_no_commit"]):
+            consistency_errors.append("other_original_ne_other_no_commit")
+    if "other_mismatch" in metrics:
+        if int(metrics["other_mismatch"]) != 0:
+            consistency_errors.append("other_breakdown_mismatch_nonzero")
+    if "ideal_slots" in metrics and "retired_slots" in metrics and "lost_slots" in metrics:
+        if int(metrics["ideal_slots"]) - int(metrics["retired_slots"]) != int(metrics["lost_slots"]):
+            consistency_errors.append("lost_slots_mismatch")
+
+    metrics["consistency_errors"] = consistency_errors
+    metrics["consistency_error_count"] = len(consistency_errors)
+    metrics.setdefault("log_has_error", 0)
 
     return metrics
 
 
 def parse_log(path: Path) -> dict[str, Any]:
-    metrics: dict[str, Any] = {"log": str(path)}
+    metrics: dict[str, Any] = {"log": str(path), "perf_lines": []}
     fallback_test = path.stem
 
     with path.open("r", encoding="utf-8", errors="replace") as handle:
@@ -555,9 +766,17 @@ def parse_log(path: Path) -> dict[str, Any]:
             line = raw_line.strip()
             if not line:
                 continue
+            signal_match = re.search(r"Received\s+(SIGHUP|SIGINT|SIGTERM|SIGQUIT)", line)
+            if signal_match:
+                metrics["signal"] = signal_match.group(1)
+            if not line.startswith("[PERF]") and re.search(
+                r"\b(fatal|assert|error)\b", line, flags=re.IGNORECASE
+            ):
+                metrics["log_has_error"] = 1
             parse_status_line(line, metrics)
             if line.startswith("[PERF]"):
                 payload = line[len("[PERF]") :].strip()
+                metrics["perf_lines"].append(payload)
                 parse_perf_payload(payload, metrics)
             elif line.startswith("[INFO] sim_exit="):
                 try:
@@ -571,6 +790,20 @@ def parse_log(path: Path) -> dict[str, Any]:
                     pass
 
     return finalize_metrics(metrics, fallback_test)
+
+
+def missing_log_row(test: str, log_dir: Path) -> dict[str, Any]:
+    return finalize_metrics(
+        {
+            "test": test,
+            "status": "MISSING",
+            "completion_reason": "missing_log",
+            "log": str(log_dir / f"{test}.log"),
+            "perf_lines": [],
+            "log_has_error": 1,
+        },
+        test,
+    )
 
 
 def write_csv(path: Path, rows: list[dict[str, Any]], columns: list[str]) -> None:
@@ -634,12 +867,77 @@ def compare_rows(
     return rows
 
 
+def load_expected_tests(path: Path | None) -> list[str]:
+    if path is None:
+        return []
+    tests: list[str] = []
+    with path.open("r", encoding="utf-8") as handle:
+        for raw_line in handle:
+            line = raw_line.strip()
+            if line and not line.startswith("#"):
+                tests.append(line)
+    return tests
+
+
+def row_complete(row: dict[str, Any]) -> bool:
+    return bool(row.get("is_full_run")) and row.get("sim_exit") == 0 and not row.get(
+        "log_has_error", 0
+    ) and not row.get("unexpected_log", 0) and int(row.get("consistency_error_count", 0)) == 0
+
+
+def write_manifest(
+    path: Path,
+    rows: list[dict[str, Any]],
+    expected_tests: list[str],
+    produced_logs: list[Path],
+) -> None:
+    row_status = {
+        str(row.get("test", "")): {
+            "status": row.get("status", "UNKNOWN"),
+            "completion_reason": row.get("completion_reason", "unknown"),
+            "is_full_run": bool(row.get("is_full_run")),
+            "sim_exit": row.get("sim_exit"),
+            "unexpected_log": bool(row.get("unexpected_log", 0)),
+            "consistency_errors": row.get("consistency_errors", []),
+            "log": row.get("log", ""),
+        }
+        for row in rows
+    }
+    complete = bool(expected_tests) and all(row_complete(row) for row in rows)
+    if expected_tests:
+        complete = complete and len(rows) == len(expected_tests)
+    else:
+        complete = bool(rows) and all(row_complete(row) for row in rows)
+
+    manifest = {
+        "schema_version": SCHEMA_VERSION,
+        "complete": complete,
+        "expected_tests": expected_tests,
+        "produced_logs": [str(path) for path in produced_logs],
+        "summary_csv": str(path / "summary.csv"),
+        "summary_json": str(path / "summary.json"),
+        "tests": row_status,
+    }
+    with (path / "manifest.json").open("w", encoding="utf-8") as handle:
+        json.dump(manifest, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-dir", required=True, help="run_perf output directory")
     parser.add_argument(
         "--baseline",
         help="baseline run directory or summary.csv to compare against",
+    )
+    parser.add_argument(
+        "--expected-tests-file",
+        help="newline-separated expected test list; missing logs become MISSING rows",
+    )
+    parser.add_argument(
+        "--require-complete",
+        action="store_true",
+        help="return nonzero unless every expected log is a full, clean run",
     )
     args = parser.parse_args()
 
@@ -649,13 +947,36 @@ def main() -> int:
         print(f"ERROR: log directory not found: {log_dir}", file=sys.stderr)
         return 1
 
-    rows = [parse_log(path) for path in sorted(log_dir.glob("*.log"))]
-    rows.sort(key=lambda item: str(item.get("test", "")))
+    produced_logs = sorted(log_dir.glob("*.log"))
+    log_by_stem = {path.stem: path for path in produced_logs}
+    try:
+        expected_tests = load_expected_tests(
+            Path(args.expected_tests_file) if args.expected_tests_file else None
+        )
+    except FileNotFoundError as exc:
+        print(f"ERROR: expected tests file not found: {exc.filename}", file=sys.stderr)
+        return 1
+
+    if expected_tests:
+        rows = [
+            parse_log(log_by_stem[test]) if test in log_by_stem else missing_log_row(test, log_dir)
+            for test in expected_tests
+        ]
+        expected_set = set(expected_tests)
+        for path in produced_logs:
+            if path.stem not in expected_set:
+                row = parse_log(path)
+                row["unexpected_log"] = 1
+                rows.append(row)
+    else:
+        rows = [parse_log(path) for path in produced_logs]
+        rows.sort(key=lambda item: str(item.get("test", "")))
 
     write_csv(run_dir / "summary.csv", rows, SUMMARY_COLUMNS)
     with (run_dir / "summary.json").open("w", encoding="utf-8") as handle:
         json.dump(rows, handle, indent=2, sort_keys=True)
         handle.write("\n")
+    write_manifest(run_dir, rows, expected_tests, produced_logs)
 
     if args.baseline:
         compare = compare_rows(load_summary(Path(args.baseline)), rows)
@@ -674,6 +995,21 @@ def main() -> int:
         status = str(row.get("status", "UNKNOWN"))
         status_counts[status] = status_counts.get(status, 0) + 1
     print("[INFO] Parsed perf logs:", ", ".join(f"{k}={v}" for k, v in sorted(status_counts.items())))
+
+    if args.require_complete:
+        incomplete = [row for row in rows if not row_complete(row)]
+        if incomplete:
+            for row in incomplete:
+                print(
+                    "ERROR: incomplete perf log: "
+                    f"{row.get('test')} status={row.get('status')} "
+                    f"reason={row.get('completion_reason')} "
+                    f"sim_exit={row.get('sim_exit', '')} "
+                    f"errors={row.get('consistency_errors', [])}",
+                    file=sys.stderr,
+                )
+            return 1
+
     return 0
 
 

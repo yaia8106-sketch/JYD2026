@@ -24,6 +24,9 @@ module perf_monitor (
     longint unsigned cnt_cycles;
     longint unsigned cnt_s0_commit;       // slot0 instructions committed (wb_valid)
     longint unsigned cnt_s1_commit;       // slot1 instructions committed (wb_s1_valid)
+    longint unsigned cnt_commit0_cycles;  // cycles with no committed instruction
+    longint unsigned cnt_commit1_cycles;  // cycles with exactly one committed instruction
+    longint unsigned cnt_commit2_cycles;  // cycles with two committed instructions
 
     // -- CPI stack, priority and mutually exclusive by cycle --
     longint unsigned cnt_cpi_retire;
@@ -34,6 +37,21 @@ module perf_monitor (
     longint unsigned cnt_cpi_raw_ready_no_fwd;
     longint unsigned cnt_cpi_frontend_empty;
     longint unsigned cnt_cpi_other_no_commit;
+
+    // -- Other no-commit breakdown, sampled only inside cnt_cpi_other_no_commit --
+    longint unsigned cnt_other_id_not_ready;
+    longint unsigned cnt_other_id_downstream;
+    longint unsigned cnt_other_ex_not_ready;
+    longint unsigned cnt_other_ex_downstream;
+    longint unsigned cnt_other_mem_not_ready;
+    longint unsigned cnt_other_mem_downstream;
+    longint unsigned cnt_other_flush_recovery;
+    longint unsigned cnt_other_frontend_backpressure;
+    longint unsigned cnt_other_pipeline_fill_drain;
+    longint unsigned cnt_other_unknown;
+    longint unsigned cnt_other_occ [0:15];
+    logic [2:0] redirect_recovery_shreg;
+    integer other_occ_i;
 
     // -- Stall breakdown --
     longint unsigned cnt_load_use_stall;  // load_use_hazard & id_valid
@@ -242,8 +260,10 @@ module perf_monitor (
     wire        mem_s1_valid    = tb_riscv_tests.u_cpu.mem_s1_valid;
     wire        if_valid        = tb_riscv_tests.u_cpu.if_valid;
     wire        id_allowin_w    = tb_riscv_tests.u_cpu.id_allowin;
+    wire        ex_allowin_w    = tb_riscv_tests.u_cpu.ex_allowin;
     wire        if_ready_go_w   = tb_riscv_tests.u_cpu.if_ready_go_w;
     wire        mem_allowin_w   = tb_riscv_tests.u_cpu.mem_allowin;
+    wire        wb_allowin_w    = tb_riscv_tests.u_cpu.wb_allowin;
 
     wire        id_ready_go_w   = tb_riscv_tests.u_cpu.u_forwarding.id_ready_go;
     wire        load_use_hazard_w = tb_riscv_tests.u_cpu.u_forwarding.load_use_hazard;
@@ -614,6 +634,20 @@ module perf_monitor (
                                     | raw_ready_other_event;
     wire cpi_frontend_empty_event = ~if_valid;
     wire cpi_retire_event = wb_valid | wb_s1_valid;
+    wire cpi_other_no_commit_event = ~cpi_redirect_event
+                                   & ~cpi_dcache_event
+                                   & ~cpi_muldiv_event
+                                   & ~cpi_raw_not_ready_event
+                                   & ~cpi_raw_ready_no_fwd_event
+                                   & ~cpi_frontend_empty_event
+                                   & ~cpi_retire_event;
+    wire pipe_ex_any_valid = ex_valid | ex_s1_valid;
+    wire pipe_mem_any_valid = mem_valid | mem_s1_valid;
+    wire pipe_non_wb_active = if_valid | id_valid | pipe_ex_any_valid
+                            | pipe_mem_any_valid;
+    wire [3:0] other_occ_index = {if_valid, id_valid, pipe_ex_any_valid,
+                                  pipe_mem_any_valid};
+    wire redirect_recovery_window = |redirect_recovery_shreg;
 
     wire repair_rs1_dep = repair_use_hazard_w
                         & ((id_rs1_used_w & (id_rs1_addr_w == ex_rd_w))
@@ -640,6 +674,9 @@ module perf_monitor (
             cnt_cycles         <= 0;
             cnt_s0_commit      <= 0;
             cnt_s1_commit      <= 0;
+            cnt_commit0_cycles <= 0;
+            cnt_commit1_cycles <= 0;
+            cnt_commit2_cycles <= 0;
             cnt_cpi_retire     <= 0;
             cnt_cpi_redirect   <= 0;
             cnt_cpi_dcache     <= 0;
@@ -648,6 +685,19 @@ module perf_monitor (
             cnt_cpi_raw_ready_no_fwd <= 0;
             cnt_cpi_frontend_empty <= 0;
             cnt_cpi_other_no_commit <= 0;
+            cnt_other_id_not_ready <= 0;
+            cnt_other_id_downstream <= 0;
+            cnt_other_ex_not_ready <= 0;
+            cnt_other_ex_downstream <= 0;
+            cnt_other_mem_not_ready <= 0;
+            cnt_other_mem_downstream <= 0;
+            cnt_other_flush_recovery <= 0;
+            cnt_other_frontend_backpressure <= 0;
+            cnt_other_pipeline_fill_drain <= 0;
+            cnt_other_unknown <= 0;
+            redirect_recovery_shreg <= 3'b000;
+            for (other_occ_i = 0; other_occ_i < 16; other_occ_i = other_occ_i + 1)
+                cnt_other_occ[other_occ_i] <= 0;
             cnt_load_use_stall <= 0;
             cnt_load_use_ex    <= 0;
             cnt_load_use_mem   <= 0;
@@ -825,6 +875,12 @@ module perf_monitor (
             // Commit
             if (wb_valid)    cnt_s0_commit <= cnt_s0_commit + 1;
             if (wb_s1_valid) cnt_s1_commit <= cnt_s1_commit + 1;
+            if (wb_valid & wb_s1_valid)
+                cnt_commit2_cycles <= cnt_commit2_cycles + 1;
+            else if (wb_valid | wb_s1_valid)
+                cnt_commit1_cycles <= cnt_commit1_cycles + 1;
+            else
+                cnt_commit0_cycles <= cnt_commit0_cycles + 1;
 
             // Priority CPI stack. Each cycle is assigned to exactly one bucket.
             if (cpi_redirect_event)
@@ -839,10 +895,39 @@ module perf_monitor (
                 cnt_cpi_raw_ready_no_fwd <= cnt_cpi_raw_ready_no_fwd + 1;
             else if (cpi_frontend_empty_event)
                 cnt_cpi_frontend_empty <= cnt_cpi_frontend_empty + 1;
-            else if (!cpi_retire_event)
+            else if (cpi_other_no_commit_event)
                 cnt_cpi_other_no_commit <= cnt_cpi_other_no_commit + 1;
             else
                 cnt_cpi_retire <= cnt_cpi_retire + 1;
+
+            if (cpi_redirect_event)
+                redirect_recovery_shreg <= 3'b111;
+            else
+                redirect_recovery_shreg <= {1'b0, redirect_recovery_shreg[2:1]};
+
+            if (cpi_other_no_commit_event) begin
+                cnt_other_occ[other_occ_index] <= cnt_other_occ[other_occ_index] + 1;
+                if (id_valid & ~id_ready_go_w)
+                    cnt_other_id_not_ready <= cnt_other_id_not_ready + 1;
+                else if (id_valid & id_ready_go_w & ~ex_allowin_w)
+                    cnt_other_id_downstream <= cnt_other_id_downstream + 1;
+                else if (pipe_ex_any_valid & ~ex_ready_go_w)
+                    cnt_other_ex_not_ready <= cnt_other_ex_not_ready + 1;
+                else if (pipe_ex_any_valid & ex_ready_go_w & ~mem_allowin_w)
+                    cnt_other_ex_downstream <= cnt_other_ex_downstream + 1;
+                else if (pipe_mem_any_valid & ~mem_ready_go_w)
+                    cnt_other_mem_not_ready <= cnt_other_mem_not_ready + 1;
+                else if (pipe_mem_any_valid & mem_ready_go_w & ~wb_allowin_w)
+                    cnt_other_mem_downstream <= cnt_other_mem_downstream + 1;
+                else if (redirect_recovery_window)
+                    cnt_other_flush_recovery <= cnt_other_flush_recovery + 1;
+                else if (if_valid & ~id_allowin_w)
+                    cnt_other_frontend_backpressure <= cnt_other_frontend_backpressure + 1;
+                else if (pipe_non_wb_active)
+                    cnt_other_pipeline_fill_drain <= cnt_other_pipeline_fill_drain + 1;
+                else
+                    cnt_other_unknown <= cnt_other_unknown + 1;
+            end
 
             // Stall
             if (id_valid & load_use_hazard_w)       cnt_load_use_stall <= cnt_load_use_stall + 1;
@@ -1126,16 +1211,42 @@ module perf_monitor (
     // ================================================================
     task print_report;
         longint unsigned total_insts, total_fwd, cpi_stack_total;
+        longint unsigned commit_cycle_total, ideal_slots, retired_slots;
+        longint unsigned lost_slots, lost_no_commit_slots, lost_single_issue_slots;
+        longint unsigned other_breakdown_total;
+        longint signed other_breakdown_mismatch;
         real cpi, dual_rate, mispredict_rate, dc_hit_rate, dc_miss_rate;
         real fe_fq_avg, fe_ftq_avg;
         begin
             total_insts = cnt_s0_commit + cnt_s1_commit;
+            commit_cycle_total = cnt_commit0_cycles + cnt_commit1_cycles
+                               + cnt_commit2_cycles;
+            ideal_slots = cnt_cycles << 1;
+            retired_slots = total_insts;
+            if (ideal_slots >= retired_slots)
+                lost_slots = ideal_slots - retired_slots;
+            else
+                lost_slots = 0;
+            lost_no_commit_slots = cnt_commit0_cycles << 1;
+            lost_single_issue_slots = cnt_commit1_cycles;
             total_fwd = cnt_fwd_s1_ex + cnt_fwd_s0_ex + cnt_fwd_s1_mem
                        + cnt_fwd_s0_mem + cnt_fwd_s1_wb + cnt_fwd_s0_wb + cnt_fwd_rf;
             cpi_stack_total = cnt_cpi_retire + cnt_cpi_redirect + cnt_cpi_dcache
                             + cnt_cpi_muldiv + cnt_cpi_raw_not_ready
                             + cnt_cpi_raw_ready_no_fwd + cnt_cpi_frontend_empty
                             + cnt_cpi_other_no_commit;
+            other_breakdown_total = cnt_other_id_not_ready
+                                  + cnt_other_id_downstream
+                                  + cnt_other_ex_not_ready
+                                  + cnt_other_ex_downstream
+                                  + cnt_other_mem_not_ready
+                                  + cnt_other_mem_downstream
+                                  + cnt_other_flush_recovery
+                                  + cnt_other_frontend_backpressure
+                                  + cnt_other_pipeline_fill_drain
+                                  + cnt_other_unknown;
+            other_breakdown_mismatch = $signed(cnt_cpi_other_no_commit)
+                                     - $signed(other_breakdown_total);
 
             if (total_insts > 0)
                 cpi = 1.0 * cnt_cycles / total_insts;
@@ -1176,6 +1287,12 @@ module perf_monitor (
             $display("[PERF]  Total insts:   %0d", total_insts);
             $display("[PERF]  CPI:           %0.3f", cpi);
             $display("[PERF]  Dual-issue %%:  %0.1f%%", dual_rate);
+            $display("[PERF]  Commit cycles: commit0=%0d commit1=%0d commit2=%0d total=%0d",
+                     cnt_commit0_cycles, cnt_commit1_cycles,
+                     cnt_commit2_cycles, commit_cycle_total);
+            $display("[PERF]  Issue slots:   ideal=%0d retired=%0d lost=%0d no_commit_lost=%0d single_issue_lost=%0d",
+                     ideal_slots, retired_slots, lost_slots,
+                     lost_no_commit_slots, lost_single_issue_slots);
             $display("[PERF]");
             $display("[PERF]  --- CPI Stack (priority cycles) ---");
             $display("[PERF]  CPI stack:     retire=%0d redirect=%0d dcache=%0d muldiv=%0d raw_not_ready=%0d raw_ready_no_fwd=%0d frontend_empty=%0d other_no_commit=%0d total=%0d",
@@ -1183,6 +1300,26 @@ module perf_monitor (
                      cnt_cpi_muldiv, cnt_cpi_raw_not_ready,
                      cnt_cpi_raw_ready_no_fwd, cnt_cpi_frontend_empty,
                      cnt_cpi_other_no_commit, cpi_stack_total);
+            $display("[PERF]");
+            $display("[PERF]  --- Other No-Commit Breakdown ---");
+            $display("[PERF]  Other no-commit: id_not_ready=%0d id_downstream=%0d ex_not_ready=%0d ex_downstream=%0d mem_not_ready=%0d mem_downstream=%0d flush_recovery=%0d frontend_backpressure=%0d pipeline_fill_drain=%0d unknown=%0d total=%0d original=%0d mismatch=%0d",
+                     cnt_other_id_not_ready, cnt_other_id_downstream,
+                     cnt_other_ex_not_ready, cnt_other_ex_downstream,
+                     cnt_other_mem_not_ready, cnt_other_mem_downstream,
+                     cnt_other_flush_recovery,
+                     cnt_other_frontend_backpressure,
+                     cnt_other_pipeline_fill_drain, cnt_other_unknown,
+                     other_breakdown_total, cnt_cpi_other_no_commit,
+                     other_breakdown_mismatch);
+            $display("[PERF]  Other occupancy: 0000=%0d 0001=%0d 0010=%0d 0011=%0d 0100=%0d 0101=%0d 0110=%0d 0111=%0d 1000=%0d 1001=%0d 1010=%0d 1011=%0d 1100=%0d 1101=%0d 1110=%0d 1111=%0d",
+                     cnt_other_occ[0], cnt_other_occ[1],
+                     cnt_other_occ[2], cnt_other_occ[3],
+                     cnt_other_occ[4], cnt_other_occ[5],
+                     cnt_other_occ[6], cnt_other_occ[7],
+                     cnt_other_occ[8], cnt_other_occ[9],
+                     cnt_other_occ[10], cnt_other_occ[11],
+                     cnt_other_occ[12], cnt_other_occ[13],
+                     cnt_other_occ[14], cnt_other_occ[15]);
             $display("[PERF]");
             $display("[PERF]  --- Stall Breakdown (cycles) ---");
             $display("[PERF]  Load-use:      %0d", cnt_load_use_stall);
