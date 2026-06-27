@@ -80,7 +80,53 @@ RVTEST_CODE_BEGIN
     CHECK_REG(12, t1, 0xffff8008)
     CHECK_REG(13, t3, 0xffffc004)
 
-pass:
+    // Cold-miss target-word return feeding each enabled repair role. All
+    // source lines alias one DCache set so every source load must refill.
+
+    // ALU consumer.
+    la   a2, repair_alu_line
+    lw   t0, 0(a2)
+    addi t1, t0, 5
+    CHECK_REG(14, t1, 0x1234567d)
+
+    // Taken branch redirects while the rest of the refill is still in flight.
+    la   a2, repair_branch_line
+    li   t1, 0x55aa55aa
+    lw   t0, 0(a2)
+    beq  t0, t1, repair_branch_ok
+    j    fail
+repair_branch_ok:
+
+    // JALR redirects while the rest of the refill is still in flight.
+    la   a2, repair_jalr_line
+    lw   t0, 0(a2)
+    jalr x0, 0(t0)
+    j    fail
+repair_jalr_ok:
+
+    // Loaded pointer feeds the next load address.
+    la   a2, repair_load_ptr_line
+    lw   t0, 0(a2)
+    lw   t1, 0(t0)
+    CHECK_REG(15, t1, 0x2468ace0)
+
+    // Loaded pointer feeds the next store address.
+    la   a2, repair_store_ptr_line
+    li   t1, 0x13579bdf
+    lw   t0, 0(a2)
+    sw   t1, 0(t0)
+    lw   t2, 0(t0)
+    CHECK_REG(16, t2, 0x13579bdf)
+
+    // Loaded value feeds the next store data operand.
+    la   a2, repair_store_data_line
+    la   a3, repair_store_data_target
+    lw   t0, 0(a2)
+    sw   t0, 0(a3)
+    lw   t1, 0(a3)
+    CHECK_REG(17, t1, 0x89abcdef)
+
+    pass:
     RVTEST_PASS
 
 fail:
@@ -107,4 +153,32 @@ edge_conflict2:
     .space 1008
 edge_store_line:
     .word 0xffff0008, 0, 0, 0
+
+.align 10
+repair_alu_line:
+    .word 0x12345678, 0, 0, 0
+    .space 1008
+repair_branch_line:
+    .word 0x55aa55aa, 0, 0, 0
+    .space 1008
+repair_jalr_line:
+    .word repair_jalr_ok, 0, 0, 0
+    .space 1008
+repair_load_ptr_line:
+    .word repair_load_target, 0, 0, 0
+    .space 1008
+repair_store_ptr_line:
+    .word repair_store_target, 0, 0, 0
+    .space 1008
+repair_store_data_line:
+    .word 0x89abcdef, 0, 0, 0
+    .space 1008
+repair_load_target:
+    .word 0x2468ace0, 0, 0, 0
+    .space 1008
+repair_store_target:
+    .word 0, 0, 0, 0
+    .space 1008
+repair_store_data_target:
+    .word 0, 0, 0, 0
 RVTEST_DATA_END

@@ -248,6 +248,24 @@ target_s1_jalr:
     j     fail
 
 target_s1_load_jalr:
+    // Part 19: a Slot1 load returns the critical word of a cold line, followed
+    // by a younger load from the same line and a repaired JALR. Refill can hold
+    // JALR in EX for several cycles, so non-completing MEM cycles must preserve
+    // the registered repair payload.
+    li    TESTNUM, 19
+    la    a4, held_refill_line
+    li    ra, 0
+    .align 3
+    addi  s3, x0, 0
+    lw    ra, 12(a4)
+    lw    s0, 8(a4)
+    addi  s1, x0, 1
+    jalr  x0, 0(ra)
+    j     fail
+
+target_held_jalr:
+    li    t2, 0x1919
+    bne   s0, t2, fail
     RVTEST_PASS
 
 fail:
@@ -257,5 +275,11 @@ RVTEST_CODE_END
 
 .data
 RVTEST_DATA_BEGIN
+.space 512
 .align 4
+held_refill_line:
+    .word 0
+    .word 0
+    .word 0x00001919
+    .word target_held_jalr
 RVTEST_DATA_END

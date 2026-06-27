@@ -287,8 +287,9 @@ module tb_forwarding;
         mem_load_ready = 1'b1;
         mem_rd = 5'd6;
         #1;
-        check(!id_ready_go, "ready MEM load should stall S0 branch");
-        check_no_wb_repair("ready S0 MEM load / S0 branch");
+        check(id_ready_go, "ready MEM load should repair S0 branch");
+        check(id_rs1_wb_repair, "S0 branch rs1 should select S0 WB load repair");
+        check(!id_rs1_wb_repair_s1, "S0 branch rs1 repair source should be Slot0");
 
         clear_inputs();
         id_rs2_addr = 5'd7;
@@ -300,8 +301,9 @@ module tb_forwarding;
         mem_load_ready = 1'b1;
         mem_rd = 5'd7;
         #1;
-        check(!id_ready_go, "ready MEM load should stall S0 store data");
-        check_no_wb_repair("ready S0 MEM load / S0 store data");
+        check(id_ready_go, "ready MEM load should repair S0 store data");
+        check(id_rs2_wb_repair, "S0 store rs2 should select S0 WB load repair");
+        check(!id_rs2_wb_repair_s1, "S0 store rs2 repair source should be Slot0");
 
         clear_inputs();
         id_rs1_addr = 5'd8;
@@ -314,6 +316,7 @@ module tb_forwarding;
         mem_rd = 5'd8;
         #1;
         check(!id_ready_go, "not-ready MEM load should still stall S0 load address");
+        check_no_wb_repair("not-ready S0 MEM load / S0 load address");
 
         clear_inputs();
         id_s1_valid = 1'b1;
@@ -325,8 +328,9 @@ module tb_forwarding;
         mem_load_ready = 1'b1;
         mem_rd = 5'd9;
         #1;
-        check(!id_ready_go, "ready S0 MEM load should stall S1 rs1 consumer");
-        check_no_wb_repair("ready S0 MEM load / S1 rs1");
+        check(id_ready_go, "ready S0 MEM load should repair S1 rs1 consumer");
+        check(id_s1_rs1_wb_repair, "S1 rs1 should select S0 WB load repair");
+        check(!id_s1_rs1_wb_repair_s1, "S1 rs1 repair source should be Slot0");
 
         clear_inputs();
         id_s1_valid = 1'b1;
@@ -338,8 +342,9 @@ module tb_forwarding;
         mem_load_ready = 1'b1;
         mem_rd = 5'd12;
         #1;
-        check(!id_ready_go, "ready S0 MEM load should stall S1 rs2 consumer");
-        check_no_wb_repair("ready S0 MEM load / S1 rs2");
+        check(id_ready_go, "ready S0 MEM load should repair S1 rs2 consumer");
+        check(id_s1_rs2_wb_repair, "S1 rs2 should select S0 WB load repair");
+        check(!id_s1_rs2_wb_repair_s1, "S1 rs2 repair source should be Slot0");
 
         clear_inputs();
         id_s1_valid = 1'b1;
@@ -353,6 +358,7 @@ module tb_forwarding;
         mem_rd = 5'd9;
         #1;
         check(!id_ready_go, "S1 consumer without repair path should still stall");
+        check_no_wb_repair("S1 consumer without repair path");
 
         clear_inputs();
         id_rs1_addr = 5'd10;
@@ -364,8 +370,9 @@ module tb_forwarding;
         mem_s1_rd = 5'd10;
         mem_load_ready = 1'b1;
         #1;
-        check(!id_ready_go, "ready S1 MEM load should stall S0 consumer");
-        check_no_wb_repair("ready S1 MEM load / S0 rs1");
+        check(id_ready_go, "ready S1 MEM load should repair S0 consumer");
+        check(id_rs1_wb_repair, "S0 rs1 should select WB load repair");
+        check(id_rs1_wb_repair_s1, "S0 rs1 repair source should be Slot1");
 
         clear_inputs();
         id_s1_valid = 1'b1;
@@ -377,8 +384,9 @@ module tb_forwarding;
         mem_s1_rd = 5'd13;
         mem_load_ready = 1'b1;
         #1;
-        check(!id_ready_go, "ready S1 MEM load should stall S1 consumer");
-        check_no_wb_repair("ready S1 MEM load / S1 rs2");
+        check(id_ready_go, "ready S1 MEM load should repair S1 consumer");
+        check(id_s1_rs2_wb_repair, "S1 rs2 should select WB load repair");
+        check(id_s1_rs2_wb_repair_s1, "S1 rs2 repair source should be Slot1");
 
         clear_inputs();
         id_rs1_addr = 5'd10;
@@ -391,6 +399,7 @@ module tb_forwarding;
         mem_load_ready = 1'b0;
         #1;
         check(!id_ready_go, "not-ready S1 MEM load should still stall S0 consumer");
+        check_no_wb_repair("not-ready S1 MEM load / S0 consumer");
 
         clear_inputs();
         id_s1_valid = 1'b1;
@@ -404,6 +413,7 @@ module tb_forwarding;
         mem_load_ready = 1'b1;
         #1;
         check(!id_ready_go, "S1 consumer without repair path should still stall on S1 MEM load");
+        check_no_wb_repair("S1 consumer without repair path / S1 MEM load");
 
         clear_inputs();
         id_rs1_addr = 5'd11;
