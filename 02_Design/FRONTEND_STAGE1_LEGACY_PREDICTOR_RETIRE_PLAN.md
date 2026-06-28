@@ -137,7 +137,7 @@ bash -n 02_Design/riscv_tests/functional/run_all.sh
 bash -n 02_Design/riscv_tests/functional/frontend/run_canonical.sh
 bash -n 02_Design/riscv_tests/functional/frontend/run_steering.sh
 bash -n 02_Design/riscv_tests/performance/short/run_perf.sh
-bash -n 02_Design/riscv_tests/performance/branch/run_branch_diag.sh
+bash -n 02_Design/riscv_tests/performance/long/run_coe_perf.sh
 ```
 
 ## 非目标

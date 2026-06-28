@@ -19,18 +19,67 @@ BRANCH_COLUMNS = [
     "mispredicts",
     "accuracy_pct",
     "mispredict_rate_pct",
+    "jcall_redirects",
+    "cpi_stack_redirect",
+    "cpi_redirect_pct",
+    "abtb_direct_lookup",
+    "abtb_direct_steer",
+    "abtb_direct_bank0",
+    "abtb_direct_bank1",
+    "abtb_direct_correct",
+    "abtb_direct_redirect",
+    "abtb_direct_target_miss",
+    "stage1_sequential",
+    "stage1_abtb_owned",
+    "stage1_branch_owned_nt",
+    "stage1_pht_confirmed",
+    "stage1_pht_abtb_branch_hit",
+    "stage1_pht_pred_taken",
+    "stage1_pht_pred_not_taken",
+    "stage1_pht_correct",
+    "stage1_pht_wrong",
+    "stage1_pht_bank0",
+    "stage1_pht_bank1",
+    "pred_s0_resolved",
+    "pred_s0_branch",
+    "pred_s0_jal",
+    "pred_s0_jalr",
+    "pred_s0_pred_taken",
+    "pred_s0_actual_taken",
+    "pred_s0_mispredict",
+    "pred_s0_dir_to_taken",
+    "pred_s0_dir_to_fallthrough",
+    "pred_s0_target_wrong",
     "s0_pred_taken_rate_pct",
     "s0_actual_taken_rate_pct",
     "s0_taken_gap_pct",
     "s0_dir_to_taken_pct",
     "s0_dir_to_fallthrough_pct",
     "s0_target_wrong_pct",
+    "pred_s1_resolved",
+    "pred_s1_branch",
+    "pred_s1_jal",
+    "pred_s1_pred_taken",
+    "pred_s1_actual_taken",
+    "pred_s1_dir_wrong",
+    "pred_s1_target_wrong",
+    "pred_s1_redirect",
     "s1_pred_taken_rate_pct",
     "s1_actual_taken_rate_pct",
     "s1_dir_wrong_rate_pct",
+    "pred_train_total",
+    "pred_train_s0",
+    "pred_train_s1",
+    "pred_train_branch",
+    "pred_train_jal",
+    "pred_train_jalr",
     "train_coverage_pct",
     "stage1_pht_update_per_branch",
-    "cpi_redirect_pct",
+    "fe_bp0_fire",
+    "fe_bp0_ftq_full",
+    "fe_bp0_fq_credit_block",
+    "fe_redirect_total",
+    "fe_redirect_ex",
     "issue_class",
     "direction_bias",
 ]
@@ -245,20 +294,22 @@ def markdown_report(path: Path, rows: list[dict[str, Any]], inputs: list[tuple[s
         "",
         "## Top Rows",
         "",
-        "| suite | test | status | acc% | predT% | actualT% | gap% | miss% | class |",
-        "|---|---|---:|---:|---:|---:|---:|---:|---|",
+        "| suite | test | status | branches | acc% | predT% | actualT% | target-wrong% | train% | redirect-cycle% | class |",
+        "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|",
     ]
     for row in suspicious[:20]:
         lines.append(
-            "| {suite} | {test} | {status} | {acc} | {pred} | {actual} | {gap} | {miss} | {klass} |".format(
+            "| {suite} | {test} | {status} | {branches} | {acc} | {pred} | {actual} | {target} | {train} | {redirect} | {klass} |".format(
                 suite=row.get("suite", ""),
                 test=row.get("test", ""),
                 status=row.get("status", ""),
+                branches=row.get("total_branch", 0),
                 acc=fmt(row.get("accuracy_pct", 0.0)),
                 pred=fmt(row.get("s0_pred_taken_rate_pct", 0.0)),
                 actual=fmt(row.get("s0_actual_taken_rate_pct", 0.0)),
-                gap=fmt(row.get("s0_taken_gap_pct", 0.0)),
-                miss=fmt(row.get("mispredict_rate_pct", 0.0)),
+                target=fmt(row.get("s0_target_wrong_pct", 0.0)),
+                train=fmt(row.get("train_coverage_pct", 0.0)),
+                redirect=fmt(row.get("cpi_redirect_pct", 0.0)),
                 klass=row.get("issue_class", ""),
             )
         )
@@ -345,8 +396,12 @@ def main() -> int:
     rows.sort(key=lambda item: (str(item.get("suite", "")), str(item.get("test", ""))))
 
     write_csv(out_dir / "branch_summary.csv", rows, BRANCH_COLUMNS)
+    projected_rows = [
+        {column: row.get(column, "") for column in BRANCH_COLUMNS}
+        for row in rows
+    ]
     with (out_dir / "branch_summary.json").open("w", encoding="utf-8") as handle:
-        json.dump(rows, handle, indent=2, sort_keys=True)
+        json.dump(projected_rows, handle, indent=2, sort_keys=True)
         handle.write("\n")
     markdown_report(out_dir / "branch_findings.md", rows, specs)
 

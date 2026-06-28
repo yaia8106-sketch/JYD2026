@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================
-# run_coe_perf.sh - Run full contest COE programs with perf counters.
+# run_coe_perf.sh - Run full contest COE programs with general and branch reports.
 #
 # Classification:
 #   Performance / long-run / COE entry. Do not use this as a default smoke
@@ -78,6 +78,11 @@ Parallel jobs always equal the contest program count.
 
 Normal completion is stop_pc unless --max-cycles is set. Watchdog is an
 idle-progress guard, not a duration limit.
+
+Outputs include the general summary plus branch-predictor-focused reports:
+  summary.csv,json        All parsed performance counters.
+  branch_summary.csv,json Branch prediction counters and derived metrics.
+  branch_findings.md      Heuristic branch prediction diagnosis.
 EOF
 }
 
@@ -541,11 +546,24 @@ if ! python3 "$RISCV_TESTS_DIR/tools/parse_perf.py" "${PARSER_ARGS[@]}"; then
     RUN_FAILED=1
 fi
 
+if [ -f "$OUT_DIR/summary.json" ]; then
+    if ! python3 "$RISCV_TESTS_DIR/tools/branch_diag_report.py" \
+        --summary "coe=$OUT_DIR/summary.json" \
+        --out "$OUT_DIR"; then
+        RUN_FAILED=1
+    fi
+else
+    echo "ERROR: cannot generate branch report without $OUT_DIR/summary.json"
+    RUN_FAILED=1
+fi
+
 echo ""
-echo "[INFO] Summary CSV:  $OUT_DIR/summary.csv"
-echo "[INFO] Summary JSON: $OUT_DIR/summary.json"
-echo "[INFO] Manifest:     $OUT_DIR/manifest.json"
-echo "[INFO] stop_pc map:  $OUT_DIR/stop_pc.txt"
+echo "[INFO] Summary CSV:       $OUT_DIR/summary.csv"
+echo "[INFO] Summary JSON:      $OUT_DIR/summary.json"
+echo "[INFO] Branch summary:    $OUT_DIR/branch_summary.csv"
+echo "[INFO] Branch findings:   $OUT_DIR/branch_findings.md"
+echo "[INFO] Manifest:          $OUT_DIR/manifest.json"
+echo "[INFO] stop_pc map:       $OUT_DIR/stop_pc.txt"
 
 if grep -R -E "^\[(FAIL|TIMEOUT|SKIP)\]" "$LOG_DIR" >/dev/null 2>&1; then
     RUN_FAILED=1

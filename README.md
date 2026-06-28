@@ -59,7 +59,6 @@ short-perf --set branch
 short-perf --set cache
 short-perf --set dual
 run-perf
-branch-diag
 ```
 
 短命令由 `bin/install-command-links.sh` 链接到 `~/.local/bin`。若换机器或链接丢失，执行：
@@ -68,7 +67,7 @@ branch-diag
 bash bin/install-command-links.sh
 ```
 
-其中 `run-perf` / `coe-perf` 会运行完整 contest COE 程序集合；`branch-diag` 会运行分支诊断集合并在 COE 阶段运行完整 contest COE 集合。这两个入口很长，不作为 AI 默认验证命令。
+其中 `run-perf` / `coe-perf` 会运行完整 contest COE 程序集合，并从同一次仿真同时生成通用性能摘要和分支预测诊断报告。这个入口很长，不作为 AI 默认验证命令。分支微基准使用 `short-perf --set branch_diag`。
 
 实现后 timing 报告：
 

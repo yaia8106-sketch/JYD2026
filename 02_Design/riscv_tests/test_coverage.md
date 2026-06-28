@@ -7,7 +7,7 @@
 - `functional/run_all.sh` 属于常规功能正确性 / smoke 入口。
 - `functional/special/run_axi_adapter.sh`、`functional/special/run_student_top_axi.sh`、`functional/special/run_student_top_smoke.sh` 属于特殊功能正确性 smoke。
 - `performance/short/run_perf.sh`、`performance/long/run_coe_perf.sh` 属于性能 / 长跑 / COE 入口，不作为默认 smoke gate。
-- `performance/branch/run_branch_diag.sh` 属于性能诊断入口，聚焦分支预测，不作为默认 smoke gate。
+- `performance/long/run_coe_perf.sh` 会从同一次 COE 运行同时生成通用性能摘要和分支预测诊断报告。
 - 新增 correctness case 应进入 `run_all.sh` 体系；性能实验和 COE 检查不要混入短功能回归。
 
 ## 默认回归规模
@@ -175,13 +175,13 @@ VCS integration 覆盖计数为
 
 ### Branch Predictor Diagnosis Microbenchmarks
 
-这些程序由 `utility/build_tests.sh` 生成 hex，主要由 `performance/branch/run_branch_diag.sh` 使用；必要时也可用 `run_perf.sh --set branch_diag` 做短 profiling。它们不属于 `functional/run_all.sh` 默认 correctness gate。
+这些程序由 `utility/build_tests.sh` 生成 hex，使用 `performance/short/run_perf.sh --set branch_diag` 做短 profiling。完整比赛程序的分支表现由 `performance/long/run_coe_perf.sh` 在通用性能运行后自动生成报告。它们不属于 `functional/run_all.sh` 默认 correctness gate。
 
 | 测试 | 诊断意图 |
 |------|----------|
-| `pred_s0_taken_loop` | 单个 S0 backward branch 的 taken 方向收敛，定位 high-BTB-hit 但持续 underpredict taken 的问题 |
-| `pred_s0_not_taken_loop` | 同一 S0 branch 反复 not-taken，观察 overpredict taken / dir_to_fallthrough |
-| `pred_s0_alternating` | 同一 S0 branch 交替 taken/not-taken，观察方向预测是否单边塌陷 |
+| `bp_s0_taken_loop` | 单个 S0 backward branch 的 taken 方向收敛，定位 high-BTB-hit 但持续 underpredict taken 的问题 |
+| `bp_s0_not_taken_loop` | 同一 S0 branch 反复 not-taken，观察 overpredict taken / dir_to_fallthrough |
+| `bp_s0_alternating` | 同一 S0 branch 交替 taken/not-taken，观察方向预测是否单边塌陷 |
 | `bp_btb_alias_pair` | 两个相隔 512B 的 taken branch 故意映射到同一 direct-mapped BTB index，隔离 alias/capacity 行为 |
 | `bp_wrongpath_pollution` | older taken branch 跳过 victim branch，随后正确路径 probe 同一 victim PC，配合 trace 检查 wrong-path update 污染 |
 

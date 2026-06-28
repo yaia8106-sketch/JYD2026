@@ -1,7 +1,0 @@
-#!/usr/bin/env bash
-set -e
-
-THIS="$(readlink -f "${BASH_SOURCE[0]}")"
-ROOT="$(cd "$(dirname "$THIS")/.." && pwd)"
-
-exec "$ROOT/02_Design/riscv_tests/performance/branch/run_branch_diag.sh" "$@"

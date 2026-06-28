@@ -22,8 +22,8 @@ INCLUDES="-I$RISCV_TESTS_DIR/env"
 LDFLAGS="-T$RISCV_TESTS_DIR/env/link.ld"
 
 # RV32IM 指令测试 (去掉 fence_i).
-# Includes diagnostic-only microbenchmarks used by performance/branch; those
-# are built here but intentionally not added to functional/run_all.sh.
+# Includes diagnostic-only microbenchmarks used by short-perf's branch_diag set;
+# those are built here but intentionally not added to functional/run_all.sh.
 TESTS="app_calc \
        simple \
        add addi sub \
