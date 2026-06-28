@@ -104,6 +104,7 @@ module perf_monitor (
     longint unsigned cnt_dc_sb_block_cycles;
     longint unsigned cnt_dc_sb_conflicts;
     longint unsigned cnt_dc_store_forward_hits;
+    longint unsigned cnt_dc_miss_buffer_hits;
 
     // -- RAW stall readiness breakdown --
     longint unsigned cnt_raw_id_stall;
@@ -499,6 +500,7 @@ module perf_monitor (
                                 & ~tb_riscv_tests.u_dcache.mem_wr
                                 & (tb_riscv_tests.u_dcache.store_fwd_hit_w0
                                  | tb_riscv_tests.u_dcache.store_fwd_hit_w1);
+    wire dc_miss_buffer_hit_w = tb_riscv_tests.u_dcache.miss_buffer_hit;
 
     wire lsu_s0_load_done = mem_valid & mem_ready_go_w & mem_mem_read_w;
     wire lsu_s0_store_done = mem_valid & mem_ready_go_w & (|mem_store_wea_w);
@@ -746,6 +748,7 @@ module perf_monitor (
             cnt_dc_sb_block_cycles <= 0;
             cnt_dc_sb_conflicts <= 0;
             cnt_dc_store_forward_hits <= 0;
+            cnt_dc_miss_buffer_hits <= 0;
             cnt_raw_id_stall   <= 0;
             cnt_raw_not_ready_total <= 0;
             cnt_raw_not_ready_ex_load <= 0;
@@ -1001,6 +1004,7 @@ module perf_monitor (
             if (dc_sb_block_w)                     cnt_dc_sb_block_cycles <= cnt_dc_sb_block_cycles + 1;
             if (tb_riscv_tests.u_dcache.sb_conflict) cnt_dc_sb_conflicts <= cnt_dc_sb_conflicts + 1;
             if (dc_store_forward_hit_w)            cnt_dc_store_forward_hits <= cnt_dc_store_forward_hits + 1;
+            if (dc_miss_buffer_hit_w)               cnt_dc_miss_buffer_hits <= cnt_dc_miss_buffer_hits + 1;
 
             if (raw_id_stall_event) cnt_raw_id_stall <= cnt_raw_id_stall + 1;
             if (raw_nr_ex_load_event | raw_nr_mem_load_wait_event | raw_nr_muldiv_event)
@@ -1361,9 +1365,10 @@ module perf_monitor (
                      cnt_dc_miss, cnt_dc_load_miss, cnt_dc_store_miss, dc_miss_rate);
             $display("[PERF]  Refill cycles: %0d words=%0d aborts=%0d",
                      cnt_dc_refill_cycles, cnt_dc_refill_words, cnt_dc_refill_aborts);
-            $display("[PERF]  Store buffer:  enq=%0d drain=%0d block=%0d conflict=%0d fwd=%0d",
+            $display("[PERF]  Store buffer:  enq=%0d drain=%0d block=%0d conflict=%0d fwd=%0d missbuf=%0d",
                      cnt_dc_sb_enqueue, cnt_dc_sb_drain, cnt_dc_sb_block_cycles,
-                     cnt_dc_sb_conflicts, cnt_dc_store_forward_hits);
+                     cnt_dc_sb_conflicts, cnt_dc_store_forward_hits,
+                     cnt_dc_miss_buffer_hits);
             $display("[PERF]  LSU complete:  cache_load=%0d cache_store=%0d mmio_load=%0d mmio_store=%0d",
                      cnt_lsu_cache_load, cnt_lsu_cache_store,
                      cnt_lsu_mmio_load, cnt_lsu_mmio_store);

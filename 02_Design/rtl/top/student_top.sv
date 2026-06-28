@@ -49,6 +49,7 @@ module student_top #(
     logic [31:0] cache_addr;
     logic [ 3:0] cache_wea;
     logic [31:0] cache_wdata;
+    logic [ 3:0] cache_load_mask;
     logic [31:0] cache_rdata;
     logic        cache_ready;
 
@@ -129,6 +130,7 @@ module student_top #(
         .cache_addr  (cache_addr),
         .cache_wea   (cache_wea),
         .cache_wdata (cache_wdata),
+        .cache_load_mask (cache_load_mask),
         .cache_rdata (cache_rdata),
         .cache_ready (cache_ready),
         .cache_flush (dcache_flush),
@@ -172,6 +174,7 @@ module student_top #(
         .cpu_addr    (cache_addr),
         .cpu_wea     (cache_wea),
         .cpu_wdata   (cache_wdata),
+        .cpu_load_mask (cache_load_mask),
         .cpu_rdata   (cache_rdata),
         .cpu_ready   (cache_ready),
 

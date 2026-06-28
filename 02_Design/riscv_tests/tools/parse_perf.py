@@ -114,6 +114,7 @@ SUMMARY_COLUMNS = [
     "dc_sb_block_cycles",
     "dc_sb_conflicts",
     "dc_store_forward_hits",
+    "dc_miss_buffer_hits",
     "id_raw_stall",
     "raw_not_ready",
     "raw_ready_no_fwd",
@@ -537,6 +538,7 @@ def parse_perf_payload(payload: str, metrics: dict[str, Any]) -> None:
         metrics["dc_sb_block_cycles"] = values.get("block", 0)
         metrics["dc_sb_conflicts"] = values.get("conflict", 0)
         metrics["dc_store_forward_hits"] = values.get("fwd", 0)
+        metrics["dc_miss_buffer_hits"] = values.get("missbuf", 0)
         return
 
     if payload.startswith("LSU complete:"):

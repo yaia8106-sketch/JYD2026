@@ -8,12 +8,14 @@ module memory_access_unit (
     input  logic        ex_mem_read_en,
     input  logic        ex_mem_write_en,
     input  logic [31:0] ex_alu_addr,
+    input  logic [ 1:0] ex_mem_size,
     input  logic [ 3:0] ex_store_wea,
     input  logic [31:0] ex_store_data,
     input  logic        ex_s1_valid,
     input  logic        ex_s1_mem_read_en,
     input  logic        ex_s1_mem_write_en,
     input  logic [31:0] ex_s1_alu_addr,
+    input  logic [ 1:0] ex_s1_mem_size,
     input  logic [ 3:0] ex_s1_store_wea,
     input  logic [31:0] ex_s1_store_data,
 
@@ -47,6 +49,7 @@ module memory_access_unit (
     output logic [31:0] cache_addr,
     output logic [ 3:0] cache_wea,
     output logic [31:0] cache_wdata,
+    output logic [ 3:0] cache_load_mask,
     output logic        cache_flush,
     output logic        cache_pipeline_stall,
 
@@ -67,9 +70,14 @@ module memory_access_unit (
     wire [31:0] ex_lsu_addr = ex_use_s1_lsu ? ex_s1_alu_addr : ex_alu_addr;
     wire        ex_lsu_read = ex_use_s1_lsu ? ex_s1_mem_read_en : ex_mem_read_en;
     wire        ex_lsu_write = ex_use_s1_lsu ? ex_s1_mem_write_en : ex_mem_write_en;
+    wire [ 1:0] ex_lsu_size = ex_use_s1_lsu ? ex_s1_mem_size : ex_mem_size;
     wire [ 3:0] ex_lsu_wea = ex_use_s1_lsu ? ex_s1_store_wea : ex_store_wea;
     wire [31:0] ex_lsu_wdata = ex_use_s1_lsu ? ex_s1_store_data : ex_store_data;
     wire        ex_lsu_cacheable = ex_use_s1_lsu ? is_cacheable_s1 : is_cacheable;
+    // Precompute load-byte candidates in EX; DCache registers the selected
+    // mask with the request for recent-store coverage checks.
+    wire [3:0] ex_load_byte_mask = 4'b0001 << ex_lsu_addr[1:0];
+    wire [3:0] ex_load_half_mask = 4'b0011 << ex_lsu_addr[1:0];
 
     wire mem_s1_load_active = mem_s1_valid & mem_s1_mem_read_en;
     wire [31:0] mem_lsu_addr = mem_s1_load_active ? mem_s1_alu_result : mem_alu_result;
@@ -104,6 +112,9 @@ module memory_access_unit (
     assign cache_addr = ex_lsu_addr;
     assign cache_wea = ex_lsu_wea;
     assign cache_wdata = ex_lsu_wdata;
+    assign cache_load_mask = ({4{ex_lsu_size == 2'b00}} & ex_load_byte_mask)
+                           | ({4{ex_lsu_size == 2'b01}} & ex_load_half_mask)
+                           | ({4{ex_lsu_size == 2'b10}} & 4'b1111);
     assign cache_flush = mem_branch_flush;
     assign cache_pipeline_stall = ~mem_allowin;
 

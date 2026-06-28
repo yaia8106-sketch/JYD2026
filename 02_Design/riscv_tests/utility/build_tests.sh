@@ -42,7 +42,7 @@ TESTS="app_calc \
        bp_s0_taken_loop bp_s0_not_taken_loop bp_s0_alternating bp_btb_alias_pair bp_wrongpath_pollution \
        dual_alu raw_block branch_single branch_dual branch_dual_flush branch_fwd_matrix branch_dual_edge slot1_branch waw loaduse_dual inst_buffer \
        fwd_s1 waw_fwd flush_instbuf pc_align loaduse_cross fwd_repair_lsu slot1_load slot1_store slot1_jal slot1_jump slot1_cfi_matrix lui_auipc_s1 \
-	       dcache_dual dcache_wna_edge instbuf_stall bp_dual slot1_bp_update \
+       dcache_dual dcache_wna_edge dcache_miss_buffer instbuf_stall bp_dual slot1_bp_update \
        sb_stress ras_overflow \
        m_ext m_dcache_edge \
        zicsr_basic zicsr_edge csr_forwarding csr_trap_stall trap_mret trap_slot1 trap_flush trap_nested timer_irq_basic"

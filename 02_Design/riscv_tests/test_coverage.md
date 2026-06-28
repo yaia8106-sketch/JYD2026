@@ -142,6 +142,18 @@ VCS integration 覆盖计数为
 | 5 | 两个 store miss 连续进入 2-entry SB，随后 LW 同 line | refill 同时合并两个 pending store，覆盖不同 word 的可见性 |
 | 6 | 同 word 的 SW 后接 SB，随后第三个 store 在 SB full 时到达 | full 后 drain/stall/retry、年轻 store byte 覆盖老 store、第三个 store 继续参与 refill merge |
 
+### `dcache_miss_buffer`
+
+| # | 场景 | 覆盖内容 |
+|:-:|------|----------|
+| 1 | 两个连续 SW 后立即读取两个冷地址 | 两个 pending entry 均可直接完成 load miss |
+| 2 | 两个 store 均排空后再次读取 | backend 写完成只清 pending，最近两次 store 数据继续保留 |
+| 3 | 交替写 entry0/entry1，各自仅一项 pending | `pending=01`、`pending=10` 两种物理状态及 1-bit 分配翻转 |
+| 4 | 已排空的 SB/SH 后接 LBU/LHU | load byte mask 被完整覆盖时直接转发 |
+| 5 | 已排空的 SB/SH 后接 LW | 覆盖不足必须回退 refill，并按 byte mask 合并 |
+| 6 | 同 word 的 SW 后接 SB | 两项并行匹配、年轻 store 覆盖年老 store |
+| 7 | 两项 pending 后第三个 store 到达 | 最老项先排空、槽位安全复用、另一 pending 项不丢失 |
+
 ### `functional/special/run_student_top_axi.sh`
 
 该脚本不是 `functional/run_all.sh` 默认回归的一部分，而是处理器侧 AXI master 集成 smoke：
@@ -293,6 +305,7 @@ correction 实验，应使用新命名、新测试和新文档，不复用已删
 |------|----------|
 | `dcache_dual` | DCache miss/refill 期间的双发射保持、miss 后前递、store miss WNA 与 load refill 合并 |
 | `dcache_wna_edge` | WT+WNA store miss 的 byte/half/word refill 合并、非目标 word 不污染、2-entry SB 满时 drain/retry 和年轻 store 覆盖 |
+| `dcache_miss_buffer` | 最近两次 store 的 pending/已排空查询、完整覆盖直返、部分覆盖 refill 和交替槽位复用 |
 | `bp_dual` | 误预测 flush 与双发循环、嵌套循环、JAL 返回点双发、背靠背分支组合 |
 | `sb_stress` | store buffer 冲突 stall、连续 store 覆盖写、store 与双发 ALU 交错 |
 | `ras_overflow` | RAS 容量内调用、超出容量后的返回修正，以及恢复后的再次调用 |

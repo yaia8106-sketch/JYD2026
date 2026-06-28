@@ -29,6 +29,7 @@ module cpu_top (
     output logic [31:0] cache_addr,      // EX stage: 访存地址
     output logic [ 3:0] cache_wea,       // EX stage: 字节写使能
     output logic [31:0] cache_wdata,     // EX stage: 写数据
+    output logic [ 3:0] cache_load_mask, // EX stage: load 使用的字节 lane
     input  logic [31:0] cache_rdata,     // MEM stage: 读数据 (from DCache)
     input  logic        cache_ready,     // MEM stage: 命中或完成
     output logic        cache_flush,     // MEM stage: pipeline flush (abort refill)
@@ -426,12 +427,14 @@ module cpu_top (
         .ex_mem_read_en      (ex_mem_read_en),
         .ex_mem_write_en     (ex_mem_write_en),
         .ex_alu_addr         (alu_addr),
+        .ex_mem_size         (ex_mem_size),
         .ex_store_wea        (dram_wea),
         .ex_store_data       (store_data_shifted),
         .ex_s1_valid         (ex_s1_valid),
         .ex_s1_mem_read_en   (ex_s1_mem_read_en),
         .ex_s1_mem_write_en  (ex_s1_mem_write_en),
         .ex_s1_alu_addr      (alu_s1_addr),
+        .ex_s1_mem_size      (ex_s1_mem_size),
         .ex_s1_store_wea     (dram_wea_s1),
         .ex_s1_store_data    (s1_store_data_shifted),
         .mem_valid           (mem_valid),
@@ -461,6 +464,7 @@ module cpu_top (
         .cache_addr          (cache_addr),
         .cache_wea           (cache_wea),
         .cache_wdata         (cache_wdata),
+        .cache_load_mask     (cache_load_mask),
         .cache_flush         (cache_flush),
         .cache_pipeline_stall(cache_pipeline_stall),
         .mmio_addr           (mmio_addr),

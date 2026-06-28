@@ -37,6 +37,7 @@ module tb_riscv_tests;
     wire [31:0] cache_addr;
     wire [ 3:0] cache_wea;
     wire [31:0] cache_wdata;
+    wire [ 3:0] cache_load_mask;
     wire [31:0] cache_rdata;
     wire        cache_ready;
     wire        cache_flush;
@@ -91,6 +92,7 @@ module tb_riscv_tests;
         .cache_addr     (cache_addr),
         .cache_wea      (cache_wea),
         .cache_wdata    (cache_wdata),
+        .cache_load_mask(cache_load_mask),
         .cache_rdata    (cache_rdata),
         .cache_ready    (cache_ready),
         .cache_flush    (cache_flush),
@@ -118,6 +120,7 @@ module tb_riscv_tests;
         .cpu_addr    (cache_addr),
         .cpu_wea     (cache_wea),
         .cpu_wdata   (cache_wdata),
+        .cpu_load_mask (cache_load_mask),
         .cpu_rdata   (cache_rdata),
         .cpu_ready   (cache_ready),
         .pipeline_stall (cache_pipeline_stall),
@@ -329,6 +332,8 @@ module tb_riscv_tests;
     integer commit_limit_hit = 0;
     integer stop_pc_enable = 0;
     integer stop_pc_hit = 0;
+    integer miss_buffer_hit_count = 0;
+    reg [3:0] miss_buffer_pending_seen = 4'b0000;
     reg [31:0] pc_guard_min = 32'h8000_0000;
     reg [31:0] pc_guard_max = 32'h8000_4000;
     reg [31:0] pc_guard_bad_pc = 32'd0;
@@ -344,6 +349,10 @@ module tb_riscv_tests;
     reg [256*8-1:0] dram_file_r;
     reg [256*8-1:0] test_name_r;
     reg [256*8-1:0] trace_file_r;
+    wire miss_buffer_directed_test = (test_name_r == "dcache_miss_buffer");
+    wire miss_buffer_coverage_failed = miss_buffer_directed_test
+                                     & ((miss_buffer_pending_seen != 4'b1111)
+                                        | (miss_buffer_hit_count < 4));
 
     initial begin
         // ---- Parse plusargs ----
@@ -456,10 +465,16 @@ module tb_riscv_tests;
                      last_wb0_pc, last_wb1_pc, cycle_cnt);
         end else if (!stop_pc_enable && tohost_detected) begin
             if (tohost_value == 32'd1) begin
-                $display("[PASS] %0s  commits=%0d first_led=0x%08x last_led=0x%08x led_writes=%0d pc=0x%08x last_wb0_pc=0x%08x last_wb1_pc=0x%08x  (%0d cycles)",
-                         test_name_r, commit_cnt, tohost_value,
-                         last_tohost_value, led_write_count, u_cpu.pc,
-                         last_wb0_pc, last_wb1_pc, cycle_cnt);
+                if (miss_buffer_coverage_failed) begin
+                    $display("[FAIL] %0s  miss-buffer coverage incomplete hits=%0d pending_seen=%04b",
+                             test_name_r, miss_buffer_hit_count,
+                             miss_buffer_pending_seen);
+                end else begin
+                    $display("[PASS] %0s  commits=%0d first_led=0x%08x last_led=0x%08x led_writes=%0d pc=0x%08x last_wb0_pc=0x%08x last_wb1_pc=0x%08x  (%0d cycles)",
+                             test_name_r, commit_cnt, tohost_value,
+                             last_tohost_value, led_write_count, u_cpu.pc,
+                             last_wb0_pc, last_wb1_pc, cycle_cnt);
+                end
             end else begin
                 $display("[FAIL] %0s  test #%0d failed commits=%0d first_led=0x%08x last_led=0x%08x led_writes=%0d pc=0x%08x last_wb0_pc=0x%08x last_wb1_pc=0x%08x  (%0d cycles)",
                          test_name_r, tohost_value >> 1, commit_cnt,
@@ -505,6 +520,22 @@ module tb_riscv_tests;
 
     always @(posedge clk) begin
         if (rst_n) cycle_cnt <= cycle_cnt + 1;
+    end
+
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            miss_buffer_hit_count <= 0;
+            miss_buffer_pending_seen <= 4'b0000;
+        end else if (u_dcache.miss_buffer_hit) begin
+            miss_buffer_hit_count <= miss_buffer_hit_count + 1;
+            case (u_dcache.sb_pending_q)
+                2'b00: miss_buffer_pending_seen[0] <= 1'b1;
+                2'b01: miss_buffer_pending_seen[1] <= 1'b1;
+                2'b10: miss_buffer_pending_seen[2] <= 1'b1;
+                2'b11: miss_buffer_pending_seen[3] <= 1'b1;
+                default: ;
+            endcase
+        end
     end
 
     always @(posedge clk) begin
