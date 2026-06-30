@@ -440,20 +440,41 @@ module dcache #(
     wire [WORD_W-1:0] direct_rd_issue_word = CRITICAL_WORD_FIRST
                                            ? (refill_target_word + direct_rd_issue_beat)
                                            : direct_rd_issue_beat;
-    wire direct_rd_issue_en = DIRECT_BRAM
-                            & ~flush
-                            & (state_refill_req
-                             | state_refill_data)
-                            & (direct_rd_issue_count < (WORD_W + 1)'(LINE_WORDS));
-    wire direct_rd_issue_last = direct_rd_issue_en
+
+    // Speculatively read the current registered MEM load before hit/miss is
+    // known. The physical BRAM read is side-effect free; only direct_start_issue
+    // below creates a logical refill token when the request is a real miss.
+    // This keeps the recent-store compares off the high-fanout BRAM EN path.
+    wire direct_idle_spec_read = DIRECT_BRAM & state_idle & mem_req & ~mem_wr;
+
+    // Beat 0 logical issue: mark the speculative read as refill data during the
+    // miss-detect cycle. Later beats continue from the registered refill state.
+    wire direct_start_issue = DIRECT_BRAM & refill_start & ~flush;
+    wire direct_stream_issue = DIRECT_BRAM
+                             & ~flush
+                             & (state_refill_req | state_refill_data)
+                             & (direct_rd_issue_count < (WORD_W + 1)'(LINE_WORDS));
+    wire direct_rd_issue_en = direct_start_issue | direct_stream_issue;
+    wire direct_rd_issue_last = direct_stream_issue
                               & (direct_rd_issue_beat == WORD_W'(LINE_WORDS - 1));
 
-    // Keep ENB active while responses remain in the BRAM/output-register
-    // pipeline. Otherwise the final word never reaches doutb.
-    assign bram_rd_en   = direct_rd_issue_en | (|direct_rd_valid_pipe);
-    assign bram_rd_addr = direct_rd_issue_en
-                        ? {refill_fetch_addr[17:4], direct_rd_issue_word}
-                        : 16'd0;
+    // Precompute both address candidates. The registered FSM state performs
+    // the late selection; the tag-miss result only validates refill data.
+    wire [WORD_W-1:0] direct_start_word = CRITICAL_WORD_FIRST ? mem_word : '0;
+    wire [15:0] direct_start_addr_candidate = {mem_addr[17:4], direct_start_word};
+    wire [15:0] direct_stream_addr_candidate = {
+        refill_fetch_addr[17:4], direct_rd_issue_word
+    };
+
+    // Physical read enable is intentionally independent of direct_start_issue.
+    // Keep ENB active while valid responses remain in the BRAM/output-register
+    // pipeline; otherwise the final refill word never reaches doutb.
+    assign bram_rd_en   = direct_idle_spec_read
+                        | direct_stream_issue
+                        | (|direct_rd_valid_pipe);
+    assign bram_rd_addr = state_idle
+                        ? direct_start_addr_candidate
+                        : direct_stream_addr_candidate;
     assign bram_wr_addr = (DIRECT_BRAM & state_sb_drain_req) ? sb_head_addr[17:2] : 16'd0;
     assign bram_wea     = (DIRECT_BRAM & state_sb_drain_req) ? sb_head_wea : 4'd0;
     assign bram_wdata   = sb_head_data;
@@ -464,12 +485,18 @@ module dcache #(
             direct_rd_last_pipe  <= 2'b00;
             direct_rd_issue_count <= '0;
         end else if (DIRECT_BRAM) begin
-            direct_rd_valid_pipe <= {direct_rd_valid_pipe[0], direct_rd_issue_en};
-            direct_rd_last_pipe  <= {direct_rd_last_pipe[0], direct_rd_issue_last};
-            if (refill_start || flush)
+            if (flush) begin
+                direct_rd_valid_pipe <= 2'b00;
+                direct_rd_last_pipe  <= 2'b00;
                 direct_rd_issue_count <= '0;
-            else if (direct_rd_issue_en)
-                direct_rd_issue_count <= direct_rd_issue_count + 1'b1;
+            end else begin
+                direct_rd_valid_pipe <= {direct_rd_valid_pipe[0], direct_rd_issue_en};
+                direct_rd_last_pipe  <= {direct_rd_last_pipe[0], direct_rd_issue_last};
+                if (direct_start_issue)
+                    direct_rd_issue_count <= (WORD_W + 1)'(1);
+                else if (direct_stream_issue)
+                    direct_rd_issue_count <= direct_rd_issue_count + 1'b1;
+            end
         end else begin
             direct_rd_valid_pipe <= 2'b00;
             direct_rd_last_pipe  <= 2'b00;

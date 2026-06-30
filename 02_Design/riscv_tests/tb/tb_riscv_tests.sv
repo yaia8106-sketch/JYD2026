@@ -333,6 +333,7 @@ module tb_riscv_tests;
     integer stop_pc_enable = 0;
     integer stop_pc_hit = 0;
     integer miss_buffer_hit_count = 0;
+    integer refill_early_discarded_spec_reads = 0;
     reg [3:0] miss_buffer_pending_seen = 4'b0000;
     reg [31:0] pc_guard_min = 32'h8000_0000;
     reg [31:0] pc_guard_max = 32'h8000_4000;
@@ -353,6 +354,16 @@ module tb_riscv_tests;
     wire miss_buffer_coverage_failed = miss_buffer_directed_test
                                      & ((miss_buffer_pending_seen != 4'b1111)
                                         | (miss_buffer_hit_count < 4));
+    wire refill_early_directed_test = (test_name_r == "dcache_refill_early");
+    wire refill_early_coverage_failed = refill_early_directed_test
+                                      & ((u_perf.cnt_dc_primary_refill_starts != 4)
+                                         | (u_perf.cnt_dc_primary_refill_completes != 4)
+                                         | (u_perf.cnt_dc_primary_refill_aborts != 0)
+                                         | (u_perf.cnt_dc_primary_refill_lat1 != 0)
+                                         | (u_perf.cnt_dc_primary_refill_lat2 != 4)
+                                         | (u_perf.cnt_dc_primary_refill_lat3 != 0)
+                                         | (u_perf.cnt_dc_primary_refill_lat4plus != 0)
+                                         | (refill_early_discarded_spec_reads < 2));
 
     initial begin
         // ---- Parse plusargs ----
@@ -469,6 +480,17 @@ module tb_riscv_tests;
                     $display("[FAIL] %0s  miss-buffer coverage incomplete hits=%0d pending_seen=%04b",
                              test_name_r, miss_buffer_hit_count,
                              miss_buffer_pending_seen);
+                end else if (refill_early_coverage_failed) begin
+                    $display("[FAIL] %0s  early-refill coverage mismatch starts=%0d completes=%0d aborts=%0d lat1=%0d lat2=%0d lat3=%0d lat4plus=%0d discarded_spec=%0d",
+                             test_name_r,
+                             u_perf.cnt_dc_primary_refill_starts,
+                             u_perf.cnt_dc_primary_refill_completes,
+                             u_perf.cnt_dc_primary_refill_aborts,
+                             u_perf.cnt_dc_primary_refill_lat1,
+                             u_perf.cnt_dc_primary_refill_lat2,
+                             u_perf.cnt_dc_primary_refill_lat3,
+                             u_perf.cnt_dc_primary_refill_lat4plus,
+                             refill_early_discarded_spec_reads);
                 end else begin
                     $display("[PASS] %0s  commits=%0d first_led=0x%08x last_led=0x%08x led_writes=%0d pc=0x%08x last_wb0_pc=0x%08x last_wb1_pc=0x%08x  (%0d cycles)",
                              test_name_r, commit_cnt, tohost_value,
@@ -526,6 +548,7 @@ module tb_riscv_tests;
         if (!rst_n) begin
             miss_buffer_hit_count <= 0;
             miss_buffer_pending_seen <= 4'b0000;
+            refill_early_discarded_spec_reads <= 0;
         end else if (u_dcache.miss_buffer_hit) begin
             miss_buffer_hit_count <= miss_buffer_hit_count + 1;
             case (u_dcache.sb_pending_q)
@@ -536,6 +559,11 @@ module tb_riscv_tests;
                 default: ;
             endcase
         end
+
+        if (rst_n && u_dcache.direct_idle_spec_read
+                  && !u_dcache.direct_start_issue)
+            refill_early_discarded_spec_reads
+                <= refill_early_discarded_spec_reads + 1;
     end
 
     always @(posedge clk) begin

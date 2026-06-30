@@ -105,6 +105,16 @@ module perf_monitor (
     longint unsigned cnt_dc_sb_conflicts;
     longint unsigned cnt_dc_store_forward_hits;
     longint unsigned cnt_dc_miss_buffer_hits;
+    longint unsigned cnt_dc_primary_refill_starts;
+    longint unsigned cnt_dc_primary_refill_completes;
+    longint unsigned cnt_dc_primary_refill_aborts;
+    longint unsigned cnt_dc_primary_refill_stall_cycles;
+    longint unsigned cnt_dc_primary_refill_lat1;
+    longint unsigned cnt_dc_primary_refill_lat2;
+    longint unsigned cnt_dc_primary_refill_lat3;
+    longint unsigned cnt_dc_primary_refill_lat4plus;
+    logic            dc_primary_refill_waiting;
+    logic [15:0]     dc_primary_refill_latency;
 
     // -- RAW stall readiness breakdown --
     longint unsigned cnt_raw_id_stall;
@@ -501,6 +511,9 @@ module perf_monitor (
                                 & (tb_riscv_tests.u_dcache.store_fwd_hit_w0
                                  | tb_riscv_tests.u_dcache.store_fwd_hit_w1);
     wire dc_miss_buffer_hit_w = tb_riscv_tests.u_dcache.miss_buffer_hit;
+    wire dc_primary_refill_start_w = tb_riscv_tests.u_dcache.idle_refill_start;
+    wire dc_primary_refill_ready_w = tb_riscv_tests.u_dcache.refill_cpu_ready;
+    wire dc_primary_refill_cancel_w = tb_riscv_tests.u_dcache.refill_cancel;
 
     wire lsu_s0_load_done = mem_valid & mem_ready_go_w & mem_mem_read_w;
     wire lsu_s0_store_done = mem_valid & mem_ready_go_w & (|mem_store_wea_w);
@@ -749,6 +762,16 @@ module perf_monitor (
             cnt_dc_sb_conflicts <= 0;
             cnt_dc_store_forward_hits <= 0;
             cnt_dc_miss_buffer_hits <= 0;
+            cnt_dc_primary_refill_starts <= 0;
+            cnt_dc_primary_refill_completes <= 0;
+            cnt_dc_primary_refill_aborts <= 0;
+            cnt_dc_primary_refill_stall_cycles <= 0;
+            cnt_dc_primary_refill_lat1 <= 0;
+            cnt_dc_primary_refill_lat2 <= 0;
+            cnt_dc_primary_refill_lat3 <= 0;
+            cnt_dc_primary_refill_lat4plus <= 0;
+            dc_primary_refill_waiting <= 1'b0;
+            dc_primary_refill_latency <= 16'd0;
             cnt_raw_id_stall   <= 0;
             cnt_raw_not_ready_total <= 0;
             cnt_raw_not_ready_ex_load <= 0;
@@ -1006,6 +1029,36 @@ module perf_monitor (
             if (dc_store_forward_hit_w)            cnt_dc_store_forward_hits <= cnt_dc_store_forward_hits + 1;
             if (dc_miss_buffer_hit_w)               cnt_dc_miss_buffer_hits <= cnt_dc_miss_buffer_hits + 1;
 
+            // Measure only the initiating load's cpu_ready=0 cycles. Remaining
+            // line-fill activity and younger memory requests are excluded.
+            if (dc_primary_refill_start_w) begin
+                cnt_dc_primary_refill_starts <= cnt_dc_primary_refill_starts + 1;
+                dc_primary_refill_waiting <= 1'b1;
+                dc_primary_refill_latency <= 16'd1;
+            end else if (dc_primary_refill_waiting) begin
+                if (dc_primary_refill_ready_w) begin
+                    cnt_dc_primary_refill_completes <= cnt_dc_primary_refill_completes + 1;
+                    cnt_dc_primary_refill_stall_cycles
+                        <= cnt_dc_primary_refill_stall_cycles
+                         + dc_primary_refill_latency;
+                    case (dc_primary_refill_latency)
+                        16'd1: cnt_dc_primary_refill_lat1 <= cnt_dc_primary_refill_lat1 + 1;
+                        16'd2: cnt_dc_primary_refill_lat2 <= cnt_dc_primary_refill_lat2 + 1;
+                        16'd3: cnt_dc_primary_refill_lat3 <= cnt_dc_primary_refill_lat3 + 1;
+                        default:
+                            cnt_dc_primary_refill_lat4plus <= cnt_dc_primary_refill_lat4plus + 1;
+                    endcase
+                    dc_primary_refill_waiting <= 1'b0;
+                    dc_primary_refill_latency <= 16'd0;
+                end else if (dc_primary_refill_cancel_w) begin
+                    cnt_dc_primary_refill_aborts <= cnt_dc_primary_refill_aborts + 1;
+                    dc_primary_refill_waiting <= 1'b0;
+                    dc_primary_refill_latency <= 16'd0;
+                end else begin
+                    dc_primary_refill_latency <= dc_primary_refill_latency + 1'b1;
+                end
+            end
+
             if (raw_id_stall_event) cnt_raw_id_stall <= cnt_raw_id_stall + 1;
             if (raw_nr_ex_load_event | raw_nr_mem_load_wait_event | raw_nr_muldiv_event)
                 cnt_raw_not_ready_total <= cnt_raw_not_ready_total + 1;
@@ -1220,6 +1273,7 @@ module perf_monitor (
         longint unsigned other_breakdown_total;
         longint signed other_breakdown_mismatch;
         real cpi, dual_rate, mispredict_rate, dc_hit_rate, dc_miss_rate;
+        real dc_primary_refill_avg;
         real fe_fq_avg, fe_ftq_avg;
         begin
             total_insts = cnt_s0_commit + cnt_s1_commit;
@@ -1274,6 +1328,13 @@ module perf_monitor (
                 dc_hit_rate = 0.0;
                 dc_miss_rate = 0.0;
             end
+
+            if (cnt_dc_primary_refill_completes > 0)
+                dc_primary_refill_avg =
+                    1.0 * cnt_dc_primary_refill_stall_cycles
+                        / cnt_dc_primary_refill_completes;
+            else
+                dc_primary_refill_avg = 0.0;
 
             if (cnt_cycles > 0) begin
                 fe_fq_avg = 1.0 * cnt_fe_fq_occupancy_sum / cnt_cycles;
@@ -1365,6 +1426,16 @@ module perf_monitor (
                      cnt_dc_miss, cnt_dc_load_miss, cnt_dc_store_miss, dc_miss_rate);
             $display("[PERF]  Refill cycles: %0d words=%0d aborts=%0d",
                      cnt_dc_refill_cycles, cnt_dc_refill_words, cnt_dc_refill_aborts);
+            $display("[PERF]  Primary refill: starts=%0d completes=%0d aborts=%0d stall=%0d avg=%0.3f lat1=%0d lat2=%0d lat3=%0d lat4plus=%0d",
+                     cnt_dc_primary_refill_starts,
+                     cnt_dc_primary_refill_completes,
+                     cnt_dc_primary_refill_aborts,
+                     cnt_dc_primary_refill_stall_cycles,
+                     dc_primary_refill_avg,
+                     cnt_dc_primary_refill_lat1,
+                     cnt_dc_primary_refill_lat2,
+                     cnt_dc_primary_refill_lat3,
+                     cnt_dc_primary_refill_lat4plus);
             $display("[PERF]  Store buffer:  enq=%0d drain=%0d block=%0d conflict=%0d fwd=%0d missbuf=%0d",
                      cnt_dc_sb_enqueue, cnt_dc_sb_drain, cnt_dc_sb_block_cycles,
                      cnt_dc_sb_conflicts, cnt_dc_store_forward_hits,

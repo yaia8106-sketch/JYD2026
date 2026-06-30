@@ -154,6 +154,15 @@ VCS integration 覆盖计数为
 | 6 | 同 word 的 SW 后接 SB | 两项并行匹配、年轻 store 覆盖年老 store |
 | 7 | 两项 pending 后第三个 store 到达 | 最老项先排空、槽位安全复用、另一 pending 项不丢失 |
 
+### `dcache_refill_early`
+
+| # | 场景 | 覆盖内容 |
+|:-:|------|----------|
+| 1 | 四个冷 cache line 分别读取 word0/1/2/3 | DIRECT_BRAM miss 检测周期发出 beat0、Critical Word First 地址回绕 |
+| 2 | testbench 检查四次 primary refill latency | 每次原始 load 必须恰好 stall 2 周期，不能退回原来的 3 周期 |
+| 3 | cache hit 后立即 cold miss | hit 的投机 BRAM 读不生成 refill token，后续 miss 响应不错位 |
+| 4 | recent-store 完整覆盖后立即 cold miss | miss-buffer hit 丢弃投机 BRAM 数据，后续 refill 仍返回正确 critical word |
+
 ### `functional/special/run_student_top_axi.sh`
 
 该脚本不是 `functional/run_all.sh` 默认回归的一部分，而是处理器侧 AXI master 集成 smoke：
@@ -306,6 +315,7 @@ correction 实验，应使用新命名、新测试和新文档，不复用已删
 | `dcache_dual` | DCache miss/refill 期间的双发射保持、miss 后前递、store miss WNA 与 load refill 合并 |
 | `dcache_wna_edge` | WT+WNA store miss 的 byte/half/word refill 合并、非目标 word 不污染、2-entry SB 满时 drain/retry 和年轻 store 覆盖 |
 | `dcache_miss_buffer` | 最近两次 store 的 pending/已排空查询、完整覆盖直返、部分覆盖 refill 和交替槽位复用 |
+| `dcache_refill_early` | DIRECT_BRAM 首拍提前、四种 critical word 偏移和 primary refill 两周期 latency |
 | `bp_dual` | 误预测 flush 与双发循环、嵌套循环、JAL 返回点双发、背靠背分支组合 |
 | `sb_stress` | store buffer 冲突 stall、连续 store 覆盖写、store 与双发 ALU 交错 |
 | `ras_overflow` | RAS 容量内调用、超出容量后的返回修正，以及恢复后的再次调用 |

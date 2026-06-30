@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 FULL_RUN_REASONS = {"stop_pc", "tohost_pass"}
 OK_FULL_STATUSES = {"PASS", "DONE"}
 
@@ -109,6 +109,15 @@ SUMMARY_COLUMNS = [
     "dc_refill_cycles",
     "dc_refill_words",
     "dc_refill_aborts",
+    "dc_primary_refill_starts",
+    "dc_primary_refill_completes",
+    "dc_primary_refill_aborts",
+    "dc_primary_refill_stall_cycles",
+    "dc_primary_refill_avg",
+    "dc_primary_refill_lat1",
+    "dc_primary_refill_lat2",
+    "dc_primary_refill_lat3",
+    "dc_primary_refill_lat4plus",
     "dc_sb_enqueues",
     "dc_sb_drains",
     "dc_sb_block_cycles",
@@ -237,6 +246,15 @@ COMPARE_METRICS = [
     "dc_misses",
     "dc_hit_rate_pct",
     "dc_refill_cycles",
+    "dc_primary_refill_starts",
+    "dc_primary_refill_completes",
+    "dc_primary_refill_aborts",
+    "dc_primary_refill_stall_cycles",
+    "dc_primary_refill_avg",
+    "dc_primary_refill_lat1",
+    "dc_primary_refill_lat2",
+    "dc_primary_refill_lat3",
+    "dc_primary_refill_lat4plus",
     "dc_sb_block_cycles",
     "dc_sb_conflicts",
     "mispredicts",
@@ -529,6 +547,24 @@ def parse_perf_payload(payload: str, metrics: dict[str, Any]) -> None:
         metrics["dc_refill_cycles"] = int(match.group(1))
         metrics["dc_refill_words"] = int(match.group(2))
         metrics["dc_refill_aborts"] = int(match.group(3))
+        return
+
+    match = re.search(
+        r"^Primary refill:\s+starts=(\d+)\s+completes=(\d+)\s+aborts=(\d+)"
+        r"\s+stall=(\d+)\s+avg=([0-9.]+)\s+lat1=(\d+)\s+lat2=(\d+)"
+        r"\s+lat3=(\d+)\s+lat4plus=(\d+)",
+        payload,
+    )
+    if match:
+        metrics["dc_primary_refill_starts"] = int(match.group(1))
+        metrics["dc_primary_refill_completes"] = int(match.group(2))
+        metrics["dc_primary_refill_aborts"] = int(match.group(3))
+        metrics["dc_primary_refill_stall_cycles"] = int(match.group(4))
+        metrics["dc_primary_refill_avg"] = float(match.group(5))
+        metrics["dc_primary_refill_lat1"] = int(match.group(6))
+        metrics["dc_primary_refill_lat2"] = int(match.group(7))
+        metrics["dc_primary_refill_lat3"] = int(match.group(8))
+        metrics["dc_primary_refill_lat4plus"] = int(match.group(9))
         return
 
     if payload.startswith("Store buffer:"):
