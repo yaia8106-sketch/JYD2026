@@ -31,7 +31,7 @@ if ! command -v vcs >/dev/null 2>&1; then
 fi
 
 RTL_FILES="
-    $RTL_DIR/core/frontend_abtb.sv
+    $RTL_DIR/core/frontend/frontend_abtb.sv
     $RISCV_TESTS_DIR/tb/tb_frontend_abtb.sv
 "
 

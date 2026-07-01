@@ -153,14 +153,29 @@ set_property PACKAGE_PIN AK26 [get_ports {virtual_seg[30]}]
 set_property IOSTANDARD LVCMOS18 [get_ports {virtual_seg[30]}]
 
 # ============================================================
-# CPU timing: MAX_FANOUT to enable register duplication for
-# high-fanout memory/cache control and payload signals.
+# CPU timing: targeted fanout control.
+# Keep these queries aligned with the post-synthesis hierarchy. Guard every
+# query so an RTL rename cannot turn a stale QoR hint into an XDC error.
 # ============================================================
-set_property MAX_FANOUT 24 [get_cells {student_top_inst/u_cpu/u_ex_mem_reg/mem_alu_result_reg[*]}]
-set_property MAX_FANOUT 24 [get_cells {student_top_inst/u_cpu/u_ex_mem_reg/mem_store_data_reg[*]}]
-set_property MAX_FANOUT 24 [get_cells {student_top_inst/u_cpu/u_ex_mem_reg/mem_store_wea_reg[*]}]
-set_property MAX_FANOUT 16 [get_cells {student_top_inst/u_cpu/u_ex_mem_reg/mem_branch_flush_reg}]
-set_property MAX_FANOUT 16 [get_cells {student_top_inst/u_cpu/u_ex_mem_reg/mem_valid_reg}]
+set ex_mem_redirect_valid_cells [get_cells -quiet {student_top_inst/u_cpu/u_ex_mem_reg/mem_redirect_reg[valid]}]
+if {[llength $ex_mem_redirect_valid_cells]} {
+    set_property MAX_FANOUT 16 $ex_mem_redirect_valid_cells
+}
+
+set ex_mem_valid_cells [get_cells -quiet {student_top_inst/u_cpu/u_ex_mem_reg/mem_valid_reg}]
+if {[llength $ex_mem_valid_cells]} {
+    set_property MAX_FANOUT 16 $ex_mem_valid_cells
+}
+
+set id_flush_nets [get_nets -quiet {student_top_inst/u_cpu/id_flush}]
+if {[llength $id_flush_nets]} {
+    set_property FORCE_MAX_FANOUT 32 $id_flush_nets
+}
+
+set dcache_store_buffer_valid_nets [get_nets -quiet {student_top_inst/u_dcache/u_store_buffer/mem_valid_reg}]
+if {[llength $dcache_store_buffer_valid_nets]} {
+    set_property FORCE_MAX_FANOUT 64 $dcache_store_buffer_valid_nets
+}
 
 # ============================================================
 # CPU timing: Pblock — 2 VERTICAL clock regions (same column)

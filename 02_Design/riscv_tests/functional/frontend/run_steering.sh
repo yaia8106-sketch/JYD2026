@@ -30,34 +30,7 @@ if ! command -v vcs >/dev/null 2>&1; then
 fi
 
 RTL_FILES="
-    $RTL_DIR/common/cpu_defs.sv
-    $RTL_DIR/core/if_id_reg.sv
-    $RTL_DIR/core/decoder.sv
-    $RTL_DIR/core/imm_gen.sv
-    $RTL_DIR/core/regfile.sv
-    $RTL_DIR/core/forwarding.sv
-    $RTL_DIR/core/alu_src_mux.sv
-    $RTL_DIR/core/id_ex_reg.sv
-    $RTL_DIR/core/id_ex_reg_s1.sv
-    $RTL_DIR/core/alu.sv
-    $RTL_DIR/core/branch_condition.sv
-    $RTL_DIR/core/id_stage_derive.sv
-    $RTL_DIR/core/ex_stage_ctrl.sv
-    $RTL_DIR/core/branch_unit.sv
-    $RTL_DIR/core/frontend_stage1_direction.sv
-    $RTL_DIR/core/frontend_abtb.sv
-    $RTL_DIR/core/frontend_ftq.sv
-    $RTL_DIR/core/mem_interface.sv
-    $RTL_DIR/core/redirect_ctrl.sv
-    $RTL_DIR/core/csr_trap_unit.sv
-    $RTL_DIR/core/memory_access_unit.sv
-    $RTL_DIR/core/muldiv_unit.sv
-    $RTL_DIR/core/dual_issue_counter.sv
-    $RTL_DIR/core/ex_mem_reg.sv
-    $RTL_DIR/core/ex_mem_reg_s1.sv
-    $RTL_DIR/core/mem_wb_reg.sv
-    $RTL_DIR/core/mem_wb_reg_s1.sv
-    $RTL_DIR/core/wb_mux.sv
+    -F $RTL_DIR/filelists/cpu_blocks.f
     $RTL_DIR/core/cpu_top.sv
     $RISCV_TESTS_DIR/tb/tb_frontend_abtb_steering.sv
 "

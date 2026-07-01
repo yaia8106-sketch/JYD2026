@@ -27,7 +27,14 @@ if ! vcs $VCS_OPTS $VCS_EXTRA_OPTS \
     -Mdir="$WORK_DIR/frontend_ftq_canonical_vcs.csrc" \
     -o "$SIM_BIN" \
     "$RTL_DIR/common/cpu_defs.sv" \
-    "$RTL_DIR/core/frontend_ftq.sv" \
+    "$RTL_DIR/core/frontend/frontend_predecode.sv" \
+    "$RTL_DIR/core/frontend/frontend_f0_packet_builder.sv" \
+    "$RTL_DIR/core/frontend/frontend_pair_policy.sv" \
+    "$RTL_DIR/core/frontend/frontend_stage1_steer_ctrl.sv" \
+    "$RTL_DIR/core/frontend/frontend_fetch_state.sv" \
+    "$RTL_DIR/core/frontend/frontend_fetch_queue.sv" \
+    "$RTL_DIR/core/frontend/frontend_abtb_sidecar.sv" \
+    "$RTL_DIR/core/frontend/frontend_ftq.sv" \
     "$RISCV_TESTS_DIR/tb/tb_frontend_ftq_canonical.sv" \
     "$VCS_SHIM" >"$COMPILE_LOG" 2>&1; then
     head -160 "$COMPILE_LOG"

@@ -29,7 +29,7 @@ fi
 if ! vcs $VCS_OPTS -top tb_frontend_stage1_direction \
     -Mdir="$WORK_DIR/frontend_stage1_direction_vcs.csrc" \
     -o "$SIM_BIN" \
-    "$RTL_DIR/core/frontend_stage1_direction.sv" \
+    "$RTL_DIR/core/frontend/frontend_stage1_direction.sv" \
     "$RISCV_TESTS_DIR/tb/tb_frontend_stage1_direction.sv" \
     "$VCS_SHIM" >"$COMPILE_LOG" 2>&1; then
     head -120 "$COMPILE_LOG"

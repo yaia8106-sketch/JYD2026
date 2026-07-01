@@ -16,26 +16,27 @@ module tb_frontend_ftq_pair;
 
     logic if_valid;
     logic if_ready_go;
-    logic [31:0] if_pc;
-    logic [31:0] if_inst0;
-    logic [31:0] if_inst1;
     logic if_s1_valid;
-    logic if_pred_taken;
-    logic [31:0] if_pred_target;
-    logic if_s1_pred_taken;
-    logic [31:0] if_s1_pred_target;
-    logic if_abtb_hit;
-    logic if_abtb_way;
-    logic [1:0] if_abtb_cfi_type;
-    logic [31:0] if_abtb_target;
-    logic if_abtb_pred_taken;
-    logic [31:0] if_abtb_pred_target;
-    logic if_s1_abtb_hit;
-    logic if_s1_abtb_way;
-    logic [1:0] if_s1_abtb_cfi_type;
-    logic [31:0] if_s1_abtb_target;
-    logic if_s1_abtb_pred_taken;
-    logic [31:0] if_s1_abtb_pred_target;
+    wire if_id_payload_t if_payload;
+    wire [31:0] if_pc = if_payload.pc;
+    wire [31:0] if_inst0 = if_payload.slot0.inst;
+    wire [31:0] if_inst1 = if_payload.slot1.inst;
+    wire if_pred_taken = if_payload.slot0.prediction.taken;
+    wire [31:0] if_pred_target = if_payload.slot0.prediction.target;
+    wire if_s1_pred_taken = if_payload.slot1.prediction.taken;
+    wire [31:0] if_s1_pred_target = if_payload.slot1.prediction.target;
+    wire if_abtb_hit = if_payload.slot0.prediction.abtb_hit;
+    wire if_abtb_way = if_payload.slot0.prediction.abtb_way;
+    wire [1:0] if_abtb_cfi_type = if_payload.slot0.prediction.abtb_cfi_type;
+    wire [31:0] if_abtb_target = if_payload.slot0.prediction.abtb_target;
+    wire if_abtb_pred_taken = if_payload.slot0.prediction.abtb_pred_taken;
+    wire [31:0] if_abtb_pred_target = if_payload.slot0.prediction.abtb_pred_target;
+    wire if_s1_abtb_hit = if_payload.slot1.prediction.abtb_hit;
+    wire if_s1_abtb_way = if_payload.slot1.prediction.abtb_way;
+    wire [1:0] if_s1_abtb_cfi_type = if_payload.slot1.prediction.abtb_cfi_type;
+    wire [31:0] if_s1_abtb_target = if_payload.slot1.prediction.abtb_target;
+    wire if_s1_abtb_pred_taken = if_payload.slot1.prediction.abtb_pred_taken;
+    wire [31:0] if_s1_abtb_pred_target = if_payload.slot1.prediction.abtb_pred_target;
     logic [31:0] current_pc;
     logic abtb_lookup_accept;
     logic can_dual_issue;
@@ -81,34 +82,8 @@ module tb_frontend_ftq_pair;
         .stage1_bank1_pht_counter(2'b01),
         .if_valid(if_valid),
         .if_ready_go(if_ready_go),
-        .if_pc(if_pc),
-        .if_inst0(if_inst0),
-        .if_inst1(if_inst1),
         .if_s1_valid(if_s1_valid),
-        .if_pred_taken(if_pred_taken),
-        .if_pred_target(if_pred_target),
-        .if_pred_source_abtb(),
-        .if_stage1_branch_owned(),
-        .if_s1_pred_taken(if_s1_pred_taken),
-        .if_s1_pred_target(if_s1_pred_target),
-        .if_s1_pred_source_abtb(),
-        .if_s1_stage1_branch_owned(),
-        .if_abtb_hit(if_abtb_hit),
-        .if_abtb_way(if_abtb_way),
-        .if_abtb_cfi_type(if_abtb_cfi_type),
-        .if_abtb_target(if_abtb_target),
-        .if_abtb_pred_taken(if_abtb_pred_taken),
-        .if_abtb_pred_target(if_abtb_pred_target),
-        .if_s1_abtb_hit(if_s1_abtb_hit),
-        .if_s1_abtb_way(if_s1_abtb_way),
-        .if_s1_abtb_cfi_type(if_s1_abtb_cfi_type),
-        .if_s1_abtb_target(if_s1_abtb_target),
-        .if_s1_abtb_pred_taken(if_s1_abtb_pred_taken),
-        .if_s1_abtb_pred_target(if_s1_abtb_pred_target),
-        .if_stage1_pht_index(),
-        .if_stage1_pht_counter(),
-        .if_s1_stage1_pht_index(),
-        .if_s1_stage1_pht_counter(),
+        .if_payload(if_payload),
         .current_pc(current_pc),
         .abtb_lookup_accept(abtb_lookup_accept),
         .can_dual_issue(can_dual_issue),

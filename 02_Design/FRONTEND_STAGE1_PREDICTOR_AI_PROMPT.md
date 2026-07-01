@@ -5,12 +5,12 @@
 You are working on the stage-1 frontend predictor of the CPU in this repository.
 Read the existing RTL before editing, especially:
 
-- `02_Design/rtl/core/frontend_ftq.sv`
-- `02_Design/rtl/core/frontend_abtb.sv`
-- `02_Design/rtl/core/frontend_stage1_direction.sv`
+- `02_Design/rtl/core/frontend/frontend_ftq.sv`
+- `02_Design/rtl/core/frontend/frontend_abtb.sv`
+- `02_Design/rtl/core/frontend/frontend_stage1_direction.sv`
 - `02_Design/rtl/core/cpu_top.sv`
-- `02_Design/rtl/core/id_stage_derive.sv`
-- `02_Design/rtl/core/redirect_ctrl.sv`
+- `02_Design/rtl/core/decode/id_stage_derive.sv`
+- `02_Design/rtl/core/control/redirect_ctrl.sv`
 
 The XiangShan frontend under `reference_cores/XiangShan` is an architectural
 reference, not code to copy directly. The target is a much smaller FPGA-friendly

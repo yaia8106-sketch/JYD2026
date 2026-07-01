@@ -12,7 +12,8 @@ module tb_frontend_abtb_integration;
     localparam logic [1:0]  TYPE_CALL   = 2'b01;
     localparam logic [1:0]  TYPE_BRANCH = 2'b10;
     localparam logic [1:0]  TYPE_RET    = 2'b11;
-    localparam integer      FQ_DEPTH    = 16;
+    localparam integer      FQ_DEPTH    = 8;
+    localparam integer      FQ_PTR_W    = $clog2(FQ_DEPTH);
     localparam integer      FQ_ROWS     = FQ_DEPTH / 2;
     localparam integer      JAL_INDEX          = 32;
     localparam integer      CALL_BLOCK_INDEX   = 48;
@@ -91,7 +92,7 @@ module tb_frontend_abtb_integration;
     logic ref_ex_s1_way;
 
     logic sidecar_stall_active;
-    logic [3:0] sidecar_stall_head;
+    logic [FQ_PTR_W-1:0] sidecar_stall_head;
     logic [31:0] sidecar_stall_token;
     logic sidecar_stall_hit;
     logic sidecar_stall_way;
@@ -228,22 +229,32 @@ module tb_frontend_abtb_integration;
         end
     endtask
 
-    function automatic logic ref_hit_for_entry(input logic [3:0] entry);
-        ref_hit_for_entry = entry[0] ? ref_odd_hit[entry[3:1]]
-                                     : ref_even_hit[entry[3:1]];
+    function automatic logic ref_hit_for_entry(
+        input logic [FQ_PTR_W-1:0] entry
+    );
+        ref_hit_for_entry =
+            entry[0] ? ref_odd_hit[entry[FQ_PTR_W-1:1]]
+                     : ref_even_hit[entry[FQ_PTR_W-1:1]];
     endfunction
 
-    function automatic logic ref_way_for_entry(input logic [3:0] entry);
-        ref_way_for_entry = entry[0] ? ref_odd_way[entry[3:1]]
-                                     : ref_even_way[entry[3:1]];
+    function automatic logic ref_way_for_entry(
+        input logic [FQ_PTR_W-1:0] entry
+    );
+        ref_way_for_entry =
+            entry[0] ? ref_odd_way[entry[FQ_PTR_W-1:1]]
+                     : ref_even_way[entry[FQ_PTR_W-1:1]];
     endfunction
 
-    function automatic logic [3:0] ref_entry_next(input logic [3:0] entry);
-        ref_entry_next = entry + 4'd1;
+    function automatic logic [FQ_PTR_W-1:0] ref_entry_next(
+        input logic [FQ_PTR_W-1:0] entry
+    );
+        ref_entry_next = entry + 1'b1;
     endfunction
 
-    function automatic logic [2:0] ref_row_for_entry(input logic [3:0] entry);
-        ref_row_for_entry = entry[3:1];
+    function automatic logic [FQ_PTR_W-2:0] ref_row_for_entry(
+        input logic [FQ_PTR_W-1:0] entry
+    );
+        ref_row_for_entry = entry[FQ_PTR_W-1:1];
     endfunction
 
     function automatic logic ref_slot0_src_hit;
@@ -283,7 +294,7 @@ module tb_frontend_abtb_integration;
     endfunction
 
     task automatic ref_write_entry_payload(
-        input logic [3:0] entry,
+        input logic [FQ_PTR_W-1:0] entry,
         input logic       hit,
         input logic       way
     );
@@ -357,14 +368,14 @@ module tb_frontend_abtb_integration;
     endtask
 
     task automatic check_sidecar_write_edge;
-        logic [3:0] entry0;
-        logic [3:0] entry1;
+        logic [FQ_PTR_W-1:0] entry0;
+        logic [FQ_PTR_W-1:0] entry1;
         logic exp_even_write;
         logic exp_odd_write;
         logic exp_even_from_slot1;
         logic exp_odd_from_slot1;
-        logic [2:0] exp_even_row;
-        logic [2:0] exp_odd_row;
+        logic [FQ_PTR_W-2:0] exp_even_row;
+        logic [FQ_PTR_W-2:0] exp_odd_row;
         begin
             entry0 = dut.u_frontend_ftq.fq_tail;
             entry1 = ref_entry_next(entry0);
@@ -415,10 +426,10 @@ module tb_frontend_abtb_integration;
     endtask
 
     task automatic check_sidecar_read_addressing;
-        logic [3:0] entry0;
-        logic [3:0] entry1;
-        logic [2:0] exp_even_row;
-        logic [2:0] exp_odd_row;
+        logic [FQ_PTR_W-1:0] entry0;
+        logic [FQ_PTR_W-1:0] entry1;
+        logic [FQ_PTR_W-2:0] exp_even_row;
+        logic [FQ_PTR_W-2:0] exp_odd_row;
         begin
             entry0 = dut.u_frontend_ftq.fq_head;
             entry1 = ref_entry_next(entry0);
@@ -438,7 +449,7 @@ module tb_frontend_abtb_integration;
     endtask
 
     task automatic check_sidecar_entry(
-        input logic [3:0] entry,
+        input logic [FQ_PTR_W-1:0] entry,
         input logic rtl_hit,
         input logic rtl_way,
         input string slot_name
@@ -916,7 +927,7 @@ module tb_frontend_abtb_integration;
                 if (!dut.id_allowin || !dut.mem_allowin || !cache_ready)
                     slot1_sidecar_kill_stall_checks =
                         slot1_sidecar_kill_stall_checks + 1;
-                if (dut.u_frontend_ftq.fq_tail_p1 == 4'd0)
+                if (dut.u_frontend_ftq.fq_tail_p1 == '0)
                     slot1_sidecar_kill_wrap_checks =
                         slot1_sidecar_kill_wrap_checks + 1;
                 if (dut.u_frontend_ftq.f0_slot0_jal

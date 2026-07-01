@@ -15,7 +15,9 @@
 `define CPU_TOP_ABTB_OBSERVE
 `endif
 
-module cpu_top (
+module cpu_top
+    import cpu_defs::*;
+(
     input  logic        clk,
     input  logic        rst_n,
 
@@ -44,11 +46,6 @@ module cpu_top (
     input  logic        timer_irq_pending
 );
 
-    localparam logic [1:0] ABTB_TYPE_JAL    = 2'b00;
-    localparam logic [1:0] ABTB_TYPE_CALL   = 2'b01;
-    localparam logic [1:0] ABTB_TYPE_BRANCH = 2'b10;
-    localparam logic [1:0] ABTB_TYPE_RET    = 2'b11;
-
     // ================================================================
     //  Internal wires
     // ================================================================
@@ -68,26 +65,12 @@ module cpu_top (
     (* max_fanout = 16 *) wire        id_allowin;
     wire        id_ready_go;
     wire        id_ready_go_raw;
-    wire [31:0] id_pc;
-    wire [31:0] id_inst;           // registered instruction from IF/ID
-    wire [31:0] id_inst1;          // registered slot1 candidate instruction
+    wire cpu_defs::if_id_payload_t if_id_payload;
+    wire cpu_defs::if_id_payload_t id_payload;
+    wire [31:0] id_pc = id_payload.pc;
+    wire [31:0] id_inst = id_payload.slot0.inst;
+    wire [31:0] id_inst1 = id_payload.slot1.inst;
     wire        id_s1_valid;       // registered slot1 issue valid
-
-    // ---- IROM ----
-    wire [31:0] irom_inst0;        // Phase 0: low 32-bit instruction from 64-bit IROM data
-    wire [31:0] irom_inst1;        // Phase 1: high 32-bit instruction from 64-bit IROM data
-
-    // ---- Instruction buffer ----
-    wire [31:0] inst_buf;
-    wire [31:0] inst_buf_pc;
-    wire        inst_buf_valid;
-    wire        skip_inst0_valid;
-    wire        if_skip_inst0 = skip_inst0_valid;
-    wire        if_buf_before_window;
-    // Keep inst_buf_before_window out of the prediction lookup path.
-    // Buffered-slot prediction metadata is precomputed and stored beside
-    // inst_buf below.
-    wire [31:0] pred_pc_live = pc;
 
     // ---- Instruction hold register ----
     wire        irom_held_valid;
@@ -165,55 +148,68 @@ module cpu_top (
     // ---- ID/EX ----
     wire        ex_valid;
     wire        ex_allowin;
-    wire [31:0] ex_pc;
-    wire [31:0] ex_alu_src1, ex_alu_src2;   // pre-selected in ID
-    wire [31:0] ex_rs1_data, ex_rs2_data;   // raw, for branch/store
-    wire        ex_rs1_wb_repair;
-    wire        ex_rs2_wb_repair;
-    wire [ 4:0] ex_rd, ex_rs1_addr, ex_rs2_addr;
-    wire        ex_alu_src1_is_rs1, ex_alu_src2_is_rs2;
-    wire [ 3:0] ex_alu_op;
-    wire        ex_reg_write_en;
-    wire [ 1:0] ex_wb_sel;
-    wire        ex_mem_read_en;
-    wire        ex_mem_write_en;
-    wire [ 1:0] ex_mem_size;
-    wire        ex_mem_unsigned;
-    wire        ex_is_branch;
-    wire [ 2:0] ex_branch_cond;
-    wire        ex_is_jal;
-    wire        ex_is_jalr;
-    wire        ex_is_csr;
-    wire        ex_csr_uses_imm;
-    wire [ 2:0] ex_csr_cmd;
-    wire [11:0] ex_csr_addr;
-    wire        ex_is_ecall;
-    wire        ex_is_mret;
-    wire        ex_is_muldiv;
-    wire [ 2:0] ex_muldiv_op;
+    wire cpu_defs::id_ex_slot0_t id_ex_s0_payload;
+    wire cpu_defs::id_ex_slot0_t ex_s0_payload;
+    wire [31:0] ex_pc = ex_s0_payload.common.pc;
+    wire [31:0] ex_alu_src1 = ex_s0_payload.common.alu_src1;
+    wire [31:0] ex_alu_src2 = ex_s0_payload.common.alu_src2;
+    wire [31:0] ex_rs1_data = ex_s0_payload.common.rs1_data;
+    wire [31:0] ex_rs2_data = ex_s0_payload.common.rs2_data;
+    wire        ex_rs1_wb_repair = ex_s0_payload.common.rs1_wb_repair;
+    wire        ex_rs2_wb_repair = ex_s0_payload.common.rs2_wb_repair;
+    wire [ 4:0] ex_rd = ex_s0_payload.common.rd;
+    wire [ 4:0] ex_rs1_addr = ex_s0_payload.common.rs1_addr;
+    wire [ 4:0] ex_rs2_addr = ex_s0_payload.common.rs2_addr;
+    wire        ex_alu_src1_is_rs1 = ex_s0_payload.common.alu_src1_is_rs1;
+    wire        ex_alu_src2_is_rs2 = ex_s0_payload.common.alu_src2_is_rs2;
+    wire [ 3:0] ex_alu_op = ex_s0_payload.common.alu_op;
+    wire        ex_reg_write_en = ex_s0_payload.common.reg_write_en;
+    wire [ 1:0] ex_wb_sel = ex_s0_payload.common.wb_sel;
+    wire        ex_mem_read_en = ex_s0_payload.common.mem_read_en;
+    wire        ex_mem_write_en = ex_s0_payload.common.mem_write_en;
+    wire [ 1:0] ex_mem_size = ex_s0_payload.common.mem_size;
+    wire        ex_mem_unsigned = ex_s0_payload.common.mem_unsigned;
+    wire        ex_is_branch = ex_s0_payload.common.is_branch;
+    wire [ 2:0] ex_branch_cond = ex_s0_payload.common.branch_cond;
+    wire        ex_is_jal = ex_s0_payload.common.is_jal;
+    wire        ex_is_jalr = ex_s0_payload.common.is_jalr;
+    wire        ex_is_csr = ex_s0_payload.is_csr;
+    wire        ex_csr_uses_imm = ex_s0_payload.csr_uses_imm;
+    wire [ 2:0] ex_csr_cmd = ex_s0_payload.csr_cmd;
+    wire [11:0] ex_csr_addr = ex_s0_payload.csr_addr;
+    wire        ex_is_ecall = ex_s0_payload.is_ecall;
+    wire        ex_is_mret = ex_s0_payload.is_mret;
+    wire        ex_is_muldiv = ex_s0_payload.is_muldiv;
+    wire [ 2:0] ex_muldiv_op = ex_s0_payload.muldiv_op;
 
-    // ---- Slot 1 shadow pipeline (valid stays 0 in Phase 1) ----
+    // ---- Slot 1 ID/EX ----
     wire        ex_s1_valid;
-    wire [31:0] ex_s1_pc;
-    wire [31:0] ex_s1_inst;
-    wire [ 4:0] ex_s1_rd, ex_s1_rs1_addr, ex_s1_rs2_addr;
-    wire [ 3:0] ex_s1_alu_op;
-    wire        ex_s1_reg_write_en;
-    wire [ 1:0] ex_s1_wb_sel;
-    wire        ex_s1_mem_read_en;
-    wire        ex_s1_mem_write_en;
-    wire [ 1:0] ex_s1_mem_size;
-    wire        ex_s1_mem_unsigned;
-    wire        ex_s1_is_branch;
-    wire [ 2:0] ex_s1_branch_cond;
-    wire        ex_s1_is_jal;
-    wire        ex_s1_is_jalr;
-    wire [31:0] ex_s1_alu_src1, ex_s1_alu_src2;
-    wire [31:0] ex_s1_rs1_data, ex_s1_rs2_data;
-    wire        ex_s1_rs1_wb_repair;
-    wire        ex_s1_rs2_wb_repair;
-    wire        ex_s1_alu_src1_is_rs1;
-    wire        ex_s1_alu_src2_is_rs2;
+    wire cpu_defs::id_ex_slot1_t id_ex_s1_payload;
+    wire cpu_defs::id_ex_slot1_t ex_s1_payload;
+    wire [31:0] ex_s1_pc = ex_s1_payload.common.pc;
+    wire [31:0] ex_s1_inst = ex_s1_payload.inst;
+    wire [ 4:0] ex_s1_rd = ex_s1_payload.common.rd;
+    wire [ 4:0] ex_s1_rs1_addr = ex_s1_payload.common.rs1_addr;
+    wire [ 4:0] ex_s1_rs2_addr = ex_s1_payload.common.rs2_addr;
+    wire [ 3:0] ex_s1_alu_op = ex_s1_payload.common.alu_op;
+    wire        ex_s1_reg_write_en = ex_s1_payload.common.reg_write_en;
+    wire [ 1:0] ex_s1_wb_sel = ex_s1_payload.common.wb_sel;
+    wire        ex_s1_mem_read_en = ex_s1_payload.common.mem_read_en;
+    wire        ex_s1_mem_write_en = ex_s1_payload.common.mem_write_en;
+    wire [ 1:0] ex_s1_mem_size = ex_s1_payload.common.mem_size;
+    wire        ex_s1_mem_unsigned = ex_s1_payload.common.mem_unsigned;
+    wire        ex_s1_is_branch = ex_s1_payload.common.is_branch;
+    wire [ 2:0] ex_s1_branch_cond = ex_s1_payload.common.branch_cond;
+    wire        ex_s1_is_jal = ex_s1_payload.common.is_jal;
+    wire        ex_s1_is_jalr = ex_s1_payload.common.is_jalr;
+    wire [31:0] ex_s1_alu_src1 = ex_s1_payload.common.alu_src1;
+    wire [31:0] ex_s1_alu_src2 = ex_s1_payload.common.alu_src2;
+    wire [31:0] ex_s1_rs1_data = ex_s1_payload.common.rs1_data;
+    wire [31:0] ex_s1_rs2_data = ex_s1_payload.common.rs2_data;
+    wire        ex_s1_rs1_wb_repair = ex_s1_payload.common.rs1_wb_repair;
+    wire        ex_s1_rs2_wb_repair = ex_s1_payload.common.rs2_wb_repair;
+    wire        ex_s1_alu_src1_is_rs1 = ex_s1_payload.common.alu_src1_is_rs1;
+    wire        ex_s1_alu_src2_is_rs2 = ex_s1_payload.common.alu_src2_is_rs2;
 
     // ---- ALU ----
     wire [31:0] alu_result;
@@ -248,7 +244,7 @@ module cpu_top (
     wire        timer_irq_request;
     wire        timer_irq_redirect;
     wire [31:0] timer_irq_target;
-    logic       timer_irq_hold;
+    wire        timer_irq_hold;
     wire        timer_irq_pipe_empty;
     wire        timer_irq_take;
     wire        ex_fast_redirect;
@@ -259,8 +255,10 @@ module cpu_top (
     assign ex_branch_registered_flush = branch_flush & ex_redirect_fire & ~ex_system_inst;
 
     // ---- Registered branch flush (MEM stage, for 250MHz timing) ----
-    wire        mem_branch_flush;      // branch_flush delayed 1 cycle (from EX/MEM reg)
-    wire [31:0] mem_branch_target;     // branch_target delayed 1 cycle (from EX/MEM reg)
+    wire cpu_defs::redirect_t ex_mem_redirect;
+    wire cpu_defs::redirect_t mem_redirect;
+    wire        mem_branch_flush = mem_redirect.valid;
+    wire [31:0] mem_branch_target = mem_redirect.target;
     wire        mem_branch_replay;
     wire        frontend_branch_flush;
     wire [31:0] frontend_branch_target;
@@ -285,34 +283,39 @@ module cpu_top (
     // ---- EX/MEM ----
     wire        mem_valid;
     wire        mem_allowin;
-    wire [31:0] mem_alu_result;
-    wire [31:0] mem_pc;
-    wire [31:0] mem_pc_plus_4;
-    wire [ 4:0] mem_rd;
-    wire        mem_reg_write_en;
-    wire [ 1:0] mem_wb_sel;
-    wire        mem_mem_read_en;
-    wire [ 1:0] mem_mem_size;
-    wire        mem_mem_unsigned;
-    wire [ 3:0] mem_store_wea;         // FIX-C: registered store WEA
-    wire [31:0] mem_store_data;        // FIX-C: registered store data
+    wire cpu_defs::ex_mem_slot0_t ex_mem_s0_payload;
+    wire cpu_defs::ex_mem_slot0_t mem_s0_payload;
+    wire [31:0] mem_alu_result = mem_s0_payload.alu_result;
+    wire [31:0] mem_pc = mem_s0_payload.pc;
+    wire [31:0] mem_pc_plus_4 = mem_s0_payload.pc_plus_4;
+    wire [ 4:0] mem_rd = mem_s0_payload.rd;
+    wire        mem_reg_write_en = mem_s0_payload.reg_write_en;
+    wire [ 1:0] mem_wb_sel = mem_s0_payload.wb_sel;
+    wire        mem_mem_read_en = mem_s0_payload.mem_read_en;
+    wire [ 1:0] mem_mem_size = mem_s0_payload.mem_size;
+    wire        mem_mem_unsigned = mem_s0_payload.mem_unsigned;
+    wire [ 3:0] mem_store_wea = mem_s0_payload.store_wea;
+    wire [31:0] mem_store_data = mem_s0_payload.store_data;
+    wire        is_cacheable_mem = mem_s0_payload.is_cacheable;
 
-    // ---- Slot 1 shadow MEM ----
+    // ---- Slot 1 MEM ----
     wire        mem_s1_valid;
-    wire [31:0] mem_s1_pc;
-    wire [31:0] mem_s1_inst;
-    wire [31:0] mem_s1_alu_result;
-    wire [31:0] mem_s1_pc_plus_4;
-    wire [ 4:0] mem_s1_rd;
-    wire        mem_s1_reg_write_en;
-    wire [ 1:0] mem_s1_wb_sel;
-    wire        mem_s1_mem_read_en;
-    wire        mem_s1_mem_write_en;
-    wire [ 1:0] mem_s1_mem_size;
-    wire        mem_s1_mem_unsigned;
-    wire [ 3:0] mem_s1_store_wea;
-    wire [31:0] mem_s1_store_data;
-    wire        mem_s1_is_cacheable;
+    wire cpu_defs::ex_mem_slot1_t ex_mem_s1_payload;
+    wire cpu_defs::ex_mem_slot1_t mem_s1_payload;
+    wire [31:0] mem_s1_pc = mem_s1_payload.pc;
+    wire [31:0] mem_s1_inst = mem_s1_payload.inst;
+    wire [31:0] mem_s1_alu_result = mem_s1_payload.alu_result;
+    wire [31:0] mem_s1_pc_plus_4 = mem_s1_payload.pc_plus_4;
+    wire [ 4:0] mem_s1_rd = mem_s1_payload.rd;
+    wire        mem_s1_reg_write_en = mem_s1_payload.reg_write_en;
+    wire [ 1:0] mem_s1_wb_sel = mem_s1_payload.wb_sel;
+    wire        mem_s1_mem_read_en = mem_s1_payload.mem_read_en;
+    wire        mem_s1_mem_write_en = mem_s1_payload.mem_write_en;
+    wire [ 1:0] mem_s1_mem_size = mem_s1_payload.mem_size;
+    wire        mem_s1_mem_unsigned = mem_s1_payload.mem_unsigned;
+    wire [ 3:0] mem_s1_store_wea = mem_s1_payload.store_wea;
+    wire [31:0] mem_s1_store_data = mem_s1_payload.store_data;
+    wire        mem_s1_is_cacheable = mem_s1_payload.is_cacheable;
 
     // The issue policy allows only one LSU operation per pair.
     wire        mem_s1_load_active = mem_s1_valid & mem_s1_mem_read_en;
@@ -332,24 +335,28 @@ module cpu_top (
     // ---- MEM/WB ----
     wire        wb_valid;
     wire        wb_allowin;
-    wire [31:0] wb_alu_result;
-    wire [31:0] wb_pc_plus_4;
-    (* max_fanout = 8 *) wire [ 4:0] wb_rd;
-    wire        wb_reg_write_en;
-    wire [ 1:0] wb_wb_sel;
-    wire        wb_is_load;
-    wire [31:0] wb_load_data;
+    wire cpu_defs::mem_wb_slot0_t mem_wb_s0_payload;
+    wire cpu_defs::mem_wb_slot0_t wb_s0_payload;
+    wire [31:0] wb_alu_result = wb_s0_payload.alu_result;
+    wire [31:0] wb_pc_plus_4 = wb_s0_payload.pc_plus_4;
+    (* max_fanout = 8 *) wire [ 4:0] wb_rd = wb_s0_payload.rd;
+    wire        wb_reg_write_en = wb_s0_payload.reg_write_en;
+    wire [ 1:0] wb_wb_sel = wb_s0_payload.wb_sel;
+    wire        wb_is_load = wb_s0_payload.is_load;
+    wire [31:0] wb_load_data = wb_s0_payload.load_data;
 
     // ---- Slot 1 shadow WB ----
     wire        wb_s1_valid;
-    wire [31:0] wb_s1_pc;
-    wire [31:0] wb_s1_inst;
-    wire [31:0] wb_s1_alu_result;
-    wire [31:0] wb_s1_pc_plus_4;
-    (* max_fanout = 8 *) wire [ 4:0] wb_s1_rd;
-    wire        wb_s1_reg_write_en;
-    wire [ 1:0] wb_s1_wb_sel;
-    wire        wb_s1_is_load;
+    wire cpu_defs::mem_wb_slot1_t mem_wb_s1_payload;
+    wire cpu_defs::mem_wb_slot1_t wb_s1_payload;
+    wire [31:0] wb_s1_pc = wb_s1_payload.pc;
+    wire [31:0] wb_s1_inst = wb_s1_payload.inst;
+    wire [31:0] wb_s1_alu_result = wb_s1_payload.alu_result;
+    wire [31:0] wb_s1_pc_plus_4 = wb_s1_payload.pc_plus_4;
+    (* max_fanout = 8 *) wire [ 4:0] wb_s1_rd = wb_s1_payload.rd;
+    wire        wb_s1_reg_write_en = wb_s1_payload.reg_write_en;
+    wire [ 1:0] wb_s1_wb_sel = wb_s1_payload.wb_sel;
+    wire        wb_s1_is_load = wb_s1_payload.is_load;
 
     // ---- WB ----
     wire [31:0] wb_write_data;
@@ -372,9 +379,6 @@ module cpu_top (
     // ---- Dual-issue performance counter ----
     wire [31:0] dual_issue_count;
 
-    // MEM-stage cacheable flag (registered from EX via EX/MEM reg)
-    wire is_cacheable_mem;
-
     // ---- Handshake ----
     wire if_ready_go_w;             // driven by frontend_ftq
     wire mmio_st_ld_hazard;
@@ -382,20 +386,6 @@ module cpu_top (
     wire ex_ready_go_w  = ~mmio_st_ld_hazard & ex_muldiv_ready;
     wire mem_ready_go_w = cache_ready; // DCache controls MEM stage flow
     assign id_ready_go = id_ready_go_raw & ~timer_irq_hold;
-    assign timer_irq_pipe_empty = ~ex_valid & ~mem_valid & ~wb_valid
-                                & ~ex_s1_valid & ~mem_s1_valid & ~wb_s1_valid;
-    assign timer_irq_take = timer_irq_hold & id_valid & timer_irq_pipe_empty;
-
-    always_ff @(posedge clk) begin
-        if (!rst_n)
-            timer_irq_hold <= 1'b0;
-        else if (timer_irq_take)
-            timer_irq_hold <= 1'b0;
-        else if (frontend_branch_flush)
-            timer_irq_hold <= 1'b0;
-        else if (timer_irq_request & id_valid)
-            timer_irq_hold <= 1'b1;
-    end
 
     // ---- Flush / redirect ----
     wire id_flush = frontend_branch_flush;
@@ -494,21 +484,42 @@ module cpu_top (
         .frontend_branch_target      (frontend_branch_target)
     );
 
+    timer_irq_ctrl u_timer_irq_ctrl (
+        .clk               (clk),
+        .rst_n             (rst_n),
+        .timer_irq_request (timer_irq_request),
+        .id_valid          (id_valid),
+        .frontend_flush    (frontend_branch_flush),
+        .ex_valid          (ex_valid),
+        .mem_valid         (mem_valid),
+        .wb_valid          (wb_valid),
+        .ex_s1_valid       (ex_s1_valid),
+        .mem_s1_valid      (mem_s1_valid),
+        .wb_s1_valid       (wb_s1_valid),
+        .timer_irq_hold    (timer_irq_hold),
+        .pipeline_empty    (timer_irq_pipe_empty),
+        .timer_irq_take    (timer_irq_take)
+    );
+
     // ================================================================
     //  Stage-1 prediction wires
     // ================================================================
 
     // ID stage prediction (from IF/ID reg)
-    wire        id_pred_taken;
-    wire [31:0] id_pred_target;
-    wire        id_s1_pred_taken;
-    wire [31:0] id_s1_pred_target;
+    wire        id_pred_taken = id_payload.slot0.prediction.taken;
+    wire [31:0] id_pred_target = id_payload.slot0.prediction.target;
+    wire        id_s1_pred_taken = id_payload.slot1.prediction.taken;
+    wire [31:0] id_s1_pred_target = id_payload.slot1.prediction.target;
 
     // EX stage prediction (from ID/EX reg)
-    wire        ex_pred_taken;
-    wire [31:0] ex_pred_target;
-    wire        ex_s1_pred_taken;
-    wire [31:0] ex_s1_pred_target;
+    wire        ex_pred_taken =
+        ex_s0_payload.common.prediction.prediction.taken;
+    wire [31:0] ex_pred_target =
+        ex_s0_payload.common.prediction.prediction.target;
+    wire        ex_s1_pred_taken =
+        ex_s1_payload.common.prediction.prediction.taken;
+    wire [31:0] ex_s1_pred_target =
+        ex_s1_payload.common.prediction.prediction.target;
 
     // ABTB lookup/training metadata. ABTB/PHT owns Stage-1 J/CALL and branch
     // steering by default. Legacy predictor metadata has been retired.
@@ -533,64 +544,86 @@ module cpu_top (
     wire [31:0] abtb_shadow_pred_target;
     wire [31:0] abtb_shadow_pred_next_pc;
 
-    wire        if_abtb_hit_out;
-    wire        if_abtb_way_out;
-    wire [ 1:0] if_abtb_cfi_type_out;
-    wire [31:0] if_abtb_target_out;
-    wire        if_abtb_pred_taken_out;
-    wire [31:0] if_abtb_pred_target_out;
-    wire        if_pred_source_abtb_out;
-    wire        if_stage1_branch_owned_out;
-    wire        if_s1_abtb_hit_out;
-    wire        if_s1_abtb_way_out;
-    wire [ 1:0] if_s1_abtb_cfi_type_out;
-    wire [31:0] if_s1_abtb_target_out;
-    wire        if_s1_abtb_pred_taken_out;
-    wire [31:0] if_s1_abtb_pred_target_out;
-    wire        if_s1_pred_source_abtb_out;
-    wire        if_s1_stage1_branch_owned_out;
+    wire        if_abtb_hit_out = if_id_payload.slot0.prediction.abtb_hit;
+    wire        if_abtb_way_out = if_id_payload.slot0.prediction.abtb_way;
+    wire [ 1:0] if_abtb_cfi_type_out = if_id_payload.slot0.prediction.abtb_cfi_type;
+    wire [31:0] if_abtb_target_out = if_id_payload.slot0.prediction.abtb_target;
+    wire        if_abtb_pred_taken_out = if_id_payload.slot0.prediction.abtb_pred_taken;
+    wire [31:0] if_abtb_pred_target_out = if_id_payload.slot0.prediction.abtb_pred_target;
+    wire        if_pred_source_abtb_out = if_id_payload.slot0.prediction.source_abtb;
+    wire        if_stage1_branch_owned_out =
+        if_id_payload.slot0.prediction.stage1_branch_owned;
+    wire        if_s1_abtb_hit_out = if_id_payload.slot1.prediction.abtb_hit;
+    wire        if_s1_abtb_way_out = if_id_payload.slot1.prediction.abtb_way;
+    wire [ 1:0] if_s1_abtb_cfi_type_out = if_id_payload.slot1.prediction.abtb_cfi_type;
+    wire [31:0] if_s1_abtb_target_out = if_id_payload.slot1.prediction.abtb_target;
+    wire        if_s1_abtb_pred_taken_out = if_id_payload.slot1.prediction.abtb_pred_taken;
+    wire [31:0] if_s1_abtb_pred_target_out = if_id_payload.slot1.prediction.abtb_pred_target;
+    wire        if_s1_pred_source_abtb_out = if_id_payload.slot1.prediction.source_abtb;
+    wire        if_s1_stage1_branch_owned_out =
+        if_id_payload.slot1.prediction.stage1_branch_owned;
 
-    wire        id_abtb_hit;
-    wire        id_abtb_way;
-    wire [ 1:0] id_abtb_cfi_type;
-    wire [31:0] id_abtb_target;
-    wire        id_abtb_pred_taken;
-    wire [31:0] id_abtb_pred_target;
-    wire        id_pred_source_abtb;
-    wire        id_stage1_branch_owned;
+    wire        id_abtb_hit = id_payload.slot0.prediction.abtb_hit;
+    wire        id_abtb_way = id_payload.slot0.prediction.abtb_way;
+    wire [ 1:0] id_abtb_cfi_type = id_payload.slot0.prediction.abtb_cfi_type;
+    wire [31:0] id_abtb_target = id_payload.slot0.prediction.abtb_target;
+    wire        id_abtb_pred_taken = id_payload.slot0.prediction.abtb_pred_taken;
+    wire [31:0] id_abtb_pred_target = id_payload.slot0.prediction.abtb_pred_target;
+    wire        id_pred_source_abtb = id_payload.slot0.prediction.source_abtb;
+    wire        id_stage1_branch_owned = id_payload.slot0.prediction.stage1_branch_owned;
     wire        id_abtb_update_qualified_w;
     wire [ 1:0] id_abtb_update_cfi_type_w;
-    wire        id_s1_abtb_hit;
-    wire        id_s1_abtb_way;
-    wire [ 1:0] id_s1_abtb_cfi_type;
-    wire [31:0] id_s1_abtb_target;
-    wire        id_s1_abtb_pred_taken;
-    wire [31:0] id_s1_abtb_pred_target;
-    wire        id_s1_pred_source_abtb;
-    wire        id_s1_stage1_branch_owned;
+    wire        id_s1_abtb_hit = id_payload.slot1.prediction.abtb_hit;
+    wire        id_s1_abtb_way = id_payload.slot1.prediction.abtb_way;
+    wire [ 1:0] id_s1_abtb_cfi_type = id_payload.slot1.prediction.abtb_cfi_type;
+    wire [31:0] id_s1_abtb_target = id_payload.slot1.prediction.abtb_target;
+    wire        id_s1_abtb_pred_taken = id_payload.slot1.prediction.abtb_pred_taken;
+    wire [31:0] id_s1_abtb_pred_target = id_payload.slot1.prediction.abtb_pred_target;
+    wire        id_s1_pred_source_abtb = id_payload.slot1.prediction.source_abtb;
+    wire        id_s1_stage1_branch_owned = id_payload.slot1.prediction.stage1_branch_owned;
     wire        id_s1_abtb_update_qualified_w;
     wire [ 1:0] id_s1_abtb_update_cfi_type_w;
 
-    wire        ex_abtb_hit;
-    wire        ex_abtb_way;
-    wire [ 1:0] ex_abtb_cfi_type;
-    wire [31:0] ex_abtb_target;
-    wire        ex_abtb_pred_taken;
-    wire [31:0] ex_abtb_pred_target;
-    wire        ex_pred_source_abtb;
-    wire        ex_stage1_branch_owned;
-    wire        ex_abtb_update_qualified;
-    wire [ 1:0] ex_abtb_update_cfi_type;
-    wire        ex_s1_abtb_hit;
-    wire        ex_s1_abtb_way;
-    wire [ 1:0] ex_s1_abtb_cfi_type;
-    wire [31:0] ex_s1_abtb_target;
-    wire        ex_s1_abtb_pred_taken;
-    wire [31:0] ex_s1_abtb_pred_target;
-    wire        ex_s1_pred_source_abtb;
-    wire        ex_s1_stage1_branch_owned;
-    wire        ex_s1_abtb_update_qualified;
-    wire [ 1:0] ex_s1_abtb_update_cfi_type;
+    wire        ex_abtb_hit =
+        ex_s0_payload.common.prediction.prediction.abtb_hit;
+    wire        ex_abtb_way =
+        ex_s0_payload.common.prediction.prediction.abtb_way;
+    wire [ 1:0] ex_abtb_cfi_type =
+        ex_s0_payload.common.prediction.prediction.abtb_cfi_type;
+    wire [31:0] ex_abtb_target =
+        ex_s0_payload.common.prediction.prediction.abtb_target;
+    wire        ex_abtb_pred_taken =
+        ex_s0_payload.common.prediction.prediction.abtb_pred_taken;
+    wire [31:0] ex_abtb_pred_target =
+        ex_s0_payload.common.prediction.prediction.abtb_pred_target;
+    wire        ex_pred_source_abtb =
+        ex_s0_payload.common.prediction.prediction.source_abtb;
+    wire        ex_stage1_branch_owned =
+        ex_s0_payload.common.prediction.prediction.stage1_branch_owned;
+    wire        ex_abtb_update_qualified =
+        ex_s0_payload.common.prediction.update_qualified;
+    wire [ 1:0] ex_abtb_update_cfi_type =
+        ex_s0_payload.common.prediction.update_cfi_type;
+    wire        ex_s1_abtb_hit =
+        ex_s1_payload.common.prediction.prediction.abtb_hit;
+    wire        ex_s1_abtb_way =
+        ex_s1_payload.common.prediction.prediction.abtb_way;
+    wire [ 1:0] ex_s1_abtb_cfi_type =
+        ex_s1_payload.common.prediction.prediction.abtb_cfi_type;
+    wire [31:0] ex_s1_abtb_target =
+        ex_s1_payload.common.prediction.prediction.abtb_target;
+    wire        ex_s1_abtb_pred_taken =
+        ex_s1_payload.common.prediction.prediction.abtb_pred_taken;
+    wire [31:0] ex_s1_abtb_pred_target =
+        ex_s1_payload.common.prediction.prediction.abtb_pred_target;
+    wire        ex_s1_pred_source_abtb =
+        ex_s1_payload.common.prediction.prediction.source_abtb;
+    wire        ex_s1_stage1_branch_owned =
+        ex_s1_payload.common.prediction.prediction.stage1_branch_owned;
+    wire        ex_s1_abtb_update_qualified =
+        ex_s1_payload.common.prediction.update_qualified;
+    wire [ 1:0] ex_s1_abtb_update_cfi_type =
+        ex_s1_payload.common.prediction.update_cfi_type;
     wire [ 7:0] stage1_bank0_pht_index;
     wire [ 1:0] stage1_bank0_pht_counter;
     wire        stage1_bank0_pht_taken;
@@ -599,28 +632,46 @@ module cpu_top (
     wire        stage1_bank1_pht_taken;
     wire [ 7:0] stage1_lookup_ghr;
     wire [ 7:0] stage1_committed_ghr;
-    wire [ 7:0] if_stage1_pht_index;
-    wire [ 1:0] if_stage1_pht_counter;
-    wire [ 7:0] if_s1_stage1_pht_index;
-    wire [ 1:0] if_s1_stage1_pht_counter;
-    wire [ 7:0] id_stage1_pht_index;
-    wire [ 1:0] id_stage1_pht_counter;
-    wire [ 7:0] id_s1_stage1_pht_index;
-    wire [ 1:0] id_s1_stage1_pht_counter;
-    wire [ 7:0] ex_stage1_pht_index;
-    wire [ 1:0] ex_stage1_pht_counter;
-    wire [ 7:0] ex_s1_stage1_pht_index;
-    wire [ 1:0] ex_s1_stage1_pht_counter;
-    wire        stage1_direction_update_valid;
-    wire [ 7:0] stage1_direction_update_index;
-    wire [ 1:0] stage1_direction_update_counter;
+    wire [ 7:0] if_stage1_pht_index =
+        if_id_payload.slot0.prediction.stage1_pht_index;
+    wire [ 1:0] if_stage1_pht_counter =
+        if_id_payload.slot0.prediction.stage1_pht_counter;
+    wire [ 7:0] if_s1_stage1_pht_index =
+        if_id_payload.slot1.prediction.stage1_pht_index;
+    wire [ 1:0] if_s1_stage1_pht_counter =
+        if_id_payload.slot1.prediction.stage1_pht_counter;
+    wire [ 7:0] id_stage1_pht_index = id_payload.slot0.prediction.stage1_pht_index;
+    wire [ 1:0] id_stage1_pht_counter = id_payload.slot0.prediction.stage1_pht_counter;
+    wire [ 7:0] id_s1_stage1_pht_index = id_payload.slot1.prediction.stage1_pht_index;
+    wire [ 1:0] id_s1_stage1_pht_counter = id_payload.slot1.prediction.stage1_pht_counter;
+    wire [ 7:0] ex_stage1_pht_index =
+        ex_s0_payload.common.prediction.prediction.stage1_pht_index;
+    wire [ 1:0] ex_stage1_pht_counter =
+        ex_s0_payload.common.prediction.prediction.stage1_pht_counter;
+    wire [ 7:0] ex_s1_stage1_pht_index =
+        ex_s1_payload.common.prediction.prediction.stage1_pht_index;
+    wire [ 1:0] ex_s1_stage1_pht_counter =
+        ex_s1_payload.common.prediction.prediction.stage1_pht_counter;
+    wire cpu_defs::predictor_resolve_t predictor_resolve_s0;
+    wire cpu_defs::predictor_resolve_t predictor_resolve_s1;
+    wire cpu_defs::predictor_train_t predictor_train;
+    wire cpu_defs::abtb_update_t predictor_abtb_update;
+    wire cpu_defs::pht_update_t predictor_pht_update;
 
-    wire        abtb_update_valid;
-    wire        abtb_update_hit;
-    wire        abtb_update_way;
-    wire [31:0] abtb_update_pc;
-    wire [ 1:0] abtb_update_cfi_type;
-    wire [31:0] abtb_update_target;
+    wire        stage1_direction_update_valid =
+        predictor_pht_update.valid;
+    wire [ 7:0] stage1_direction_update_index =
+        predictor_pht_update.index;
+    wire [ 1:0] stage1_direction_update_counter =
+        predictor_pht_update.counter;
+
+    wire        abtb_update_valid = predictor_abtb_update.valid;
+    wire        abtb_update_hit = predictor_abtb_update.hit;
+    wire        abtb_update_way = predictor_abtb_update.way;
+    wire [31:0] abtb_update_pc = predictor_abtb_update.pc;
+    wire [ 1:0] abtb_update_cfi_type =
+        predictor_abtb_update.cfi_type;
+    wire [31:0] abtb_update_target = predictor_abtb_update.target;
     wire        stage1_steer_valid;
     wire        stage1_steer_source_abtb;
     wire        stage1_steer_branch_owned;
@@ -633,14 +684,15 @@ module cpu_top (
 
     wire        s0_pred_update_valid_raw;
     wire        s1_pred_update_valid_raw;
-    wire        pred_train_from_s1;
-    wire        pred_train_valid;
-    wire [31:0] pred_train_pc;
-    wire        pred_train_is_branch;
-    wire        pred_train_is_jal;
-    wire        pred_train_is_jalr;
-    wire        pred_train_actual_taken;
-    wire [31:0] pred_train_actual_target;
+    wire        pred_train_from_s1 = predictor_train.from_slot1;
+    wire        pred_train_valid = predictor_train.valid;
+    wire [31:0] pred_train_pc = predictor_train.pc;
+    wire        pred_train_is_branch = predictor_train.is_branch;
+    wire        pred_train_is_jal = predictor_train.is_jal;
+    wire        pred_train_is_jalr = predictor_train.is_jalr;
+    wire        pred_train_actual_taken = predictor_train.actual_taken;
+    wire [31:0] pred_train_actual_target =
+        predictor_train.actual_target;
 
     // ================================================================
     //  Module instantiations
@@ -698,70 +750,51 @@ module cpu_top (
 
     // ==================== Branch Predictor ====================
 
-    assign s0_pred_update_valid_raw = ex_valid
-                                  & (ex_is_branch | ex_is_jal | ex_is_jalr);
-    assign s1_pred_update_valid_raw = ex_s1_valid
-                                  & (ex_s1_is_branch | ex_s1_is_jal
-                                   | ex_s1_is_jalr);
-    assign pred_train_from_s1 = ~s0_pred_update_valid_raw
-                            & s1_pred_update_valid_raw;
-    assign pred_train_valid = (s0_pred_update_valid_raw | s1_pred_update_valid_raw)
-                          & ex_ready_go_w
-                          & mem_allowin
-                          & ~mem_branch_flush;
+    predictor_resolve_builder u_predictor_resolve_builder (
+        .s0_valid             (ex_valid),
+        .s0_pc                (ex_pc),
+        .s0_is_branch         (ex_is_branch),
+        .s0_is_jal            (ex_is_jal),
+        .s0_is_jalr           (ex_is_jalr),
+        .s0_actual_taken      (actual_taken),
+        .s0_actual_target     (actual_target),
+        .s0_update_qualified  (ex_abtb_update_qualified),
+        .s0_update_cfi_type   (ex_abtb_update_cfi_type),
+        .s0_abtb_hit          (ex_abtb_hit),
+        .s0_abtb_way          (ex_abtb_way),
+        .s0_pht_index         (ex_stage1_pht_index),
+        .s0_pht_counter       (ex_stage1_pht_counter),
+        .s1_valid             (ex_s1_valid),
+        .s1_pc                (ex_s1_pc),
+        .s1_is_branch         (ex_s1_is_branch),
+        .s1_is_jal            (ex_s1_is_jal),
+        .s1_is_jalr           (ex_s1_is_jalr),
+        .s1_actual_taken      (ex_s1_actual_taken),
+        .s1_actual_target     (ex_s1_branch_target),
+        .s1_update_qualified  (ex_s1_abtb_update_qualified),
+        .s1_update_cfi_type   (ex_s1_abtb_update_cfi_type),
+        .s1_abtb_hit          (ex_s1_abtb_hit),
+        .s1_abtb_way          (ex_s1_abtb_way),
+        .s1_pht_index         (ex_s1_stage1_pht_index),
+        .s1_pht_counter       (ex_s1_stage1_pht_counter),
+        .slot0_resolve        (predictor_resolve_s0),
+        .slot1_resolve        (predictor_resolve_s1)
+    );
 
-    assign pred_train_pc            = pred_train_from_s1 ? ex_s1_pc
-                                                     : ex_pc;
-    assign pred_train_is_branch     = pred_train_from_s1 ? ex_s1_is_branch
-                                                     : ex_is_branch;
-    assign pred_train_is_jal        = pred_train_from_s1 ? ex_s1_is_jal
-                                                     : ex_is_jal;
-    assign pred_train_is_jalr       = pred_train_from_s1 ? ex_s1_is_jalr
-                                                         : ex_is_jalr;
-    assign pred_train_actual_taken  = pred_train_from_s1 ? ex_s1_actual_taken
-                                                     : actual_taken;
-    assign pred_train_actual_target = pred_train_from_s1 ? ex_s1_branch_target
-                                                     : actual_target;
-
-    // ABTB/PHT reuse the existing EX slot arbitration, unified pipeline-fire
-    // qualification, and wrong-path suppression. A not-taken branch does not
-    // write ABTB.
-    wire abtb_train_update_qualified =
-        pred_train_from_s1 ? ex_s1_abtb_update_qualified
-                         : ex_abtb_update_qualified;
-    wire [1:0] abtb_train_update_cfi_type =
-        pred_train_from_s1 ? ex_s1_abtb_update_cfi_type
-                         : ex_abtb_update_cfi_type;
-    wire abtb_train_is_branch =
-        abtb_train_update_cfi_type == ABTB_TYPE_BRANCH;
-    wire abtb_train_write_qualified =
-        abtb_train_update_qualified
-        & (!abtb_train_is_branch | pred_train_actual_taken);
-
-    assign abtb_update_valid = pred_train_valid
-                             & abtb_train_write_qualified;
-    assign abtb_update_hit = pred_train_from_s1 ? ex_s1_abtb_hit
-                                               : ex_abtb_hit;
-    assign abtb_update_way = pred_train_from_s1 ? ex_s1_abtb_way
-                                               : ex_abtb_way;
-    assign abtb_update_pc = pred_train_pc;
-    assign abtb_update_cfi_type = abtb_train_update_cfi_type;
-    assign abtb_update_target = pred_train_actual_target;
-    assign stage1_direction_update_valid =
-        pred_train_valid && pred_train_is_branch;
-    assign stage1_direction_update_index =
-        pred_train_from_s1 ? ex_s1_stage1_pht_index
-                         : ex_stage1_pht_index;
-    assign stage1_direction_update_counter =
-        pred_train_from_s1 ? ex_s1_stage1_pht_counter
-                         : ex_stage1_pht_counter;
-
-`ifndef SYNTHESIS
-    always @(posedge clk) begin
-        if (rst_n && s0_pred_update_valid_raw && s1_pred_update_valid_raw)
-            $error("Single predictor update port saw simultaneous slot0 and slot1 control flow");
-    end
-`endif
+    predictor_update_ctrl u_predictor_update_ctrl (
+        .clk              (clk),
+        .rst_n            (rst_n),
+        .ex_ready_go      (ex_ready_go_w),
+        .mem_allowin      (mem_allowin),
+        .mem_branch_flush (mem_branch_flush),
+        .slot0_resolve    (predictor_resolve_s0),
+        .slot1_resolve    (predictor_resolve_s1),
+        .slot0_cfi_valid  (s0_pred_update_valid_raw),
+        .slot1_cfi_valid  (s1_pred_update_valid_raw),
+        .train            (predictor_train),
+        .abtb_update      (predictor_abtb_update),
+        .pht_update       (predictor_pht_update)
+    );
 
     frontend_stage1_direction u_frontend_stage1_direction (
         .clk                 (clk),
@@ -825,309 +858,140 @@ module cpu_top (
     );
 
 `ifdef CPU_TOP_ABTB_OBSERVE
-    // Shadow observability. In production synthesis this block is removed; in
-    // simulation and ABTB measurement builds these counters do not feed
-    // prediction, queue ready/valid, or redirect control.
-    logic [31:0] abtb_lookup_block_count;
-    logic [31:0] abtb_bank0_hit_count;
-    logic [31:0] abtb_bank1_hit_count;
-    logic [31:0] abtb_ex_update_count;
-    logic [31:0] abtb_allocation_count;
-    logic [31:0] abtb_hit_update_count;
-    logic [31:0] abtb_direct_lookup_count;
-    logic [31:0] abtb_direct_steer_count;
-    logic [31:0] abtb_direct_bank0_count;
-    logic [31:0] abtb_direct_bank1_count;
-    logic [31:0] abtb_direct_correct_count;
-    logic [31:0] abtb_direct_redirect_count;
-    logic [31:0] abtb_direct_target_miss_count;
-    logic [31:0] stage1_sequential_count;
-    logic [31:0] stage1_abtb_owned_count;
-    logic [31:0] stage1_branch_owned_nt_count;
-    logic [31:0] stage1_confirmed_branch_count;
-    logic [31:0] stage1_abtb_branch_hit_count;
-    logic [31:0] stage1_pht_taken_count;
-    logic [31:0] stage1_pht_not_taken_count;
-    logic [31:0] stage1_pht_correct_count;
-    logic [31:0] stage1_pht_wrong_count;
-    logic [31:0] stage1_bank0_branch_lookup_count;
-    logic [31:0] stage1_bank1_branch_lookup_count;
+    // Simulation and measurement observability only. These outputs never feed
+    // production prediction, ready/valid, redirect, or IROM control.
+    wire cpu_defs::abtb_lookup_bank_t abtb_monitor_bank0;
+    wire cpu_defs::abtb_lookup_bank_t abtb_monitor_bank1;
+    wire cpu_defs::abtb_shadow_result_t abtb_monitor_shadow;
+    wire cpu_defs::stage1_steer_event_t abtb_monitor_steer;
+    wire cpu_defs::frontend_abtb_counters_t abtb_monitor_counters;
 
-    wire abtb_direct_s0_resolve = ex_valid
-                                && ex_pred_source_abtb
-                                && ex_ready_go_w
-                                && mem_allowin
-                                && !mem_branch_flush;
-    wire abtb_direct_s1_resolve = ex_s1_valid
-                                && ex_s1_pred_source_abtb
-                                && ex_ready_go_w
-                                && mem_allowin
-                                && !mem_branch_flush
-                                && !s0_pred_update_valid_raw;
-    wire abtb_direct_s0_target_miss =
-        abtb_direct_s0_resolve && actual_taken && ex_pred_taken
-        && (actual_target != ex_pred_target);
-    wire abtb_direct_s1_target_miss =
-        abtb_direct_s1_resolve && ex_s1_actual_taken && ex_s1_pred_taken
-        && (ex_s1_branch_target != ex_s1_pred_target);
-    wire stage1_bank0_branch_lookup_event =
-        abtb_lookup_accept
-        && abtb_bank0_hit
-        && (abtb_bank0_cfi_type == ABTB_TYPE_BRANCH);
-    wire stage1_bank1_branch_lookup_event =
-        abtb_lookup_accept
-        && abtb_bank1_hit
-        && (abtb_bank1_cfi_type == ABTB_TYPE_BRANCH);
+    frontend_abtb_monitor_adapter u_frontend_abtb_monitor_adapter (
+        .bank0_hit              (abtb_bank0_hit),
+        .bank0_way              (abtb_bank0_way),
+        .bank0_cfi_type         (abtb_bank0_cfi_type),
+        .bank0_target           (abtb_bank0_target),
+        .bank0_pred_taken       (abtb_bank0_pred_taken),
+        .bank0_pred_target      (abtb_bank0_pred_target),
+        .bank0_pht_taken        (stage1_bank0_pht_taken),
+        .bank1_hit              (abtb_bank1_hit),
+        .bank1_way              (abtb_bank1_way),
+        .bank1_cfi_type         (abtb_bank1_cfi_type),
+        .bank1_target           (abtb_bank1_target),
+        .bank1_pred_taken       (abtb_bank1_pred_taken),
+        .bank1_pred_target      (abtb_bank1_pred_target),
+        .bank1_pht_taken        (stage1_bank1_pht_taken),
+        .shadow_pred_taken      (abtb_shadow_pred_taken),
+        .shadow_pred_bank       (abtb_shadow_pred_bank),
+        .shadow_pred_cfi_type   (abtb_shadow_pred_cfi_type),
+        .shadow_pred_target     (abtb_shadow_pred_target),
+        .shadow_pred_next_pc    (abtb_shadow_pred_next_pc),
+        .steer_valid            (stage1_steer_valid),
+        .steer_source_abtb      (stage1_steer_source_abtb),
+        .steer_branch_owned     (stage1_steer_branch_owned),
+        .steer_branch_owned_nt  (stage1_steer_branch_owned_nt),
+        .steer_bank             (stage1_steer_bank),
+        .bank0_lookup           (abtb_monitor_bank0),
+        .bank1_lookup           (abtb_monitor_bank1),
+        .shadow_result          (abtb_monitor_shadow),
+        .steer_event            (abtb_monitor_steer)
+    );
 
-    always_ff @(posedge clk) begin
-        if (!rst_n) begin
-            abtb_lookup_block_count <= 32'd0;
-            abtb_bank0_hit_count <= 32'd0;
-            abtb_bank1_hit_count <= 32'd0;
-            abtb_ex_update_count <= 32'd0;
-            abtb_allocation_count <= 32'd0;
-            abtb_hit_update_count <= 32'd0;
-            abtb_direct_lookup_count <= 32'd0;
-            abtb_direct_steer_count <= 32'd0;
-            abtb_direct_bank0_count <= 32'd0;
-            abtb_direct_bank1_count <= 32'd0;
-            abtb_direct_correct_count <= 32'd0;
-            abtb_direct_redirect_count <= 32'd0;
-            abtb_direct_target_miss_count <= 32'd0;
-            stage1_sequential_count <= 32'd0;
-            stage1_abtb_owned_count <= 32'd0;
-            stage1_branch_owned_nt_count <= 32'd0;
-            stage1_confirmed_branch_count <= 32'd0;
-            stage1_abtb_branch_hit_count <= 32'd0;
-            stage1_pht_taken_count <= 32'd0;
-            stage1_pht_not_taken_count <= 32'd0;
-            stage1_pht_correct_count <= 32'd0;
-            stage1_pht_wrong_count <= 32'd0;
-            stage1_bank0_branch_lookup_count <= 32'd0;
-            stage1_bank1_branch_lookup_count <= 32'd0;
-        end else begin
-            if (abtb_lookup_accept)
-                abtb_lookup_block_count <= abtb_lookup_block_count + 32'd1;
-            if (abtb_lookup_accept && abtb_bank0_hit)
-                abtb_bank0_hit_count <= abtb_bank0_hit_count + 32'd1;
-            if (abtb_lookup_accept && abtb_bank1_hit)
-                abtb_bank1_hit_count <= abtb_bank1_hit_count + 32'd1;
-            if (abtb_update_valid)
-                abtb_ex_update_count <= abtb_ex_update_count + 32'd1;
-            if (abtb_update_valid && !abtb_update_hit)
-                abtb_allocation_count <= abtb_allocation_count + 32'd1;
-            if (abtb_update_valid && abtb_update_hit)
-                abtb_hit_update_count <= abtb_hit_update_count + 32'd1;
-            if (stage1_steer_valid)
-                abtb_direct_lookup_count <= abtb_direct_lookup_count + 32'd1;
-            if (stage1_steer_valid && stage1_steer_source_abtb) begin
-                abtb_direct_steer_count <= abtb_direct_steer_count + 32'd1;
-                if (stage1_steer_bank)
-                    abtb_direct_bank1_count <= abtb_direct_bank1_count + 32'd1;
-                else
-                    abtb_direct_bank0_count <= abtb_direct_bank0_count + 32'd1;
-            end
-            if (stage1_steer_valid
-                && (stage1_steer_source_abtb || stage1_steer_branch_owned))
-                stage1_abtb_owned_count <= stage1_abtb_owned_count + 32'd1;
-            if (stage1_steer_valid && stage1_steer_branch_owned_nt)
-                stage1_branch_owned_nt_count <=
-                    stage1_branch_owned_nt_count + 32'd1;
-            if (stage1_steer_valid
-                && !stage1_steer_source_abtb
-                && !stage1_steer_branch_owned)
-                stage1_sequential_count <= stage1_sequential_count + 32'd1;
-            if (stage1_bank0_branch_lookup_event)
-                stage1_bank0_branch_lookup_count <=
-                    stage1_bank0_branch_lookup_count + 32'd1;
-            if (stage1_bank1_branch_lookup_event)
-                stage1_bank1_branch_lookup_count <=
-                    stage1_bank1_branch_lookup_count + 32'd1;
-            if (stage1_bank0_branch_lookup_event
-                || stage1_bank1_branch_lookup_event)
-                stage1_abtb_branch_hit_count <=
-                    stage1_abtb_branch_hit_count
-                    + {31'd0, stage1_bank0_branch_lookup_event}
-                    + {31'd0, stage1_bank1_branch_lookup_event};
-            if ((stage1_bank0_branch_lookup_event
-                 && stage1_bank0_pht_taken)
-                || (stage1_bank1_branch_lookup_event
-                    && stage1_bank1_pht_taken))
-                stage1_pht_taken_count <=
-                    stage1_pht_taken_count
-                    + {31'd0, stage1_bank0_branch_lookup_event
-                               && stage1_bank0_pht_taken}
-                    + {31'd0, stage1_bank1_branch_lookup_event
-                               && stage1_bank1_pht_taken};
-            if ((stage1_bank0_branch_lookup_event
-                 && !stage1_bank0_pht_taken)
-                || (stage1_bank1_branch_lookup_event
-                    && !stage1_bank1_pht_taken))
-                stage1_pht_not_taken_count <=
-                    stage1_pht_not_taken_count
-                    + {31'd0, stage1_bank0_branch_lookup_event
-                               && !stage1_bank0_pht_taken}
-                    + {31'd0, stage1_bank1_branch_lookup_event
-                               && !stage1_bank1_pht_taken};
-            if (stage1_direction_update_valid) begin
-                stage1_confirmed_branch_count <=
-                    stage1_confirmed_branch_count + 32'd1;
-                if (stage1_direction_update_counter[1]
-                    == pred_train_actual_taken)
-                    stage1_pht_correct_count <=
-                        stage1_pht_correct_count + 32'd1;
-                else
-                    stage1_pht_wrong_count <=
-                        stage1_pht_wrong_count + 32'd1;
-            end
-            if (abtb_direct_s0_resolve) begin
-                if (branch_flush)
-                    abtb_direct_redirect_count <=
-                        abtb_direct_redirect_count + 32'd1;
-                else
-                    abtb_direct_correct_count <=
-                        abtb_direct_correct_count + 32'd1;
-            end else if (abtb_direct_s1_resolve) begin
-                if (ex_s1_branch_redirect)
-                    abtb_direct_redirect_count <=
-                        abtb_direct_redirect_count + 32'd1;
-                else
-                    abtb_direct_correct_count <=
-                        abtb_direct_correct_count + 32'd1;
-            end
-            if (abtb_direct_s0_target_miss || abtb_direct_s1_target_miss)
-                abtb_direct_target_miss_count <=
-                    abtb_direct_target_miss_count + 32'd1;
-        end
-    end
+    wire [31:0] abtb_lookup_block_count =
+        abtb_monitor_counters.lookup_block;
+    wire [31:0] abtb_bank0_hit_count = abtb_monitor_counters.bank0_hit;
+    wire [31:0] abtb_bank1_hit_count = abtb_monitor_counters.bank1_hit;
+    wire [31:0] abtb_ex_update_count = abtb_monitor_counters.ex_update;
+    wire [31:0] abtb_allocation_count = abtb_monitor_counters.allocation;
+    wire [31:0] abtb_hit_update_count = abtb_monitor_counters.hit_update;
+    wire [31:0] abtb_direct_lookup_count =
+        abtb_monitor_counters.direct_lookup;
+    wire [31:0] abtb_direct_steer_count =
+        abtb_monitor_counters.direct_steer;
+    wire [31:0] abtb_direct_bank0_count =
+        abtb_monitor_counters.direct_bank0;
+    wire [31:0] abtb_direct_bank1_count =
+        abtb_monitor_counters.direct_bank1;
+    wire [31:0] abtb_direct_correct_count =
+        abtb_monitor_counters.direct_correct;
+    wire [31:0] abtb_direct_redirect_count =
+        abtb_monitor_counters.direct_redirect;
+    wire [31:0] abtb_direct_target_miss_count =
+        abtb_monitor_counters.direct_target_miss;
+    wire [31:0] stage1_sequential_count =
+        abtb_monitor_counters.stage1_sequential;
+    wire [31:0] stage1_abtb_owned_count =
+        abtb_monitor_counters.stage1_abtb_owned;
+    wire [31:0] stage1_branch_owned_nt_count =
+        abtb_monitor_counters.stage1_branch_owned_nt;
+    wire [31:0] stage1_confirmed_branch_count =
+        abtb_monitor_counters.stage1_confirmed_branch;
+    wire [31:0] stage1_abtb_branch_hit_count =
+        abtb_monitor_counters.stage1_abtb_branch_hit;
+    wire [31:0] stage1_pht_taken_count =
+        abtb_monitor_counters.stage1_pht_taken;
+    wire [31:0] stage1_pht_not_taken_count =
+        abtb_monitor_counters.stage1_pht_not_taken;
+    wire [31:0] stage1_pht_correct_count =
+        abtb_monitor_counters.stage1_pht_correct;
+    wire [31:0] stage1_pht_wrong_count =
+        abtb_monitor_counters.stage1_pht_wrong;
+    wire [31:0] stage1_bank0_branch_lookup_count =
+        abtb_monitor_counters.stage1_bank0_branch_lookup;
+    wire [31:0] stage1_bank1_branch_lookup_count =
+        abtb_monitor_counters.stage1_bank1_branch_lookup;
 
-`ifdef ABTB_MEASUREMENT
-    // Measurement-only sink. It keeps the shadow ABTB, F0 capture, FQ sidecar,
-    // IF/ID, ID/EX, and EX update signals observable in the integrated timing
-    // build without feeding any production PC, redirect, ready/valid, or IROM
-    // steering path.
-    localparam int ABTB_MEASUREMENT_SINK_W = 920;
-    (* keep = "true" *)
-    wire [ABTB_MEASUREMENT_SINK_W-1:0] abtb_measurement_sink_d = {
-        pc,
-        abtb_lookup_accept,
-        abtb_bank0_hit,
-        abtb_bank0_way,
-        abtb_bank0_cfi_type,
-        abtb_bank0_target,
-        abtb_bank0_pred_taken,
-        abtb_bank0_pred_target,
-        abtb_bank1_hit,
-        abtb_bank1_way,
-        abtb_bank1_cfi_type,
-        abtb_bank1_target,
-        abtb_bank1_pred_taken,
-        abtb_bank1_pred_target,
-        abtb_shadow_pred_taken,
-        abtb_shadow_pred_bank,
-        abtb_shadow_pred_cfi_type,
-        abtb_shadow_pred_target,
-        abtb_shadow_pred_next_pc,
-        if_abtb_hit_out,
-        if_abtb_way_out,
-        if_abtb_cfi_type_out,
-        if_abtb_target_out,
-        if_abtb_pred_taken_out,
-        if_abtb_pred_target_out,
-        if_s1_abtb_hit_out,
-        if_s1_abtb_way_out,
-        if_s1_abtb_cfi_type_out,
-        if_s1_abtb_target_out,
-        if_s1_abtb_pred_taken_out,
-        if_s1_abtb_pred_target_out,
-        id_abtb_hit,
-        id_abtb_way,
-        id_abtb_cfi_type,
-        id_abtb_target,
-        id_abtb_pred_taken,
-        id_abtb_pred_target,
-        id_s1_abtb_hit,
-        id_s1_abtb_way,
-        id_s1_abtb_cfi_type,
-        id_s1_abtb_target,
-        id_s1_abtb_pred_taken,
-        id_s1_abtb_pred_target,
-        ex_abtb_hit,
-        ex_abtb_way,
-        ex_abtb_cfi_type,
-        ex_abtb_target,
-        ex_abtb_pred_taken,
-        ex_abtb_pred_target,
-        ex_abtb_update_qualified,
-        ex_abtb_update_cfi_type,
-        ex_s1_abtb_hit,
-        ex_s1_abtb_way,
-        ex_s1_abtb_cfi_type,
-        ex_s1_abtb_target,
-        ex_s1_abtb_pred_taken,
-        ex_s1_abtb_pred_target,
-        ex_s1_abtb_update_qualified,
-        ex_s1_abtb_update_cfi_type,
-        abtb_update_valid,
-        abtb_update_hit,
-        abtb_update_way,
-        abtb_update_pc,
-        abtb_update_cfi_type,
-        abtb_update_target,
-        abtb_lookup_block_count,
-        abtb_bank0_hit_count,
-        abtb_bank1_hit_count,
-        abtb_ex_update_count,
-        abtb_allocation_count,
-        abtb_hit_update_count
-    };
-
-    (* dont_touch = "true" *)
-    logic [ABTB_MEASUREMENT_SINK_W-1:0] abtb_measurement_sink_q;
-
-    always_ff @(posedge clk) begin
-        if (!rst_n)
-            abtb_measurement_sink_q <= '0;
-        else
-            abtb_measurement_sink_q <= abtb_measurement_sink_d;
-    end
-`endif
+    frontend_abtb_monitor u_frontend_abtb_monitor (
+        .clk                    (clk),
+        .rst_n                  (rst_n),
+        .frontend_pc            (pc),
+        .lookup_accept          (abtb_lookup_accept),
+        .bank0_lookup           (abtb_monitor_bank0),
+        .bank1_lookup           (abtb_monitor_bank1),
+        .shadow_result          (abtb_monitor_shadow),
+        .steer_event            (abtb_monitor_steer),
+        .if_slot0_prediction    (if_id_payload.slot0.prediction),
+        .if_slot1_prediction    (if_id_payload.slot1.prediction),
+        .id_slot0_prediction    (id_payload.slot0.prediction),
+        .id_slot1_prediction    (id_payload.slot1.prediction),
+        .ex_slot0_prediction    (ex_s0_payload.common.prediction),
+        .ex_slot1_prediction    (ex_s1_payload.common.prediction),
+        .slot0_resolve          (predictor_resolve_s0),
+        .slot1_resolve          (predictor_resolve_s1),
+        .ex_ready_go            (ex_ready_go_w),
+        .mem_allowin            (mem_allowin),
+        .mem_branch_flush       (mem_branch_flush),
+        .slot0_cfi_valid        (s0_pred_update_valid_raw),
+        .slot0_redirect         (branch_flush),
+        .slot1_redirect         (ex_s1_branch_redirect),
+        .abtb_update            (predictor_abtb_update),
+        .pht_update             (predictor_pht_update),
+        .counters               (abtb_monitor_counters)
+    );
 `endif
 
     // ==================== Pre-IF ====================
 
     wire        can_dual_issue;
-    wire        can_dual_fetch;
     wire        raw_pair_raw;
-    wire        raw_inst1_is_alu_type;
-    wire        raw_inst0_is_jump;
     logic       predict_dual;
 
-    wire [31:0] if_inst0_out;
-    wire [31:0] if_inst1_out;
-    wire [31:0] if_pc_out;
-    wire        if_pred_taken_out;
-    wire [31:0] if_pred_target_out;
-    wire        if_s1_pred_taken_out;
-    wire [31:0] if_s1_pred_target_out;
+    wire [31:0] if_inst0_out = if_id_payload.slot0.inst;
+    wire [31:0] if_inst1_out = if_id_payload.slot1.inst;
+    wire [31:0] if_pc_out = if_id_payload.pc;
+    wire        if_pred_taken_out = if_id_payload.slot0.prediction.taken;
+    wire [31:0] if_pred_target_out = if_id_payload.slot0.prediction.target;
+    wire        if_s1_pred_taken_out = if_id_payload.slot1.prediction.taken;
+    wire [31:0] if_s1_pred_target_out = if_id_payload.slot1.prediction.target;
     wire        if_skip_out;
     wire        if_s1_valid;
-    wire        if_sequential_fetch;
-    wire        inst_buf_valid_next;
 
-    assign irom_inst0 = irom_data[31:0];
-    assign irom_inst1 = irom_data[63:32];
-
-    assign can_dual_fetch = can_dual_issue;
-    assign raw_inst1_is_alu_type = 1'b0;
-    assign raw_inst0_is_jump = 1'b0;
-    assign if_sequential_fetch = ~if_pred_taken_out;
-    assign inst_buf_valid_next = 1'b0;
-    assign inst_buf = 32'd0;
-    assign inst_buf_pc = 32'd0;
-    assign inst_buf_valid = 1'b0;
-    assign skip_inst0_valid = 1'b0;
-    assign if_buf_before_window = 1'b0;
+    // Compatibility probes retained for the existing performance monitor.
+    // The retired raw-pair and skip machinery no longer feeds the frontend.
+    wire raw_inst1_is_alu_type = 1'b0;
+    wire raw_inst0_is_jump = 1'b0;
+    wire if_sequential_fetch = ~if_pred_taken_out;
+    wire skip_inst0_valid = 1'b0;
 
     frontend_ftq u_frontend_ftq (
         .clk              (clk),
@@ -1157,34 +1021,8 @@ module cpu_top (
         .stage1_bank1_pht_counter(stage1_bank1_pht_counter),
         .if_valid         (if_valid),
         .if_ready_go      (if_ready_go_w),
-        .if_pc            (if_pc_out),
-        .if_inst0         (if_inst0_out),
-        .if_inst1         (if_inst1_out),
         .if_s1_valid      (if_s1_valid),
-        .if_pred_taken      (if_pred_taken_out),
-        .if_pred_target     (if_pred_target_out),
-        .if_pred_source_abtb(if_pred_source_abtb_out),
-        .if_stage1_branch_owned(if_stage1_branch_owned_out),
-        .if_s1_pred_taken   (if_s1_pred_taken_out),
-        .if_s1_pred_target  (if_s1_pred_target_out),
-        .if_s1_pred_source_abtb(if_s1_pred_source_abtb_out),
-        .if_s1_stage1_branch_owned(if_s1_stage1_branch_owned_out),
-        .if_abtb_hit         (if_abtb_hit_out),
-        .if_abtb_way         (if_abtb_way_out),
-        .if_abtb_cfi_type    (if_abtb_cfi_type_out),
-        .if_abtb_target      (if_abtb_target_out),
-        .if_abtb_pred_taken  (if_abtb_pred_taken_out),
-        .if_abtb_pred_target (if_abtb_pred_target_out),
-        .if_s1_abtb_hit         (if_s1_abtb_hit_out),
-        .if_s1_abtb_way         (if_s1_abtb_way_out),
-        .if_s1_abtb_cfi_type    (if_s1_abtb_cfi_type_out),
-        .if_s1_abtb_target      (if_s1_abtb_target_out),
-        .if_s1_abtb_pred_taken  (if_s1_abtb_pred_taken_out),
-        .if_s1_abtb_pred_target (if_s1_abtb_pred_target_out),
-        .if_stage1_pht_index(if_stage1_pht_index),
-        .if_stage1_pht_counter(if_stage1_pht_counter),
-        .if_s1_stage1_pht_index(if_s1_stage1_pht_index),
-        .if_s1_stage1_pht_counter(if_s1_stage1_pht_counter),
+        .if_payload       (if_id_payload),
         .current_pc       (pc),
         .abtb_lookup_accept(abtb_lookup_accept),
         .stage1_steer_valid(stage1_steer_valid),
@@ -1222,63 +1060,10 @@ module cpu_top (
         .id_ready_go  (id_ready_go),
         .ex_allowin   (ex_allowin),
         .id_flush     (id_flush),
-        .if_pc        (if_pc_out),
-        .if_inst      (if_inst0_out),    // held, buffered, or live BRAM output
-        .if_inst1     (if_inst1_out),
         .if_s1_valid  (if_s1_valid),
-        .id_pc        (id_pc),
-        .id_inst      (id_inst),         // registered instruction for ID
-        .id_inst1     (id_inst1),
         .id_s1_valid  (id_s1_valid),
-        // Branch prediction passthrough
-        .if_pred_taken    (if_pred_taken_out),
-        .if_pred_target   (if_pred_target_out),
-        .if_pred_source_abtb(if_pred_source_abtb_out),
-        .if_stage1_branch_owned(if_stage1_branch_owned_out),
-        .if_s1_pred_taken    (if_s1_pred_taken_out),
-        .if_s1_pred_target   (if_s1_pred_target_out),
-        .if_s1_pred_source_abtb(if_s1_pred_source_abtb_out),
-        .if_s1_stage1_branch_owned(if_s1_stage1_branch_owned_out),
-        .if_abtb_hit         (if_abtb_hit_out),
-        .if_abtb_way         (if_abtb_way_out),
-        .if_abtb_cfi_type    (if_abtb_cfi_type_out),
-        .if_abtb_target      (if_abtb_target_out),
-        .if_abtb_pred_taken  (if_abtb_pred_taken_out),
-        .if_abtb_pred_target (if_abtb_pred_target_out),
-        .if_s1_abtb_hit         (if_s1_abtb_hit_out),
-        .if_s1_abtb_way         (if_s1_abtb_way_out),
-        .if_s1_abtb_cfi_type    (if_s1_abtb_cfi_type_out),
-        .if_s1_abtb_target      (if_s1_abtb_target_out),
-        .if_s1_abtb_pred_taken  (if_s1_abtb_pred_taken_out),
-        .if_s1_abtb_pred_target (if_s1_abtb_pred_target_out),
-        .if_stage1_pht_index(if_stage1_pht_index),
-        .if_stage1_pht_counter(if_stage1_pht_counter),
-        .if_s1_stage1_pht_index(if_s1_stage1_pht_index),
-        .if_s1_stage1_pht_counter(if_s1_stage1_pht_counter),
-        .id_pred_taken    (id_pred_taken),
-        .id_pred_target   (id_pred_target),
-        .id_pred_source_abtb(id_pred_source_abtb),
-        .id_stage1_branch_owned(id_stage1_branch_owned),
-        .id_s1_pred_taken    (id_s1_pred_taken),
-        .id_s1_pred_target   (id_s1_pred_target),
-        .id_s1_pred_source_abtb(id_s1_pred_source_abtb),
-        .id_s1_stage1_branch_owned(id_s1_stage1_branch_owned),
-        .id_abtb_hit         (id_abtb_hit),
-        .id_abtb_way         (id_abtb_way),
-        .id_abtb_cfi_type    (id_abtb_cfi_type),
-        .id_abtb_target      (id_abtb_target),
-        .id_abtb_pred_taken  (id_abtb_pred_taken),
-        .id_abtb_pred_target (id_abtb_pred_target),
-        .id_s1_abtb_hit         (id_s1_abtb_hit),
-        .id_s1_abtb_way         (id_s1_abtb_way),
-        .id_s1_abtb_cfi_type    (id_s1_abtb_cfi_type),
-        .id_s1_abtb_target      (id_s1_abtb_target),
-        .id_s1_abtb_pred_taken  (id_s1_abtb_pred_taken),
-        .id_s1_abtb_pred_target (id_s1_abtb_pred_target),
-        .id_stage1_pht_index(id_stage1_pht_index),
-        .id_stage1_pht_counter(id_stage1_pht_counter),
-        .id_s1_stage1_pht_index(id_s1_stage1_pht_index),
-        .id_s1_stage1_pht_counter(id_s1_stage1_pht_counter)
+        .if_payload   (if_id_payload),
+        .id_payload   (id_payload)
     );
 
     decoder u_decoder (
@@ -1455,6 +1240,72 @@ module cpu_top (
 
     // ==================== ID/EX ====================
 
+    id_ex_payload_builder u_id_ex_payload_builder (
+        .s0_pc                 (id_pc),
+        .s0_alu_src1           (id_alu_src1),
+        .s0_alu_src2           (id_alu_src2),
+        .s0_rs1_data           (fwd_rs1_data),
+        .s0_rs2_data           (fwd_rs2_data),
+        .s0_rs1_wb_repair      (fwd_rs1_wb_repair),
+        .s0_rs2_wb_repair      (fwd_rs2_wb_repair),
+        .s0_rd                 (id_rd_addr),
+        .s0_rs1_addr           (id_rs1_addr),
+        .s0_rs2_addr           (id_rs2_addr),
+        .s0_alu_src1_is_rs1    (id_alu_src1_is_rs1),
+        .s0_alu_src2_is_rs2    (id_alu_src2_is_rs2),
+        .s0_alu_op             (dec_alu_op),
+        .s0_reg_write_en       (dec_reg_write_en),
+        .s0_wb_sel             (dec_wb_sel),
+        .s0_mem_read_en        (dec_mem_read_en),
+        .s0_mem_write_en       (dec_mem_write_en),
+        .s0_mem_size           (dec_mem_size),
+        .s0_mem_unsigned       (dec_mem_unsigned),
+        .s0_is_branch          (dec_is_branch),
+        .s0_branch_cond        (dec_branch_cond),
+        .s0_is_jal             (dec_is_jal),
+        .s0_is_jalr            (dec_is_jalr),
+        .s0_prediction         (id_payload.slot0.prediction),
+        .s0_update_qualified   (id_abtb_update_qualified_w),
+        .s0_update_cfi_type    (id_abtb_update_cfi_type_w),
+        .s0_is_csr             (dec_is_csr),
+        .s0_csr_uses_imm       (dec_csr_uses_imm),
+        .s0_csr_cmd            (id_csr_cmd),
+        .s0_csr_addr           (id_csr_addr),
+        .s0_is_ecall           (dec_is_ecall),
+        .s0_is_mret            (dec_is_mret),
+        .s0_is_muldiv          (dec_is_muldiv),
+        .s0_muldiv_op          (id_inst[14:12]),
+        .s1_pc                 (id_s1_pc),
+        .s1_inst               (id_inst1),
+        .s1_alu_src1           (id_s1_alu_src1),
+        .s1_alu_src2           (id_s1_alu_src2),
+        .s1_rs1_data           (fwd_s1_rs1_data),
+        .s1_rs2_data           (fwd_s1_rs2_data),
+        .s1_rs1_wb_repair      (fwd_s1_rs1_wb_repair),
+        .s1_rs2_wb_repair      (fwd_s1_rs2_wb_repair),
+        .s1_rd                 (id_s1_rd_addr),
+        .s1_rs1_addr           (id_s1_rs1_addr),
+        .s1_rs2_addr           (id_s1_rs2_addr),
+        .s1_alu_src1_is_rs1    (id_s1_alu_src1_is_rs1),
+        .s1_alu_src2_is_rs2    (id_s1_alu_src2_is_rs2),
+        .s1_alu_op             (dec1_alu_op),
+        .s1_reg_write_en       (dec1_reg_write_en),
+        .s1_wb_sel             (dec1_wb_sel),
+        .s1_mem_read_en        (dec1_mem_read_en),
+        .s1_mem_write_en       (dec1_mem_write_en),
+        .s1_mem_size           (dec1_mem_size),
+        .s1_mem_unsigned       (dec1_mem_unsigned),
+        .s1_is_branch          (dec1_is_branch),
+        .s1_branch_cond        (dec1_branch_cond),
+        .s1_is_jal             (dec1_is_jal),
+        .s1_is_jalr            (dec1_is_jalr),
+        .s1_prediction         (id_payload.slot1.prediction),
+        .s1_update_qualified   (id_s1_abtb_update_qualified_w),
+        .s1_update_cfi_type    (id_s1_abtb_update_cfi_type_w),
+        .slot0_payload         (id_ex_s0_payload),
+        .slot1_payload         (id_ex_s1_payload)
+    );
+
     id_ex_reg u_id_ex_reg (
         .clk              (clk),
         .rst_n            (rst_n),
@@ -1465,98 +1316,8 @@ module cpu_top (
         .ex_ready_go      (ex_ready_go_w),
         .mem_allowin      (mem_allowin),
         .ex_flush         (ex_flush),
-        .id_pc            (id_pc),
-        .id_alu_src1      (id_alu_src1),
-        .id_alu_src2      (id_alu_src2),
-        .id_rs1_data      (fwd_rs1_data),
-        .id_rs2_data      (fwd_rs2_data),
-        .id_rs1_wb_repair (fwd_rs1_wb_repair),
-        .id_rs2_wb_repair (fwd_rs2_wb_repair),
-        .id_rd            (id_rd_addr),
-        .id_rs1_addr      (id_rs1_addr),
-        .id_rs2_addr      (id_rs2_addr),
-        .id_alu_src1_is_rs1(id_alu_src1_is_rs1),
-        .id_alu_src2_is_rs2(id_alu_src2_is_rs2),
-        .id_alu_op        (dec_alu_op),
-        .id_reg_write_en  (dec_reg_write_en),
-        .id_wb_sel        (dec_wb_sel),
-        .id_mem_read_en   (dec_mem_read_en),
-        .id_mem_write_en  (dec_mem_write_en),
-        .id_mem_size      (dec_mem_size),
-        .id_mem_unsigned  (dec_mem_unsigned),
-        .id_is_branch     (dec_is_branch),
-        .id_branch_cond   (dec_branch_cond),
-        .id_is_jal        (dec_is_jal),
-        .id_is_jalr       (dec_is_jalr),
-        .id_is_csr        (dec_is_csr),
-        .id_csr_uses_imm  (dec_csr_uses_imm),
-        .id_csr_cmd       (id_csr_cmd),
-        .id_csr_addr      (id_csr_addr),
-        .id_is_ecall      (dec_is_ecall),
-        .id_is_mret       (dec_is_mret),
-        .id_is_muldiv     (dec_is_muldiv),
-        .id_muldiv_op     (id_inst[14:12]),
-        // Stage-1 canonical prediction passthrough.
-        .id_pred_taken      (id_pred_taken),
-        .id_pred_target     (id_pred_target),
-        .id_pred_source_abtb(id_pred_source_abtb),
-        .id_stage1_branch_owned(id_stage1_branch_owned),
-        .id_abtb_hit         (id_abtb_hit),
-        .id_abtb_way         (id_abtb_way),
-        .id_abtb_cfi_type    (id_abtb_cfi_type),
-        .id_abtb_target      (id_abtb_target),
-        .id_abtb_pred_taken  (id_abtb_pred_taken),
-        .id_abtb_pred_target (id_abtb_pred_target),
-        .id_abtb_update_qualified(id_abtb_update_qualified_w),
-        .id_abtb_update_cfi_type (id_abtb_update_cfi_type_w),
-        .id_stage1_pht_index(id_stage1_pht_index),
-        .id_stage1_pht_counter(id_stage1_pht_counter),
-        .ex_pc            (ex_pc),
-        .ex_alu_src1      (ex_alu_src1),
-        .ex_alu_src2      (ex_alu_src2),
-        .ex_rs1_data      (ex_rs1_data),
-        .ex_rs2_data      (ex_rs2_data),
-        .ex_rs1_wb_repair (ex_rs1_wb_repair),
-        .ex_rs2_wb_repair (ex_rs2_wb_repair),
-        .ex_rd            (ex_rd),
-        .ex_rs1_addr      (ex_rs1_addr),
-        .ex_rs2_addr      (ex_rs2_addr),
-        .ex_alu_src1_is_rs1(ex_alu_src1_is_rs1),
-        .ex_alu_src2_is_rs2(ex_alu_src2_is_rs2),
-        .ex_alu_op        (ex_alu_op),
-        .ex_reg_write_en  (ex_reg_write_en),
-        .ex_wb_sel        (ex_wb_sel),
-        .ex_mem_read_en   (ex_mem_read_en),
-        .ex_mem_write_en  (ex_mem_write_en),
-        .ex_mem_size      (ex_mem_size),
-        .ex_mem_unsigned  (ex_mem_unsigned),
-        .ex_is_branch     (ex_is_branch),
-        .ex_branch_cond   (ex_branch_cond),
-        .ex_is_jal        (ex_is_jal),
-        .ex_is_jalr       (ex_is_jalr),
-        .ex_is_csr        (ex_is_csr),
-        .ex_csr_uses_imm  (ex_csr_uses_imm),
-        .ex_csr_cmd       (ex_csr_cmd),
-        .ex_csr_addr      (ex_csr_addr),
-        .ex_is_ecall      (ex_is_ecall),
-        .ex_is_mret       (ex_is_mret),
-        .ex_is_muldiv     (ex_is_muldiv),
-        .ex_muldiv_op     (ex_muldiv_op),
-        // Branch prediction out
-        .ex_pred_taken      (ex_pred_taken),
-        .ex_pred_target     (ex_pred_target),
-        .ex_pred_source_abtb(ex_pred_source_abtb),
-        .ex_stage1_branch_owned(ex_stage1_branch_owned),
-        .ex_abtb_hit         (ex_abtb_hit),
-        .ex_abtb_way         (ex_abtb_way),
-        .ex_abtb_cfi_type    (ex_abtb_cfi_type),
-        .ex_abtb_target      (ex_abtb_target),
-        .ex_abtb_pred_taken  (ex_abtb_pred_taken),
-        .ex_abtb_pred_target (ex_abtb_pred_target),
-        .ex_abtb_update_qualified(ex_abtb_update_qualified),
-        .ex_abtb_update_cfi_type (ex_abtb_update_cfi_type),
-        .ex_stage1_pht_index(ex_stage1_pht_index),
-        .ex_stage1_pht_counter(ex_stage1_pht_counter)
+        .id_payload       (id_ex_s0_payload),
+        .ex_payload       (ex_s0_payload)
     );
 
     id_ex_reg_s1 u_id_ex_reg_s1 (
@@ -1566,83 +1327,9 @@ module cpu_top (
         .id_ready_go         (id_ready_go),
         .ex_allowin          (ex_allowin),
         .ex_flush            (ex_flush),
-        .id_pc               (id_s1_pc),
-        .id_inst             (id_inst1),
-        .id_alu_src1         (id_s1_alu_src1),
-        .id_alu_src2         (id_s1_alu_src2),
-        .id_rs1_data         (fwd_s1_rs1_data),
-        .id_rs2_data         (fwd_s1_rs2_data),
-        .id_rs1_wb_repair    (fwd_s1_rs1_wb_repair),
-        .id_rs2_wb_repair    (fwd_s1_rs2_wb_repair),
-        .id_rd               (id_s1_rd_addr),
-        .id_rs1_addr         (id_s1_rs1_addr),
-        .id_rs2_addr         (id_s1_rs2_addr),
-        .id_alu_src1_is_rs1  (id_s1_alu_src1_is_rs1),
-        .id_alu_src2_is_rs2  (id_s1_alu_src2_is_rs2),
-        .id_alu_op           (dec1_alu_op),
-        .id_reg_write_en     (dec1_reg_write_en),
-        .id_wb_sel           (dec1_wb_sel),
-        .id_mem_read_en      (dec1_mem_read_en),
-        .id_mem_write_en     (dec1_mem_write_en),
-        .id_mem_size         (dec1_mem_size),
-        .id_mem_unsigned     (dec1_mem_unsigned),
-        .id_is_branch        (dec1_is_branch),
-        .id_branch_cond      (dec1_branch_cond),
-        .id_is_jal           (dec1_is_jal),
-        .id_is_jalr          (dec1_is_jalr),
-        .id_pred_taken         (id_s1_pred_taken),
-        .id_pred_target        (id_s1_pred_target),
-        .id_pred_source_abtb (id_s1_pred_source_abtb),
-        .id_stage1_branch_owned(id_s1_stage1_branch_owned),
-        .id_abtb_hit         (id_s1_abtb_hit),
-        .id_abtb_way         (id_s1_abtb_way),
-        .id_abtb_cfi_type    (id_s1_abtb_cfi_type),
-        .id_abtb_target      (id_s1_abtb_target),
-        .id_abtb_pred_taken  (id_s1_abtb_pred_taken),
-        .id_abtb_pred_target (id_s1_abtb_pred_target),
-        .id_abtb_update_qualified(id_s1_abtb_update_qualified_w),
-        .id_abtb_update_cfi_type (id_s1_abtb_update_cfi_type_w),
-        .id_stage1_pht_index(id_s1_stage1_pht_index),
-        .id_stage1_pht_counter(id_s1_stage1_pht_counter),
         .ex_s1_valid         (ex_s1_valid),
-        .ex_s1_pc            (ex_s1_pc),
-        .ex_s1_inst          (ex_s1_inst),
-        .ex_s1_alu_src1      (ex_s1_alu_src1),
-        .ex_s1_alu_src2      (ex_s1_alu_src2),
-        .ex_s1_rs1_data      (ex_s1_rs1_data),
-        .ex_s1_rs2_data      (ex_s1_rs2_data),
-        .ex_s1_rs1_wb_repair (ex_s1_rs1_wb_repair),
-        .ex_s1_rs2_wb_repair (ex_s1_rs2_wb_repair),
-        .ex_s1_rd            (ex_s1_rd),
-        .ex_s1_rs1_addr      (ex_s1_rs1_addr),
-        .ex_s1_rs2_addr      (ex_s1_rs2_addr),
-        .ex_s1_alu_src1_is_rs1(ex_s1_alu_src1_is_rs1),
-        .ex_s1_alu_src2_is_rs2(ex_s1_alu_src2_is_rs2),
-        .ex_s1_alu_op        (ex_s1_alu_op),
-        .ex_s1_reg_write_en  (ex_s1_reg_write_en),
-        .ex_s1_wb_sel        (ex_s1_wb_sel),
-        .ex_s1_mem_read_en   (ex_s1_mem_read_en),
-        .ex_s1_mem_write_en  (ex_s1_mem_write_en),
-        .ex_s1_mem_size      (ex_s1_mem_size),
-        .ex_s1_mem_unsigned  (ex_s1_mem_unsigned),
-        .ex_s1_is_branch     (ex_s1_is_branch),
-        .ex_s1_branch_cond   (ex_s1_branch_cond),
-        .ex_s1_is_jal        (ex_s1_is_jal),
-        .ex_s1_is_jalr       (ex_s1_is_jalr),
-        .ex_s1_pred_taken      (ex_s1_pred_taken),
-        .ex_s1_pred_target     (ex_s1_pred_target),
-        .ex_s1_pred_source_abtb(ex_s1_pred_source_abtb),
-        .ex_s1_stage1_branch_owned(ex_s1_stage1_branch_owned),
-        .ex_s1_abtb_hit         (ex_s1_abtb_hit),
-        .ex_s1_abtb_way         (ex_s1_abtb_way),
-        .ex_s1_abtb_cfi_type    (ex_s1_abtb_cfi_type),
-        .ex_s1_abtb_target      (ex_s1_abtb_target),
-        .ex_s1_abtb_pred_taken  (ex_s1_abtb_pred_taken),
-        .ex_s1_abtb_pred_target (ex_s1_abtb_pred_target),
-        .ex_s1_abtb_update_qualified(ex_s1_abtb_update_qualified),
-        .ex_s1_abtb_update_cfi_type (ex_s1_abtb_update_cfi_type),
-        .ex_s1_stage1_pht_index(ex_s1_stage1_pht_index),
-        .ex_s1_stage1_pht_counter(ex_s1_stage1_pht_counter)
+        .id_payload          (id_ex_s1_payload),
+        .ex_payload          (ex_s1_payload)
     );
 
     // ==================== EX stage ====================
@@ -1833,6 +1520,40 @@ module cpu_top (
 
     // ==================== EX/MEM ====================
 
+    ex_mem_payload_builder u_ex_mem_payload_builder (
+        .redirect_valid  (ex_registered_branch_flush),
+        .redirect_target (ex_registered_branch_target),
+        .s0_alu_result   (ex_pipe_alu_result),
+        .s0_pc           (ex_pc),
+        .s0_pc_plus_4    (ex_pc_plus_4),
+        .s0_rd           (ex_rd),
+        .s0_reg_write_en (ex_reg_write_en),
+        .s0_wb_sel       (ex_wb_sel),
+        .s0_mem_read_en  (ex_mem_read_en),
+        .s0_mem_size     (ex_mem_size),
+        .s0_mem_unsigned (ex_mem_unsigned),
+        .s0_store_wea    (dram_wea),
+        .s0_store_data   (store_data_shifted),
+        .s0_is_cacheable (is_cacheable),
+        .s1_pc           (ex_s1_pc),
+        .s1_inst         (ex_s1_inst),
+        .s1_alu_result   (alu_s1_result),
+        .s1_pc_plus_4    (ex_s1_pc_plus_4),
+        .s1_rd           (ex_s1_rd),
+        .s1_reg_write_en (ex_s1_reg_write_en),
+        .s1_wb_sel       (ex_s1_wb_sel),
+        .s1_mem_read_en  (ex_s1_mem_read_en),
+        .s1_mem_write_en (ex_s1_mem_write_en),
+        .s1_mem_size     (ex_s1_mem_size),
+        .s1_mem_unsigned (ex_s1_mem_unsigned),
+        .s1_store_wea    (dram_wea_s1),
+        .s1_store_data   (s1_store_data_shifted),
+        .s1_is_cacheable (is_cacheable_s1),
+        .redirect        (ex_mem_redirect),
+        .slot0_payload   (ex_mem_s0_payload),
+        .slot1_payload   (ex_mem_s1_payload)
+    );
+
     ex_mem_reg u_ex_mem_reg (
         .clk              (clk),
         .rst_n            (rst_n),
@@ -1842,40 +1563,10 @@ module cpu_top (
         .mem_valid        (mem_valid),
         .mem_ready_go     (mem_ready_go_w),
         .wb_allowin       (wb_allowin),
-        // Register branch redirects before replaying the frontend.  Keeping
-        // this off the same-cycle IROM path buys timing at one extra miss cycle.
-        // Gate with EX readiness: don't propagate while the EX instruction stalls.
-        // (DCache refill). This ensures the flush-generating instruction advances
-        // to MEM first, rather than being killed by its own registered flush.
-        .ex_branch_flush  (ex_registered_branch_flush),
-        .ex_branch_target (ex_registered_branch_target),
-        .mem_branch_flush (mem_branch_flush),
-        .mem_branch_target(mem_branch_target),
-        .ex_alu_result    (ex_pipe_alu_result),
-        .ex_pc            (ex_pc),
-        .ex_pc_plus_4     (ex_pc_plus_4),
-        .ex_rd            (ex_rd),
-        .ex_reg_write_en  (ex_reg_write_en),
-        .ex_wb_sel        (ex_wb_sel),
-        .ex_mem_read_en   (ex_mem_read_en),
-        .ex_mem_size      (ex_mem_size),
-        .ex_mem_unsigned  (ex_mem_unsigned),
-        .ex_store_wea     (dram_wea),
-        .ex_store_data    (store_data_shifted),
-        // DCache: pass is_cacheable to MEM
-        .ex_is_cacheable  (is_cacheable),
-        .mem_alu_result   (mem_alu_result),
-        .mem_pc           (mem_pc),
-        .mem_pc_plus_4    (mem_pc_plus_4),
-        .mem_rd           (mem_rd),
-        .mem_reg_write_en (mem_reg_write_en),
-        .mem_wb_sel       (mem_wb_sel),
-        .mem_mem_read_en  (mem_mem_read_en),
-        .mem_mem_size     (mem_mem_size),
-        .mem_mem_unsigned (mem_mem_unsigned),
-        .mem_store_wea    (mem_store_wea),
-        .mem_store_data   (mem_store_data),
-        .mem_is_cacheable (is_cacheable_mem)
+        .ex_redirect      (ex_mem_redirect),
+        .mem_redirect     (mem_redirect),
+        .ex_payload       (ex_mem_s0_payload),
+        .mem_payload      (mem_s0_payload)
     );
 
     ex_mem_reg_s1 u_ex_mem_reg_s1 (
@@ -1886,86 +1577,54 @@ module cpu_top (
         .mem_allowin         (mem_allowin),
         .ex_branch_flush     (branch_flush),
         .mem_branch_flush    (mem_branch_flush),
-        .ex_s1_pc            (ex_s1_pc),
-        .ex_s1_inst          (ex_s1_inst),
-        .ex_s1_alu_result    (alu_s1_result),
-        .ex_s1_pc_plus_4     (ex_s1_pc_plus_4),
-        .ex_s1_rd            (ex_s1_rd),
-        .ex_s1_reg_write_en  (ex_s1_reg_write_en),
-        .ex_s1_wb_sel        (ex_s1_wb_sel),
-        .ex_s1_mem_read_en   (ex_s1_mem_read_en),
-        .ex_s1_mem_write_en  (ex_s1_mem_write_en),
-        .ex_s1_mem_size      (ex_s1_mem_size),
-        .ex_s1_mem_unsigned  (ex_s1_mem_unsigned),
-        .ex_s1_store_wea     (dram_wea_s1),
-        .ex_s1_store_data    (s1_store_data_shifted),
-        .ex_s1_is_cacheable  (is_cacheable_s1),
         .mem_s1_valid        (mem_s1_valid),
-        .mem_s1_pc           (mem_s1_pc),
-        .mem_s1_inst         (mem_s1_inst),
-        .mem_s1_alu_result   (mem_s1_alu_result),
-        .mem_s1_pc_plus_4    (mem_s1_pc_plus_4),
-        .mem_s1_rd           (mem_s1_rd),
-        .mem_s1_reg_write_en (mem_s1_reg_write_en),
-        .mem_s1_wb_sel       (mem_s1_wb_sel),
-        .mem_s1_mem_read_en  (mem_s1_mem_read_en),
-        .mem_s1_mem_write_en (mem_s1_mem_write_en),
-        .mem_s1_mem_size     (mem_s1_mem_size),
-        .mem_s1_mem_unsigned (mem_s1_mem_unsigned),
-        .mem_s1_store_wea    (mem_s1_store_wea),
-        .mem_s1_store_data   (mem_s1_store_data),
-        .mem_s1_is_cacheable (mem_s1_is_cacheable)
+        .ex_payload          (ex_mem_s1_payload),
+        .mem_payload         (mem_s1_payload)
     );
 
     // ==================== MEM/WB ====================
 
+    mem_wb_payload_builder u_mem_wb_payload_builder (
+        .s0_alu_result   (mem_alu_result),
+        .s0_pc_plus_4    (mem_pc_plus_4),
+        .s0_rd           (mem_rd),
+        .s0_reg_write_en (mem_reg_write_en),
+        .s0_wb_sel       (mem_wb_sel),
+        .s0_is_load      (mem_mem_read_en),
+        .s0_load_data    (mem_load_data_ext),
+        .s1_pc           (mem_s1_pc),
+        .s1_inst         (mem_s1_inst),
+        .s1_alu_result   (mem_s1_alu_result),
+        .s1_pc_plus_4    (mem_s1_pc_plus_4),
+        .s1_rd           (mem_s1_rd),
+        .s1_reg_write_en (mem_s1_reg_write_en),
+        .s1_wb_sel       (mem_s1_wb_sel),
+        .s1_is_load      (mem_s1_mem_read_en),
+        .slot0_payload   (mem_wb_s0_payload),
+        .slot1_payload   (mem_wb_s1_payload)
+    );
+
     mem_wb_reg u_mem_wb_reg (
-        .clk              (clk),
-        .rst_n            (rst_n),
-        .mem_valid        (mem_valid),
-        .mem_ready_go     (mem_ready_go_w),
-        .wb_allowin       (wb_allowin),
-        .wb_valid         (wb_valid),
-        .mem_alu_result   (mem_alu_result),
-        .mem_pc_plus_4    (mem_pc_plus_4),
-        .mem_rd           (mem_rd),
-        .mem_reg_write_en (mem_reg_write_en),
-        .mem_wb_sel       (mem_wb_sel),
-        .mem_mem_read_en  (mem_mem_read_en),
-        .mem_load_valid   (mem_load_valid),
-        .mem_load_data    (mem_load_data_ext),
-        .wb_alu_result    (wb_alu_result),
-        .wb_pc_plus_4     (wb_pc_plus_4),
-        .wb_rd            (wb_rd),
-        .wb_reg_write_en  (wb_reg_write_en),
-        .wb_wb_sel        (wb_wb_sel),
-        .wb_is_load       (wb_is_load),
-        .wb_load_data     (wb_load_data)
+        .clk            (clk),
+        .rst_n          (rst_n),
+        .mem_valid      (mem_valid),
+        .mem_ready_go   (mem_ready_go_w),
+        .wb_allowin     (wb_allowin),
+        .wb_valid       (wb_valid),
+        .mem_load_valid (mem_load_valid),
+        .mem_payload    (mem_wb_s0_payload),
+        .wb_payload     (wb_s0_payload)
     );
 
     mem_wb_reg_s1 u_mem_wb_reg_s1 (
-        .clk                 (clk),
-        .rst_n               (rst_n),
-        .mem_s1_valid        (mem_s1_valid),
-        .mem_ready_go        (mem_ready_go_w),
-        .wb_allowin          (wb_allowin),
-        .mem_s1_pc           (mem_s1_pc),
-        .mem_s1_inst         (mem_s1_inst),
-        .mem_s1_alu_result   (mem_s1_alu_result),
-        .mem_s1_pc_plus_4    (mem_s1_pc_plus_4),
-        .mem_s1_rd           (mem_s1_rd),
-        .mem_s1_reg_write_en (mem_s1_reg_write_en),
-        .mem_s1_wb_sel       (mem_s1_wb_sel),
-        .mem_s1_mem_read_en  (mem_s1_mem_read_en),
-        .wb_s1_valid         (wb_s1_valid),
-        .wb_s1_pc            (wb_s1_pc),
-        .wb_s1_inst          (wb_s1_inst),
-        .wb_s1_alu_result    (wb_s1_alu_result),
-        .wb_s1_pc_plus_4     (wb_s1_pc_plus_4),
-        .wb_s1_rd            (wb_s1_rd),
-        .wb_s1_reg_write_en  (wb_s1_reg_write_en),
-        .wb_s1_wb_sel        (wb_s1_wb_sel),
-        .wb_s1_is_load       (wb_s1_is_load)
+        .clk           (clk),
+        .rst_n         (rst_n),
+        .mem_s1_valid  (mem_s1_valid),
+        .mem_ready_go  (mem_ready_go_w),
+        .wb_allowin    (wb_allowin),
+        .mem_payload   (mem_wb_s1_payload),
+        .wb_s1_valid   (wb_s1_valid),
+        .wb_payload    (wb_s1_payload)
     );
 
     // ==================== WB stage ====================

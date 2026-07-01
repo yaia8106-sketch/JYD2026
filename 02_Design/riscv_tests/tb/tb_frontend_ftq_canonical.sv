@@ -1,6 +1,7 @@
 `timescale 1ns/1ps
 
 module tb_frontend_ftq_canonical;
+    import cpu_defs::*;
 
     localparam logic [31:0] BASE = 32'h8000_0000;
     localparam logic [1:0] TYPE_JAL = 2'b00;
@@ -29,14 +30,17 @@ module tb_frontend_ftq_canonical;
 
     logic if_valid;
     logic if_s1_valid;
-    logic if_pred_taken;
-    logic [31:0] if_pred_target;
-    logic if_pred_source_abtb;
-    logic if_stage1_branch_owned;
-    logic if_s1_pred_taken;
-    logic [31:0] if_s1_pred_target;
-    logic if_s1_pred_source_abtb;
-    logic if_s1_stage1_branch_owned;
+    wire if_id_payload_t if_payload;
+    wire if_pred_taken = if_payload.slot0.prediction.taken;
+    wire [31:0] if_pred_target = if_payload.slot0.prediction.target;
+    wire if_pred_source_abtb = if_payload.slot0.prediction.source_abtb;
+    wire if_stage1_branch_owned =
+        if_payload.slot0.prediction.stage1_branch_owned;
+    wire if_s1_pred_taken = if_payload.slot1.prediction.taken;
+    wire [31:0] if_s1_pred_target = if_payload.slot1.prediction.target;
+    wire if_s1_pred_source_abtb = if_payload.slot1.prediction.source_abtb;
+    wire if_s1_stage1_branch_owned =
+        if_payload.slot1.prediction.stage1_branch_owned;
     logic [31:0] current_pc;
     logic stage1_steer_valid;
     logic stage1_steer_source_abtb;
@@ -77,34 +81,8 @@ module tb_frontend_ftq_canonical;
         .stage1_bank1_pht_counter    (2'b10),
         .if_valid                    (if_valid),
         .if_ready_go                 (),
-        .if_pc                       (),
-        .if_inst0                    (),
-        .if_inst1                    (),
         .if_s1_valid                 (if_s1_valid),
-        .if_pred_taken                 (if_pred_taken),
-        .if_pred_target                (if_pred_target),
-        .if_pred_source_abtb         (if_pred_source_abtb),
-        .if_stage1_branch_owned      (if_stage1_branch_owned),
-        .if_s1_pred_taken              (if_s1_pred_taken),
-        .if_s1_pred_target             (if_s1_pred_target),
-        .if_s1_pred_source_abtb      (if_s1_pred_source_abtb),
-        .if_s1_stage1_branch_owned   (if_s1_stage1_branch_owned),
-        .if_abtb_hit                 (),
-        .if_abtb_way                 (),
-        .if_abtb_cfi_type            (),
-        .if_abtb_target              (),
-        .if_abtb_pred_taken          (),
-        .if_abtb_pred_target         (),
-        .if_s1_abtb_hit              (),
-        .if_s1_abtb_way              (),
-        .if_s1_abtb_cfi_type         (),
-        .if_s1_abtb_target           (),
-        .if_s1_abtb_pred_taken       (),
-        .if_s1_abtb_pred_target      (),
-        .if_stage1_pht_index         (),
-        .if_stage1_pht_counter       (),
-        .if_s1_stage1_pht_index      (),
-        .if_s1_stage1_pht_counter    (),
+        .if_payload                  (if_payload),
         .current_pc                  (current_pc),
         .abtb_lookup_accept          (),
         .stage1_steer_valid          (stage1_steer_valid),

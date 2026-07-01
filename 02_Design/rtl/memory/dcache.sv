@@ -89,7 +89,6 @@ module dcache #(
     localparam TAG_W      = 8;    // addr[17:10]
     localparam INDEX_W    = 6;    // addr[9:4]
     localparam WORD_W     = 2;    // addr[3:2]
-    localparam SB_DEPTH   = 2;
 
     function automatic [31:0] merge_bytes (
         input logic [31:0] base,
@@ -319,14 +318,6 @@ module dcache #(
     logic [1:0]  direct_rd_last_pipe;
     logic [WORD_W:0] direct_rd_issue_count;
 
-    // Capture the two recent-store entries once when a refill starts.
-    // The line compare is resolved up front; each refill beat then only
-    // needs a narrow word check and byte selection.
-    logic                 refill_merge_valid [SB_DEPTH-1:0];
-    logic [1:0]           refill_merge_word  [SB_DEPTH-1:0];
-    logic [ 3:0]          refill_merge_wea   [SB_DEPTH-1:0];
-    logic [31:0]          refill_merge_data  [SB_DEPTH-1:0];
-
     // ================================================================
     //  Store Forwarding
     //  A store hit writes the cache RAM at the same edge that a following load
@@ -358,77 +349,22 @@ module dcache #(
     wire lru_victim = lru[mem_index];
 
     // ================================================================
-    //  Store Buffer + Recent-Store Miss Buffer (2 fixed entries)
+    //  Store Buffer interface
     // ================================================================
-    // sb_alloc_sel alternates on each accepted store. It always identifies
-    // the next entry to overwrite and, when both writes are pending, the older
-    // entry to drain. Payload never moves between entries.
-    //
-    // pending:      the backend still owes this store a write response.
-    // recent_valid: the entry belongs to the latest two accepted stores and
-    //               remains searchable after its backend write completes.
-    logic [SB_DEPTH-1:0] sb_pending_q;
-    logic [SB_DEPTH-1:0] sb_recent_valid_q;
-    logic                sb_alloc_sel;
-    logic [31:0]         sb_addr_q [SB_DEPTH-1:0];
-    logic [ 3:0]         sb_wea_q  [SB_DEPTH-1:0];
-    logic [31:0]         sb_data_q [SB_DEPTH-1:0];
-
-    wire sb_any_valid = |sb_pending_q;
-    wire sb_full      = &sb_pending_q;
-
-    // Physical pending states 01/10 select the sole pending entry. In state
-    // 11, sb_alloc_sel points to the older entry because allocation alternates.
-    wire sb_drain_sel = sb_pending_q[0] & sb_pending_q[1]
-                      ? sb_alloc_sel
-                      : sb_pending_q[1];
-    wire [31:0] sb_head_addr = sb_drain_sel ? sb_addr_q[1] : sb_addr_q[0];
-    wire [ 3:0] sb_head_wea  = sb_drain_sel ? sb_wea_q[1]  : sb_wea_q[0];
-    wire [31:0] sb_head_data = sb_drain_sel ? sb_data_q[1] : sb_data_q[0];
-
+    wire [1:0]  sb_pending_q;
+    wire [1:0]  sb_recent_valid_q;
+    wire        sb_alloc_sel;
+    wire        sb_drain_sel;
+    wire        sb_any_valid;
+    wire        sb_full;
+    wire [31:0] sb_head_addr;
+    wire [ 3:0] sb_head_wea;
+    wire [31:0] sb_head_data;
     wire        sb_resp_fire;
     wire        sb_store_enqueue;
     wire        sb_pop   = sb_resp_fire;
     wire        sb_push  = sb_store_enqueue;
     wire [31:0] sb_push_addr = {mem_addr[31:2], 2'b00};
-
-    // Age-ordered views used only when a refill starts. With two fixed entries,
-    // sb_alloc_sel is the older recent store and ~sb_alloc_sel is the newer.
-    wire        sb_recent_old_valid = sb_alloc_sel
-                                    ? sb_recent_valid_q[1]
-                                    : sb_recent_valid_q[0];
-    wire [31:0] sb_recent_old_addr  = sb_alloc_sel ? sb_addr_q[1] : sb_addr_q[0];
-    wire [ 3:0] sb_recent_old_wea   = sb_alloc_sel ? sb_wea_q[1]  : sb_wea_q[0];
-    wire [31:0] sb_recent_old_data  = sb_alloc_sel ? sb_data_q[1] : sb_data_q[0];
-    wire        sb_recent_new_valid = sb_alloc_sel
-                                    ? sb_recent_valid_q[0]
-                                    : sb_recent_valid_q[1];
-    wire [31:0] sb_recent_new_addr  = sb_alloc_sel ? sb_addr_q[0] : sb_addr_q[1];
-    wire [ 3:0] sb_recent_new_wea   = sb_alloc_sel ? sb_wea_q[0]  : sb_wea_q[1];
-    wire [31:0] sb_recent_new_data  = sb_alloc_sel ? sb_data_q[0] : sb_data_q[1];
-
-    always_ff @(posedge clk) begin
-        if (!rst_n) begin
-            for (int e = 0; e < SB_DEPTH; e++) begin
-                refill_merge_valid[e] <= 1'b0;
-                refill_merge_word[e]  <= '0;
-                refill_merge_wea[e]   <= 4'd0;
-                refill_merge_data[e]  <= 32'd0;
-            end
-        end else if (refill_start) begin
-            // Preserve age order so entry 1 always wins overlapping bytes.
-            refill_merge_valid[0] <= sb_recent_old_valid
-                                  & (sb_recent_old_addr[31:4] == mem_addr[31:4]);
-            refill_merge_word[0]  <= sb_recent_old_addr[3:2];
-            refill_merge_wea[0]   <= sb_recent_old_wea;
-            refill_merge_data[0]  <= sb_recent_old_data;
-            refill_merge_valid[1] <= sb_recent_new_valid
-                                  & (sb_recent_new_addr[31:4] == mem_addr[31:4]);
-            refill_merge_word[1]  <= sb_recent_new_addr[3:2];
-            refill_merge_wea[1]   <= sb_recent_new_wea;
-            refill_merge_data[1]  <= sb_recent_new_data;
-        end
-    end
 
     // ================================================================
     //  Direct BRAM backend datapath
@@ -512,45 +448,36 @@ module dcache #(
     wire        backend_wr_valid  = DIRECT_BRAM ? state_sb_drain_resp : mem_wr_valid;
     wire        backend_wr_ready  = state_sb_drain_resp;
 
-    // If a load miss refills a line while a recent-store entry for the same
-    // line is retained, merge those store bytes into the cache line.
-    // Entry 0 is older; entry 1 is younger and wins for overlapping bytes.
-    wire refill_sb0_same_word = refill_merge_valid[0] & (refill_merge_word[0] == refill_word);
-    wire refill_sb1_same_word = refill_merge_valid[1] & (refill_merge_word[1] == refill_word);
-    wire [3:0] refill_sb0_strobe = refill_sb0_same_word ? refill_merge_wea[0] : 4'b0000;
-    wire [3:0] refill_sb1_strobe = refill_sb1_same_word ? refill_merge_wea[1] : 4'b0000;
-    wire [31:0] refill_after_sb0 = merge_bytes(backend_rd_data, refill_merge_data[0], refill_sb0_strobe);
+    wire [31:0] miss_buffer_rdata;
+    wire        miss_buffer_covers_load;
 
-    assign refill_write_data = merge_bytes(refill_after_sb0, refill_merge_data[1], refill_sb1_strobe);
-
-    // ================================================================
-    //  Recent-store lookup for load misses
-    // ================================================================
-    // Compare both physical entries in parallel. Precompute both possible age
-    // orders, then use sb_alloc_sel only for the final data selection. This
-    // keeps the ready path to two parallel address compares plus mask coverage.
-    wire miss_buffer_match0 = sb_recent_valid_q[0]
-                            & (sb_addr_q[0][31:2] == mem_addr[31:2]);
-    wire miss_buffer_match1 = sb_recent_valid_q[1]
-                            & (sb_addr_q[1][31:2] == mem_addr[31:2]);
-    wire [3:0] miss_buffer_mask0 = miss_buffer_match0 ? sb_wea_q[0] : 4'b0000;
-    wire [3:0] miss_buffer_mask1 = miss_buffer_match1 ? sb_wea_q[1] : 4'b0000;
-    wire [3:0] miss_buffer_covered_mask = miss_buffer_mask0 | miss_buffer_mask1;
-
-    // alloc=0: entry0 is older, entry1 is newer.
-    // alloc=1: entry1 is older, entry0 is newer.
-    wire [31:0] miss_buffer_after_0 = merge_bytes(32'd0, sb_data_q[0], miss_buffer_mask0);
-    wire [31:0] miss_buffer_after_1 = merge_bytes(32'd0, sb_data_q[1], miss_buffer_mask1);
-    wire [31:0] miss_buffer_0_then_1 =
-        merge_bytes(miss_buffer_after_0, sb_data_q[1], miss_buffer_mask1);
-    wire [31:0] miss_buffer_1_then_0 =
-        merge_bytes(miss_buffer_after_1, sb_data_q[0], miss_buffer_mask0);
-    wire [31:0] miss_buffer_rdata = sb_alloc_sel
-                                  ? miss_buffer_1_then_0
-                                  : miss_buffer_0_then_1;
-    wire miss_buffer_covers_load = |mem_load_mask
-                                 & ((miss_buffer_covered_mask & mem_load_mask)
-                                    == mem_load_mask);
+    dcache_store_buffer u_store_buffer (
+        .clk                (clk),
+        .rst_n              (rst_n),
+        .push               (sb_push),
+        .push_addr          (sb_push_addr),
+        .push_wea           (mem_wea),
+        .push_data          (mem_wdata),
+        .pop                (sb_pop),
+        .any_pending        (sb_any_valid),
+        .full               (sb_full),
+        .drain_addr         (sb_head_addr),
+        .drain_wea          (sb_head_wea),
+        .drain_data         (sb_head_data),
+        .lookup_addr        (mem_addr),
+        .lookup_mask        (mem_load_mask),
+        .lookup_covers      (miss_buffer_covers_load),
+        .lookup_data        (miss_buffer_rdata),
+        .refill_capture     (refill_start),
+        .refill_line_addr   (mem_addr),
+        .refill_word        (refill_word),
+        .refill_base_data   (backend_rd_data),
+        .refill_merged_data (refill_write_data),
+        .pending_q          (sb_pending_q),
+        .recent_valid_q     (sb_recent_valid_q),
+        .alloc_sel          (sb_alloc_sel),
+        .drain_sel          (sb_drain_sel)
+    );
 
     // ================================================================
     //  FSM - variable-latency refill/store backend
@@ -781,37 +708,6 @@ module dcache #(
     end
 
     // ================================================================
-    //  Store Buffer / recent-store state
-    // ================================================================
-    // Enqueue alternates between the two physical entries. A backend response
-    // clears only pending; recent_valid and payload remain available to load
-    // misses until a later store overwrites that physical entry.
-    always_ff @(posedge clk) begin
-        if (!rst_n) begin
-            sb_pending_q      <= '0;
-            sb_recent_valid_q <= '0;
-            sb_alloc_sel      <= 1'b0;
-            for (int e = 0; e < SB_DEPTH; e++) begin
-                sb_addr_q[e] <= 32'd0;
-                sb_wea_q[e]  <= 4'd0;
-                sb_data_q[e] <= 32'd0;
-            end
-        end else begin
-            if (sb_pop)
-                sb_pending_q[sb_drain_sel] <= 1'b0;
-
-            if (sb_push) begin
-                sb_pending_q[sb_alloc_sel]      <= 1'b1;
-                sb_recent_valid_q[sb_alloc_sel] <= 1'b1;
-                sb_addr_q[sb_alloc_sel]         <= sb_push_addr;
-                sb_wea_q[sb_alloc_sel]          <= mem_wea;
-                sb_data_q[sb_alloc_sel]         <= mem_wdata;
-                sb_alloc_sel                    <= ~sb_alloc_sel;
-            end
-        end
-    end
-
-    // ================================================================
     //  External memory backend request/response
     // ================================================================
     assign mem_req_valid = state_refill_req | state_sb_drain_req;
@@ -856,22 +752,5 @@ module dcache #(
     //  load-miss refill or store-hit conflict -> S_SB_DRAIN_REQ
     //  Already handled in FSM next-state logic above.
     // ================================================================
-
-`ifndef SYNTHESIS
-    always_ff @(posedge clk) begin
-        if (rst_n) begin
-            if (sb_push && sb_pending_q[sb_alloc_sel])
-                $error("DCache store buffer overwrote a pending entry");
-            if (sb_pop && !sb_pending_q[sb_drain_sel])
-                $error("DCache store buffer popped a non-pending entry");
-            if (|(sb_pending_q & ~sb_recent_valid_q))
-                $error("DCache pending entry lost recent-store validity");
-            if (sb_push && sb_pop)
-                $error("DCache store buffer push/pop must be mutually exclusive");
-            if (miss_buffer_hit && !miss_buffer_covers_load)
-                $error("DCache miss-buffer hit without full load-byte coverage");
-        end
-    end
-`endif
 
 endmodule

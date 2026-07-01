@@ -31,7 +31,8 @@ if ! command -v vcs >/dev/null 2>&1; then
 fi
 
 RTL_FILES="
-    $RTL_DIR/core/forwarding.sv
+    $RTL_DIR/core/decode/load_hazard_ctrl.sv
+    $RTL_DIR/core/decode/forwarding.sv
     $RISCV_TESTS_DIR/tb/tb_forwarding.sv
 "
 

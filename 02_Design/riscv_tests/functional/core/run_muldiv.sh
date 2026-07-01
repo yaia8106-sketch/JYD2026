@@ -34,7 +34,7 @@ if ! vcs $VCS_OPTS $VCS_EXTRA_OPTS -top tb_muldiv_unit \
     -Mdir="$WORK_DIR/muldiv_vcs.csrc" \
     -o "$SIM_BIN" \
     "$RTL_DIR/common/cpu_defs.sv" \
-    "$RTL_DIR/core/muldiv_unit.sv" \
+    "$RTL_DIR/core/execute/muldiv_unit.sv" \
     "$RISCV_TESTS_DIR/tb/tb_muldiv_unit.sv" \
     "$VCS_SHIM" >"$COMPILE_LOG" 2>&1; then
     echo "ERROR: VCS compilation failed"
