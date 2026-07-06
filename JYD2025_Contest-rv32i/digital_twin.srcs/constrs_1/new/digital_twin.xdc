@@ -154,35 +154,40 @@ set_property IOSTANDARD LVCMOS18 [get_ports {virtual_seg[30]}]
 
 # ============================================================
 # CPU timing: targeted fanout control.
-# Keep these queries aligned with the post-synthesis hierarchy. Guard every
-# query so an RTL rename cannot turn a stale QoR hint into an XDC error.
+# Keep these queries aligned with the post-synthesis hierarchy. Both the object
+# query and set_property are quiet so a stale optional QoR hint is harmless.
 # ============================================================
-set ex_mem_redirect_valid_cells [get_cells -quiet {student_top_inst/u_cpu/u_ex_mem_reg/mem_redirect_reg[valid]}]
-if {[llength $ex_mem_redirect_valid_cells]} {
-    set_property MAX_FANOUT 16 $ex_mem_redirect_valid_cells
-}
-
-set ex_mem_valid_cells [get_cells -quiet {student_top_inst/u_cpu/u_ex_mem_reg/mem_valid_reg}]
-if {[llength $ex_mem_valid_cells]} {
-    set_property MAX_FANOUT 16 $ex_mem_valid_cells
-}
-
-set id_flush_nets [get_nets -quiet {student_top_inst/u_cpu/id_flush}]
-if {[llength $id_flush_nets]} {
-    set_property FORCE_MAX_FANOUT 32 $id_flush_nets
-}
-
-set dcache_store_buffer_valid_nets [get_nets -quiet {student_top_inst/u_dcache/u_store_buffer/mem_valid_reg}]
-if {[llength $dcache_store_buffer_valid_nets]} {
-    set_property FORCE_MAX_FANOUT 64 $dcache_store_buffer_valid_nets
-}
+set_property -quiet MAX_FANOUT 16 [
+    get_cells -quiet {
+        student_top_inst/u_cpu/u_ex_mem_reg/mem_redirect_reg[valid]
+    }
+]
+set_property -quiet MAX_FANOUT 16 [
+    get_cells -quiet {
+        student_top_inst/u_cpu/u_ex_mem_reg/mem_valid_reg
+    }
+]
+set_property -quiet FORCE_MAX_FANOUT 32 [
+    get_nets -quiet -hierarchical -filter {
+        NAME =~ *id_flush*
+    }
+]
+set_property -quiet MAX_FANOUT 32 [
+    get_cells -quiet -hierarchical -filter {
+        NAME =~ *u_frontend_fetch_state/current_pc_reg*
+    }
+]
+set_property -quiet FORCE_MAX_FANOUT 64 [
+    get_nets -quiet {
+        student_top_inst/u_dcache/u_store_buffer/mem_valid_reg
+    }
+]
 
 # ============================================================
-# CPU timing: Pblock — 2 VERTICAL clock regions (same column)
-#   X1Y3 + X1Y4: CPU + DCache data RAM + IROM in the same BRAM column.
-#   Vertical stacking keeps BRAMs in same physical column
-#   (short routing), 2 regions avoids congestion. DRAM4MyOwn is a much
-#   larger memory IP and is intentionally left to the placer.
+# CPU timing: Pblock — 2 vertical clock regions (same column).
+#   X1Y3 + X1Y4 keep CPU + DCache data RAM + IROM close without
+#   overfilling a single region. The Pblock remains soft.
+#   DRAM4MyOwn is intentionally left to the placer.
 # ============================================================
 create_pblock pblock_cpu_irom
 add_cells_to_pblock [get_pblocks pblock_cpu_irom] [get_cells student_top_inst/u_cpu]

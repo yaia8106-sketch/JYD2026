@@ -3,7 +3,7 @@
 // Description: Operand forwarding network and load-hazard integration shell.
 // Domain: decode and issue.
 // Spec: 02_Design/spec/forwarding_spec.md
-// Style: parallel match + priority encode + AND-OR MUX
+// Style: parallel match + per-stage preselect + encoded 4-way group MUX
 //
 // FIX: EX/MEM forwarding now handles JAL/JALR (wb_sel=10 → PC+4)
 //   Previously forwarded alu_result even for JAL/JALR, which gives
@@ -116,6 +116,25 @@ module forwarding (
     wire [31:0] mem_fwd_val    = (mem_wb_sel    == 2'b10) ? mem_pc_plus_4    : mem_alu_result;
     wire [31:0] mem_s1_fwd_val = (mem_s1_wb_sel == 2'b10) ? mem_s1_pc_plus_4 : mem_s1_alu_result;
 
+    // The select encoding is computed independently of the 32-bit payloads:
+    //   00 = EX, 01 = MEM, 10 = WB, 11 = register file.
+    // On a 6-input LUT FPGA, one output bit of this 4-way mux can map to one
+    // LUT after the S1/S0 data for each pipeline stage has been preselected.
+    function automatic logic [31:0] select_forward_group(
+        input logic [ 1:0] group_select,
+        input logic [31:0] ex_data,
+        input logic [31:0] mem_data,
+        input logic [31:0] wb_data,
+        input logic [31:0] rf_data
+    );
+        case (group_select)
+            2'b00: select_forward_group = ex_data;
+            2'b01: select_forward_group = mem_data;
+            2'b10: select_forward_group = wb_data;
+            default: select_forward_group = rf_data;
+        endcase
+    endfunction
+
 `define FWD_MUX(TAG, SRC_ADDR, RF_DATA, OUT_DATA) \
     wire TAG``_s1_ex_hit  = ex_s1_valid  && ex_s1_reg_write  && (ex_s1_rd != 5'd0) && (ex_s1_rd == SRC_ADDR); \
     wire TAG``_s0_ex_hit  = ex_valid     && ex_reg_write     && (ex_rd != 5'd0) && (ex_rd == SRC_ADDR); \
@@ -123,20 +142,26 @@ module forwarding (
     wire TAG``_s0_mem_hit = mem_valid    && mem_reg_write    && !mem_is_load    && (mem_rd    != 5'd0) && (mem_rd    == SRC_ADDR); \
     wire TAG``_s1_wb_hit  = wb_s1_valid  && wb_s1_reg_write  && (wb_s1_rd != 5'd0) && (wb_s1_rd == SRC_ADDR); \
     wire TAG``_s0_wb_hit  = wb_valid     && wb_reg_write     && (wb_rd    != 5'd0) && (wb_rd    == SRC_ADDR); \
-    wire TAG``_s1_ex_oh   = TAG``_s1_ex_hit; \
-    wire TAG``_s0_ex_oh   = ~TAG``_s1_ex_hit & TAG``_s0_ex_hit; \
-    wire TAG``_s1_mem_oh  = ~TAG``_s1_ex_hit & ~TAG``_s0_ex_hit & TAG``_s1_mem_hit; \
-    wire TAG``_s0_mem_oh  = ~TAG``_s1_ex_hit & ~TAG``_s0_ex_hit & ~TAG``_s1_mem_hit & TAG``_s0_mem_hit; \
-    wire TAG``_s1_wb_oh   = ~TAG``_s1_ex_hit & ~TAG``_s0_ex_hit & ~TAG``_s1_mem_hit & ~TAG``_s0_mem_hit & TAG``_s1_wb_hit; \
-    wire TAG``_s0_wb_oh   = ~TAG``_s1_ex_hit & ~TAG``_s0_ex_hit & ~TAG``_s1_mem_hit & ~TAG``_s0_mem_hit & ~TAG``_s1_wb_hit & TAG``_s0_wb_hit; \
-    wire TAG``_rf_oh      = ~TAG``_s1_ex_hit & ~TAG``_s0_ex_hit & ~TAG``_s1_mem_hit & ~TAG``_s0_mem_hit & ~TAG``_s1_wb_hit & ~TAG``_s0_wb_hit; \
-    assign OUT_DATA = ({32{TAG``_s1_ex_oh}}  & ex_s1_fwd_val)    | \
-                      ({32{TAG``_s0_ex_oh}}  & ex_fwd_val)       | \
-                      ({32{TAG``_s1_mem_oh}} & mem_s1_fwd_val)   | \
-                      ({32{TAG``_s0_mem_oh}} & mem_fwd_val)      | \
-                      ({32{TAG``_s1_wb_oh}}  & wb_s1_write_data) | \
-                      ({32{TAG``_s0_wb_oh}}  & wb_write_data)    | \
-                      ({32{TAG``_rf_oh}}     & RF_DATA)
+    wire TAG``_ex_group_hit  = TAG``_s1_ex_hit  | TAG``_s0_ex_hit; \
+    wire TAG``_mem_group_hit = TAG``_s1_mem_hit | TAG``_s0_mem_hit; \
+    wire TAG``_wb_group_hit  = TAG``_s1_wb_hit  | TAG``_s0_wb_hit; \
+    wire [31:0] TAG``_ex_group_data = \
+        TAG``_s1_ex_hit ? ex_s1_fwd_val : ex_fwd_val; \
+    wire [31:0] TAG``_mem_group_data = \
+        TAG``_s1_mem_hit ? mem_s1_fwd_val : mem_fwd_val; \
+    wire [31:0] TAG``_wb_group_data = \
+        TAG``_s1_wb_hit ? wb_s1_write_data : wb_write_data; \
+    wire [1:0] TAG``_group_select = { \
+        ~TAG``_ex_group_hit & ~TAG``_mem_group_hit, \
+        ~TAG``_ex_group_hit & (TAG``_mem_group_hit | ~TAG``_wb_group_hit) \
+    }; \
+    assign OUT_DATA = select_forward_group( \
+        TAG``_group_select, \
+        TAG``_ex_group_data, \
+        TAG``_mem_group_data, \
+        TAG``_wb_group_data, \
+        RF_DATA \
+    )
 
     `FWD_MUX(s0_rs1, id_rs1_addr,    rf_rs1_data,    id_rs1_data);
     `FWD_MUX(s0_rs2, id_rs2_addr,    rf_rs2_data,    id_rs2_data);
