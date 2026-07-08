@@ -65,6 +65,7 @@ module memory_access_unit (
 
     localparam logic [31:0] DUAL_ISSUE_CNT_ADDR = 32'h8020_0060;
 
+    // The shared LSU chooses Slot 1 only when Slot 0 is not using memory.
     wire ex_s0_lsu = ex_mem_read_en | ex_mem_write_en;
     wire ex_s1_lsu = ex_s1_valid & (ex_s1_mem_read_en | ex_s1_mem_write_en);
     wire ex_use_s1_lsu = ~ex_s0_lsu & ex_s1_lsu;
@@ -97,11 +98,13 @@ module memory_access_unit (
     wire dual_issue_cnt_read = (mem_lsu_addr == DUAL_ISSUE_CNT_ADDR);
     wire [31:0] mmio_load_data = dual_issue_cnt_read ? dual_issue_count : mmio_rdata;
 
+    // Cacheability is a simple address-window decode used by the lab platform.
     assign is_cacheable = ex_alu_addr[20] & ~ex_alu_addr[21]
                         & ~ex_alu_addr[19] & ~ex_alu_addr[18];
     assign is_cacheable_s1 = ex_s1_alu_addr[20] & ~ex_s1_alu_addr[21]
                            & ~ex_s1_alu_addr[19] & ~ex_s1_alu_addr[18];
 
+    // An uncacheable store in MEM can conflict with a younger load request.
     assign mmio_st_ld_hazard = ex_lsu_read
                              & mem_store_active
                              & mem_store_uncacheable;

@@ -36,6 +36,8 @@ module mem_interface (
     wire st_half = (store_mem_size == 2'b01);
     wire st_word = (store_mem_size == 2'b10);
 
+    // Misaligned halfword masks are generated literally; the memory system
+    // decides whether such accesses are legal for the target platform.
     wire [3:0] wea_raw = ({4{st_byte}} & (4'b0001 << store_addr_low))
                        | ({4{st_half}} & (4'b0011 << store_addr_low))
                        | ({4{st_word}} & 4'b1111);

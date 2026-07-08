@@ -5,7 +5,7 @@
 // Spec: 02_Design/spec/forwarding_spec.md
 // Style: parallel match + per-stage preselect + encoded 4-way group MUX
 //
-// FIX: EX/MEM forwarding now handles JAL/JALR (wb_sel=10 → PC+4)
+// FIX: EX/MEM forwarding now handles JAL/JALR (wb_sel=10 -> PC+4)
 //   Previously forwarded alu_result even for JAL/JALR, which gives
 //   the jump TARGET instead of the LINK ADDRESS (PC+4).
 //   This was masked pre-predictor (JAL always flushed, so no
@@ -107,7 +107,7 @@ module forwarding (
     // ================================================================
     //  Forwarding value computation
     //  For EX/MEM stages: if wb_sel==10 (JAL/JALR), forward PC+4
-    //  For wb_sel==01 (load), value not ready yet → handled by stall.
+    //  For wb_sel==01 (load), value not ready yet -> handled by stall.
     //  Repaired EX results are valid forwarding sources now that branch/JALR
     //  target work no longer sits in ID.
     // ================================================================
@@ -136,6 +136,8 @@ module forwarding (
     endfunction
 
 `define FWD_MUX(TAG, SRC_ADDR, RF_DATA, OUT_DATA) \
+    /* Build match bits for one ID operand. Younger pipeline stages have */ \
+    /* priority over older ones; within a stage Slot 1 is younger than Slot 0. */ \
     wire TAG``_s1_ex_hit  = ex_s1_valid  && ex_s1_reg_write  && (ex_s1_rd != 5'd0) && (ex_s1_rd == SRC_ADDR); \
     wire TAG``_s0_ex_hit  = ex_valid     && ex_reg_write     && (ex_rd != 5'd0) && (ex_rd == SRC_ADDR); \
     wire TAG``_s1_mem_hit = mem_s1_valid && mem_s1_reg_write && !mem_s1_is_load && (mem_s1_rd != 5'd0) && (mem_s1_rd == SRC_ADDR); \
@@ -179,6 +181,8 @@ module forwarding (
     // ================================================================
     //  Load hazard / WB repair policy
     // ================================================================
+    // Repair is a one-cycle promise: the consumer moves to EX now and will
+    // substitute WB load data there on the next cycle.
     wire id_s0_repair_ok = id_s0_alu_only
                          | id_s0_branch
                          | id_s0_jalr

@@ -75,6 +75,8 @@ module id_ex_payload_builder
     output id_ex_slot1_t       slot1_payload
 );
 
+    // Start each packed payload from zero so fields unused by a slot cannot
+    // leak stale state into downstream side-effect enables.
     always_comb begin
         slot0_payload = '0;
         slot0_payload.common.pc = s0_pc;

@@ -1,7 +1,7 @@
 // ============================================================
 // Module: alu_src_mux
 // Description: ALU operand selection (ID stage, pure combinational)
-//              输出经 ID/EX_reg 打拍后送入 EX 级 ALU
+//              Selected operands are registered by ID/EX before EX.
 // Domain: decode and issue.
 // ============================================================
 
@@ -22,15 +22,17 @@ module alu_src_mux (
 );
 
     // ---- src1: 3-way AND-OR MUX ----
+    // LUI selects the implicit zero source; AUIPC/JAL/JALR select PC.
     wire sel1_rs1 = (alu_src1_sel == 2'b00);
     wire sel1_pc  = (alu_src1_sel == 2'b01);
     // sel1_zero implied by default (neither rs1 nor pc)
 
     assign alu_src1 = ({32{sel1_rs1}} & rs1_data)
                     | ({32{sel1_pc}}  & pc);
-                    // zero: all terms are 0 → output = 0
+                    // zero: all terms are 0 -> output = 0
 
     // ---- src2: 2-way MUX ----
+    // Memory addressing and immediate ALU operations use the decoded immediate.
     assign alu_src2 = alu_src2_sel ? imm : rs2_data;
 
 endmodule

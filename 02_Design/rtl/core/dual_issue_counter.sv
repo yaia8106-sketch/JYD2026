@@ -10,6 +10,7 @@ module dual_issue_counter (
     output logic [31:0] dual_issue_count
 );
 
+    // Slot 1 validity at WB is equivalent to one committed dual-issue partner.
     always_ff @(posedge clk) begin
         if (!rst_n)
             dual_issue_count <= 32'd0;

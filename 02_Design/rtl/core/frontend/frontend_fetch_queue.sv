@@ -46,6 +46,8 @@ module frontend_fetch_queue
     output logic                       head_pair_ok
 );
 
+    // Circular queue storage. pair_ok_mem[i] describes whether entry i can
+    // issue together with entry i+1 when i reaches the head.
     frontend_fq_entry_t entry_mem [0:FQ_DEPTH-1];
     frontend_pair_meta_t pair_meta_mem [0:FQ_DEPTH-1];
     logic pair_ok_mem [0:FQ_DEPTH-1];
@@ -72,6 +74,8 @@ module frontend_fetch_queue
     wire enq_one = enq0_valid && !enq1_valid;
     wire enq_none = !enq0_valid;
 
+    // Head/tail/count are computed independently so enqueue and dequeue can
+    // occur in the same cycle.
     wire [FQ_PTR_W-1:0] head_next =
         ({FQ_PTR_W{deq_dual}}   & head_p2) |
         ({FQ_PTR_W{deq_single}} & head_p1) |

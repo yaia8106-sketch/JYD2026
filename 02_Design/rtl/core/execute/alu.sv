@@ -13,13 +13,13 @@ module alu
     input  logic [31:0] alu_src1,
     input  logic [31:0] alu_src2,
     output logic [31:0] alu_result,
-    output logic [31:0] alu_sum,       // 加法器直出（跳过 output MUX），供 bridge 做地址判断
-    output logic [31:0] alu_addr       // FIX-A: 独立地址加法器，不依赖 alu_op
+    output logic [31:0] alu_sum,       // Raw shared adder output, before result MUX
+    output logic [31:0] alu_addr       // Independent address adder, does not depend on alu_op
 );
 
 
-    // FIX-A: 纯 src1+src2 加法器，用于 load/store 地址计算
-    //   不经过 negate 逻辑，彻底切断 alu_op → DRAM 地址的依赖
+    // Pure src1+src2 adder for load/store address calculation. This bypasses
+    // the subtract/compare negate logic and removes alu_op from the address path.
     assign alu_addr = alu_src1 + alu_src2;
 
     // ---- 3.1 Shared adder/subtractor ----
@@ -30,11 +30,12 @@ module alu
 
     // ---- 3.2 Unified comparator ----
     // Same sign: check subtraction result sign bit
-    // Different sign: signed → src1[31], unsigned → src2[31]
+    // Different sign: signed -> src1[31], unsigned -> src2[31]
     wire cmp = (alu_src1[31] == alu_src2[31]) ? sum[31]
              : alu_op[0] ? alu_src2[31] : alu_src1[31];
 
     // ---- 3.3 Bit-reversal shifter ----
+    // A right shifter plus bit reversal implements both left and right shifts.
     wire [4:0]  shamt  = alu_src2[4:0];
     wire [31:0] shin   = alu_op[2] ? alu_src1 : bit_reverse(alu_src1);
     wire [32:0] shift  = {alu_op[3] & shin[31], shin};

@@ -83,6 +83,8 @@ module load_hazard_ctrl (
     // The consumer then selects that registered value in EX on the next cycle.
     localparam logic ENABLE_MEM_LOAD_WB_REPAIR = 1'b1;
 
+    // A MEM load can be either a blocking dependency or a repair source,
+    // depending on whether its data is ready and the consumer can be repaired.
     wire mem_s0_load_pending = mem_valid & mem_is_load & (mem_rd != 5'd0);
     wire mem_s1_load_pending = mem_s1_valid & mem_s1_is_load
                              & (mem_s1_rd != 5'd0);
@@ -113,6 +115,8 @@ module load_hazard_ctrl (
     wire s1_rs2_uses_s1_mem_load = id_s1_valid & id_s1_rs2_used
                                  & (mem_s1_rd == id_s1_rs2_addr);
 
+    // Per-source repair tags distinguish Slot 0 MEM and Slot 1 MEM so EX can
+    // preserve normal forwarding priority when both slots name the same rd.
     wire id_rs1_wb_repair_s0 = mem_s0_load_repair_source
                               & id_s0_has_mem_load_repair_path
                               & s0_rs1_uses_s0_mem_load
@@ -191,6 +195,7 @@ module load_hazard_ctrl (
     assign id_s1_uses_s1_mem_load = s1_rs1_uses_s1_mem_load
                                    | s1_rs2_uses_s1_mem_load;
 
+    // MEM loads only stall when the repair path is unavailable.
     wire id_s0_waits_s0_mem_load = mem_s0_load_pending
                                   & id_s0_uses_s0_mem_load
                                   & ~id_s0_can_repair_mem_load;

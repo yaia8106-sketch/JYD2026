@@ -19,7 +19,7 @@ module branch_unit (
     input  logic        is_jalr,
     input  logic        ex_valid,
 
-    // Prediction from pipeline (IF → ID → EX)
+    // Prediction from pipeline (IF -> ID -> EX)
     input  logic        predicted_taken,
     input  logic [31:0] predicted_target,
 
@@ -34,6 +34,7 @@ module branch_unit (
 
     wire branch_taken;
 
+    // Conditional branches use the comparator; jumps are unconditionally taken.
     branch_condition u_branch_condition (
         .rs1_data   (rs1_data),
         .rs2_data   (rs2_data),
@@ -62,8 +63,8 @@ module branch_unit (
                                     | target_mismatch_flush);
 
     // ---- Flush target (correct next PC) ----
-    // Actual taken → redirect to actual target
-    // Actual not-taken (but predicted taken) → redirect to ex_pc + 4
+    // Actual taken -> redirect to actual target
+    // Actual not-taken (but predicted taken) -> redirect to ex_pc + 4
     assign branch_target = actual_taken ? actual_target : fallthrough_pc;
 
 endmodule

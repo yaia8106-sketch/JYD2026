@@ -59,6 +59,8 @@ module id_stage_derive
     output logic [ 1:0] id_s1_abtb_update_cfi_type
 );
 
+    // Decode architectural register fields for both issue slots. Slot 1 is
+    // always the sequential instruction at id_pc+4 when it is valid.
     assign id_rs1_addr = id_inst[19:15];
     assign id_rs2_addr = id_inst[24:20];
     assign id_rd_addr  = id_inst[11:7];
@@ -70,16 +72,21 @@ module id_stage_derive
     assign id_csr_cmd = id_inst[14:12];
     assign id_csr_addr = id_inst[31:20];
 
+    // These booleans let later repair logic know whether replacing rs1/rs2
+    // should also replace the already-selected ALU operand.
     assign id_alu_src1_is_rs1 = dec_alu_src1_sel == 2'b00;
     assign id_alu_src2_is_rs2 = ~dec_alu_src2_sel;
     assign id_s1_alu_src1_is_rs1 = dec1_alu_src1_sel == 2'b00;
     assign id_s1_alu_src2_is_rs2 = ~dec1_alu_src2_sel;
 
+    // Operand-use flags drive forwarding and load-use hazard detection.
     assign id_rs1_used = id_alu_src1_is_rs1 | dec_is_branch | dec_csr_uses_rs1;
     assign id_rs2_used = id_alu_src2_is_rs2 | dec_is_branch | dec_mem_write_en;
     assign id_s1_rs1_used = id_s1_alu_src1_is_rs1 | dec1_is_branch | dec1_csr_uses_rs1;
     assign id_s1_rs2_used = id_s1_alu_src2_is_rs2 | dec1_is_branch | dec1_mem_write_en;
 
+    // Only simple ALU-like Slot 0 consumers can advance with a MEM-load repair
+    // tag. DIV/REM stay out because the multi-cycle unit captures operands.
     wire id_s0_divrem = dec_is_muldiv & id_inst[14];
     assign id_s0_alu_only = dec_reg_write_en & (dec_wb_sel == 2'b00)
                           & ~dec_mem_read_en & ~dec_mem_write_en

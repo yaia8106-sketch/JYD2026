@@ -108,6 +108,8 @@ module frontend_abtb (
     logic bank0_lru [0:SETS-1];
     logic bank1_lru [0:SETS-1];
 
+    // Lookup is indexed by the aligned 64-bit fetch block; bank0 is the lower
+    // word and bank1 is the upper word of that block.
     wire [31:0] lookup_block_pc = {predict_pc[31:3], 3'b000};
     wire [SET_IDX_W-1:0] lookup_set = lookup_block_pc[6:3];
     wire [TAG_W-1:0] lookup_tag = lookup_block_pc[13:7];
@@ -220,6 +222,8 @@ module frontend_abtb (
     wire [31:0] sequential_next_pc =
         predict_pc + (predict_pc[2] ? 32'd4 : 32'd8);
 
+    // Combine tag-hit, CFI type, PHT direction, and optional return targets
+    // into per-bank predictions, then choose the earliest taken bank.
     always_comb begin
         bank0_eligible = lookup_valid && !predict_pc[2];
         bank0_lookup_hit = !predict_pc[2] && bank0_any_match;
@@ -289,6 +293,7 @@ module frontend_abtb (
 
     logic update_alloc_way;
 
+    // Miss allocation first fills invalid ways, then falls back to pseudo-LRU.
     always_comb begin
         update_alloc_way = 1'b0;
         if (!update_bank) begin
@@ -311,6 +316,8 @@ module frontend_abtb (
     wire update_selected_way = update_hit ? update_way : update_alloc_way;
 
     integer set_i;
+    // Valid bits and LRU state are explicit registers; payload RAM is written
+    // separately to keep reset from blocking distributed RAM inference.
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             for (set_i = 0; set_i < SETS; set_i = set_i + 1) begin

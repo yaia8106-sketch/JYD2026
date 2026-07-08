@@ -30,6 +30,8 @@ module predictor_update_ctrl
     logic selected_is_abtb_branch;
     logic selected_abtb_write_qualified;
 
+    // Only one CFI trains the predictors each cycle. Slot 0 is older; Slot 1
+    // trains only when Slot 0 is not a resolved CFI.
     always_comb begin
         slot0_cfi_valid = slot0_resolve.valid
                         & (slot0_resolve.is_branch

@@ -30,6 +30,8 @@ module if_id_reg
     output if_id_payload_t id_payload
 );
 
+    // Reset prediction counters to weakly-not-taken so early training matches
+    // the standalone PHT reset convention.
     function automatic if_id_payload_t reset_payload();
         begin
             reset_payload = '0;
@@ -48,6 +50,8 @@ module if_id_reg
             id_s1_valid                                   <= 1'b0;
             id_payload                                    <= reset_payload();
         end else if (id_flush) begin
+            // Flush kills validity and speculative prediction ownership, but
+            // leaves unrelated payload fields untouched until the next accept.
             id_valid                                        <= 1'b0;
             id_s1_valid                                     <= 1'b0;
             id_payload.slot0.prediction.source_abtb         <= 1'b0;

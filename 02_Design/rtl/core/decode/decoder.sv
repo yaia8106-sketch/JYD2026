@@ -68,7 +68,7 @@ module decoder
     localparam logic [13:0] DEC_JALR   = {2'b00, 1'b1, 1'b1, 2'b10, 1'b0, 1'b0, 1'b0, 1'b0, 1'b1, IMM_I };
     localparam logic [13:0] DEC_INVALID= {2'b00, 1'b0, 1'b0, 2'b00, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0, 3'b000};
 
-    // ---- Opcode → control word LUT ----
+    // ---- Opcode to control word LUT ----
     logic [13:0] ctrl_word;
 
     always_comb begin
@@ -93,12 +93,15 @@ module decoder
             mem_read_en, mem_write_en, is_branch, is_jal, is_jalr,
             imm_type} = ctrl_word;
 
+    // SYSTEM with funct3!=0 is a CSR instruction. ECALL/MRET are decoded as
+    // system redirects, not CSR writes, so they keep the normal control word.
     assign is_csr       = is_system & (funct3 != 3'b000);
     assign csr_uses_imm = is_csr & funct3[2];
     assign csr_uses_rs1 = is_csr & ~funct3[2];
     assign is_ecall     = (inst == 32'h0000_0073);
     assign is_mret      = (inst == 32'h3020_0073);
     assign is_muldiv    = (opcode == OP_R_TYPE) & (funct7 == MULDIV_FUNCT7);
+    // CSR read-modify-write instructions write the old CSR value to rd.
     assign reg_write_en = ctrl_reg_write_en | is_csr;
 
     // ================================================================

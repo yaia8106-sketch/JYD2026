@@ -19,6 +19,8 @@ module mem_wb_reg_s1
     output mem_wb_slot1_t wb_payload
 );
 
+    // Slot 1 has no load-data field; mask register writes when the slot is not
+    // valid while keeping the rest of the payload inspectable.
     function automatic mem_wb_slot1_t accepted_payload(
         input mem_wb_slot1_t incoming_payload,
         input logic          slot_active

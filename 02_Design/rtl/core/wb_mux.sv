@@ -14,6 +14,7 @@ module wb_mux (
 );
 
     // ---- 3-way AND-OR MUX ----
+    // Loads use the already-formatted MEM/WB data; jumps use the link address.
     wire sel_alu  = (wb_sel == 2'b00);
     wire sel_mem  = (wb_sel == 2'b01);
     wire sel_link = (wb_sel == 2'b10);

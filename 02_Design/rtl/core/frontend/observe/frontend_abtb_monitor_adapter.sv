@@ -42,6 +42,8 @@ module frontend_abtb_monitor_adapter
     output stage1_steer_event_t  steer_event
 );
 
+    // Pack loose top-level signals into structured monitor records without
+    // creating any control dependency on observation logic.
     always_comb begin
         bank0_lookup = '0;
         bank0_lookup.hit = bank0_hit;

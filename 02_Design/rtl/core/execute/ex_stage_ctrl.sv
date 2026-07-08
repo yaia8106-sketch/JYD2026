@@ -79,6 +79,8 @@ module ex_stage_ctrl (
     assign ex_pc_plus_4 = ex_pc + 32'd4;
     assign ex_s1_pc_plus_4 = ex_s1_pc + 32'd4;
 
+    // WB repair replaces only operands that originally came from rs1/rs2.
+    // PC/zero/immediate operands must remain unchanged.
     assign ex_alu_src1_repair = (ex_rs1_wb_repair & ex_alu_src1_is_rs1)
                               ? wb_load_data
                               : ex_alu_src1;
@@ -99,6 +101,7 @@ module ex_stage_ctrl (
                                                            ex_s1_rs1_data;
     assign ex_s1_rs2_data_repair = ex_s1_rs2_wb_repair ? wb_load_data :
                                                            ex_s1_rs2_data;
+    // Forward the architectural writeback value, not always the ALU output.
     assign ex_forward_result = ex_is_csr    ? ex_csr_rdata :
                                ex_is_muldiv ? ex_muldiv_result :
                                               alu_result;
@@ -128,6 +131,8 @@ module ex_stage_ctrl (
         .taken      (ex_s1_branch_taken)
     );
 
+    // Slot 1 has its own redirect check because Slot 0 already owns the main
+    // branch_unit instance and can be older in the same cycle.
     wire ex_s1_actual_taken_w = ex_s1_is_jal
                               | ex_s1_is_jalr
                               | (ex_s1_is_branch & ex_s1_branch_taken);

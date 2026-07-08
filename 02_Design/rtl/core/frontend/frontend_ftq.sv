@@ -100,6 +100,8 @@ module frontend_ftq
     // ================================================================
     //  BP0 / F0 metadata
     // ================================================================
+    // BP0 predicts and issues an IROM request. F0 captures the accepted
+    // prediction context and later combines it with the synchronous IROM data.
     wire [31:0] fetch_current_pc;
     wire [ 1:0] frontend_epoch;
     wire frontend_f0_state_t f0_state;
@@ -163,6 +165,7 @@ module frontend_ftq
     wire frontend_f0_bank_meta_t bp0_f0_bank0_meta;
     wire frontend_f0_bank_meta_t bp0_f0_bank1_meta;
 
+    // Convert ABTB/PHT outputs into the canonical steering input record.
     assign bp0_steer_bank0.lookup_hit = abtb_bank0_lookup_hit;
     assign bp0_steer_bank0.cfi_type = abtb_bank0_cfi_type;
     assign bp0_steer_bank0.target = abtb_bank0_target;
@@ -236,11 +239,13 @@ module frontend_ftq
         .outstanding_count      (ftq_count)
     );
 
+    // IROM is addressed by aligned 64-bit fetch block.
     assign irom_addr = {1'b0, current_pc[13:3]};
 
     // ================================================================
     //  F0 alignment and enqueue preparation
     // ================================================================
+    // Epoch matching drops stale IROM responses produced before a redirect.
     wire f0_epoch_match = (f0_epoch_r == frontend_epoch);
     wire f0_accept_base = f0_valid_r
                         && f0_epoch_match
@@ -418,6 +423,8 @@ module frontend_ftq
         .odd_write_data     (fq_abtb_odd_write_data)
     );
 
+    // F1 exposes the queue head to IF/ID. Pairing has already been precomputed
+    // at enqueue time, so dequeue only checks availability and stored policy.
     wire fq_has_slot0 = (fq_count != 0);
     wire fq_has_slot1 = (fq_count >= 2);
     wire fq_tail_has_prev = (fq_count != 0);
@@ -565,6 +572,8 @@ module frontend_ftq
         .head_pair_ok         (fq_head_pair_ok)
     );
 
+    // Leave enough fetch-queue credit for the in-flight F0 response and a new
+    // two-instruction BP0 packet.
     wire ftq_alloc_ready = (ftq_count < FTQ_DEPTH_COUNT);
     wire fq_credit_for_bp0 = f0_valid_r ? (fq_count <= FQ_DEPTH_MINUS_4)
                                         : (fq_count <= FQ_DEPTH_MINUS_2);

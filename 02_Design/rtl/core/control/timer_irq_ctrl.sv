@@ -24,6 +24,8 @@ module timer_irq_ctrl (
     output logic timer_irq_take
 );
 
+    // Timer interrupts are taken only at an instruction boundary after all
+    // older in-flight instructions have drained.
     assign pipeline_empty = ~ex_valid
                           & ~mem_valid
                           & ~wb_valid
@@ -32,6 +34,7 @@ module timer_irq_ctrl (
                           & ~wb_s1_valid;
     assign timer_irq_take = timer_irq_hold & id_valid & pipeline_empty;
 
+    // Hold the request once ID observes it; redirects cancel the pending hold.
     always_ff @(posedge clk) begin
         if (!rst_n)
             timer_irq_hold <= 1'b0;

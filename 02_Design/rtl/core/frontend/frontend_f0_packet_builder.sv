@@ -31,6 +31,9 @@ module frontend_f0_packet_builder
     output frontend_pair_meta_t        pair_meta1
 );
 
+    // Align the 64-bit IROM block to the requested PC. If the fetch starts at
+    // the upper word, Slot 1 is a synthetic NOP because the next word is in the
+    // following block.
     wire [31:0] slot0_inst = start_pc[2] ? irom_data[63:32]
                                           : irom_data[31:0];
     wire [31:0] slot1_inst = start_pc[2] ? 32'h0000_0013
@@ -61,6 +64,8 @@ module frontend_f0_packet_builder
         .decoded (slot1_dec)
     );
 
+    // Build the queue entry consumed by ID. Prediction metadata is copied into
+    // the entry so EX can later train the same predictor state.
     function automatic frontend_fq_entry_t make_entry(
         input logic                  valid,
         input logic [31:0]           pc,
@@ -111,6 +116,7 @@ module frontend_f0_packet_builder
         end
     endfunction
 
+    // Pair metadata is a compact dependency/class summary used by the queue.
     function automatic frontend_pair_meta_t make_pair_meta(
         input logic [31:0]         inst,
         input frontend_predecode_t decoded,
@@ -159,6 +165,7 @@ module frontend_f0_packet_builder
             slot0_pht_counter = bank0_meta.pht_counter;
         end
 
+        // Slot 1 is discarded when Slot 0 redirects or was predicted taken.
         kill_after_slot0 =
             slot0_dec.is_jal
             || slot0_dec.is_jalr

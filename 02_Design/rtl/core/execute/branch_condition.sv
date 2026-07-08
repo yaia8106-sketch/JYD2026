@@ -11,12 +11,14 @@ module branch_condition (
     output logic        taken
 );
 
+    // One subtract feeds equality and less-than tests for all branch types.
     wire [31:0] diff = rs1_data - rs2_data;
     wire        neq = |diff;
     wire        is_unsigned = branch_cond[1];
     wire        cmp = (rs1_data[31] == rs2_data[31]) ? diff[31] :
                       is_unsigned ? rs2_data[31] : rs1_data[31];
 
+    // Invalid branch funct3 values decode to not-taken because no select is set.
     wire sel_eq = (branch_cond == 3'b000);
     wire sel_ne = (branch_cond == 3'b001);
     wire sel_lt = (branch_cond == 3'b100) | (branch_cond == 3'b110);

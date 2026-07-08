@@ -45,6 +45,8 @@ module frontend_fetch_state
     assign f0_abtb_bank1_meta.hit = f0_abtb_bank1_hit_r;
     assign f0_abtb_bank1_meta.way = f0_abtb_bank1_way_r;
 
+    // BP0 PC state advances on accepted predictions and is reset immediately
+    // by backend redirects. The epoch marks outstanding F0 responses.
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             current_pc <= RESET_PC;
@@ -57,6 +59,8 @@ module frontend_fetch_state
         end
     end
 
+    // F0 metadata is the one-cycle-delayed packet context paired with the IROM
+    // response. Redirects invalidate it by changing the epoch and clearing valid.
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             f0_state.valid <= 1'b0;
@@ -98,6 +102,7 @@ module frontend_fetch_state
         end
     end
 
+    // Outstanding count tracks accepted BP0 requests minus returned F0 packets.
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             outstanding_count <= '0;
@@ -115,6 +120,8 @@ module frontend_fetch_state
     end
 
     generate
+        // Wide metadata is only needed for observation/debug builds; functional
+        // prediction uses hit/way plus normal carried prediction fields.
         if (WIDE_ABTB_META) begin : g_wide_abtb_meta
             logic [ 1:0] bank0_cfi_type_r;
             logic [31:0] bank0_target_r;

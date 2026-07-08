@@ -28,6 +28,8 @@ module id_ex_reg_s1
         end
     endfunction
 
+    // Slot 1 shares the Slot 0 handshake. When Slot 1 is absent, keep debug
+    // fields visible but mask all side-effect controls.
     function automatic id_ex_slot1_t accepted_payload(
         input id_ex_slot1_t payload,
         input logic         slot_valid
@@ -50,6 +52,7 @@ module id_ex_reg_s1
             ex_s1_valid <= 1'b0;
             ex_payload <= reset_payload();
         end else if (ex_flush) begin
+            // Prediction and repair tags are cleared with validity on redirects.
             ex_s1_valid <= 1'b0;
             ex_payload.common.rs1_wb_repair <= 1'b0;
             ex_payload.common.rs2_wb_repair <= 1'b0;

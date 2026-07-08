@@ -26,6 +26,7 @@ module id_ex_reg
     output id_ex_slot0_t  ex_payload
 );
 
+    // Keep the embedded PHT counter reset aligned with frontend defaults.
     function automatic id_ex_slot0_t reset_payload();
         begin
             reset_payload = '0;
@@ -41,6 +42,8 @@ module id_ex_reg
             ex_valid <= 1'b0;
             ex_payload <= reset_payload();
         end else if (ex_flush) begin
+            // Flush clears validity and repair/prediction tags that could
+            // otherwise affect the next instruction accepted into EX.
             ex_valid <= 1'b0;
             ex_payload.common.rs1_wb_repair <= 1'b0;
             ex_payload.common.rs2_wb_repair <= 1'b0;

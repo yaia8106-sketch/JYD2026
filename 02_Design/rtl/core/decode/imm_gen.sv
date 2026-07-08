@@ -22,6 +22,7 @@ module imm_gen
     wire sel_j = (imm_type == IMM_J);
 
     // ---- Parallel immediate generation ----
+    // B/J immediates include the architectural low zero bit for halfword scale.
     wire [31:0] imm_i = {{20{inst[31]}}, inst[31:20]};
     wire [31:0] imm_s = {{20{inst[31]}}, inst[31:25], inst[11:7]};
     wire [31:0] imm_b = {{19{inst[31]}}, inst[31], inst[7], inst[30:25], inst[11:8], 1'b0};

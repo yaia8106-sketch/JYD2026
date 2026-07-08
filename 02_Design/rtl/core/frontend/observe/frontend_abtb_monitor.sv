@@ -40,6 +40,8 @@ module frontend_abtb_monitor
     output frontend_abtb_counters_t counters
 );
 
+    // Direct-prediction correctness is checked at EX fire, after wrong-path
+    // suppression and Slot 0 priority are applied.
     wire slot0_direct_resolve =
         slot0_resolve.valid
         && ex_slot0_prediction.prediction.source_abtb
@@ -76,6 +78,7 @@ module frontend_abtb_monitor
         && bank1_lookup.hit
         && (bank1_lookup.cfi_type == ABTB_TYPE_BRANCH);
 
+    // Counters are observation-only and must not feed back into prediction.
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             counters <= '0;
@@ -249,6 +252,7 @@ module frontend_abtb_monitor
         counters.hit_update
     };
 
+    // Keep the wide measurement vector live in synthesis measurement builds.
     (* dont_touch = "true" *)
     logic [ABTB_MEASUREMENT_SINK_W-1:0] measurement_sink_q;
 

@@ -40,6 +40,8 @@ module predictor_resolve_builder
     output predictor_resolve_t     slot1_resolve
 );
 
+    // Package resolved EX facts with the prediction-time metadata needed by
+    // the single predictor update port.
     always_comb begin
         slot0_resolve = '0;
         slot0_resolve.valid = s0_valid;

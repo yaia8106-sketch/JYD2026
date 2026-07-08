@@ -23,6 +23,8 @@ module frontend_pair_policy
     logic both_lsu;
     logic both_cfi;
 
+    // Pairing is conservative: only supported instruction classes, no RAW from
+    // Slot 0 to Slot 1, no two LSU ops, and no two CFIs in one pair.
     always_comb begin
         raw_dep =
             slot0_meta.writes_rd

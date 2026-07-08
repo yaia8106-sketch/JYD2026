@@ -37,6 +37,7 @@ module csr_trap_unit (
     output logic [31:0] ex_csr_rdata
 );
 
+    // Minimal machine-mode CSR map used by timer interrupts, ECALL, and MRET.
     localparam logic [11:0] CSR_MSTATUS  = 12'h300;
     localparam logic [11:0] CSR_MIE      = 12'h304;
     localparam logic [11:0] CSR_MTVEC    = 12'h305;
@@ -56,6 +57,7 @@ module csr_trap_unit (
     logic [31:0] csr_mcause;
     wire  [31:0] csr_mip = {24'd0, timer_irq_pending, 7'd0};
 
+    // Unsupported CSR addresses read as zero and ignore writes.
     wire ex_csr_supported = (ex_csr_addr == CSR_MSTATUS)
                           | (ex_csr_addr == CSR_MIE)
                           | (ex_csr_addr == CSR_MTVEC)
@@ -73,6 +75,7 @@ module csr_trap_unit (
                                  & (ex_csr_cmd_write
                                   | ((ex_csr_cmd_set | ex_csr_cmd_clear) & ex_csr_src_nonzero));
 
+    // CSRRS/CSRRC with a zero source are read-only by spec.
     wire [31:0] ex_csr_wdata = ex_csr_cmd_write ? ex_csr_src :
                                 ex_csr_cmd_set   ? (ex_csr_rdata | ex_csr_src) :
                                 ex_csr_cmd_clear ? (ex_csr_rdata & ~ex_csr_src) :
@@ -121,6 +124,8 @@ module csr_trap_unit (
                 endcase
             end
 
+            // Trap/return state updates have priority after ordinary CSR writes
+            // so MEPC/MCAUSE/mstatus reflect the taken control event.
             if (timer_irq_take) begin
                 csr_mepc       <= timer_irq_mepc;
                 csr_mcause     <= MCAUSE_TIMER_INTERRUPT;

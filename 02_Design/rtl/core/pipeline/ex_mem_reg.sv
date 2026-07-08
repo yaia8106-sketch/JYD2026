@@ -27,6 +27,8 @@ module ex_mem_reg
     output ex_mem_slot0_t mem_payload
 );
 
+    // Standard valid/allow pipeline rule: MEM can accept a new payload when it
+    // is empty or the current payload can advance to WB.
     assign mem_allowin = !mem_valid || (mem_ready_go & wb_allowin);
 
     // A registered redirect invalidates the younger EX instruction only when
@@ -42,6 +44,7 @@ module ex_mem_reg
     end
 
     // Redirect propagation must not be blocked by MEM backpressure.
+    // Frontend replay must see control-flow recovery even while a load waits.
     always_ff @(posedge clk) begin
         if (!rst_n)
             mem_redirect <= '0;

@@ -43,6 +43,7 @@ module frontend_stage1_direction (
     logic [1:0] pht [0:PHT_ENTRIES-1];
     logic [7:0] ghr;
 
+    // Both PHT ports use the committed GHR and the two PCs in the fetch block.
     wire [31:0] block_pc = {predict_pc[31:3], 3'b000};
     wire [31:0] bank0_pc = block_pc;
     wire [31:0] bank1_pc = block_pc + 32'd4;
@@ -56,6 +57,7 @@ module frontend_stage1_direction (
     assign bank0_taken = bank0_counter[1];
     assign bank1_taken = bank1_counter[1];
 
+    // Saturating counter update for the confirmed branch selected in EX.
     wire [1:0] update_increment =
         (update_counter == 2'b11) ? 2'b11 : update_counter + 2'b01;
     wire [1:0] update_decrement =

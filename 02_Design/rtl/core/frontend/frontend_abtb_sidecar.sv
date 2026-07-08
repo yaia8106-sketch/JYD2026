@@ -53,6 +53,8 @@ module frontend_abtb_sidecar
     output frontend_abtb_meta_t        odd_write_data
 );
 
+    // The sidecar stores ABTB metadata in even/odd banks keyed by FQ pointer
+    // parity so the main queue does not grow with optional debug fields.
     (* ram_style = "distributed" *)
     logic even_hit [0:(FQ_DEPTH/2)-1];
     (* ram_style = "distributed" *)
@@ -71,6 +73,8 @@ module frontend_abtb_sidecar
         f0_meta1 = f0_bank1_meta;
     end
 
+    // Read rows are selected so head0/head1 metadata follows queue order even
+    // when the head pointer starts on the odd bank.
     assign even_read_row = fq_head[0]
                          ? fq_head_p1[FQ_PTR_W-1:1]
                          : fq_head[FQ_PTR_W-1:1];
@@ -122,6 +126,7 @@ module frontend_abtb_sidecar
 `endif
     end
 
+    // Entry 0 writes at tail; entry 1 writes at tail+1 if it survived kill.
     assign even_write_entry0 = enq0_valid && !fq_tail[0];
     assign even_write_entry1 = slot1_write_valid && !fq_tail_p1[0];
     assign odd_write_entry0 = enq0_valid && fq_tail[0];

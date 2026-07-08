@@ -35,6 +35,7 @@ module regfile (
 );
 
     // ---- Register array ----
+    // x0 is intentionally omitted; reads of address zero return a constant.
     logic [31:0] regs [1:31];   // x0 not stored, hardwired to 0
 
     // ---- Read (combinational, read-first) ----
@@ -44,6 +45,7 @@ module regfile (
     assign rs2_data_s1 = (rs2_addr_s1 == 5'd0) ? 32'd0 : regs[rs2_addr_s1];
 
     // ---- Write (posedge, x0 guard). Slot 1 wins WAW by assigning last. ----
+    // Both write ports retire in program order in the same WB cycle.
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             for (int i = 1; i < 32; i++) begin

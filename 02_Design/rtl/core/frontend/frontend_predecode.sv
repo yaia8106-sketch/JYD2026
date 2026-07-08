@@ -13,6 +13,8 @@ module frontend_predecode
 
     logic [6:0] opcode;
 
+    // Predecode is intentionally shallow: it classifies enough information for
+    // pairing and prediction metadata without replacing the real decoder.
     always_comb begin
         opcode = inst[6:0];
         decoded = '0;
@@ -64,6 +66,8 @@ module frontend_predecode
         decoded.is_lsu = decoded.is_load | decoded.is_store;
         decoded.is_cfi =
             decoded.is_branch | decoded.is_jal | decoded.is_jalr;
+        // Multi-cycle, serializing, and exceptional instruction classes issue
+        // alone to keep the downstream pipeline policy simple.
         decoded.force_single_slot0 =
             decoded.is_jalr
             | decoded.is_system

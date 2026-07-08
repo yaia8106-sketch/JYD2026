@@ -32,6 +32,8 @@ module frontend_stage1_steer_ctrl
     logic second_taken;
     logic [31:0] sequential_next_pc;
 
+    // Steering chooses the first visible control-flow instruction in program
+    // order. A lower-bank not-taken branch can still own PHT metadata.
     always_comb begin
         sequential_next_pc =
             current_pc + (current_pc[2] ? 32'd4 : 32'd8);

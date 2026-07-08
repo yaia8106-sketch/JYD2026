@@ -2,8 +2,8 @@
 // Module: cpu_top
 // Description: RV32I 5-stage pipeline skeleton and module interconnect
 // Rule: Keep behavior in stage/helper modules; cpu_top owns wiring and small glue.
-// IROM: 外部例化，通过端口访问
-// DRAM: 通过 DCache 访问（student_top 中例化）
+// IROM: instantiated outside this module and accessed through ports.
+// DRAM: accessed through the DCache instantiated by student_top.
 // Frontend Prediction: Stage-1 ABTB + PHT canonical steering
 // ============================================================
 
@@ -21,28 +21,28 @@ module cpu_top
     input  logic        clk,
     input  logic        rst_n,
 
-    // IROM 接口 (IF stage): 64-bit aligned block ROM
+    // IROM interface (IF stage): 64-bit aligned block ROM
     output logic [11:0] irom_addr,
     input  logic [63:0] irom_data,
 
-    // DCache 接口 (EX → MEM stage)
-    output logic        cache_req,       // EX stage: 有访存请求
+    // DCache interface (EX to MEM stage)
+    output logic        cache_req,       // EX stage: memory request valid
     output logic        cache_wr,        // EX stage: 0=load, 1=store
-    output logic [31:0] cache_addr,      // EX stage: 访存地址
-    output logic [ 3:0] cache_wea,       // EX stage: 字节写使能
-    output logic [31:0] cache_wdata,     // EX stage: 写数据
-    output logic [ 3:0] cache_load_mask, // EX stage: load 使用的字节 lane
-    input  logic [31:0] cache_rdata,     // MEM stage: 读数据 (from DCache)
-    input  logic        cache_ready,     // MEM stage: 命中或完成
+    output logic [31:0] cache_addr,      // EX stage: memory address
+    output logic [ 3:0] cache_wea,       // EX stage: byte write enable
+    output logic [31:0] cache_wdata,     // EX stage: write data
+    output logic [ 3:0] cache_load_mask, // EX stage: load byte lanes
+    input  logic [31:0] cache_rdata,     // MEM stage: read data from DCache
+    input  logic        cache_ready,     // MEM stage: hit or completed miss
     output logic        cache_flush,     // MEM stage: pipeline flush (abort refill)
     output logic        cache_pipeline_stall, // DCache sync: ~mem_allowin
 
-    // MMIO 接口 (保留原有 perip 风格)
-    output logic [31:0] mmio_addr,       // EX stage: 地址
-    output logic [31:0] mmio_wr_addr,    // MEM stage: 写地址
-    output logic [ 3:0] mmio_wea,        // MEM stage: 写使能
-    output logic [31:0] mmio_wdata,      // MEM stage: 写数据
-    input  logic [31:0] mmio_rdata,      // MEM stage: 读数据
+    // MMIO interface, preserving the existing perip-style split address ports
+    output logic [31:0] mmio_addr,       // EX stage: address
+    output logic [31:0] mmio_wr_addr,    // MEM stage: write address
+    output logic [ 3:0] mmio_wea,        // MEM stage: write enable
+    output logic [31:0] mmio_wdata,      // MEM stage: write data
+    input  logic [31:0] mmio_rdata,      // MEM stage: read data
     input  logic        timer_irq_pending
 );
 
@@ -51,10 +51,12 @@ module cpu_top
     // ================================================================
 
     // ---- PC & IF ----
+    // pc is driven by the frontend fetch state and doubles as the predictor
+    // lookup PC for the current BP0 request.
     wire [31:0] pc;
     wire        if_valid;
 
-    // 250MHz: Pre-computed PC+4 register — eliminates carry chain from irom_addr default path
+    // 250MHz: Pre-computed PC+4 register - eliminates carry chain from irom_addr default path
     // Each branch computes +4 independently from its registered source (no irom_addr feedback)
     logic [31:0] pc_plus4;
     logic [31:0] pc_plus8;
@@ -65,6 +67,8 @@ module cpu_top
     (* max_fanout = 16 *) wire        id_allowin;
     wire        id_ready_go;
     wire        id_ready_go_raw;
+    // Structured payloads keep per-slot prediction metadata adjacent to the
+    // instruction as it crosses the pipeline boundary.
     wire cpu_defs::if_id_payload_t if_id_payload;
     wire cpu_defs::if_id_payload_t id_payload;
     wire [31:0] id_pc = id_payload.pc;
@@ -213,8 +217,8 @@ module cpu_top
 
     // ---- ALU ----
     wire [31:0] alu_result;
-    wire [31:0] alu_sum;               // ALU 加法器直出（跳过 output MUX）
-    wire [31:0] alu_addr;              // FIX-A: 独立地址加法器（不依赖 alu_op）
+    wire [31:0] alu_sum;               // Raw ALU adder result before output MUX
+    wire [31:0] alu_addr;              // Independent address adder, not alu_op-dependent
     wire [31:0] alu_s1_result;
     wire [31:0] alu_s1_sum;
     wire [31:0] alu_s1_addr;
@@ -252,6 +256,8 @@ module cpu_top
     wire        ex_registered_branch_flush;
     wire [31:0] ex_registered_branch_target;
 
+    // Ordinary Slot 0 branch misses are registered through EX/MEM. System and
+    // timer redirects use the fast frontend redirect path instead.
     assign ex_branch_registered_flush = branch_flush & ex_redirect_fire & ~ex_system_inst;
 
     // ---- Registered branch flush (MEM stage, for 250MHz timing) ----
@@ -412,6 +418,8 @@ module cpu_top
     wire        id_s1_rs2_used;
     wire        id_s0_alu_only;
     wire        id_s1_repair_ok;
+    // The LSU bridge arbitrates Slot 0/Slot 1 memory requests, routes them to
+    // cache or MMIO, and returns the raw load word to the MEM load formatter.
     memory_access_unit u_memory_access_unit (
         .ex_valid            (ex_valid),
         .ex_mem_read_en      (ex_mem_read_en),
@@ -465,6 +473,8 @@ module cpu_top
         .mem_load_ready      (mem_load_ready)
     );
 
+    // Redirect priority is centralized here: fast EX system/timer redirects
+    // can override replay of the older registered MEM redirect.
     redirect_ctrl u_redirect_ctrl (
         .clk                         (clk),
         .rst_n                       (rst_n),
@@ -484,6 +494,8 @@ module cpu_top
         .frontend_branch_target      (frontend_branch_target)
     );
 
+    // Timer interrupts wait until the pipeline is empty before redirecting to
+    // mtvec, which keeps trap entry precise.
     timer_irq_ctrl u_timer_irq_ctrl (
         .clk               (clk),
         .rst_n             (rst_n),
@@ -544,6 +556,8 @@ module cpu_top
     wire [31:0] abtb_shadow_pred_target;
     wire [31:0] abtb_shadow_pred_next_pc;
 
+    // Compatibility probes mirror IF/ID, ID, and EX prediction metadata for
+    // existing monitors. They do not participate in control.
     wire        if_abtb_hit_out = if_id_payload.slot0.prediction.abtb_hit;
     wire        if_abtb_way_out = if_id_payload.slot0.prediction.abtb_way;
     wire [ 1:0] if_abtb_cfi_type_out = if_id_payload.slot0.prediction.abtb_cfi_type;
@@ -658,6 +672,7 @@ module cpu_top
     wire cpu_defs::abtb_update_t predictor_abtb_update;
     wire cpu_defs::pht_update_t predictor_pht_update;
 
+    // PHT updates use the prediction-time index and counter carried to EX.
     wire        stage1_direction_update_valid =
         predictor_pht_update.valid;
     wire [ 7:0] stage1_direction_update_index =
@@ -698,6 +713,8 @@ module cpu_top
     //  Module instantiations
     // ================================================================
 
+    // Field extraction and lightweight decode-derived policy shared by both
+    // issue slots.
     id_stage_derive u_id_stage_derive (
         .id_pc             (id_pc),
         .id_inst           (id_inst),
@@ -749,6 +766,8 @@ module cpu_top
     );
 
     // ==================== Branch Predictor ====================
+    // EX resolves control-flow outcomes. The update controller chooses at most
+    // one architecturally valid CFI per cycle to train ABTB/PHT.
 
     predictor_resolve_builder u_predictor_resolve_builder (
         .s0_valid             (ex_valid),
@@ -993,6 +1012,8 @@ module cpu_top
     wire if_sequential_fetch = ~if_pred_taken_out;
     wire skip_inst0_valid = 1'b0;
 
+    // Frontend FTQ owns BP0/F0/F1 fetch flow and returns at most two
+    // predecoded instructions to the existing IF/ID register.
     frontend_ftq u_frontend_ftq (
         .clk              (clk),
         .rst_n            (rst_n),
@@ -1147,6 +1168,8 @@ module cpu_top
         .rd_valid_s1  (wb_s1_valid)
     );
 
+    // Forwarding also returns id_ready_go_raw. Timer IRQ hold is applied after
+    // hazard detection so interrupts stall ID like an ordinary readiness block.
     forwarding u_forwarding (
         .id_rs1_addr    (id_rs1_addr),
         .id_rs2_addr    (id_rs2_addr),
@@ -1240,6 +1263,7 @@ module cpu_top
 
     // ==================== ID/EX ====================
 
+    // Payload builders keep large struct assembly out of sequential registers.
     id_ex_payload_builder u_id_ex_payload_builder (
         .s0_pc                 (id_pc),
         .s0_alu_src1           (id_alu_src1),
@@ -1417,6 +1441,7 @@ module cpu_top
         .alu_addr   (alu_s1_addr)
     );
 
+    // MUL/DIV requests hold EX until the multi-cycle unit reports done.
     muldiv_unit u_muldiv_unit (
         .clk       (clk),
         .rst_n     (rst_n),
@@ -1463,6 +1488,8 @@ module cpu_top
         .ex_csr_rdata      (ex_csr_rdata)
     );
 
+    // Slot 0 branch_unit checks prediction correctness; Slot 1 redirect is
+    // handled in ex_stage_ctrl because it has separate younger-slot priority.
     branch_unit u_branch_unit (
         .target_pc        (ex_control_target),
         .fallthrough_pc   (ex_pc_plus_4),
@@ -1481,7 +1508,7 @@ module cpu_top
         .actual_target    (actual_target)
     );
 
-    // Store interface (EX stage → DCache)
+    // Store interface (EX stage -> DCache)
     mem_interface u_mem_interface (
         // Store side (EX stage)
         .store_valid     (ex_valid),

@@ -29,6 +29,8 @@ module mem_wb_payload_builder
     output mem_wb_slot1_t    slot1_payload
 );
 
+    // MEM/WB carries the final load data only for Slot 0 because the shared LSU
+    // allows at most one load result per cycle.
     always_comb begin
         slot0_payload = '0;
         slot0_payload.alu_result = s0_alu_result;

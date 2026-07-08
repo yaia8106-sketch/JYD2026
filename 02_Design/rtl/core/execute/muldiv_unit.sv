@@ -51,6 +51,7 @@ module muldiv_unit
     logic        div_quot_neg;
     logic        div_rem_neg;
 
+    // req_op[2] separates the multiplier family from DIV/REM operations.
     wire req_is_mul = ~req_op[2];
     wire req_is_rem = req_op[1];
     wire req_is_signed_div = (req_op == M_OP_DIV) | (req_op == M_OP_REM);
@@ -61,6 +62,7 @@ module muldiv_unit
     wire signed [32:0] mul_b = {mul_signed_b & req_mul_rs2[31], req_mul_rs2};
     (* use_dsp = "yes" *) wire signed [65:0] mul_product_w = mul_a_r * mul_b_r;
 
+    // Division runs on magnitudes and applies signs only to the final result.
     wire [31:0] req_abs_rs1 = (req_is_signed_div & req_div_rs1[31]) ? (~req_div_rs1 + 32'd1) : req_div_rs1;
     wire [31:0] req_abs_rs2 = (req_is_signed_div & req_div_rs2[31]) ? (~req_div_rs2 + 32'd1) : req_div_rs2;
     wire        req_div_by_zero = (req_div_rs2 == 32'd0);
@@ -93,6 +95,8 @@ module muldiv_unit
     wire [33:0] req_divisor_1x = {2'b00, req_abs_rs2};
     wire [33:0] req_divisor_2x = {1'b0, req_abs_rs2, 1'b0};
     wire [33:0] req_divisor_3x = req_divisor_1x + req_divisor_2x;
+    // The radix-4 step consumes two quotient bits per cycle by comparing the
+    // shifted remainder against 1x/2x/3x divisor candidates.
     wire [33:0] div_rem_shift = {div_remainder[31:0], div_quotient[31:30]};
     wire [34:0] div_rem_sub_1x = {1'b0, div_rem_shift} - {1'b0, div_divisor_1x_r};
     wire [34:0] div_rem_sub_2x = {1'b0, div_rem_shift} - {1'b0, div_divisor_2x_r};
@@ -199,16 +203,19 @@ module muldiv_unit
                 end
 
                 S_MUL_EXEC: begin
+                    // Capture the DSP product one cycle after loading operands.
                     mul_product_r <= mul_product_w;
                     state <= S_MUL_DONE;
                 end
 
                 S_MUL_DONE: begin
+                    // Hold done high until EX consumes the result or drops req_valid.
                     if (consume | !req_valid)
                         state <= S_IDLE;
                 end
 
                 S_DIV_RUN: begin
+                    // Sixteen radix-4 iterations produce all 32 quotient bits.
                     div_remainder <= div_rem_next;
                     div_quotient  <= div_quot_next;
                     div_count     <= div_count - 6'd1;

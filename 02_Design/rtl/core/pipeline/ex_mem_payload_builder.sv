@@ -44,6 +44,8 @@ module ex_mem_payload_builder
     output ex_mem_slot1_t      slot1_payload
 );
 
+    // Redirect payload and data payload are built together, but the register
+    // stage may propagate the redirect even when MEM is backpressured.
     always_comb begin
         redirect.valid = redirect_valid;
         redirect.target = redirect_target;

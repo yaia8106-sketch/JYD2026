@@ -21,8 +21,12 @@ module ex_mem_reg_s1
     output ex_mem_slot1_t mem_payload
 );
 
+    // Slot 1 is younger than Slot 0, so either a same-cycle EX miss or an older
+    // registered MEM redirect invalidates it.
     wire s1_flush = ex_branch_flush | mem_branch_flush;
 
+    // Preserve payload fields for observability, but mask all architectural
+    // side effects when Slot 1 is not actually active.
     function automatic ex_mem_slot1_t accepted_payload(
         input ex_mem_slot1_t payload,
         input logic          slot_active

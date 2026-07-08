@@ -27,6 +27,8 @@ module mem_wb_reg
     wire wb_ready_go = 1'b1;
     assign wb_allowin = !wb_valid || wb_ready_go;
 
+    // When MEM advances for a non-load, keep the previous load_data value so
+    // an EX-stage repair can still source the registered load result.
     function automatic mem_wb_slot0_t accepted_payload(
         input mem_wb_slot0_t current_payload,
         input mem_wb_slot0_t incoming_payload,
