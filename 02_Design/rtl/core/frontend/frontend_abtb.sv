@@ -32,7 +32,7 @@ module frontend_abtb (
     output logic        bank0_eligible, // if predict_pc[2] is 1, bank0 is not eligible for prediction
     output logic        bank0_lookup_hit, // if(pred_tag == bank0_tag && bank0_valid)
     output logic        bank0_hit, // if(lookup_valid && bank0_lookup_hit)
-    output logic        bank0_way, // !pred_pc[3]
+    output logic        bank0_way, // ~pred_pc[3]
     output logic [ 1:0] bank0_cfi_type, // JAL, JALR, BRANCH, RET
     output logic [31:0] bank0_abtb_pred_target, // from ABTB RAM, before RET replacement
     output logic        bank0_pred_taken,
