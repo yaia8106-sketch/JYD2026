@@ -69,8 +69,7 @@ module frontend_abtb (
 
     localparam int SETS = 16;
     localparam int SET_IDX_W = 4;
-    // The implemented IROM is 16 KB at one fixed base address, so PC[13:7]
-    // uniquely identifies the remaining block address after set selection.
+    // The implemented IROM is 16 KB(64*2048bits) at one fixed base address, so PC[13:7] uniquely identifies the remaining block address after set selection.
     localparam int TAG_W = 7;
 
     // Preserve the current predictor type encoding for later integration.
@@ -79,7 +78,7 @@ module frontend_abtb (
     localparam logic [1:0] TYPE_BRANCH = 2'b10;
     localparam logic [1:0] TYPE_RET    = 2'b11;
 
-    localparam int PAYLOAD_W = TAG_W + 2 + 32;
+    localparam int PAYLOAD_W = TAG_W + 2 + 32; // tag(7) + cfi_type(2) + target(32) = 41 bit
     localparam int TYPE_MSB = 33;
     localparam int TYPE_LSB = 32;
 
@@ -105,8 +104,6 @@ module frontend_abtb (
     logic bank0_lru [0:SETS-1];
     logic bank1_lru [0:SETS-1];
 
-    // Lookup is indexed by the aligned 64-bit fetch block; bank0 is the lower
-    // word and bank1 is the upper word of that block.
     wire [31:0] pred_lookup_block_pc = {predict_pc[31:3], 3'b000};
     wire [SET_IDX_W-1:0] pred_lookup_set = pred_lookup_block_pc[6:3];
     wire [TAG_W-1:0] pred_lookup_tag = pred_lookup_block_pc[13:7];
@@ -120,6 +117,7 @@ module frontend_abtb (
     wire [PAYLOAD_W-1:0] bank1_way1_lookup_payload =
         bank1_way1_payload[pred_lookup_set];
 
+    // TAG
     wire [TAG_W-1:0] bank0_way0_lookup_tag =
         bank0_way0_lookup_payload[PAYLOAD_W-1 -: TAG_W];
     wire [TAG_W-1:0] bank0_way1_lookup_tag =
@@ -129,6 +127,7 @@ module frontend_abtb (
     wire [TAG_W-1:0] bank1_way1_lookup_tag =
         bank1_way1_lookup_payload[PAYLOAD_W-1 -: TAG_W];
 
+    // TYPE
     wire [1:0] bank0_way0_lookup_type =
         bank0_way0_lookup_payload[TYPE_MSB:TYPE_LSB];
     wire [1:0] bank0_way1_lookup_type =
@@ -138,6 +137,7 @@ module frontend_abtb (
     wire [1:0] bank1_way1_lookup_type =
         bank1_way1_lookup_payload[TYPE_MSB:TYPE_LSB];
 
+    // TARGET
     wire [31:0] bank0_way0_stored_target = bank0_way0_lookup_payload[31:0];
     wire [31:0] bank0_way1_stored_target = bank0_way1_lookup_payload[31:0];
     wire [31:0] bank1_way0_stored_target = bank1_way0_lookup_payload[31:0];
@@ -152,8 +152,6 @@ module frontend_abtb (
     wire bank1_way1_match = bank1_way1_valid[pred_lookup_set]
                           && (bank1_way1_lookup_tag == pred_lookup_tag);
 
-    // Decode direction and target independently for every way. These candidates
-    // run in parallel with the tag comparisons; way and bank selection are late.
     wire bank0_way0_is_direct = !bank0_way0_lookup_type[1];
     wire bank0_way1_is_direct = !bank0_way1_lookup_type[1];
     wire bank1_way0_is_direct = !bank1_way0_lookup_type[1];
@@ -186,6 +184,8 @@ module frontend_abtb (
         || (bank1_way1_is_branch && bank1_branch_taken)
         || (bank1_way1_is_ret && bank1_ret_valid);
 
+    // if the stored CFI is a RET, the predicted target is replaced by the RAS result.
+    // else the predicted target is the stored target in the ABTB RAM.
     wire [31:0] bank0_way0_pred_target_candidate =
         bank0_way0_is_ret ? bank0_ret_target : bank0_way0_stored_target;
     wire [31:0] bank0_way1_pred_target_candidate =
@@ -219,7 +219,7 @@ module frontend_abtb (
     wire [31:0] sequential_next_pc =
         predict_pc + (predict_pc[2] ? 32'd4 : 32'd8);
 
-    // Combine tag-hit, CFI type, PHT direction, and optional return targets
+    // Combine tag-hit, CFI type, PHT direction, and optional ras return targets
     // into per-bank predictions, then choose the earliest taken bank.
     always_comb begin
         bank0_eligible = lookup_valid && !predict_pc[2];
