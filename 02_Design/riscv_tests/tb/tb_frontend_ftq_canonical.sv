@@ -18,15 +18,15 @@ module tb_frontend_ftq_canonical;
     logic abtb_bank0_hit;
     logic abtb_bank0_way;
     logic [1:0] abtb_bank0_cfi_type;
-    logic [31:0] abtb_bank0_target;
+    logic [31:0] abtb_bank0_abtb_pred_target;
     logic abtb_bank0_pred_taken;
-    logic [31:0] abtb_bank0_pred_target;
+    logic [31:0] abtb_bank0_final_pred_target;
     logic abtb_bank1_hit;
     logic abtb_bank1_way;
     logic [1:0] abtb_bank1_cfi_type;
-    logic [31:0] abtb_bank1_target;
+    logic [31:0] abtb_bank1_abtb_pred_target;
     logic abtb_bank1_pred_taken;
-    logic [31:0] abtb_bank1_pred_target;
+    logic [31:0] abtb_bank1_final_pred_target;
 
     logic if_valid;
     logic if_s1_valid;
@@ -65,16 +65,16 @@ module tb_frontend_ftq_canonical;
         .abtb_bank0_hit              (abtb_bank0_hit),
         .abtb_bank0_way              (abtb_bank0_way),
         .abtb_bank0_cfi_type         (abtb_bank0_cfi_type),
-        .abtb_bank0_target           (abtb_bank0_target),
+        .abtb_bank0_abtb_pred_target           (abtb_bank0_abtb_pred_target),
         .abtb_bank0_pred_taken       (abtb_bank0_pred_taken),
-        .abtb_bank0_pred_target      (abtb_bank0_pred_target),
+        .abtb_bank0_final_pred_target      (abtb_bank0_final_pred_target),
         .abtb_bank1_lookup_hit       (abtb_bank1_hit),
         .abtb_bank1_hit              (abtb_bank1_hit),
         .abtb_bank1_way              (abtb_bank1_way),
         .abtb_bank1_cfi_type         (abtb_bank1_cfi_type),
-        .abtb_bank1_target           (abtb_bank1_target),
+        .abtb_bank1_abtb_pred_target           (abtb_bank1_abtb_pred_target),
         .abtb_bank1_pred_taken       (abtb_bank1_pred_taken),
-        .abtb_bank1_pred_target      (abtb_bank1_pred_target),
+        .abtb_bank1_final_pred_target      (abtb_bank1_final_pred_target),
         .stage1_bank0_pht_index      (8'h10),
         .stage1_bank0_pht_counter    (2'b01),
         .stage1_bank1_pht_index      (8'h11),
@@ -124,15 +124,15 @@ module tb_frontend_ftq_canonical;
             abtb_bank0_hit = 1'b0;
             abtb_bank0_way = 1'b0;
             abtb_bank0_cfi_type = 2'd0;
-            abtb_bank0_target = 32'd0;
+            abtb_bank0_abtb_pred_target = 32'd0;
             abtb_bank0_pred_taken = 1'b0;
-            abtb_bank0_pred_target = 32'd0;
+            abtb_bank0_final_pred_target = 32'd0;
             abtb_bank1_hit = 1'b1;
             abtb_bank1_way = 1'b0;
             abtb_bank1_cfi_type = TYPE_JAL;
-            abtb_bank1_target = BASE + 32'h80;
+            abtb_bank1_abtb_pred_target = BASE + 32'h80;
             abtb_bank1_pred_taken = 1'b1;
-            abtb_bank1_pred_target = BASE + 32'h80;
+            abtb_bank1_final_pred_target = BASE + 32'h80;
         end
     endtask
 
@@ -205,28 +205,28 @@ module tb_frontend_ftq_canonical;
     endtask
 
     task automatic scenario_bank1_abtb_selected_under_stall;
-        logic [31:0] bank1_target;
+        logic [31:0] bank1_abtb_pred_target;
         logic [31:0] held_pc;
         logic held_s1_source;
         begin
             drive_defaults();
             id_allowin = 1'b0;
-            bank1_target = BASE + 32'h80;
-            abtb_bank1_pred_target = bank1_target;
+            bank1_abtb_pred_target = BASE + 32'h80;
+            abtb_bank1_final_pred_target = bank1_abtb_pred_target;
             reset_dut();
 
-            accept_taken_and_check(1'b1, 1'b1, bank1_target);
+            accept_taken_and_check(1'b1, 1'b1, bank1_abtb_pred_target);
             check(dut.f0_final_taken
                   && dut.f0_final_source_abtb
                   && dut.f0_final_bank
-                  && dut.f0_final_next_pc == bank1_target,
+                  && dut.f0_final_next_pc == bank1_abtb_pred_target,
                   "bank1 ABTB steering was not selected");
             @(posedge clk);
             #1;
             check(if_valid && !if_pred_taken && !if_pred_source_abtb
                   && if_s1_valid && if_s1_pred_taken
                   && if_s1_pred_source_abtb
-                  && if_s1_pred_target == bank1_target,
+                  && if_s1_pred_target == bank1_abtb_pred_target,
                   "bank1 ABTB metadata was bound to the wrong FQ slot");
 
             // Stop creating new ABTB events, then wait until the blocked FQ
@@ -259,11 +259,11 @@ module tb_frontend_ftq_canonical;
             abtb_target = BASE + 32'hc0;
             abtb_bank0_hit = 1'b1;
             abtb_bank0_cfi_type = TYPE_JAL;
-            abtb_bank0_target = abtb_target;
+            abtb_bank0_abtb_pred_target = abtb_target;
             // Direct direction is intrinsic to JAL/CALL. Keep the shadow
             // direction result low to prove it cannot gate canonical steering.
             abtb_bank0_pred_taken = 1'b0;
-            abtb_bank0_pred_target = abtb_target;
+            abtb_bank0_final_pred_target = abtb_target;
             reset_dut();
 
             accept_taken_and_check(1'b1, 1'b0, abtb_target);
@@ -306,9 +306,9 @@ module tb_frontend_ftq_canonical;
             irom_data = {32'h0000_0013, 32'h0000_0063};
             abtb_bank0_hit = 1'b1;
             abtb_bank0_cfi_type = TYPE_BRANCH;
-            abtb_bank0_target = branch_target;
+            abtb_bank0_abtb_pred_target = branch_target;
             abtb_bank0_pred_taken = 1'b1;
-            abtb_bank0_pred_target = branch_target;
+            abtb_bank0_final_pred_target = branch_target;
             reset_dut();
 
             accept_taken_and_check(1'b1, 1'b0, branch_target);
@@ -326,19 +326,19 @@ module tb_frontend_ftq_canonical;
     endtask
 
     task automatic scenario_branch_owned_nt_then_bank1;
-        logic [31:0] bank1_target;
+        logic [31:0] bank1_abtb_pred_target;
         begin
             drive_defaults();
-            bank1_target = BASE + 32'h80;
+            bank1_abtb_pred_target = BASE + 32'h80;
             irom_data = {32'h0000_0013, 32'h0000_0063};
             abtb_bank0_hit = 1'b1;
             abtb_bank0_cfi_type = TYPE_BRANCH;
-            abtb_bank0_target = BASE + 32'h40;
+            abtb_bank0_abtb_pred_target = BASE + 32'h40;
             abtb_bank0_pred_taken = 1'b0;
-            abtb_bank0_pred_target = BASE + 32'h40;
+            abtb_bank0_final_pred_target = BASE + 32'h40;
             reset_dut();
 
-            accept_taken_and_check(1'b1, 1'b1, bank1_target);
+            accept_taken_and_check(1'b1, 1'b1, bank1_abtb_pred_target);
             check(dut.f0_slot0_stage1_branch_owned,
                   "owned not-taken branch lost Stage-1 ownership");
             @(posedge clk);
@@ -348,7 +348,7 @@ module tb_frontend_ftq_canonical;
                   && if_s1_valid && if_s1_pred_taken
                   && if_s1_pred_source_abtb
                   && !if_s1_stage1_branch_owned
-                  && if_s1_pred_target == bank1_target,
+                  && if_s1_pred_target == bank1_abtb_pred_target,
                   "owned branch NT did not expose younger bank1 direct metadata");
             pass_case("owned branch NT continues to younger bank1 direct");
         end
@@ -360,11 +360,11 @@ module tb_frontend_ftq_canonical;
             irom_data = {32'h0000_0063, 32'h0000_0063};
             abtb_bank0_hit = 1'b1;
             abtb_bank0_cfi_type = TYPE_BRANCH;
-            abtb_bank0_target = BASE + 32'h40;
+            abtb_bank0_abtb_pred_target = BASE + 32'h40;
             abtb_bank0_pred_taken = 1'b0;
             abtb_bank1_hit = 1'b1;
             abtb_bank1_cfi_type = TYPE_BRANCH;
-            abtb_bank1_target = BASE + 32'h80;
+            abtb_bank1_abtb_pred_target = BASE + 32'h80;
             abtb_bank1_pred_taken = 1'b0;
             reset_dut();
 

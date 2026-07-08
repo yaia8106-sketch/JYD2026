@@ -1,15 +1,15 @@
 // ============================================================
 // Module: frontend_abtb
+// "a" means ahead
+// "btb" means branch target buffer
 // Description: Two-bank, two-way ahead BTB for one 64-bit fetch block.
 // Domain: frontend.
 //   - bank0 describes block_pc
 //   - bank1 describes block_pc + 4
 //   - both banks are read combinationally and in parallel
-//   - one confirmed CFI update may be written per cycle
-//
-// Direction and return-target state are intentionally outside this module.
-// The branch-direction and uRAS inputs provide clean integration boundaries
-// for later predictor stages.
+//   - only one confirmed CFI update(not two) can be written per cycle
+
+// Direction and ret ins'state&direction are intentionally outside this module.
 // ============================================================
 
 module frontend_abtb (
@@ -20,8 +20,7 @@ module frontend_abtb (
     input  logic        lookup_valid,
     input  logic [31:0] predict_pc,
 
-    // Future PHT/uRAS result inputs. Direct J/CALL directions are generated
-    // locally from the stored CFI type.
+    // Future PHT/RAS result inputs. J type instruction's directions are generated locally from the stored CFI type.
     input  logic        bank0_branch_taken,
     input  logic        bank1_branch_taken,
     input  logic        bank0_ret_valid,
@@ -29,43 +28,39 @@ module frontend_abtb (
     input  logic        bank1_ret_valid,
     input  logic [31:0] bank1_ret_target,
 
-    // Parallel per-bank lookup metadata. lookup_hit is the continuous
-    // combinational tag result used to precompute steering; hit is qualified
-    // by lookup_valid for accepted metadata and predictor bookkeeping.
-    output logic        bank0_eligible,
-    output logic        bank0_lookup_hit,
-    output logic        bank0_hit,
-    output logic        bank0_way,
-    output logic [ 1:0] bank0_cfi_type,
-    output logic [31:0] bank0_target,
+    // Parallel per-bank lookup metadata.
+    output logic        bank0_eligible, // if predict_pc[2] is 1, bank0 is not eligible for prediction
+    output logic        bank0_lookup_hit, // if(pred_tag == bank0_tag && bank0_valid)
+    output logic        bank0_hit, // if(lookup_valid && bank0_lookup_hit)
+    output logic        bank0_way, // !pred_pc[3]
+    output logic [ 1:0] bank0_cfi_type, // JAL, JALR, BRANCH, RET
+    output logic [31:0] bank0_abtb_pred_target, // from ABTB RAM, before RET replacement
     output logic        bank0_pred_taken,
-    output logic [31:0] bank0_pred_target,
+    output logic [31:0] bank0_final_pred_target, // if RET, from RAS; else from ABTB RAM
 
     output logic        bank1_eligible,
     output logic        bank1_lookup_hit,
     output logic        bank1_hit,
-    output logic        bank1_way,
+    output logic        bank1_way, // pred_pc[3]
     output logic [ 1:0] bank1_cfi_type,
-    output logic [31:0] bank1_target,
+    output logic [31:0] bank1_abtb_pred_target,
     output logic        bank1_pred_taken,
-    output logic [31:0] bank1_pred_target,
+    output logic [31:0] bank1_final_pred_target,
 
     // Program-order selection. bank0 wins when both candidates are taken.
     output logic        pred_taken,
     output logic        pred_bank,
     output logic [ 1:0] pred_cfi_type,
     output logic [31:0] pred_target,
-    output logic [31:0] pred_next_pc,
+    output logic [31:0] pred_next_pc, // if pred_taken is 1, pred_next_pc = pred_target; else pred_next_pc = sequential_next_pc
 
-    // Confirmed update port. update_valid must already include architectural
-    // validity/fire and older-flush suppression from the caller. A hit uses
-    // bank/way metadata carried from prediction; a miss allocates by valid/LRU.
+    // Confirmed update port.
+    // A hit uses bank/way metadata carried from prediction to update
+    // unhit update will be allocated by valid/LRU.
     input  logic        update_valid,
     input  logic        update_hit,
-    // update_way is prediction metadata carried to EX and is valid only for a
-    // hit. It may become stale after an intervening replacement; overwriting
-    // that way is an accepted predictor-only performance loss. Do not recover
-    // it with a second associative lookup on the update path.
+    // !These metadata may become stale after an intervening replacement;
+    // !now we choose to use the stale metadata to update, but it will cause misprediction if the stale metadata is wrong.
     input  logic        update_way,
     input  logic [31:0] update_pc,
     input  logic [ 1:0] update_cfi_type,
@@ -95,6 +90,8 @@ module frontend_abtb (
     logic bank1_way0_valid [0:SETS-1];
     logic bank1_way1_valid [0:SETS-1];
 
+    // 16(set) * 41(entry) bit
+    // tag(7) + cfi_type(2) + target(32) = 41 bit
     (* ram_style = "distributed" *)
     logic [PAYLOAD_W-1:0] bank0_way0_payload [0:SETS-1];
     (* ram_style = "distributed" *)
@@ -110,18 +107,18 @@ module frontend_abtb (
 
     // Lookup is indexed by the aligned 64-bit fetch block; bank0 is the lower
     // word and bank1 is the upper word of that block.
-    wire [31:0] lookup_block_pc = {predict_pc[31:3], 3'b000};
-    wire [SET_IDX_W-1:0] lookup_set = lookup_block_pc[6:3];
-    wire [TAG_W-1:0] lookup_tag = lookup_block_pc[13:7];
+    wire [31:0] pred_lookup_block_pc = {predict_pc[31:3], 3'b000};
+    wire [SET_IDX_W-1:0] pred_lookup_set = pred_lookup_block_pc[6:3];
+    wire [TAG_W-1:0] pred_lookup_tag = pred_lookup_block_pc[13:7];
 
     wire [PAYLOAD_W-1:0] bank0_way0_lookup_payload =
-        bank0_way0_payload[lookup_set];
+        bank0_way0_payload[pred_lookup_set];
     wire [PAYLOAD_W-1:0] bank0_way1_lookup_payload =
-        bank0_way1_payload[lookup_set];
+        bank0_way1_payload[pred_lookup_set];
     wire [PAYLOAD_W-1:0] bank1_way0_lookup_payload =
-        bank1_way0_payload[lookup_set];
+        bank1_way0_payload[pred_lookup_set];
     wire [PAYLOAD_W-1:0] bank1_way1_lookup_payload =
-        bank1_way1_payload[lookup_set];
+        bank1_way1_payload[pred_lookup_set];
 
     wire [TAG_W-1:0] bank0_way0_lookup_tag =
         bank0_way0_lookup_payload[PAYLOAD_W-1 -: TAG_W];
@@ -146,14 +143,14 @@ module frontend_abtb (
     wire [31:0] bank1_way0_stored_target = bank1_way0_lookup_payload[31:0];
     wire [31:0] bank1_way1_stored_target = bank1_way1_lookup_payload[31:0];
 
-    wire bank0_way0_match = bank0_way0_valid[lookup_set]
-                          && (bank0_way0_lookup_tag == lookup_tag);
-    wire bank0_way1_match = bank0_way1_valid[lookup_set]
-                          && (bank0_way1_lookup_tag == lookup_tag);
-    wire bank1_way0_match = bank1_way0_valid[lookup_set]
-                          && (bank1_way0_lookup_tag == lookup_tag);
-    wire bank1_way1_match = bank1_way1_valid[lookup_set]
-                          && (bank1_way1_lookup_tag == lookup_tag);
+    wire bank0_way0_match = bank0_way0_valid[pred_lookup_set]
+                          && (bank0_way0_lookup_tag == pred_lookup_tag);
+    wire bank0_way1_match = bank0_way1_valid[pred_lookup_set]
+                          && (bank0_way1_lookup_tag == pred_lookup_tag);
+    wire bank1_way0_match = bank1_way0_valid[pred_lookup_set]
+                          && (bank1_way0_lookup_tag == pred_lookup_tag);
+    wire bank1_way1_match = bank1_way1_valid[pred_lookup_set]
+                          && (bank1_way1_lookup_tag == pred_lookup_tag);
 
     // Decode direction and target independently for every way. These candidates
     // run in parallel with the tag comparisons; way and bank selection are late.
@@ -230,14 +227,14 @@ module frontend_abtb (
         bank0_hit = lookup_valid && bank0_lookup_hit;
         bank0_way = bank0_way1_selected;
         bank0_cfi_type = 2'd0;
-        bank0_target = 32'd0;
+        bank0_abtb_pred_target = 32'd0;
 
         if (bank0_way0_match) begin
             bank0_cfi_type = bank0_way0_lookup_type;
-            bank0_target = bank0_way0_stored_target;
+            bank0_abtb_pred_target = bank0_way0_stored_target;
         end else if (bank0_way1_selected) begin
             bank0_cfi_type = bank0_way1_lookup_type;
-            bank0_target = bank0_way1_stored_target;
+            bank0_abtb_pred_target = bank0_way1_stored_target;
         end
 
         bank1_eligible = lookup_valid;
@@ -245,28 +242,28 @@ module frontend_abtb (
         bank1_hit = lookup_valid && bank1_lookup_hit;
         bank1_way = bank1_way1_selected;
         bank1_cfi_type = 2'd0;
-        bank1_target = 32'd0;
+        bank1_abtb_pred_target = 32'd0;
 
         if (bank1_way0_match) begin
             bank1_cfi_type = bank1_way0_lookup_type;
-            bank1_target = bank1_way0_stored_target;
+            bank1_abtb_pred_target = bank1_way0_stored_target;
         end else if (bank1_way1_selected) begin
             bank1_cfi_type = bank1_way1_lookup_type;
-            bank1_target = bank1_way1_stored_target;
+            bank1_abtb_pred_target = bank1_way1_stored_target;
         end
 
         bank0_pred_taken =
             bank0_eligible && bank0_selected_taken_candidate;
-        bank0_pred_target = bank0_target;
+        bank0_final_pred_target = bank0_abtb_pred_target;
         if (bank0_hit) begin
-            bank0_pred_target = bank0_selected_pred_target_candidate;
+            bank0_final_pred_target = bank0_selected_pred_target_candidate;
         end
 
         bank1_pred_taken =
             bank1_eligible && bank1_selected_taken_candidate;
-        bank1_pred_target = bank1_target;
+        bank1_final_pred_target = bank1_abtb_pred_target;
         if (bank1_hit) begin
-            bank1_pred_target = bank1_selected_pred_target_candidate;
+            bank1_final_pred_target = bank1_selected_pred_target_candidate;
         end
 
         pred_taken = bank0_pred_taken || bank1_pred_taken;
@@ -330,7 +327,7 @@ module frontend_abtb (
             end
         end else begin
             if (lookup_valid && !predict_pc[2] && bank0_hit)
-                bank0_lru[lookup_set] <= !bank0_way;
+                bank0_lru[pred_lookup_set] <= !bank0_way;
 
             if (update_valid && !update_bank) begin
                 if (!update_selected_way)
@@ -341,7 +338,7 @@ module frontend_abtb (
             end
 
             if (lookup_valid && bank1_hit && !bank0_pred_taken)
-                bank1_lru[lookup_set] <= !bank1_way;
+                bank1_lru[pred_lookup_set] <= !bank1_way;
 
             if (update_valid && update_bank) begin
                 if (!update_selected_way)

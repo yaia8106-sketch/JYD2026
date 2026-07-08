@@ -26,16 +26,16 @@ module tb_frontend_abtb;
     logic bank0_hit;
     logic bank0_way;
     logic [1:0] bank0_cfi_type;
-    logic [31:0] bank0_target;
+    logic [31:0] bank0_abtb_pred_target;
     logic bank0_pred_taken;
-    logic [31:0] bank0_pred_target;
+    logic [31:0] bank0_final_pred_target;
     logic bank1_eligible;
     logic bank1_hit;
     logic bank1_way;
     logic [1:0] bank1_cfi_type;
-    logic [31:0] bank1_target;
+    logic [31:0] bank1_abtb_pred_target;
     logic bank1_pred_taken;
-    logic [31:0] bank1_pred_target;
+    logic [31:0] bank1_final_pred_target;
     logic pred_taken;
     logic pred_bank;
     logic [1:0] pred_cfi_type;
@@ -66,16 +66,16 @@ module tb_frontend_abtb;
         .bank0_hit            (bank0_hit),
         .bank0_way            (bank0_way),
         .bank0_cfi_type       (bank0_cfi_type),
-        .bank0_target         (bank0_target),
+        .bank0_abtb_pred_target         (bank0_abtb_pred_target),
         .bank0_pred_taken     (bank0_pred_taken),
-        .bank0_pred_target    (bank0_pred_target),
+        .bank0_final_pred_target    (bank0_final_pred_target),
         .bank1_eligible       (bank1_eligible),
         .bank1_hit            (bank1_hit),
         .bank1_way            (bank1_way),
         .bank1_cfi_type       (bank1_cfi_type),
-        .bank1_target         (bank1_target),
+        .bank1_abtb_pred_target         (bank1_abtb_pred_target),
         .bank1_pred_taken     (bank1_pred_taken),
-        .bank1_pred_target    (bank1_pred_target),
+        .bank1_final_pred_target    (bank1_final_pred_target),
         .pred_taken           (pred_taken),
         .pred_bank            (pred_bank),
         .pred_cfi_type        (pred_cfi_type),
@@ -169,17 +169,17 @@ module tb_frontend_abtb;
                 check(bank0_hit && bank0_way == expected_way,
                       "bank0 JAL candidate selected the wrong way");
                 check(bank0_cfi_type == TYPE_JAL
-                      && bank0_target == 32'h8000_3100
+                      && bank0_abtb_pred_target == 32'h8000_3100
                       && bank0_pred_taken
-                      && bank0_pred_target == 32'h8000_3100,
+                      && bank0_final_pred_target == 32'h8000_3100,
                       "bank0 JAL candidate behavior mismatch");
             end else begin
                 check(bank1_hit && bank1_way == expected_way,
                       "bank1 JAL candidate selected the wrong way");
                 check(bank1_cfi_type == TYPE_JAL
-                      && bank1_target == 32'h8000_3100
+                      && bank1_abtb_pred_target == 32'h8000_3100
                       && bank1_pred_taken
-                      && bank1_pred_target == 32'h8000_3100,
+                      && bank1_final_pred_target == 32'h8000_3100,
                       "bank1 JAL candidate behavior mismatch");
             end
 
@@ -188,12 +188,12 @@ module tb_frontend_abtb;
             if (!expected_bank)
                 check(bank0_cfi_type == TYPE_CALL
                       && bank0_pred_taken
-                      && bank0_pred_target == 32'h8000_3200,
+                      && bank0_final_pred_target == 32'h8000_3200,
                       "bank0 CALL candidate behavior mismatch");
             else
                 check(bank1_cfi_type == TYPE_CALL
                       && bank1_pred_taken
-                      && bank1_pred_target == 32'h8000_3200,
+                      && bank1_final_pred_target == 32'h8000_3200,
                       "bank1 CALL candidate behavior mismatch");
 
             train_hit(pc, expected_way, TYPE_BRANCH, 32'h8000_3300);
@@ -204,7 +204,7 @@ module tb_frontend_abtb;
             lookup(pc);
             if (!expected_bank) begin
                 check(!bank0_pred_taken
-                      && bank0_pred_target == 32'h8000_3300,
+                      && bank0_final_pred_target == 32'h8000_3300,
                       "bank0 not-taken BRANCH candidate mismatch");
                 bank0_branch_taken = 1'b1;
                 #1;
@@ -212,7 +212,7 @@ module tb_frontend_abtb;
                       "bank0 taken BRANCH candidate mismatch");
             end else begin
                 check(!bank1_pred_taken
-                      && bank1_pred_target == 32'h8000_3300,
+                      && bank1_final_pred_target == 32'h8000_3300,
                       "bank1 not-taken BRANCH candidate mismatch");
                 bank1_branch_taken = 1'b1;
                 #1;
@@ -231,21 +231,21 @@ module tb_frontend_abtb;
             lookup(pc);
             if (!expected_bank) begin
                 check(!bank0_pred_taken
-                      && bank0_pred_target == 32'h8000_3400,
+                      && bank0_final_pred_target == 32'h8000_3400,
                       "bank0 invalid RET candidate mismatch");
                 bank0_ret_valid = 1'b1;
                 #1;
                 check(bank0_pred_taken
-                      && bank0_pred_target == 32'h8000_3400,
+                      && bank0_final_pred_target == 32'h8000_3400,
                       "bank0 valid RET candidate mismatch");
             end else begin
                 check(!bank1_pred_taken
-                      && bank1_pred_target == 32'h8000_3400,
+                      && bank1_final_pred_target == 32'h8000_3400,
                       "bank1 invalid RET candidate mismatch");
                 bank1_ret_valid = 1'b1;
                 #1;
                 check(bank1_pred_taken
-                      && bank1_pred_target == 32'h8000_3400,
+                      && bank1_final_pred_target == 32'h8000_3400,
                       "bank1 valid RET candidate mismatch");
             end
 
@@ -291,9 +291,9 @@ module tb_frontend_abtb;
         train_miss(32'h8000_0004, TYPE_CALL, 32'h8000_0200);
         lookup(32'h8000_0000);
         check(bank0_hit && bank1_hit, "parallel dual-bank lookup did not hit both CFIs");
-        check(bank0_cfi_type == TYPE_JAL && bank0_target == 32'h8000_0100,
+        check(bank0_cfi_type == TYPE_JAL && bank0_abtb_pred_target == 32'h8000_0100,
               "bank0 metadata mismatch");
-        check(bank1_cfi_type == TYPE_CALL && bank1_target == 32'h8000_0200,
+        check(bank1_cfi_type == TYPE_CALL && bank1_abtb_pred_target == 32'h8000_0200,
               "bank1 metadata mismatch");
         check(bank0_pred_taken && bank1_pred_taken, "direct CFIs must predict taken");
         check(pred_taken && !pred_bank && pred_target == 32'h8000_0100,
@@ -313,7 +313,7 @@ module tb_frontend_abtb;
         bank1_branch_taken = 1'b0;
         lookup(32'h8000_0000);
         check(bank1_hit && bank1_cfi_type == TYPE_BRANCH
-              && bank1_target == 32'h8000_0300,
+              && bank1_abtb_pred_target == 32'h8000_0300,
               "existing bank1 entry update failed");
         check(!bank1_pred_taken, "not-taken branch direction input was ignored");
         check(pred_taken && !pred_bank && pred_target == 32'h8000_0100,
@@ -353,7 +353,7 @@ module tb_frontend_abtb;
         bank1_ret_valid = 1'b1;
         bank1_ret_target = 32'h8000_0700;
         #1;
-        check(bank1_pred_taken && bank1_pred_target == 32'h8000_0700,
+        check(bank1_pred_taken && bank1_final_pred_target == 32'h8000_0700,
               "RET did not use the external uRAS target boundary");
 
         // Exercise every CFI type in every physical bank/way. Miss allocation
@@ -379,9 +379,9 @@ module tb_frontend_abtb;
         lookup(32'h8000_0050);
         check(bank0_hit && !bank0_way
               && bank0_cfi_type == TYPE_JAL
-              && bank0_target == 32'h8000_3500
+              && bank0_abtb_pred_target == 32'h8000_3500
               && bank0_pred_taken
-              && bank0_pred_target == 32'h8000_3500,
+              && bank0_final_pred_target == 32'h8000_3500,
               "duplicate-tag lookup did not preserve way0 priority");
 
         // Two-way collision/replacement test in an otherwise unused bank0 set.
@@ -391,7 +391,7 @@ module tb_frontend_abtb;
 
         // Touch the older entry so the other way becomes LRU.
         lookup(32'h8000_0028);
-        check(bank0_hit && bank0_target == 32'h8000_1100,
+        check(bank0_hit && bank0_abtb_pred_target == 32'h8000_1100,
               "first colliding entry was not retained");
         @(posedge clk);
 
@@ -400,10 +400,10 @@ module tb_frontend_abtb;
         lookup(32'h8000_00a8);
         check(!bank0_hit, "LRU victim survived a three-tag set collision");
         lookup(32'h8000_0028);
-        check(bank0_hit && bank0_target == 32'h8000_1100,
+        check(bank0_hit && bank0_abtb_pred_target == 32'h8000_1100,
               "recently used way was incorrectly replaced");
         lookup(32'h8000_0128);
-        check(bank0_hit && bank0_target == 32'h8000_1300,
+        check(bank0_hit && bank0_abtb_pred_target == 32'h8000_1300,
               "replacement entry was not installed");
 
         // Repeat replacement in bank1 to verify that its LRU state is
@@ -411,7 +411,7 @@ module tb_frontend_abtb;
         train_miss(32'h8000_0034, TYPE_CALL, 32'h8000_2100);
         train_miss(32'h8000_00b4, TYPE_CALL, 32'h8000_2200);
         lookup(32'h8000_0034);
-        check(bank1_hit && bank1_target == 32'h8000_2100,
+        check(bank1_hit && bank1_abtb_pred_target == 32'h8000_2100,
               "first colliding bank1 entry was not retained");
         @(posedge clk);
 
@@ -419,10 +419,10 @@ module tb_frontend_abtb;
         lookup(32'h8000_00b4);
         check(!bank1_hit, "bank1 LRU victim survived a three-tag set collision");
         lookup(32'h8000_0034);
-        check(bank1_hit && bank1_target == 32'h8000_2100,
+        check(bank1_hit && bank1_abtb_pred_target == 32'h8000_2100,
               "recently used bank1 way was incorrectly replaced");
         lookup(32'h8000_0134);
-        check(bank1_hit && bank1_target == 32'h8000_2300,
+        check(bank1_hit && bank1_abtb_pred_target == 32'h8000_2300,
               "bank1 replacement entry was not installed");
 
         // A same-cycle lookup/update to the same entry observes the old payload
@@ -440,12 +440,12 @@ module tb_frontend_abtb;
         update_cfi_type = TYPE_CALL;
         update_target = 32'h8000_3200;
         #1;
-        check(bank0_hit && bank0_target == 32'h8000_3100,
+        check(bank0_hit && bank0_abtb_pred_target == 32'h8000_3100,
               "same-entry conflict did not expose old payload before edge");
         @(posedge clk);
         #1;
         check(bank0_hit && bank0_cfi_type == TYPE_CALL
-              && bank0_target == 32'h8000_3200,
+              && bank0_abtb_pred_target == 32'h8000_3200,
               "same-entry conflict did not expose updated payload after edge");
         @(negedge clk);
         update_valid = 1'b0;
@@ -472,7 +472,7 @@ module tb_frontend_abtb;
         update_cfi_type = TYPE_CALL;
         update_target = 32'h8000_4300;
         #1;
-        check(bank0_hit && bank0_target == 32'h8000_4100,
+        check(bank0_hit && bank0_abtb_pred_target == 32'h8000_4100,
               "different-entry conflict lookup selected the wrong entry");
         @(posedge clk);
         @(negedge clk);
@@ -485,10 +485,10 @@ module tb_frontend_abtb;
               "lookup LRU write incorrectly overrode same-set update priority");
         lookup(32'h8000_00c0);
         check(bank0_hit && bank0_cfi_type == TYPE_CALL
-              && bank0_target == 32'h8000_4300,
+              && bank0_abtb_pred_target == 32'h8000_4300,
               "same-set updated entry was incorrectly replaced");
         lookup(32'h8000_0140);
-        check(bank0_hit && bank0_target == 32'h8000_4400,
+        check(bank0_hit && bank0_abtb_pred_target == 32'h8000_4400,
               "same-set replacement after conflict was not installed");
 
         // A younger bank1 hit behind a taken bank0 candidate is not consumed
@@ -508,10 +508,10 @@ module tb_frontend_abtb;
         check(!bank1_hit,
               "bank1 wrong-path hit incorrectly changed replacement state");
         lookup(32'h8000_00cc);
-        check(bank1_hit && bank1_target == 32'h8000_5300,
+        check(bank1_hit && bank1_abtb_pred_target == 32'h8000_5300,
               "bank1 resident entry was incorrectly replaced");
         lookup(32'h8000_014c);
-        check(bank1_hit && bank1_target == 32'h8000_5400,
+        check(bank1_hit && bank1_abtb_pred_target == 32'h8000_5400,
               "bank1 replacement after wrong-path lookup was not installed");
 
         // Bank independence and lookup_valid qualification.

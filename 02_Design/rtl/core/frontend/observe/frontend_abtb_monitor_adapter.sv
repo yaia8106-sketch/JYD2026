@@ -11,17 +11,17 @@ module frontend_abtb_monitor_adapter
     input  logic                 bank0_hit,
     input  logic                 bank0_way,
     input  logic [ 1:0]          bank0_cfi_type,
-    input  logic [31:0]          bank0_target,
+    input  logic [31:0]          bank0_abtb_pred_target,
     input  logic                 bank0_pred_taken,
-    input  logic [31:0]          bank0_pred_target,
+    input  logic [31:0]          bank0_final_pred_target,
     input  logic                 bank0_pht_taken,
 
     input  logic                 bank1_hit,
     input  logic                 bank1_way,
     input  logic [ 1:0]          bank1_cfi_type,
-    input  logic [31:0]          bank1_target,
+    input  logic [31:0]          bank1_abtb_pred_target,
     input  logic                 bank1_pred_taken,
-    input  logic [31:0]          bank1_pred_target,
+    input  logic [31:0]          bank1_final_pred_target,
     input  logic                 bank1_pht_taken,
 
     input  logic                 shadow_pred_taken,
@@ -49,18 +49,18 @@ module frontend_abtb_monitor_adapter
         bank0_lookup.hit = bank0_hit;
         bank0_lookup.way = bank0_way;
         bank0_lookup.cfi_type = bank0_cfi_type;
-        bank0_lookup.target = bank0_target;
+        bank0_lookup.target = bank0_abtb_pred_target;
         bank0_lookup.pred_taken = bank0_pred_taken;
-        bank0_lookup.pred_target = bank0_pred_target;
+        bank0_lookup.pred_target = bank0_final_pred_target;
         bank0_lookup.pht_taken = bank0_pht_taken;
 
         bank1_lookup = '0;
         bank1_lookup.hit = bank1_hit;
         bank1_lookup.way = bank1_way;
         bank1_lookup.cfi_type = bank1_cfi_type;
-        bank1_lookup.target = bank1_target;
+        bank1_lookup.target = bank1_abtb_pred_target;
         bank1_lookup.pred_taken = bank1_pred_taken;
-        bank1_lookup.pred_target = bank1_pred_target;
+        bank1_lookup.pred_target = bank1_final_pred_target;
         bank1_lookup.pht_taken = bank1_pht_taken;
 
         shadow_result = '0;

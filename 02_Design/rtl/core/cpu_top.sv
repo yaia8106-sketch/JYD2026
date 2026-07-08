@@ -540,16 +540,16 @@ module cpu_top
     wire        abtb_bank0_lookup_hit;
     wire        abtb_bank0_way;
     wire [ 1:0] abtb_bank0_cfi_type;
-    wire [31:0] abtb_bank0_target;
+    wire [31:0] abtb_bank0_abtb_pred_target;
     wire        abtb_bank0_pred_taken;
-    wire [31:0] abtb_bank0_pred_target;
+    wire [31:0] abtb_bank0_final_pred_target;
     wire        abtb_bank1_hit;
     wire        abtb_bank1_lookup_hit;
     wire        abtb_bank1_way;
     wire [ 1:0] abtb_bank1_cfi_type;
-    wire [31:0] abtb_bank1_target;
+    wire [31:0] abtb_bank1_abtb_pred_target;
     wire        abtb_bank1_pred_taken;
-    wire [31:0] abtb_bank1_pred_target;
+    wire [31:0] abtb_bank1_final_pred_target;
     wire        abtb_shadow_pred_taken;
     wire        abtb_shadow_pred_bank;
     wire [ 1:0] abtb_shadow_pred_cfi_type;
@@ -852,17 +852,17 @@ module cpu_top
         .bank0_hit            (abtb_bank0_hit),
         .bank0_way            (abtb_bank0_way),
         .bank0_cfi_type       (abtb_bank0_cfi_type),
-        .bank0_target         (abtb_bank0_target),
+        .bank0_abtb_pred_target (abtb_bank0_abtb_pred_target),
         .bank0_pred_taken     (abtb_bank0_pred_taken),
-        .bank0_pred_target    (abtb_bank0_pred_target),
+        .bank0_final_pred_target (abtb_bank0_final_pred_target),
         .bank1_eligible       (),
         .bank1_lookup_hit     (abtb_bank1_lookup_hit),
         .bank1_hit            (abtb_bank1_hit),
         .bank1_way            (abtb_bank1_way),
         .bank1_cfi_type       (abtb_bank1_cfi_type),
-        .bank1_target         (abtb_bank1_target),
+        .bank1_abtb_pred_target (abtb_bank1_abtb_pred_target),
         .bank1_pred_taken     (abtb_bank1_pred_taken),
-        .bank1_pred_target    (abtb_bank1_pred_target),
+        .bank1_final_pred_target (abtb_bank1_final_pred_target),
         .pred_taken           (abtb_shadow_pred_taken),
         .pred_bank            (abtb_shadow_pred_bank),
         .pred_cfi_type        (abtb_shadow_pred_cfi_type),
@@ -889,16 +889,16 @@ module cpu_top
         .bank0_hit              (abtb_bank0_hit),
         .bank0_way              (abtb_bank0_way),
         .bank0_cfi_type         (abtb_bank0_cfi_type),
-        .bank0_target           (abtb_bank0_target),
+        .bank0_abtb_pred_target (abtb_bank0_abtb_pred_target),
         .bank0_pred_taken       (abtb_bank0_pred_taken),
-        .bank0_pred_target      (abtb_bank0_pred_target),
+        .bank0_final_pred_target(abtb_bank0_final_pred_target),
         .bank0_pht_taken        (stage1_bank0_pht_taken),
         .bank1_hit              (abtb_bank1_hit),
         .bank1_way              (abtb_bank1_way),
         .bank1_cfi_type         (abtb_bank1_cfi_type),
-        .bank1_target           (abtb_bank1_target),
+        .bank1_abtb_pred_target (abtb_bank1_abtb_pred_target),
         .bank1_pred_taken       (abtb_bank1_pred_taken),
-        .bank1_pred_target      (abtb_bank1_pred_target),
+        .bank1_final_pred_target(abtb_bank1_final_pred_target),
         .bank1_pht_taken        (stage1_bank1_pht_taken),
         .shadow_pred_taken      (abtb_shadow_pred_taken),
         .shadow_pred_bank       (abtb_shadow_pred_bank),
@@ -1026,16 +1026,16 @@ module cpu_top
         .abtb_bank0_hit         (abtb_bank0_hit),
         .abtb_bank0_way         (abtb_bank0_way),
         .abtb_bank0_cfi_type    (abtb_bank0_cfi_type),
-        .abtb_bank0_target      (abtb_bank0_target),
+        .abtb_bank0_abtb_pred_target      (abtb_bank0_abtb_pred_target),
         .abtb_bank0_pred_taken  (abtb_bank0_pred_taken),
-        .abtb_bank0_pred_target (abtb_bank0_pred_target),
+        .abtb_bank0_final_pred_target (abtb_bank0_final_pred_target),
         .abtb_bank1_lookup_hit  (abtb_bank1_lookup_hit),
         .abtb_bank1_hit         (abtb_bank1_hit),
         .abtb_bank1_way         (abtb_bank1_way),
         .abtb_bank1_cfi_type    (abtb_bank1_cfi_type),
-        .abtb_bank1_target      (abtb_bank1_target),
+        .abtb_bank1_abtb_pred_target      (abtb_bank1_abtb_pred_target),
         .abtb_bank1_pred_taken  (abtb_bank1_pred_taken),
-        .abtb_bank1_pred_target (abtb_bank1_pred_target),
+        .abtb_bank1_final_pred_target (abtb_bank1_final_pred_target),
         .stage1_bank0_pht_index(stage1_bank0_pht_index),
         .stage1_bank0_pht_counter(stage1_bank0_pht_counter),
         .stage1_bank1_pht_index(stage1_bank1_pht_index),

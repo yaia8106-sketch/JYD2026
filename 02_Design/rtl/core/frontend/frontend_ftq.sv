@@ -43,16 +43,16 @@ module frontend_ftq
     input  logic        abtb_bank0_hit,
     input  logic        abtb_bank0_way,
     input  logic [ 1:0] abtb_bank0_cfi_type,
-    input  logic [31:0] abtb_bank0_target,
+    input  logic [31:0] abtb_bank0_abtb_pred_target,
     input  logic        abtb_bank0_pred_taken,
-    input  logic [31:0] abtb_bank0_pred_target,
+    input  logic [31:0] abtb_bank0_final_pred_target,
     input  logic        abtb_bank1_lookup_hit,
     input  logic        abtb_bank1_hit,
     input  logic        abtb_bank1_way,
     input  logic [ 1:0] abtb_bank1_cfi_type,
-    input  logic [31:0] abtb_bank1_target,
+    input  logic [31:0] abtb_bank1_abtb_pred_target,
     input  logic        abtb_bank1_pred_taken,
-    input  logic [31:0] abtb_bank1_pred_target,
+    input  logic [31:0] abtb_bank1_final_pred_target,
 
     // Stage-1 direction metadata is queried in parallel with ABTB and captured
     // with the accepted prediction block. ABTB/PHT branch steering is the
@@ -168,11 +168,11 @@ module frontend_ftq
     // Convert ABTB/PHT outputs into the canonical steering input record.
     assign bp0_steer_bank0.lookup_hit = abtb_bank0_lookup_hit;
     assign bp0_steer_bank0.cfi_type = abtb_bank0_cfi_type;
-    assign bp0_steer_bank0.target = abtb_bank0_target;
+    assign bp0_steer_bank0.target = abtb_bank0_abtb_pred_target;
     assign bp0_steer_bank0.pred_taken = abtb_bank0_pred_taken;
     assign bp0_steer_bank1.lookup_hit = abtb_bank1_lookup_hit;
     assign bp0_steer_bank1.cfi_type = abtb_bank1_cfi_type;
-    assign bp0_steer_bank1.target = abtb_bank1_target;
+    assign bp0_steer_bank1.target = abtb_bank1_abtb_pred_target;
     assign bp0_steer_bank1.pred_taken = abtb_bank1_pred_taken;
 
     assign bp0_f0_bank0_meta.branch_owned = abtb_bank0_branch_owned;
@@ -185,15 +185,15 @@ module frontend_ftq
     assign bp0_abtb_bank0_meta.hit = abtb_bank0_hit;
     assign bp0_abtb_bank0_meta.way = abtb_bank0_way;
     assign bp0_abtb_bank0_meta.cfi_type = abtb_bank0_cfi_type;
-    assign bp0_abtb_bank0_meta.target = abtb_bank0_target;
+    assign bp0_abtb_bank0_meta.target = abtb_bank0_abtb_pred_target;
     assign bp0_abtb_bank0_meta.pred_taken = abtb_bank0_pred_taken;
-    assign bp0_abtb_bank0_meta.pred_target = abtb_bank0_pred_target;
+    assign bp0_abtb_bank0_meta.pred_target = abtb_bank0_final_pred_target;
     assign bp0_abtb_bank1_meta.hit = abtb_bank1_hit;
     assign bp0_abtb_bank1_meta.way = abtb_bank1_way;
     assign bp0_abtb_bank1_meta.cfi_type = abtb_bank1_cfi_type;
-    assign bp0_abtb_bank1_meta.target = abtb_bank1_target;
+    assign bp0_abtb_bank1_meta.target = abtb_bank1_abtb_pred_target;
     assign bp0_abtb_bank1_meta.pred_taken = abtb_bank1_pred_taken;
-    assign bp0_abtb_bank1_meta.pred_target = abtb_bank1_pred_target;
+    assign bp0_abtb_bank1_meta.pred_target = abtb_bank1_final_pred_target;
 
     assign stage1_steer_valid = bp0_steer_result.valid;
     assign stage1_steer_source_abtb = bp0_steer_result.source_abtb;
