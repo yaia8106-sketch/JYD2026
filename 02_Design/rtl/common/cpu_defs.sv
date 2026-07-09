@@ -85,6 +85,7 @@ package cpu_defs;
 
     // ---- Frontend instruction predecode ----
     typedef struct packed {
+        // ins type
         logic is_branch;
         logic is_jal;
         logic is_jalr;
@@ -95,15 +96,19 @@ package cpu_defs;
         logic is_load;
         logic is_store;
         logic is_alu_type;
-        logic writes_rd;
-        logic uses_rs1;
-        logic uses_rs2;
         logic is_jump;
         logic is_control;
         logic is_lsu;
         logic is_cfi;
-        logic force_single_slot0;
-        logic force_single_slot1;
+        // 寄存器使用情况
+        logic writes_rd;
+        logic uses_rs1;
+        logic uses_rs2;
+        // pair logic
+        // some ins couldn't be issued with other instructions, so we need to force them to be issued alone.
+        // for example, force_signle_slot0 means that the instruction in slot0 should be issued alone, and the instruction in slot1 should be issued as NOP ins.
+        logic force_single_slot0; // force_single_slot0=(jalr|system|fence|illegal|muldiv)
+        logic force_single_slot1; // force_single_slot1=(system|fence|illegal|muldiv)
     } frontend_predecode_t;
 
     typedef struct packed {
