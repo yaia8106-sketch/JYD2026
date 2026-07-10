@@ -148,6 +148,195 @@ RVTEST_CODE_BEGIN
 1:
     CHECK_REG(45, t2, 55)
 
+    // Unary zero/all-one and one-hot boundaries.
+    clz t2, x0
+    CHECK_REG(46, t2, 32)
+    ctz t2, x0
+    CHECK_REG(47, t2, 32)
+    li t0, -1
+    cpop t2, t0
+    CHECK_REG(48, t2, 32)
+    li t0, 1
+    clz t2, t0
+    CHECK_REG(49, t2, 31)
+    li t0, 0x80000000
+    ctz t2, t0
+    CHECK_REG(50, t2, 31)
+
+    // Register rotation masks rs2 to five bits; immediate endpoints include 31.
+    li t0, 0x80000001
+    li t1, 32
+    rol t2, t0, t1
+    CHECK_REG(51, t2, 0x80000001)
+    li t1, 63
+    ror t2, t0, t1
+    CHECK_REG(52, t2, 0x00000003)
+    rori t2, t0, 31
+    CHECK_REG(53, t2, 0x00000003)
+
+    // Signed and unsigned comparisons at the sign boundary.
+    li t0, 0x80000000
+    li t1, 0x7fffffff
+    max t2, t0, t1
+    CHECK_REG(54, t2, 0x7fffffff)
+    min t2, t0, t1
+    CHECK_REG(55, t2, 0x80000000)
+    maxu t2, t0, t1
+    CHECK_REG(56, t2, 0x80000000)
+    minu t2, t0, t1
+    CHECK_REG(57, t2, 0x7fffffff)
+
+    // Zba arithmetic wraps modulo 2^32.
+    li t0, 0x80000000
+    sh1add t2, t0, x0
+    CHECK_REG(58, t2, 0)
+    li t0, 0x40000000
+    li t1, -1
+    sh2add t2, t0, t1
+    CHECK_REG(59, t2, 0xffffffff)
+    li t0, 0x20000000
+    li t1, 1
+    sh3add t2, t0, t1
+    CHECK_REG(60, t2, 1)
+
+    // In-place immediate and register bit operations at bit 0/31.
+    li t0, 0
+    bseti t0, t0, 31
+    CHECK_REG(61, t0, 0x80000000)
+    binvi t0, t0, 0
+    CHECK_REG(62, t0, 0x80000001)
+    bclri t0, t0, 31
+    CHECK_REG(63, t0, 1)
+    bexti t2, t0, 0
+    CHECK_REG(64, t2, 1)
+    li t0, 0
+    li t1, -1
+    bset t2, t0, t1
+    CHECK_REG(65, t2, 0x80000000)
+    li t0, -1
+    bclr t2, t0, t1
+    CHECK_REG(66, t2, 0x7fffffff)
+    li t0, 0x80000000
+    bext t2, t0, t1
+    CHECK_REG(67, t2, 1)
+
+    // Extension and per-byte combine boundaries.
+    li t0, 0x0000007f
+    sext.b t2, t0
+    CHECK_REG(68, t2, 0x0000007f)
+    li t0, 0xffff7fff
+    sext.h t2, t0
+    CHECK_REG(69, t2, 0x00007fff)
+    li t0, 0xffff8000
+    zext.h t2, t0
+    CHECK_REG(70, t2, 0x00008000)
+    li t0, 0x00010000
+    orc.b t2, t0
+    CHECK_REG(71, t2, 0x00ff0000)
+
+    // Carry-less multiply with a product crossing bit 31/32.
+    li t0, 0x80000000
+    li t1, 2
+    clmul t2, t0, t1
+    CHECK_REG(72, t2, 0)
+    clmulr t2, t0, t1
+    CHECK_REG(73, t2, 2)
+    clmulh t2, t0, t1
+    CHECK_REG(74, t2, 1)
+    li t0, -1
+    li t1, 1
+    clmulr t2, t0, t1
+    CHECK_REG(75, t2, 1)
+
+    // Packing and bit permutations, including reversible identities.
+    li t0, 0xaaaa5555
+    li t1, 0x1234fedc
+    pack t2, t0, t1
+    CHECK_REG(76, t2, 0xfedc5555)
+    packh t2, t0, t1
+    CHECK_REG(77, t2, 0x0000dc55)
+    zip t2, t0
+    unzip t2, t2
+    CHECK_REG(78, t2, 0xaaaa5555)
+    unzip t2, t0
+    zip t2, t2
+    CHECK_REG(79, t2, 0xaaaa5555)
+    brev8 t2, t0
+    brev8 t2, t2
+    CHECK_REG(80, t2, 0xaaaa5555)
+
+    // Crossbar identity and all-out-of-range selector vectors.
+    li t0, 0x89abcdef
+    li t1, 0x76543210
+    xperm4 t2, t0, t1
+    CHECK_REG(81, t2, 0x89abcdef)
+    li t1, 0x88888888
+    xperm4 t2, t0, t1
+    CHECK_REG(82, t2, 0)
+    li t1, 0x03020100
+    xperm8 t2, t0, t1
+    CHECK_REG(83, t2, 0x89abcdef)
+    li t1, 0x04040404
+    xperm8 t2, t0, t1
+    CHECK_REG(84, t2, 0)
+
+    // x0 destination and in-place source/destination aliasing.
+    li t0, 0x12345678
+    xnor x0, t0, t0
+    CHECK_REG(85, x0, 0)
+    xnor t0, t0, t0
+    CHECK_REG(86, t0, 0xffffffff)
+    andn t0, t0, t0
+    CHECK_REG(87, t0, 0)
+
+    // Immediate B result consumed by a branch with no intervening instruction.
+    li TESTNUM, 88
+    li t0, 0x80000000
+    bexti t2, t0, 31
+    beq t2, x0, fail
+
+    // B result feeds store data and store address directly.
+    la t4, b_scratch
+    li t0, 0x12345678
+    li t1, 0x89abcdef
+    xnor t2, t0, t1
+    sw t2, 0(t4)
+    lw t3, 0(t4)
+    CHECK_REG(89, t3, 0x64606468)
+    li t3, 0x55aa33cc
+    sh1add t5, x0, t4
+    sw t3, 4(t5)
+    lw t2, 4(t4)
+    CHECK_REG(90, t2, 0x55aa33cc)
+
+    // One load repairs both B operands, for fast and iterative resources.
+    la t4, b_data
+    lw t0, 0(t4)
+    xnor t2, t0, t0
+    CHECK_REG(91, t2, 0xffffffff)
+    lw t0, 0(t4)
+    clmul t2, t0, t0
+    CHECK_REG(92, t2, 0x11141540)
+
+    // Independent consecutive B requests and a CLMUL-dependent branch.
+    li t0, 0x12345678
+    li t1, 0x89abcdef
+    andn s3, t0, t1
+    orc.b s4, t0
+    CHECK_REG(93, s3, 0x12141210)
+    CHECK_REG(94, s4, 0xffffffff)
+    li TESTNUM, 95
+    clmul t2, t0, t1
+    beq t2, x0, fail
+
+    // A wrong-path fast B operation must be flushed just like CLMUL.
+    li t2, 77
+    beq x0, x0, 2f
+    xnor t2, t0, t1
+    addi t2, t2, 1
+2:
+    CHECK_REG(96, t2, 77)
+
 pass:
     RVTEST_PASS
 
@@ -162,4 +351,7 @@ RVTEST_DATA_BEGIN
 b_data:
     .word 0x12345678
     .word 0x89abcdef
+b_scratch:
+    .word 0
+    .word 0
 RVTEST_DATA_END
