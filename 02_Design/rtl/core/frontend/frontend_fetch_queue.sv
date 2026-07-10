@@ -1,7 +1,8 @@
 // ============================================================
 // Module: frontend_fetch_queue
-// Description: Instruction-granular frontend queue storage and state.
+// Description:
 // Domain: frontend.
+// 指令是否能被配对的信息会在模块外进行计算，这个模块是用来实现“队列”的
 // Pair eligibility is computed outside this module and stored with the entry.
 // ============================================================
 
@@ -13,25 +14,27 @@ module frontend_fetch_queue
 ) (
     input  logic                       clk,
     input  logic                       rst_n,
-    input  logic                       flush,
+    input  logic                       flush, // redirect信号，由于当前没有二级预测，因此flush会对fq内的所有指令进行冲刷
 
-    input  logic                       enq0_payload,
+    input  logic                       enq0_payload, // enq0_payload = accept_base(本质是个valid信号) && base_mask[0](看取指块的这条指令能不能用，比如当取指的PC[2]=1的时候enq1就不为valid)，和enq0_valid本质是一个信号
     input  logic                       enq1_payload,
     input  logic                       enq0_valid,
     input  logic                       enq1_valid,
-    input  frontend_fq_entry_t         enq_entry0,
+    input  frontend_fq_entry_t         enq_entry0, // 这个结构体包含了fq entry需要的所有信息。
     input  frontend_fq_entry_t         enq_entry1,
-    input  frontend_pair_meta_t        enq_pair_meta0,
+    input  frontend_pair_meta_t        enq_pair_meta0, // 预译码信息。
     input  frontend_pair_meta_t        enq_pair_meta1,
-    input  logic                       enq_entry0_pair_ok,
-    input  logic                       prev_tail_pair_ok,
+    // 这两个信号本质都是frontend_pair_policy这个模块算出来的配对信息
+    input  logic                       enq_entry0_pair_ok, // 用来判断当前周期的entry0是否有配对资格
+    input  logic                       prev_tail_pair_ok, // 用来判断
 
-    input  logic                       deq_valid,
+    input  logic                       deq_valid, // 流水线握手信号
+    // 这两个信号也是神完了，我们首先在当前模块判断两条指令能否配对，然后把这个信号传出去送给ftq模块，再送回当前模块供给给寄存器。功能上没什么问题，但是不是很便于观察
     input  logic                       deq_single,
     input  logic                       deq_dual,
 
     output logic [FQ_PTR_W-1:0]        head,
-    output logic [FQ_PTR_W-1:0]        head_p1,
+    output logic [FQ_PTR_W-1:0]        head_p1, // head plus 1
     output logic [FQ_PTR_W-1:0]        tail,
     output logic [FQ_PTR_W-1:0]        tail_p1,
     output logic [FQ_PTR_W:0]          count,

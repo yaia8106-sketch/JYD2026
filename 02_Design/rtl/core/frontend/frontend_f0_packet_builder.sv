@@ -1,7 +1,7 @@
 // ============================================================
 // Module: frontend_f0_packet_builder
 // Description: 
-// 这个模块的输入包括64bit取指包、pc、预测元数据(用于预测器训练和重定向，我喜欢称之为metadata)。
+// 这个模块的输入包括64bit取指包、pc、预测元数据(用于预测器训练和redirect)。
 // 它的输出包括将发送到fq的元数据和一些解码信息(坦白说，它不应该被称为fq，因为它已经有了指令)。
 // Domain: frontend.
 //TODO 结构体信号是否冗余的问题仍有待商榷
@@ -40,7 +40,7 @@ module frontend_f0_packet_builder
     output logic                       kill_after_slot0, // slot0被预测为跳转/确实是跳转时拉高，用于对slot1的指令进行冲刷
     output frontend_fq_entry_t         entry0, // 这个结构体包含了fq entry需要的所有信息。
     output frontend_fq_entry_t         entry1,
-    output frontend_pair_meta_t        pair_meta0,
+    output frontend_pair_meta_t        pair_meta0, // 预译码信息。
     output frontend_pair_meta_t        pair_meta1
 );
 
