@@ -2,7 +2,7 @@
 // Module: predictor_update_ctrl
 // Description: Select one resolved CFI and generate ABTB/PHT updates.
 // Domain: frontend.
-// Slot 0 is older and therefore has priority over Slot 1.
+// The issue policy guarantees that at most one slot contains a CFI.
 // ============================================================
 
 module predictor_update_ctrl
@@ -33,8 +33,12 @@ module predictor_update_ctrl
                              & (slot1_resolve.is_branch
                               | slot1_resolve.is_jal
                               | slot1_resolve.is_jalr);
+    // frontend_pair_policy rejects two-CFI pairs, and Slot-0 JALR is forced
+    // single.  Keep the slots independent here so one slot's CFI decode does
+    // not sit on the other slot's predictor write-enable path.  The assertion
+    // below guards this pipeline invariant in simulation.
     wire slot0_selected = slot0_cfi_candidate;
-    wire slot1_selected = ~slot0_cfi_candidate & slot1_cfi_candidate;
+    wire slot1_selected = slot1_cfi_candidate;
     wire update_fire = ex_ready_go & mem_allowin & ~mem_branch_flush;
 
     // Qualify each slot independently before the final priority selection.
@@ -50,20 +54,23 @@ module predictor_update_ctrl
     wire slot1_abtb_qualified = slot1_resolve.update_qualified
                               & (~slot1_is_abtb_branch
                                  | slot1_resolve.actual_taken);
-    wire slot0_abtb_fire = update_fire & slot0_selected
+    // update_qualified is generated only for predictor-trainable CFIs, so the
+    // additional is_branch/is_jal/is_jalr candidate gate would be redundant.
+    wire slot0_abtb_fire = update_fire & slot0_resolve.valid
                          & slot0_abtb_qualified;
-    wire slot1_abtb_fire = update_fire & slot1_selected
+    wire slot1_abtb_fire = update_fire & slot1_resolve.valid
                          & slot1_abtb_qualified;
-    wire slot0_pht_fire = update_fire & slot0_selected
+    wire slot0_pht_fire = update_fire & slot0_resolve.valid
                         & slot0_resolve.is_branch;
-    wire slot1_pht_fire = update_fire & slot1_selected
+    wire slot1_pht_fire = update_fire & slot1_resolve.valid
                         & slot1_resolve.is_branch;
 
     assign slot0_cfi_valid = slot0_cfi_candidate;
     assign slot1_cfi_valid = slot1_cfi_candidate;
 
-    // Only one CFI trains the predictors each cycle. Slot 0 is older; Slot 1
-    // trains only when Slot 0 is not a resolved CFI.
+    // Only one CFI trains the predictors each cycle.  Because the slot-valid
+    // predicates are mutually exclusive for CFIs, this remains a one-hot
+    // selection without a cross-slot priority dependency.
     always_comb begin
         train = '0;
         abtb_update = '0;
