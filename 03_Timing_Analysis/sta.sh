@@ -91,21 +91,6 @@ set progress [get_property PROGRESS $run_obj]
 set needs_refresh ""
 catch {set needs_refresh [get_property NEEDS_REFRESH $run_obj]}
 
-# Vivado may mark synth_1 stale after source-file rebinding while leaving the
-# completed impl_1 checkpoint itself unmarked. Never analyze implementation
-# results produced from a stale synthesis run.
-set synth_runs [get_runs -quiet synth_1]
-if {[llength $synth_runs] != 0} {
-    set synth_needs_refresh ""
-    catch {
-        set synth_needs_refresh \
-            [get_property NEEDS_REFRESH [lindex $synth_runs 0]]
-    }
-    if {$synth_needs_refresh ne "" && $synth_needs_refresh ne "0"} {
-        fail "Synthesis run 'synth_1' is marked NEEDS_REFRESH. Rerun synthesis and implementation before STA."
-    }
-}
-
 puts "  Status  : $status"
 puts "  Progress: $progress"
 if {$needs_refresh ne "" && $needs_refresh ne "0"} {

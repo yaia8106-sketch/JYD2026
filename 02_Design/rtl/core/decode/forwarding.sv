@@ -39,6 +39,7 @@ module forwarding (
     // Slot 0 EX stage
     input  logic        ex_valid,
     input  logic        ex_reg_write,
+    input  logic        ex_is_bitmanip,
     input  logic        ex_mem_read,
     input  logic [ 4:0] ex_rd,
     input  logic [31:0] ex_alu_result,
@@ -139,7 +140,7 @@ module forwarding (
     /* Build match bits for one ID operand. Younger pipeline stages have */ \
     /* priority over older ones; within a stage Slot 1 is younger than Slot 0. */ \
     wire TAG``_s1_ex_hit  = ex_s1_valid  && ex_s1_reg_write  && (ex_s1_rd != 5'd0) && (ex_s1_rd == SRC_ADDR); \
-    wire TAG``_s0_ex_hit  = ex_valid     && ex_reg_write     && (ex_rd != 5'd0) && (ex_rd == SRC_ADDR); \
+    wire TAG``_s0_ex_hit  = ex_valid     && ex_reg_write     && !ex_is_bitmanip && (ex_rd != 5'd0) && (ex_rd == SRC_ADDR); \
     wire TAG``_s1_mem_hit = mem_s1_valid && mem_s1_reg_write && !mem_s1_is_load && (mem_s1_rd != 5'd0) && (mem_s1_rd == SRC_ADDR); \
     wire TAG``_s0_mem_hit = mem_valid    && mem_reg_write    && !mem_is_load    && (mem_rd    != 5'd0) && (mem_rd    == SRC_ADDR); \
     wire TAG``_s1_wb_hit  = wb_s1_valid  && wb_s1_reg_write  && (wb_s1_rd != 5'd0) && (wb_s1_rd == SRC_ADDR); \
@@ -289,6 +290,20 @@ module forwarding (
     // wire for the perf monitor; it now reports actual wait cycles, expected 0.
     wire repair_use_hazard = 1'b0;
 
+    // B results do not participate in the EX forwarding payload mux.  While a
+    // completed B producer is still resident in EX, hold any matching ID
+    // consumer for one cycle; the result is forwardable from MEM afterwards.
+    wire id_s0_uses_ex_bitmanip =
+        (id_rs1_used & (ex_rd == id_rs1_addr))
+      | (id_rs2_used & (ex_rd == id_rs2_addr));
+    wire id_s1_uses_ex_bitmanip = id_s1_valid
+        & ((id_s1_rs1_used & (ex_rd == id_s1_rs1_addr))
+         | (id_s1_rs2_used & (ex_rd == id_s1_rs2_addr)));
+    wire bitmanip_use_hazard = ex_valid & ex_reg_write & ex_is_bitmanip
+                             & (ex_rd != 5'd0)
+                             & (id_s0_uses_ex_bitmanip
+                                | id_s1_uses_ex_bitmanip);
+
     // Kept as named monitor wires. EX-produced branch/JALR operands now use
     // the ordinary ID operand path and resolve control flow in EX.
     wire jalr_ex_wait_hazard = 1'b0;
@@ -298,7 +313,8 @@ module forwarding (
     // it now reports actual wait cycles, which should be zero for S1_WB hits.
     wire s1_wb_wait_hazard = 1'b0;
 
-    wire id_hazard = load_use_hazard | repair_use_hazard;
+    wire id_hazard = load_use_hazard | repair_use_hazard
+                   | bitmanip_use_hazard;
     assign id_ready_go = ~id_hazard;
 
 endmodule

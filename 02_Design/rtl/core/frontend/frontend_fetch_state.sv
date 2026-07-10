@@ -59,11 +59,25 @@ module frontend_fetch_state
         end
     end
 
-    // F0 metadata is the one-cycle-delayed packet context paired with the IROM
-    // response. Redirects invalidate it by changing the epoch and clearing valid.
+    // F0 valid is the only state that a redirect must kill immediately.
+    // Payload contents are unobservable while valid is low, so keep the late
+    // redirect path off the wide metadata registers.
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             f0_state.valid <= 1'b0;
+        end else if (redirect_valid) begin
+            f0_state.valid <= 1'b0;
+        end else begin
+            f0_state.valid <= accept;
+        end
+    end
+
+    // F0 metadata is the one-cycle-delayed packet context paired with the IROM
+    // response.  An accept never fires with a redirect in the integrated
+    // frontend; even if both are driven in a unit test, the speculative payload
+    // write is harmless because the valid block above gives redirect priority.
+    always_ff @(posedge clk) begin
+        if (!rst_n) begin
             f0_state.epoch <= 2'd0;
             f0_state.start_pc <= 32'd0;
             f0_state.base_mask <= 2'd0;
@@ -78,27 +92,22 @@ module frontend_fetch_state
             f0_abtb_bank0_way_r <= 1'b0;
             f0_abtb_bank1_hit_r <= 1'b0;
             f0_abtb_bank1_way_r <= 1'b0;
-        end else if (redirect_valid) begin
-            f0_state.valid <= 1'b0;
-        end else begin
-            f0_state.valid <= accept;
-            if (accept) begin
-                f0_state.epoch <= frontend_epoch;
-                f0_state.start_pc <= current_pc;
-                f0_state.base_mask <= accept_base_mask;
-                f0_state.steer.taken <= accept_steer.taken;
-                f0_state.steer.source_abtb <= accept_steer.source_abtb;
-                f0_state.steer.bank <= accept_steer.bank;
-                f0_state.steer.cfi_type <= accept_steer.cfi_type;
-                f0_state.steer.target <= accept_steer.target;
-                f0_state.steer.next_pc <= accept_steer.next_pc;
-                f0_state.bank0_meta <= accept_bank0_meta;
-                f0_state.bank1_meta <= accept_bank1_meta;
-                f0_abtb_bank0_hit_r <= accept_abtb_bank0_meta.hit;
-                f0_abtb_bank0_way_r <= accept_abtb_bank0_meta.way;
-                f0_abtb_bank1_hit_r <= accept_abtb_bank1_meta.hit;
-                f0_abtb_bank1_way_r <= accept_abtb_bank1_meta.way;
-            end
+        end else if (accept) begin
+            f0_state.epoch <= frontend_epoch;
+            f0_state.start_pc <= current_pc;
+            f0_state.base_mask <= accept_base_mask;
+            f0_state.steer.taken <= accept_steer.taken;
+            f0_state.steer.source_abtb <= accept_steer.source_abtb;
+            f0_state.steer.bank <= accept_steer.bank;
+            f0_state.steer.cfi_type <= accept_steer.cfi_type;
+            f0_state.steer.target <= accept_steer.target;
+            f0_state.steer.next_pc <= accept_steer.next_pc;
+            f0_state.bank0_meta <= accept_bank0_meta;
+            f0_state.bank1_meta <= accept_bank1_meta;
+            f0_abtb_bank0_hit_r <= accept_abtb_bank0_meta.hit;
+            f0_abtb_bank0_way_r <= accept_abtb_bank0_meta.way;
+            f0_abtb_bank1_hit_r <= accept_abtb_bank1_meta.hit;
+            f0_abtb_bank1_way_r <= accept_abtb_bank1_meta.way;
         end
     end
 

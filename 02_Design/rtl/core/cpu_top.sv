@@ -99,6 +99,8 @@ module cpu_top
     wire        dec_is_ecall;
     wire        dec_is_mret;
     wire        dec_is_muldiv;
+    wire        dec_is_bitmanip;
+    wire cpu_defs::bitmanip_op_t dec_bitmanip_op;
     wire [ 2:0] dec_imm_type;
 
     // ---- Slot 1 decoder outputs ----
@@ -185,6 +187,9 @@ module cpu_top
     wire        ex_is_mret = ex_s0_payload.is_mret;
     wire        ex_is_muldiv = ex_s0_payload.is_muldiv;
     wire [ 2:0] ex_muldiv_op = ex_s0_payload.muldiv_op;
+    wire        ex_is_bitmanip = ex_s0_payload.is_bitmanip;
+    wire cpu_defs::bitmanip_op_t ex_bitmanip_op =
+        ex_s0_payload.bitmanip_op;
 
     // ---- Slot 1 ID/EX ----
     wire        ex_s1_valid;
@@ -382,6 +387,18 @@ module cpu_top
                                & mem_allowin & ~mem_branch_flush;
     wire        muldiv_flush = frontend_branch_flush | mem_branch_flush;
 
+    // ---- RV32 bit-manipulation multi-cycle unit ----
+    wire        bitmanip_busy;
+    wire        bitmanip_done;
+    wire [31:0] bitmanip_result;
+    wire        ex_bitmanip_req = ex_valid & ex_is_bitmanip
+                                & ~mem_branch_flush;
+    wire        bitmanip_consume = ex_valid & ex_is_bitmanip
+                                  & bitmanip_done & mem_allowin
+                                  & ~mem_branch_flush;
+    wire        bitmanip_flush = frontend_branch_flush
+                               | mem_branch_flush;
+
     // ---- Dual-issue performance counter ----
     wire [31:0] dual_issue_count;
 
@@ -389,7 +406,10 @@ module cpu_top
     wire if_ready_go_w;             // driven by frontend_ftq
     wire mmio_st_ld_hazard;
     wire ex_muldiv_ready = mem_branch_flush | ~ex_muldiv_req | muldiv_done;
-    wire ex_ready_go_w  = ~mmio_st_ld_hazard & ex_muldiv_ready;
+    wire ex_bitmanip_ready = mem_branch_flush | ~ex_bitmanip_req
+                           | bitmanip_done;
+    wire ex_ready_go_w  = ~mmio_st_ld_hazard
+                        & ex_muldiv_ready & ex_bitmanip_ready;
     wire mem_ready_go_w = cache_ready; // DCache controls MEM stage flow
     assign id_ready_go = id_ready_go_raw & ~timer_irq_hold;
 
@@ -1135,6 +1155,12 @@ module cpu_top
         .imm_type       (dec1_imm_type)
     );
 
+    bitmanip_decoder u_bitmanip_decoder (
+        .inst         (id_inst),
+        .is_bitmanip  (dec_is_bitmanip),
+        .bitmanip_op  (dec_bitmanip_op)
+    );
+
     imm_gen u_imm_gen (
         .inst     (id_inst),                   // from IF/ID register
         .imm_type (dec_imm_type),
@@ -1191,7 +1217,10 @@ module cpu_top
         .rf_s1_rs1_data (rf_s1_rs1_data),
         .rf_s1_rs2_data (rf_s1_rs2_data),
         .ex_valid       (ex_valid),
-        .ex_reg_write   (ex_reg_write_en & (~ex_is_muldiv | muldiv_done)),
+        .ex_reg_write   (ex_reg_write_en
+                        & (~ex_is_muldiv | muldiv_done)
+                        & (~ex_is_bitmanip | bitmanip_done)),
+        .ex_is_bitmanip (ex_is_bitmanip),
         .ex_mem_read    (ex_mem_read_en),
         .ex_rd          (ex_rd),
         .ex_alu_result  (ex_forward_result),
@@ -1299,6 +1328,8 @@ module cpu_top
         .s0_is_mret            (dec_is_mret),
         .s0_is_muldiv          (dec_is_muldiv),
         .s0_muldiv_op          (id_inst[14:12]),
+        .s0_is_bitmanip        (dec_is_bitmanip),
+        .s0_bitmanip_op        (dec_bitmanip_op),
         .s1_pc                 (id_s1_pc),
         .s1_inst               (id_inst1),
         .s1_alu_src1           (id_s1_alu_src1),
@@ -1380,6 +1411,8 @@ module cpu_top
         .ex_csr_rdata               (ex_csr_rdata),
         .ex_is_muldiv               (ex_is_muldiv),
         .ex_muldiv_result           (muldiv_result),
+        .ex_is_bitmanip             (ex_is_bitmanip),
+        .ex_bitmanip_result         (bitmanip_result),
         .alu_result                 (alu_result),
         .ex_s1_valid                (ex_s1_valid),
         .ex_s1_is_branch            (ex_s1_is_branch),
@@ -1456,6 +1489,20 @@ module cpu_top
         .busy      (muldiv_busy),
         .done      (muldiv_done),
         .result    (muldiv_result)
+    );
+
+    bitmanip_unit u_bitmanip_unit (
+        .clk       (clk),
+        .rst_n     (rst_n),
+        .req_valid (ex_bitmanip_req),
+        .req_op    (ex_bitmanip_op),
+        .req_rs1   (ex_alu_src1_repair),
+        .req_rs2   (ex_alu_src2_repair),
+        .consume   (bitmanip_consume),
+        .flush     (bitmanip_flush),
+        .busy      (bitmanip_busy),
+        .done      (bitmanip_done),
+        .result    (bitmanip_result)
     );
 
     // ==================== Minimal M-mode CSR / Trap ====================

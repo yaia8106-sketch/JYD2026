@@ -11,9 +11,13 @@ module branch_condition (
     output logic        taken
 );
 
-    // One subtract feeds equality and less-than tests for all branch types.
+    // Equality is independent of ordering.  Keep it on a balanced XOR/OR
+    // reduction instead of sending BEQ/BNE through the subtract carry chain.
+    wire [31:0] mismatch_bits = rs1_data ^ rs2_data;
+    wire        neq = |mismatch_bits;
+
+    // The subtract path is needed only for signed/unsigned ordering tests.
     wire [31:0] diff = rs1_data - rs2_data;
-    wire        neq = |diff;
     wire        is_unsigned = branch_cond[1];
     wire        cmp = (rs1_data[31] == rs2_data[31]) ? diff[31] :
                       is_unsigned ? rs2_data[31] : rs1_data[31];
