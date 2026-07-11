@@ -535,7 +535,6 @@ module frontend_ftq
     wire if_accept = if_valid && if_ready_go && id_allowin;
     wire if_accept_dual = if_accept & can_dual_issue;
     wire if_accept_single = if_accept & ~can_dual_issue;
-    wire if_accept_none = ~if_accept;
 
     frontend_fetch_queue #(
         .FQ_DEPTH (FQ_DEPTH),
@@ -554,7 +553,6 @@ module frontend_ftq
         .enq_pair_meta1       (f0_pair_meta1),
         .enq_entry0_pair_ok   (f0_entry0_pair_ok),
         .prev_tail_pair_ok    (fq_prev_tail_pair_ok),
-        .deq_valid            (if_accept),
         .deq_single           (if_accept_single),
         .deq_dual             (if_accept_dual),
         .head                 (fq_head),

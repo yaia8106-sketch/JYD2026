@@ -1,6 +1,6 @@
 // ============================================================
 // Module: frontend_f0_packet_builder
-// Description: 
+// Description:
 // 这个模块的输入包括64bit取指包、pc、预测元数据(用于预测器训练和redirect)。
 // 它的输出包括将发送到fq的元数据和一些解码信息(坦白说，它不应该被称为fq，因为它已经有了指令)。
 // Domain: frontend.
@@ -11,7 +11,8 @@ module frontend_f0_packet_builder
     import cpu_defs::*;
 (
     // IROM ins fetch
-    input  logic                       accept_base, // valid信号
+    // ???这都什么信号
+    input  logic                       accept_base, // accept_base= f0_valid_r && f0_epoch_match && !ex_redirect_valid
     input  logic [31:0]                start_pc, // 64bit指令包中第一条指令对应的PC
     //* base_mask可以用start_pc[2]直接代替,并且我们在start_pc[2] = 1时slot1中已经有了NOP指令,所以我们不需要使用这个信号来控制slot1的valid。
     input  logic [ 1:0]                base_mask, // if pc[2] = 0, base_mask = 2'b11, else base_mask = 2'b01
@@ -28,7 +29,6 @@ module frontend_f0_packet_builder
     input  frontend_f0_bank_meta_t     bank0_meta, // 包含pht的counter，index和branch_owned信号。
     input  frontend_f0_bank_meta_t     bank1_meta,
 
-    //* enq0_payload和enq0_valid本质是同一个信号，可以考虑删减，没什么区别。
     output logic                       enq0_payload, // enq0_payload = accept_base && base_mask[0]
     output logic                       enq1_payload,
     //? 这里如果slot1是valid并且slot0禁止slot1发射，那slot1是如何被保留下来的？具体逻辑是怎样的？
@@ -36,9 +36,9 @@ module frontend_f0_packet_builder
     output logic                       enq1_valid,
     //? 现在我们一旦将slot0预测为跳转，会导致slot1直接被flush掉。但是我们为什么不开放这种双发射，来获得一些可能性的收益并减轻资源占用呢？
     //? 如果我们允许这种双发射，那system指令是否应该被加入双发射逻辑中？
-    //! 在决定对这个双发射逻辑进行修改之前，请确保这条slot1不会引起各种边界情况(例如错误的DRAM访问，或者是其他情况)
+    //! 在决定对这个双发射逻辑进行修改之前，请确保这条slot1不会引起各种边界情况(例如错误的DRAM访问，或者是预测器误训练，误重定向等其他情况)
     output logic                       kill_after_slot0, // slot0被预测为跳转/确实是跳转时拉高，用于对slot1的指令进行冲刷
-    output frontend_fq_entry_t         entry0, // 这个结构体包含了fq entry需要的所有信息。
+    output frontend_fq_entry_t         entry0,
     output frontend_fq_entry_t         entry1,
     output frontend_pair_meta_t        pair_meta0, // 预译码信息。
     output frontend_pair_meta_t        pair_meta1
@@ -79,7 +79,6 @@ module frontend_f0_packet_builder
         .decoded (slot1_dec)
     );
 
-    // 这个结构体包含了fq entry需要的所有信息。
     function automatic frontend_fq_entry_t make_entry(
         input logic                  valid,
         input logic [31:0]           pc,

@@ -48,12 +48,30 @@ module mmio_bridge (
     localparam CNT_STOP_CMD  = 32'hFFFF_FFFF;
 
     // ================================================================
-    //  地址打拍 (EX → MEM，给 MMIO 组合读用)
+    //  读地址译码打拍 (EX → MEM)
     // ================================================================
-    logic [31:0] mem_addr;
+    localparam int RD_SW0         = 0;
+    localparam int RD_SW1         = 1;
+    localparam int RD_KEY         = 2;
+    localparam int RD_SEG         = 3;
+    localparam int RD_CNT         = 4;
+    localparam int RD_MTIME_LO    = 5;
+    localparam int RD_MTIME_HI    = 6;
+    localparam int RD_MTIMECMP_LO = 7;
+    localparam int RD_MTIMECMP_HI = 8;
+
+    logic [8:0] mem_read_sel;
 
     always_ff @(posedge clk) begin
-        mem_addr <= addr;
+        mem_read_sel[RD_SW0]         <= addr == SW0_ADDR;
+        mem_read_sel[RD_SW1]         <= addr == SW1_ADDR;
+        mem_read_sel[RD_KEY]         <= addr == KEY_ADDR;
+        mem_read_sel[RD_SEG]         <= addr == SEG_ADDR;
+        mem_read_sel[RD_CNT]         <= addr == CNT_ADDR;
+        mem_read_sel[RD_MTIME_LO]    <= addr == MTIME_LO_ADDR;
+        mem_read_sel[RD_MTIME_HI]    <= addr == MTIME_HI_ADDR;
+        mem_read_sel[RD_MTIMECMP_LO] <= addr == MTIMECMP_LO_ADDR;
+        mem_read_sel[RD_MTIMECMP_HI] <= addr == MTIMECMP_HI_ADDR;
     end
 
     // ================================================================
@@ -181,17 +199,17 @@ module mmio_bridge (
     assign seg_output[37] = 1'b0;
 
     // ================================================================
-    //  MMIO 读 (MEM 阶段，组合逻辑，用 mem_addr 译码)
+    //  MMIO 读 (MEM 阶段，组合逻辑，用已打拍的 one-hot 选择)
     // ================================================================
-    assign rdata = ({32{mem_addr == SW0_ADDR}} & sw[31:0])
-                 | ({32{mem_addr == SW1_ADDR}} & sw[63:32])
-                 | ({32{mem_addr == KEY_ADDR}} & {24'd0, key})
-                 | ({32{mem_addr == SEG_ADDR}} & seg_wdata)
-                 | ({32{mem_addr == CNT_ADDR}} & cnt_rdata)
-                 | ({32{mem_addr == MTIME_LO_ADDR}} & mtime[31:0])
-                 | ({32{mem_addr == MTIME_HI_ADDR}} & mtime[63:32])
-                 | ({32{mem_addr == MTIMECMP_LO_ADDR}} & mtimecmp[31:0])
-                 | ({32{mem_addr == MTIMECMP_HI_ADDR}} & mtimecmp[63:32]);
+    assign rdata = ({32{mem_read_sel[RD_SW0]}} & sw[31:0])
+                 | ({32{mem_read_sel[RD_SW1]}} & sw[63:32])
+                 | ({32{mem_read_sel[RD_KEY]}} & {24'd0, key})
+                 | ({32{mem_read_sel[RD_SEG]}} & seg_wdata)
+                 | ({32{mem_read_sel[RD_CNT]}} & cnt_rdata)
+                 | ({32{mem_read_sel[RD_MTIME_LO]}} & mtime[31:0])
+                 | ({32{mem_read_sel[RD_MTIME_HI]}} & mtime[63:32])
+                 | ({32{mem_read_sel[RD_MTIMECMP_LO]}} & mtimecmp[31:0])
+                 | ({32{mem_read_sel[RD_MTIMECMP_HI]}} & mtimecmp[63:32]);
 
     // ================================================================
     //  平台输出

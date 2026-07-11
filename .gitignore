@@ -14,6 +14,7 @@ NutShell/
 # --- Timing Analysis Reports (regenerable) ---
 03_Timing_Analysis/stage_timing_report.txt
 03_Timing_Analysis/vivado_work/
+03_Timing_Analysis/results/
 
 # --- Simulation Artifacts ---
 02_Design/riscv_tests/work/*

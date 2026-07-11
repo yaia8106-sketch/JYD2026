@@ -115,6 +115,7 @@ package cpu_defs;
         logic        valid;
         logic [31:0] pc;
         logic [31:0] inst;
+        // pred info
         logic        pred_taken;
         logic [31:0] pred_target;
         logic        pred_source_abtb;
@@ -122,6 +123,10 @@ package cpu_defs;
         logic [ 1:0] pred_cfi_type;
         logic [ 7:0] stage1_pht_index;
         logic [ 1:0] stage1_pht_counter;
+        // ins type
+        logic        is_jump;
+        logic        is_control;
+        logic        is_lsu;
         logic        is_branch;
         logic        is_jal;
         logic        is_jalr;
@@ -132,12 +137,12 @@ package cpu_defs;
         logic        is_load;
         logic        is_store;
         logic        is_alu_type;
+        // 寄存器调度情况
         logic        writes_rd;
         logic        uses_rs1;
         logic        uses_rs2;
-        logic        is_jump;
-        logic        is_control;
-        logic        is_lsu;
+        // 是否强制单发射
+        // force_single = is_system | is_fence | is_illegal | is_muldiv
         logic        force_single;
     } frontend_fq_entry_t;
 
@@ -327,8 +332,8 @@ package cpu_defs;
         logic [ 4:0]       rd;
         logic [ 4:0]       rs1_addr;
         logic [ 4:0]       rs2_addr;
-        logic              alu_src1_is_rs1;
-        logic              alu_src2_is_rs2;
+        logic              alu_src1_wb_repair;
+        logic              alu_src2_wb_repair;
         logic [ 3:0]       alu_op;
         logic              reg_write_en;
         logic [ 1:0]       wb_sel;

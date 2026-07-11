@@ -84,8 +84,11 @@ module memory_access_unit (
     wire mem_s1_load_active = mem_s1_valid & mem_s1_mem_read_en;
     wire [31:0] mem_lsu_addr = mem_s1_load_active ? mem_s1_alu_result : mem_alu_result;
     wire        mem_lsu_cacheable = mem_s1_load_active ? mem_s1_is_cacheable : mem_is_cacheable;
-    wire        mem_s0_store_active = mem_valid & (|mem_store_wea);
-    wire        mem_s1_store_active = mem_s1_valid & mem_s1_mem_write_en & (|mem_s1_store_wea);
+    // store_wea is generated with valid/write gating in EX and is masked again
+    // at the EX/MEM.S1 boundary.  Use that registered one-hot payload directly
+    // so redundant valid/write predicates do not enter MMIO read arbitration.
+    wire        mem_s0_store_active = |mem_store_wea;
+    wire        mem_s1_store_active = |mem_s1_store_wea;
     wire        mem_use_s1_store = mem_s1_store_active;
     wire [31:0] mem_store_addr = mem_use_s1_store ? mem_s1_alu_result : mem_alu_result;
     wire [ 3:0] mem_selected_store_wea = mem_use_s1_store ? mem_s1_store_wea : mem_store_wea;

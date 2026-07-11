@@ -89,8 +89,12 @@ module id_ex_payload_builder
         slot0_payload.common.rd = s0_rd;
         slot0_payload.common.rs1_addr = s0_rs1_addr;
         slot0_payload.common.rs2_addr = s0_rs2_addr;
-        slot0_payload.common.alu_src1_is_rs1 = s0_alu_src1_is_rs1;
-        slot0_payload.common.alu_src2_is_rs2 = s0_alu_src2_is_rs2;
+        // Register the ALU-specific repair predicates at the stage boundary.
+        // EX still retains the raw rs1/rs2 repair tags for branch/store data.
+        slot0_payload.common.alu_src1_wb_repair =
+            s0_rs1_wb_repair & s0_alu_src1_is_rs1;
+        slot0_payload.common.alu_src2_wb_repair =
+            s0_rs2_wb_repair & s0_alu_src2_is_rs2;
         slot0_payload.common.alu_op = s0_alu_op;
         slot0_payload.common.reg_write_en = s0_reg_write_en;
         slot0_payload.common.wb_sel = s0_wb_sel;
@@ -127,8 +131,10 @@ module id_ex_payload_builder
         slot1_payload.common.rd = s1_rd;
         slot1_payload.common.rs1_addr = s1_rs1_addr;
         slot1_payload.common.rs2_addr = s1_rs2_addr;
-        slot1_payload.common.alu_src1_is_rs1 = s1_alu_src1_is_rs1;
-        slot1_payload.common.alu_src2_is_rs2 = s1_alu_src2_is_rs2;
+        slot1_payload.common.alu_src1_wb_repair =
+            s1_rs1_wb_repair & s1_alu_src1_is_rs1;
+        slot1_payload.common.alu_src2_wb_repair =
+            s1_rs2_wb_repair & s1_alu_src2_is_rs2;
         slot1_payload.common.alu_op = s1_alu_op;
         slot1_payload.common.reg_write_en = s1_reg_write_en;
         slot1_payload.common.wb_sel = s1_wb_sel;

@@ -81,10 +81,13 @@ module dcache_store_buffer (
     // ================================================================
     //  Recent-store load-miss lookup
     // ================================================================
+    // The instantiated DRAM is 256 KiB at 0x8010_0000..0x8013_FFFF, so bits
+    // [31:18] are constant for every address that can reach this DCache.  Use
+    // the same word key as the cache instead of a redundant 30-bit equality.
     wire lookup_match0 = recent_valid_q[0]
-                       & (addr_q[0][31:2] == lookup_addr[31:2]);
+                       & (addr_q[0][17:2] == lookup_addr[17:2]);
     wire lookup_match1 = recent_valid_q[1]
-                       & (addr_q[1][31:2] == lookup_addr[31:2]);
+                       & (addr_q[1][17:2] == lookup_addr[17:2]);
     wire [3:0] lookup_entry_mask0 = lookup_match0 ? wea_q[0] : 4'b0000;
     wire [3:0] lookup_entry_mask1 = lookup_match1 ? wea_q[1] : 4'b0000;
     wire [3:0] lookup_covered_mask = lookup_entry_mask0 | lookup_entry_mask1;
