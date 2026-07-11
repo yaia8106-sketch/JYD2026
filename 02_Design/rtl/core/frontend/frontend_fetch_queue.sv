@@ -28,8 +28,8 @@ module frontend_fetch_queue
     input  logic                       enq_entry0_pair_ok, // 用来判断当前周期的entry0是否有配对资格
     input  logic                       prev_tail_pair_ok, // 用来判断
 
-    input  logic                       deq_valid, // 流水线握手信号
-    // 这两个信号也是神完了，我们首先在当前模块判断两条指令能否配对，然后把这个信号传出去送给ftq模块，再送回当前模块供给给寄存器。功能上没什么问题，但是不是很便于观察
+    // These mutually-exclusive controls fully describe dequeue acceptance.
+    // No separate deq_valid is needed; deq_none is their complement.
     input  logic                       deq_single,
     input  logic                       deq_dual,
 
@@ -79,10 +79,12 @@ module frontend_fetch_queue
 
     // Head/tail/count are computed independently so enqueue and dequeue can
     // occur in the same cycle.
+    wire deq_none = ~(deq_single | deq_dual);
+
     wire [FQ_PTR_W-1:0] head_next =
         ({FQ_PTR_W{deq_dual}}   & head_p2) |
         ({FQ_PTR_W{deq_single}} & head_p1) |
-        ({FQ_PTR_W{~deq_valid}} & head);
+        ({FQ_PTR_W{deq_none}}   & head);
 
     wire [FQ_PTR_W-1:0] tail_next =
         ({FQ_PTR_W{enq_two}}  & tail_p2) |
@@ -98,20 +100,26 @@ module frontend_fetch_queue
     wire [FQ_PTR_W:0] count_m2 =
         count - {{(FQ_PTR_W-1){1'b0}}, 2'd2};
 
-    wire count_inc2 = enq_two & ~deq_valid;
-    wire count_inc1 = (enq_two & deq_single)
-                    | (enq_one & ~deq_valid);
-    wire count_dec1 = (enq_one & deq_dual)
-                    | (enq_none & deq_single);
-    wire count_dec2 = enq_none & deq_dual;
-    wire count_hold = ~(count_inc2 | count_inc1 | count_dec1 | count_dec2);
+    // Enqueue-dependent candidates are built in parallel.  The late dequeue
+    // decision then selects only once, keeping backend id_allowin out of the
+    // old inc/dec predicate tree.
+    wire [FQ_PTR_W:0] count_if_deq_none =
+        ({(FQ_PTR_W+1){enq_two}}  & count_p2) |
+        ({(FQ_PTR_W+1){enq_one}}  & count_p1) |
+        ({(FQ_PTR_W+1){enq_none}} & count);
+    wire [FQ_PTR_W:0] count_if_deq_single =
+        ({(FQ_PTR_W+1){enq_two}}  & count_p1) |
+        ({(FQ_PTR_W+1){enq_one}}  & count) |
+        ({(FQ_PTR_W+1){enq_none}} & count_m1);
+    wire [FQ_PTR_W:0] count_if_deq_dual =
+        ({(FQ_PTR_W+1){enq_two}}  & count) |
+        ({(FQ_PTR_W+1){enq_one}}  & count_m1) |
+        ({(FQ_PTR_W+1){enq_none}} & count_m2);
 
     wire [FQ_PTR_W:0] count_next =
-        ({(FQ_PTR_W+1){count_inc2}} & count_p2) |
-        ({(FQ_PTR_W+1){count_inc1}} & count_p1) |
-        ({(FQ_PTR_W+1){count_hold}} & count) |
-        ({(FQ_PTR_W+1){count_dec1}} & count_m1) |
-        ({(FQ_PTR_W+1){count_dec2}} & count_m2);
+        ({(FQ_PTR_W+1){deq_dual}}   & count_if_deq_dual) |
+        ({(FQ_PTR_W+1){deq_single}} & count_if_deq_single) |
+        ({(FQ_PTR_W+1){deq_none}}   & count_if_deq_none);
 
     wire [31:0] enq_last_next_pc =
         enq_two ? (enq_entry1.pc + 32'd4) : (enq_entry0.pc + 32'd4);

@@ -166,8 +166,10 @@ module cpu_top
     wire [ 4:0] ex_rd = ex_s0_payload.common.rd;
     wire [ 4:0] ex_rs1_addr = ex_s0_payload.common.rs1_addr;
     wire [ 4:0] ex_rs2_addr = ex_s0_payload.common.rs2_addr;
-    wire        ex_alu_src1_is_rs1 = ex_s0_payload.common.alu_src1_is_rs1;
-    wire        ex_alu_src2_is_rs2 = ex_s0_payload.common.alu_src2_is_rs2;
+    wire        ex_alu_src1_wb_repair =
+        ex_s0_payload.common.alu_src1_wb_repair;
+    wire        ex_alu_src2_wb_repair =
+        ex_s0_payload.common.alu_src2_wb_repair;
     wire [ 3:0] ex_alu_op = ex_s0_payload.common.alu_op;
     wire        ex_reg_write_en = ex_s0_payload.common.reg_write_en;
     wire [ 1:0] ex_wb_sel = ex_s0_payload.common.wb_sel;
@@ -217,8 +219,10 @@ module cpu_top
     wire [31:0] ex_s1_rs2_data = ex_s1_payload.common.rs2_data;
     wire        ex_s1_rs1_wb_repair = ex_s1_payload.common.rs1_wb_repair;
     wire        ex_s1_rs2_wb_repair = ex_s1_payload.common.rs2_wb_repair;
-    wire        ex_s1_alu_src1_is_rs1 = ex_s1_payload.common.alu_src1_is_rs1;
-    wire        ex_s1_alu_src2_is_rs2 = ex_s1_payload.common.alu_src2_is_rs2;
+    wire        ex_s1_alu_src1_wb_repair =
+        ex_s1_payload.common.alu_src1_wb_repair;
+    wire        ex_s1_alu_src2_wb_repair =
+        ex_s1_payload.common.alu_src2_wb_repair;
 
     // ---- ALU ----
     wire [31:0] alu_result;
@@ -412,6 +416,17 @@ module cpu_top
                         & ex_muldiv_ready & ex_bitmanip_ready;
     wire mem_ready_go_w = cache_ready; // DCache controls MEM stage flow
     assign id_ready_go = id_ready_go_raw & ~timer_irq_hold;
+
+    // wb_allowin is permanently true, so the ordinary ready chain is exactly:
+    //   mem_allowin = !mem_valid || mem_ready_go_w
+    //   ex_allowin  = !ex_valid  || (ex_ready_go_w && mem_allowin)
+    // Compute the frontend-visible result directly.  Six inputs fit one LUT6
+    // and avoid serially routing DCache ready through the MEM and EX modules.
+    assign id_allowin = !id_valid
+                      || (id_ready_go
+                          && (!ex_valid
+                              || (ex_ready_go_w
+                                  && (!mem_valid || mem_ready_go_w))));
 
     // ---- Flush / redirect ----
     wire id_flush = frontend_branch_flush;
@@ -1098,8 +1113,6 @@ module cpu_top
         .if_ready_go  (if_ready_go_w),
         .id_allowin   (id_allowin),
         .id_valid     (id_valid),
-        .id_ready_go  (id_ready_go),
-        .ex_allowin   (ex_allowin),
         .id_flush     (id_flush),
         .if_s1_valid  (if_s1_valid),
         .id_s1_valid  (id_s1_valid),
@@ -1400,8 +1413,8 @@ module cpu_top
         .wb_load_data               (wb_load_data),
         .ex_alu_src1                (ex_alu_src1),
         .ex_alu_src2                (ex_alu_src2),
-        .ex_alu_src1_is_rs1         (ex_alu_src1_is_rs1),
-        .ex_alu_src2_is_rs2         (ex_alu_src2_is_rs2),
+        .ex_alu_src1_wb_repair      (ex_alu_src1_wb_repair),
+        .ex_alu_src2_wb_repair      (ex_alu_src2_wb_repair),
         .ex_rs1_data                (ex_rs1_data),
         .ex_rs2_data                (ex_rs2_data),
         .ex_is_branch               (ex_is_branch),
@@ -1423,8 +1436,8 @@ module cpu_top
         .ex_s1_rs2_wb_repair        (ex_s1_rs2_wb_repair),
         .ex_s1_alu_src1             (ex_s1_alu_src1),
         .ex_s1_alu_src2             (ex_s1_alu_src2),
-        .ex_s1_alu_src1_is_rs1      (ex_s1_alu_src1_is_rs1),
-        .ex_s1_alu_src2_is_rs2      (ex_s1_alu_src2_is_rs2),
+        .ex_s1_alu_src1_wb_repair   (ex_s1_alu_src1_wb_repair),
+        .ex_s1_alu_src2_wb_repair   (ex_s1_alu_src2_wb_repair),
         .ex_s1_rs1_data             (ex_s1_rs1_data),
         .ex_s1_rs2_data             (ex_s1_rs2_data),
         .ex_s1_predicted_taken      (ex_s1_pred_taken),

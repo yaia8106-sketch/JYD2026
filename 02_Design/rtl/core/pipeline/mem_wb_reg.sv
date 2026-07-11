@@ -27,29 +27,24 @@ module mem_wb_reg
     wire wb_ready_go = 1'b1;
     assign wb_allowin = !wb_valid || wb_ready_go;
 
-    // When MEM advances for a non-load, keep the previous load_data value so
-    // an EX-stage repair can still source the registered load result.
-    function automatic mem_wb_slot0_t accepted_payload(
-        input mem_wb_slot0_t current_payload,
-        input mem_wb_slot0_t incoming_payload,
-        input logic          load_data_write
-    );
-        accepted_payload = incoming_payload;
-        if (!load_data_write)
-            accepted_payload.load_data = current_payload.load_data;
-    endfunction
-
     always_ff @(posedge clk) begin
         if (!rst_n) begin
-            wb_valid <= 1'b0;
-            wb_payload <= '0;
+            wb_valid                <= 1'b0;
+            wb_payload              <= '0;
         end else if (wb_allowin) begin
-            wb_valid <= mem_valid & mem_ready_go;
-            wb_payload <= accepted_payload(
-                wb_payload,
-                mem_payload,
-                mem_load_valid & mem_ready_go
-            );
+            wb_valid                <= mem_valid & mem_ready_go;
+            wb_payload.alu_result   <= mem_payload.alu_result;
+            wb_payload.pc_plus_4    <= mem_payload.pc_plus_4;
+            wb_payload.rd           <= mem_payload.rd;
+            wb_payload.reg_write_en <= mem_payload.reg_write_en;
+            wb_payload.wb_sel       <= mem_payload.wb_sel;
+            wb_payload.is_load      <= mem_payload.is_load;
+
+            // A non-load must retain the last completed load for the EX-stage
+            // WB-repair path.  Keeping this field on its own write enable also
+            // prevents unrelated MMIO/store selection from feeding its D pin.
+            if (mem_load_valid & mem_ready_go)
+                wb_payload.load_data <= mem_payload.load_data;
         end
     end
 

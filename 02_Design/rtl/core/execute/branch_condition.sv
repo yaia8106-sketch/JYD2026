@@ -11,10 +11,20 @@ module branch_condition (
     output logic        taken
 );
 
-    // Equality is independent of ordering.  Keep it on a balanced XOR/OR
-    // reduction instead of sending BEQ/BNE through the subtract carry chain.
+    // Equality is independent of ordering.  Keep BEQ/BNE off the subtract
+    // carry chain and make the reduction tree explicit: each first-level
+    // group fits one LUT6, followed by one six-input OR.  The keep attributes
+    // prevent the groups from being absorbed serially into the predictor
+    // update enable logic.
     wire [31:0] mismatch_bits = rs1_data ^ rs2_data;
-    wire        neq = |mismatch_bits;
+    (* keep = "true" *) wire neq_group0 = |mismatch_bits[ 5: 0];
+    (* keep = "true" *) wire neq_group1 = |mismatch_bits[11: 6];
+    (* keep = "true" *) wire neq_group2 = |mismatch_bits[17:12];
+    (* keep = "true" *) wire neq_group3 = |mismatch_bits[23:18];
+    (* keep = "true" *) wire neq_group4 = |mismatch_bits[29:24];
+    (* keep = "true" *) wire neq_group5 = |mismatch_bits[31:30];
+    wire neq = neq_group0 | neq_group1 | neq_group2
+             | neq_group3 | neq_group4 | neq_group5;
 
     // The subtract path is needed only for signed/unsigned ordering tests.
     wire [31:0] diff = rs1_data - rs2_data;

@@ -2,10 +2,64 @@
 // ============================================================
 // Lightweight behavioral IP models for student_top COE simulation.
 // These models match the ports and latency assumptions used by student_top:
+// - IROM: official 4096x32 asynchronous ROM (Core_cpu leaves it unused).
 // - IROM64: 2048x64 synchronous ROM, 1-cycle read.
 // - IROMEven32/IROMOdd32: legacy 4096x32 synchronous ROMs.
+// - DRAM: official 65536x32 asynchronous-read, synchronous-write RAM.
 // - DRAM4MyOwn: 65536x32 SDP RAM with byte writes and 2-cycle read latency.
 // ============================================================
+
+module IROM (
+    input  wire [11:0] a,
+    output wire [31:0] spo
+);
+    reg [31:0] mem [0:4095];
+    reg [1023:0] file_name;
+    integer i;
+
+    initial begin
+        for (i = 0; i < 4096; i = i + 1)
+            mem[i] = 32'h0000_0013;
+
+        if (!$value$plusargs("irom=%s", file_name)) begin
+            $display("ERROR: specify +irom=<hex> for IROM");
+            $finish;
+        end
+        $readmemh(file_name, mem);
+    end
+
+    assign spo = mem[a];
+endmodule
+
+module DRAM (
+    input  wire        clk,
+    input  wire [15:0] a,
+    output wire [31:0] spo,
+    input  wire        we,
+    input  wire [31:0] d
+);
+    reg [31:0] mem [0:65535];
+    reg [1023:0] file_name;
+    integer i;
+
+    initial begin
+        for (i = 0; i < 65536; i = i + 1)
+            mem[i] = 32'd0;
+
+        if (!$value$plusargs("dram=%s", file_name)) begin
+            $display("ERROR: specify +dram=<hex> for DRAM");
+            $finish;
+        end
+        $readmemh(file_name, mem);
+    end
+
+    always @(posedge clk) begin
+        if (we)
+            mem[a] <= d;
+    end
+
+    assign spo = mem[a];
+endmodule
 
 module IROMEven32 (
     input  wire        clka,

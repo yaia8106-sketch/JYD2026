@@ -47,6 +47,8 @@ module id_ex_reg
             ex_valid <= 1'b0;
             ex_payload.common.rs1_wb_repair <= 1'b0;
             ex_payload.common.rs2_wb_repair <= 1'b0;
+            ex_payload.common.alu_src1_wb_repair <= 1'b0;
+            ex_payload.common.alu_src2_wb_repair <= 1'b0;
             ex_payload.common.prediction.prediction.source_abtb <= 1'b0;
             ex_payload.common.prediction.prediction.stage1_branch_owned <=
                 1'b0;

@@ -38,6 +38,8 @@ module id_ex_reg_s1
             accepted_payload = payload;
             accepted_payload.common.rs1_wb_repair &= slot_valid;
             accepted_payload.common.rs2_wb_repair &= slot_valid;
+            accepted_payload.common.alu_src1_wb_repair &= slot_valid;
+            accepted_payload.common.alu_src2_wb_repair &= slot_valid;
             accepted_payload.common.reg_write_en  &= slot_valid;
             accepted_payload.common.mem_read_en   &= slot_valid;
             accepted_payload.common.mem_write_en  &= slot_valid;
@@ -56,6 +58,8 @@ module id_ex_reg_s1
             ex_s1_valid <= 1'b0;
             ex_payload.common.rs1_wb_repair <= 1'b0;
             ex_payload.common.rs2_wb_repair <= 1'b0;
+            ex_payload.common.alu_src1_wb_repair <= 1'b0;
+            ex_payload.common.alu_src2_wb_repair <= 1'b0;
             ex_payload.common.prediction.prediction.taken <= 1'b0;
             ex_payload.common.prediction.prediction.source_abtb <= 1'b0;
             ex_payload.common.prediction.prediction.stage1_branch_owned <=

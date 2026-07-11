@@ -159,12 +159,12 @@ set_property IOSTANDARD LVCMOS18 [get_ports {virtual_seg[30]}]
 # ============================================================
 set_property -quiet MAX_FANOUT 16 [
     get_cells -quiet {
-        student_top_inst/u_cpu/u_ex_mem_reg/mem_redirect_reg[valid]
+        student_top_inst/Core_cpu/u_cpu/u_ex_mem_reg/mem_redirect_reg[valid]
     }
 ]
 set_property -quiet MAX_FANOUT 16 [
     get_cells -quiet {
-        student_top_inst/u_cpu/u_ex_mem_reg/mem_valid_reg
+        student_top_inst/Core_cpu/u_cpu/u_ex_mem_reg/mem_valid_reg
     }
 ]
 set_property -quiet FORCE_MAX_FANOUT 32 [
@@ -179,7 +179,7 @@ set_property -quiet MAX_FANOUT 32 [
 ]
 set_property -quiet FORCE_MAX_FANOUT 64 [
     get_nets -quiet {
-        student_top_inst/u_dcache/u_store_buffer/mem_valid_reg
+        student_top_inst/Core_cpu/u_dcache/u_store_buffer/mem_valid_reg
     }
 ]
 
@@ -190,7 +190,7 @@ set_property -quiet FORCE_MAX_FANOUT 64 [
 #   DRAM4MyOwn is intentionally left to the placer.
 # ============================================================
 create_pblock pblock_cpu_irom
-add_cells_to_pblock [get_pblocks pblock_cpu_irom] [get_cells student_top_inst/u_cpu]
-add_cells_to_pblock [get_pblocks pblock_cpu_irom] [get_cells student_top_inst/u_irom]
-add_cells_to_pblock [get_pblocks pblock_cpu_irom] [get_cells student_top_inst/u_dcache]
+add_cells_to_pblock [get_pblocks pblock_cpu_irom] [get_cells student_top_inst/Core_cpu/u_cpu]
+add_cells_to_pblock [get_pblocks pblock_cpu_irom] [get_cells student_top_inst/Core_cpu/u_irom]
+add_cells_to_pblock [get_pblocks pblock_cpu_irom] [get_cells student_top_inst/Core_cpu/u_dcache]
 resize_pblock pblock_cpu_irom -add {CLOCKREGION_X1Y3:CLOCKREGION_X1Y4}

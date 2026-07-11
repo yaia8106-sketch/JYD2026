@@ -99,9 +99,9 @@ package cpu_defs;
     // Keep pipeline data grouped by function. Handshake and lane-valid signals
     // remain separate so pipeline control is explicit at every stage boundary.
     typedef struct packed {
-        logic        taken;
-        logic [31:0] target;
-        logic        source_abtb;
+        logic        taken; // 方向
+        logic [31:0] target; // 目标地址
+        logic        source_abtb; //是否来自于btb
         logic        stage1_branch_owned;
         logic        abtb_hit;
         logic        abtb_way;
@@ -368,8 +368,8 @@ package cpu_defs;
         logic [ 4:0]       rd;
         logic [ 4:0]       rs1_addr;
         logic [ 4:0]       rs2_addr;
-        logic              alu_src1_is_rs1;
-        logic              alu_src2_is_rs2;
+        logic              alu_src1_wb_repair;
+        logic              alu_src2_wb_repair;
         logic [ 3:0]       alu_op;
         logic              reg_write_en;
         logic [ 1:0]       wb_sel;

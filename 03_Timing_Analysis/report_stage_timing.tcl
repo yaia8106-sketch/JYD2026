@@ -61,13 +61,14 @@ if {[catch {current_design} _current_design_name] || $_current_design_name eq ""
 puts "  当前设计: $_current_design_name"
 
 # 设计层级前缀（自动检测）
-# 支持两种顶层配置：
-#   1. student_top 作为顶层 → TOP_HIER = ""
-#   2. top.sv 作为顶层，例化名 student_top_inst → TOP_HIER = "student_top_inst"
+# 支持 Core_cpu 包装前后的顶层配置。当前比赛集成层级为：
+#   top/student_top_inst/Core_cpu/{u_cpu,u_dcache,u_irom,u_dram,...}
 #
 # 检测方法：查找当前前端 u_cpu/u_frontend_ftq 在哪个层次下
 set TOP_HIER ""
 set _probe_patterns [list \
+    "student_top_inst/Core_cpu" \
+    "Core_cpu"             \
     ""                    \
     "student_top_inst"    \
     "u_student_top"       \
@@ -113,7 +114,7 @@ set PIPELINE_GROUPS [list \
     [list "DCacheBackend"  "u_dcache_bram_backend"       ] \
     [list "DCacheAxi"      "u_dcache_axi_backend"        ] \
     [list "AXIAdapter"     "u_dcache_axi_backend/u_axi_master_adapter"] \
-    [list "MMIO"           "u_mmio"                      ] \
+    [list "MMIO"           "u_mmio_adapter"              ] \
 ]
 
 # ---- 顶层零散寄存器组 ----

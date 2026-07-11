@@ -81,10 +81,15 @@ module dcache_store_buffer (
     // ================================================================
     //  Recent-store load-miss lookup
     // ================================================================
+    // The DCache serves only the contest DRAM window
+    // 0x8010_0000..0x8013_FFFF.  Bits [31:18] are therefore constant and the
+    // cache itself identifies a word with {tag,index,word} = address[17:2].
+    // Keep the store-buffer lookup on that same key instead of building a
+    // redundant 30-bit equality chain on the CPU-ready critical path.
     wire lookup_match0 = recent_valid_q[0]
-                       & (addr_q[0][31:2] == lookup_addr[31:2]);
+                       & (addr_q[0][17:2] == lookup_addr[17:2]);
     wire lookup_match1 = recent_valid_q[1]
-                       & (addr_q[1][31:2] == lookup_addr[31:2]);
+                       & (addr_q[1][17:2] == lookup_addr[17:2]);
     wire [3:0] lookup_entry_mask0 = lookup_match0 ? wea_q[0] : 4'b0000;
     wire [3:0] lookup_entry_mask1 = lookup_match1 ? wea_q[1] : 4'b0000;
     wire [3:0] lookup_covered_mask = lookup_entry_mask0 | lookup_entry_mask1;

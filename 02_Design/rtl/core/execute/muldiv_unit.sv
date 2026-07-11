@@ -3,7 +3,7 @@
 // Description: RV32M multi-cycle execution unit.
 // Domain: execute.
 //   - MUL/MULH/MULHSU/MULHU use a pipelined DSP-inferred multiplier.
-//   - DIV/DIVU/REM/REMU use a small radix-2 iterative divider.
+//   - DIV/DIVU/REM/REMU use a small radix-4 iterative divider.
 // ============================================================
 
 module muldiv_unit
@@ -31,6 +31,7 @@ module muldiv_unit
         S_MUL_EXEC,
         S_MUL_DONE,
         S_DIV_RUN,
+        S_DIV_FINISH,
         S_DONE
     } state_t;
 
@@ -114,10 +115,15 @@ module muldiv_unit
                                                  div_rem_shift;
     wire [32:0] div_rem_next = div_rem_next_wide[32:0];
     wire [31:0] div_quot_next = {div_quotient[29:0], div_quot_digit};
-    wire [31:0] div_quot_signed_next = div_quot_neg ? (~div_quot_next + 32'd1)
-                                                     : div_quot_next;
-    wire [31:0] div_rem_signed_next = div_rem_neg ? (~div_rem_next[31:0] + 32'd1)
-                                                   : div_rem_next[31:0];
+    // Sign correction is intentionally based on the registered final magnitude.
+    // It runs in S_DIV_FINISH, one cycle after the last radix-4 subtract, so two
+    // 32-bit carry chains are never serialized in one timing path.
+    wire [31:0] div_quot_signed = div_quot_neg
+                                ? (~div_quotient + 32'd1)
+                                : div_quotient;
+    wire [31:0] div_rem_signed = div_rem_neg
+                               ? (~div_remainder[31:0] + 32'd1)
+                               : div_remainder[31:0];
 
     function automatic logic [31:0] mul_result_select(
         input logic [2:0] op,
@@ -219,10 +225,13 @@ module muldiv_unit
                     div_remainder <= div_rem_next;
                     div_quotient  <= div_quot_next;
                     div_count     <= div_count - 6'd1;
-                    if (div_count == 6'd1) begin
-                        result_r <= op_r[1] ? div_rem_signed_next : div_quot_signed_next;
-                        state <= S_DONE;
-                    end
+                    if (div_count == 6'd1)
+                        state <= S_DIV_FINISH;
+                end
+
+                S_DIV_FINISH: begin
+                    result_r <= op_r[1] ? div_rem_signed : div_quot_signed;
+                    state <= S_DONE;
                 end
 
                 S_DONE: begin

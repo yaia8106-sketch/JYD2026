@@ -3,8 +3,8 @@
 // Testbench: tb_student_top_smoke
 // Description:
 //   Short student_top-level correctness smoke.
-//   It keeps the real student_top/mmio_bridge path and replaces only the
-//   Vivado BRAM IPs with lightweight behavioral models.
+//   It keeps the official student_top/perip_bridge boundary and replaces
+//   only the Vivado memory IPs with lightweight behavioral models.
 // ============================================================
 
 module tb_student_top_smoke;
@@ -56,10 +56,11 @@ module tb_student_top_smoke;
 
     reg [256*8-1:0] test_name_r;
 
-    wire led_write = (|dut.u_mmio.wea) && (dut.u_mmio.wr_addr == LED_MMIO_ADDR);
-    wire sim_progress = dut.u_cpu.wb_valid | dut.u_cpu.wb_s1_valid |
-                        dut.u_cpu.branch_flush |
-                        dut.u_cpu.mem_branch_flush | led_write;
+    wire led_write = dut.perip_wen && (dut.perip_addr == LED_MMIO_ADDR);
+    wire sim_progress = dut.Core_cpu.u_cpu.wb_valid |
+                        dut.Core_cpu.u_cpu.wb_s1_valid |
+                        dut.Core_cpu.u_cpu.branch_flush |
+                        dut.Core_cpu.u_cpu.mem_branch_flush | led_write;
 
     initial begin
         if (!$value$plusargs("test=%s", test_name_r))
@@ -102,12 +103,12 @@ module tb_student_top_smoke;
             if (tohost_value == 32'd1) begin
                 $display("[PASS] %0s  commits=%0d first_led=0x%08x last_led=0x%08x led_writes=%0d pc=0x%08x last_wb0_pc=0x%08x last_wb1_pc=0x%08x  (%0d cycles)",
                          test_name_r, commit_cnt, first_led, last_led,
-                         led_write_count, dut.u_cpu.pc, last_wb0_pc,
+                         led_write_count, dut.Core_cpu.u_cpu.pc, last_wb0_pc,
                          last_wb1_pc, cycle_cnt);
             end else begin
                 $display("[FAIL] %0s  test #%0d failed commits=%0d first_led=0x%08x last_led=0x%08x led_writes=%0d pc=0x%08x last_wb0_pc=0x%08x last_wb1_pc=0x%08x  (%0d cycles)",
                          test_name_r, tohost_value >> 1, commit_cnt, first_led,
-                         last_led, led_write_count, dut.u_cpu.pc, last_wb0_pc,
+                         last_led, led_write_count, dut.Core_cpu.u_cpu.pc, last_wb0_pc,
                          last_wb1_pc, cycle_cnt);
             end
         end else if (pc_guard_fired) begin
@@ -118,12 +119,12 @@ module tb_student_top_smoke;
         end else if (watchdog_fired) begin
             $display("[TIMEOUT] %0s  no pipeline progress for %0d cycles commits=%0d first_led=0x%08x last_led=0x%08x led_writes=%0d pc=0x%08x last_wb0_pc=0x%08x last_wb1_pc=0x%08x  (%0d cycles)",
                      test_name_r, watchdog_cycles, commit_cnt, first_led,
-                     last_led, led_write_count, dut.u_cpu.pc, last_wb0_pc,
+                     last_led, led_write_count, dut.Core_cpu.u_cpu.pc, last_wb0_pc,
                      last_wb1_pc, cycle_cnt);
         end else begin
             $display("[TIMEOUT] %0s  commits=%0d first_led=0x%08x last_led=0x%08x led_writes=%0d pc=0x%08x last_wb0_pc=0x%08x last_wb1_pc=0x%08x  (>%0d cycles)",
                      test_name_r, commit_cnt, first_led, last_led,
-                     led_write_count, dut.u_cpu.pc, last_wb0_pc, last_wb1_pc,
+                     led_write_count, dut.Core_cpu.u_cpu.pc, last_wb0_pc, last_wb1_pc,
                      max_cycles);
         end
 
@@ -148,32 +149,32 @@ module tb_student_top_smoke;
             last_wb1_pc <= 32'd0;
         end else begin
             cycle_cnt <= cycle_cnt + 1;
-            commit_cnt <= commit_cnt + (dut.u_cpu.wb_valid ? 1 : 0)
-                                     + (dut.u_cpu.wb_s1_valid ? 1 : 0);
+            commit_cnt <= commit_cnt + (dut.Core_cpu.u_cpu.wb_valid ? 1 : 0)
+                                     + (dut.Core_cpu.u_cpu.wb_s1_valid ? 1 : 0);
 
-            if (dut.u_cpu.wb_valid)
-                last_wb0_pc <= dut.u_cpu.wb_pc_plus_4 - 32'd4;
-            if (dut.u_cpu.wb_s1_valid)
-                last_wb1_pc <= dut.u_cpu.wb_s1_pc;
+            if (dut.Core_cpu.u_cpu.wb_valid)
+                last_wb0_pc <= dut.Core_cpu.u_cpu.wb_pc_plus_4 - 32'd4;
+            if (dut.Core_cpu.u_cpu.wb_s1_valid)
+                last_wb1_pc <= dut.Core_cpu.u_cpu.wb_s1_pc;
 
             if (cycle_cnt >= max_cycles)
                 cycle_timeout_fired <= 1;
 
             if (led_write) begin
                 if (led_write_count == 0)
-                    first_led <= dut.u_mmio.wdata;
-                last_led <= dut.u_mmio.wdata;
+                    first_led <= dut.perip_wdata;
+                last_led <= dut.perip_wdata;
                 led_write_count <= led_write_count + 1;
 
-                if (dut.u_mmio.wdata != 32'd0 && !tohost_detected) begin
+                if (dut.perip_wdata != 32'd0 && !tohost_detected) begin
                     tohost_detected <= 1;
-                    tohost_value <= dut.u_mmio.wdata;
+                    tohost_value <= dut.perip_wdata;
                 end
 
                 if (led_trace_enable)
                     $display("[LED] %0s  cycle=%0d mem_pc=0x%08x value=0x%08x writes=%0d",
-                             test_name_r, cycle_cnt, dut.u_cpu.mem_pc,
-                             dut.u_mmio.wdata, led_write_count + 1);
+                             test_name_r, cycle_cnt, dut.Core_cpu.u_cpu.mem_pc,
+                             dut.perip_wdata, led_write_count + 1);
             end
 
             if (sim_progress)
@@ -185,9 +186,10 @@ module tb_student_top_smoke;
                 watchdog_fired <= 1;
 
             if (pc_guard_enable && cycle_cnt > 8 && !pc_guard_fired &&
-                (dut.u_cpu.pc < pc_guard_min || dut.u_cpu.pc >= pc_guard_max)) begin
+                (dut.Core_cpu.u_cpu.pc < pc_guard_min ||
+                 dut.Core_cpu.u_cpu.pc >= pc_guard_max)) begin
                 pc_guard_fired <= 1;
-                pc_guard_bad_pc <= dut.u_cpu.pc;
+                pc_guard_bad_pc <= dut.Core_cpu.u_cpu.pc;
             end
         end
     end

@@ -14,8 +14,8 @@ module ex_stage_ctrl (
     input  logic [31:0] wb_load_data,
     input  logic [31:0] ex_alu_src1,
     input  logic [31:0] ex_alu_src2,
-    input  logic        ex_alu_src1_is_rs1,
-    input  logic        ex_alu_src2_is_rs2,
+    input  logic        ex_alu_src1_wb_repair,
+    input  logic        ex_alu_src2_wb_repair,
     input  logic [31:0] ex_rs1_data,
     input  logic [31:0] ex_rs2_data,
 
@@ -39,8 +39,8 @@ module ex_stage_ctrl (
     input  logic        ex_s1_rs2_wb_repair,
     input  logic [31:0] ex_s1_alu_src1,
     input  logic [31:0] ex_s1_alu_src2,
-    input  logic        ex_s1_alu_src1_is_rs1,
-    input  logic        ex_s1_alu_src2_is_rs2,
+    input  logic        ex_s1_alu_src1_wb_repair,
+    input  logic        ex_s1_alu_src2_wb_repair,
     input  logic [31:0] ex_s1_rs1_data,
     input  logic [31:0] ex_s1_rs2_data,
     input  logic        ex_s1_predicted_taken,
@@ -83,18 +83,14 @@ module ex_stage_ctrl (
 
     // WB repair replaces only operands that originally came from rs1/rs2.
     // PC/zero/immediate operands must remain unchanged.
-    assign ex_alu_src1_repair = (ex_rs1_wb_repair & ex_alu_src1_is_rs1)
-                              ? wb_load_data
-                              : ex_alu_src1;
-    assign ex_alu_src2_repair = (ex_rs2_wb_repair & ex_alu_src2_is_rs2)
-                              ? wb_load_data
-                              : ex_alu_src2;
-    assign ex_s1_alu_src1_repair =
-        (ex_s1_rs1_wb_repair & ex_s1_alu_src1_is_rs1) ? wb_load_data :
-                                                         ex_s1_alu_src1;
-    assign ex_s1_alu_src2_repair =
-        (ex_s1_rs2_wb_repair & ex_s1_alu_src2_is_rs2) ? wb_load_data :
-                                                         ex_s1_alu_src2;
+    assign ex_alu_src1_repair = ex_alu_src1_wb_repair ? wb_load_data
+                                                       : ex_alu_src1;
+    assign ex_alu_src2_repair = ex_alu_src2_wb_repair ? wb_load_data
+                                                       : ex_alu_src2;
+    assign ex_s1_alu_src1_repair = ex_s1_alu_src1_wb_repair
+                                 ? wb_load_data : ex_s1_alu_src1;
+    assign ex_s1_alu_src2_repair = ex_s1_alu_src2_wb_repair
+                                 ? wb_load_data : ex_s1_alu_src2;
     assign ex_rs1_data_repair = ex_rs1_wb_repair ? wb_load_data :
                                                     ex_rs1_data;
     assign ex_rs2_data_repair = ex_rs2_wb_repair ? wb_load_data :
