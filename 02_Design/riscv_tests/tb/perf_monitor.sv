@@ -116,6 +116,56 @@ module perf_monitor (
     logic            dc_primary_refill_waiting;
     logic [15:0]     dc_primary_refill_latency;
 
+    // Direct-BRAM store-buffer drain profiling. Separate state occupancy
+    // from actual pipeline stalls and probe independent-drain concurrency.
+    longint unsigned cnt_dc_drain_req_cycles;
+    longint unsigned cnt_dc_drain_resp_cycles;
+    longint unsigned cnt_dc_drain_req_stall;
+    longint unsigned cnt_dc_drain_resp_stall;
+    longint unsigned cnt_dc_drain_stall_load;
+    longint unsigned cnt_dc_drain_stall_store;
+    longint unsigned cnt_dc_drain_stall_other;
+    longint unsigned cnt_dc_drain_pending_cycles;
+    longint unsigned cnt_dc_drain_read_overlap;
+    longint unsigned cnt_dc_drain_read_collision;
+    longint unsigned cnt_dc_drain_push_overlap;
+
+    // DCache stall attribution.  State counters are mutually exclusive;
+    // request/tag/SB counters are orthogonal views of the same stall cycles.
+    longint unsigned cnt_dc_stall_state_idle;
+    longint unsigned cnt_dc_stall_state_refill_req;
+    longint unsigned cnt_dc_stall_state_refill_data;
+    longint unsigned cnt_dc_stall_state_refill_drop;
+    longint unsigned cnt_dc_stall_state_done;
+    longint unsigned cnt_dc_stall_state_sb_req;
+    longint unsigned cnt_dc_stall_state_sb_resp;
+    longint unsigned cnt_dc_stall_state_other;
+    longint unsigned cnt_dc_stall_req_load;
+    longint unsigned cnt_dc_stall_req_store;
+    longint unsigned cnt_dc_stall_req_other;
+    longint unsigned cnt_dc_stall_tag_hit;
+    longint unsigned cnt_dc_stall_tag_miss;
+    longint unsigned cnt_dc_stall_sb_occ0;
+    longint unsigned cnt_dc_stall_sb_occ1;
+    longint unsigned cnt_dc_stall_sb_occ2;
+
+    // RV32M requests and wait cycles split by operation. A request is counted
+    // once when the unit accepts it from ID/EX; wait counters retain the
+    // existing definition (EX valid and result not done).
+    longint unsigned cnt_muldiv_issue [0:7];
+    longint unsigned cnt_muldiv_wait_op [0:7];
+    longint unsigned cnt_muldiv_complete;
+    longint unsigned cnt_muldiv_abort;
+    longint unsigned cnt_muldiv_lat1;
+    longint unsigned cnt_muldiv_lat2;
+    longint unsigned cnt_muldiv_lat3_4;
+    longint unsigned cnt_muldiv_lat5_8;
+    longint unsigned cnt_muldiv_lat9_16;
+    longint unsigned cnt_muldiv_lat17plus;
+    logic            muldiv_profile_active;
+    logic [7:0]      muldiv_profile_latency;
+    integer          muldiv_op_i;
+
     // -- RAW stall readiness breakdown --
     longint unsigned cnt_raw_id_stall;
     longint unsigned cnt_raw_not_ready_total;
@@ -241,6 +291,48 @@ module perf_monitor (
     longint unsigned cnt_ex_s1_seen;
     longint unsigned cnt_mem_s1_seen;
 
+    // Exact head-pair rejection reasons, derived from the same FQ metadata as
+    // frontend_pair_policy. These replace opcode-based guesses for diagnosis.
+    longint unsigned cnt_pair_block_no_candidate;
+    longint unsigned cnt_pair_block_noncontiguous;
+    longint unsigned cnt_pair_block_s0_pred_taken;
+    longint unsigned cnt_pair_block_s0_force_single;
+    longint unsigned cnt_pair_block_s1_force_single;
+    longint unsigned cnt_pair_block_s0_unsupported;
+    longint unsigned cnt_pair_block_s1_unsupported_exact;
+    longint unsigned cnt_pair_block_both_lsu;
+    longint unsigned cnt_pair_block_both_cfi;
+    longint unsigned cnt_pair_block_stored_other;
+
+    // Same-pair RAW producer/consumer matrix. Operand-role counters are hits,
+    // so rs1 and rs2 may both increment for one rejected pair.
+    longint unsigned cnt_pair_raw_prod_alu;
+    longint unsigned cnt_pair_raw_prod_load;
+    longint unsigned cnt_pair_raw_prod_cfi;
+    longint unsigned cnt_pair_raw_prod_other;
+    longint unsigned cnt_pair_raw_cons_alu;
+    longint unsigned cnt_pair_raw_cons_load;
+    longint unsigned cnt_pair_raw_cons_store;
+    longint unsigned cnt_pair_raw_cons_branch;
+    longint unsigned cnt_pair_raw_cons_jalr;
+    longint unsigned cnt_pair_raw_cons_other;
+    longint unsigned cnt_pair_raw_alu_to_alu;
+    longint unsigned cnt_pair_raw_alu_to_load;
+    longint unsigned cnt_pair_raw_alu_to_store;
+    longint unsigned cnt_pair_raw_alu_to_branch;
+    longint unsigned cnt_pair_raw_alu_to_jalr;
+    longint unsigned cnt_pair_raw_alu_to_other;
+    longint unsigned cnt_pair_raw_load_to_alu;
+    longint unsigned cnt_pair_raw_load_to_load;
+    longint unsigned cnt_pair_raw_load_to_store;
+    longint unsigned cnt_pair_raw_load_to_branch;
+    longint unsigned cnt_pair_raw_load_to_jalr;
+    longint unsigned cnt_pair_raw_load_to_other;
+    longint unsigned cnt_pair_raw_store_addr;
+    longint unsigned cnt_pair_raw_store_data;
+    longint unsigned cnt_pair_raw_alu_to_store_addr;
+    longint unsigned cnt_pair_raw_alu_to_store_data;
+
     // -- Forwarding source distribution (slot0 rs1 as representative) --
     longint unsigned cnt_fwd_s1_ex;
     longint unsigned cnt_fwd_s0_ex;
@@ -299,11 +391,19 @@ module perf_monitor (
     wire        mem_load_ready_w = tb_riscv_tests.u_cpu.mem_load_ready;
     wire        mmio_st_ld_hazard_w = tb_riscv_tests.u_cpu.mmio_st_ld_hazard;
     wire        ex_is_muldiv_w  = tb_riscv_tests.u_cpu.ex_is_muldiv;
+    wire [ 2:0] ex_muldiv_op_w  = tb_riscv_tests.u_cpu.ex_muldiv_op;
+    wire        ex_muldiv_req_w = tb_riscv_tests.u_cpu.ex_muldiv_req;
     wire        muldiv_done_w   = tb_riscv_tests.u_cpu.muldiv_done;
+    wire        muldiv_busy_w   = tb_riscv_tests.u_cpu.muldiv_busy;
+    wire        muldiv_start_event = ex_muldiv_req_w
+                                   & ~muldiv_busy_w & ~muldiv_done_w;
 
     wire        branch_flush_w  = tb_riscv_tests.u_cpu.branch_flush;
     wire        mem_branch_flush_w = tb_riscv_tests.u_cpu.mem_branch_flush;
     wire        frontend_branch_flush_w = tb_riscv_tests.u_cpu.frontend_branch_flush;
+    wire        muldiv_profile_abort_event = muldiv_profile_active
+                                           & (frontend_branch_flush_w
+                                              | mem_branch_flush_w);
     wire        ex_is_branch    = tb_riscv_tests.u_cpu.ex_is_branch;
     wire        ex_is_jal       = tb_riscv_tests.u_cpu.ex_is_jal;
     wire        ex_is_jalr      = tb_riscv_tests.u_cpu.ex_is_jalr;
@@ -496,8 +596,7 @@ module perf_monitor (
                          & ~tb_riscv_tests.u_dcache.cache_hit;
     wire dc_store_miss_w = tb_riscv_tests.u_dcache.store_miss_accept;
     wire dc_miss_start_w = dc_load_miss_w | dc_store_miss_w;
-    wire dc_sb_drain_w   = tb_riscv_tests.u_dcache.mem_req_valid
-                          & tb_riscv_tests.u_dcache.mem_req_write;
+    wire dc_sb_drain_w   = tb_riscv_tests.u_dcache.sb_pop;
     wire dc_refill_cycle_w = ~tb_riscv_tests.u_dcache.state_idle
                            & ~tb_riscv_tests.u_dcache.mem_req_write
                            & ~tb_riscv_tests.u_dcache.mem_wr_ready;
@@ -514,6 +613,28 @@ module perf_monitor (
     wire dc_primary_refill_start_w = tb_riscv_tests.u_dcache.idle_refill_start;
     wire dc_primary_refill_ready_w = tb_riscv_tests.u_dcache.refill_cpu_ready;
     wire dc_primary_refill_cancel_w = tb_riscv_tests.u_dcache.refill_cancel;
+    wire dc_state_idle_w = tb_riscv_tests.u_dcache.state_idle;
+    wire dc_state_refill_req_w = tb_riscv_tests.u_dcache.state_refill_req;
+    wire dc_state_refill_data_w = tb_riscv_tests.u_dcache.state_refill_data;
+    wire dc_state_refill_drop_w = tb_riscv_tests.u_dcache.state_refill_drop;
+    wire dc_state_done_w = tb_riscv_tests.u_dcache.state_done;
+    wire dc_state_sb_req_w = tb_riscv_tests.u_dcache.state_sb_drain_req;
+    wire dc_state_sb_resp_w = tb_riscv_tests.u_dcache.state_sb_drain_resp;
+    wire dc_mem_req_w = tb_riscv_tests.u_dcache.mem_req;
+    wire dc_mem_wr_w = tb_riscv_tests.u_dcache.mem_wr;
+    wire dc_tag_hit_w = tb_riscv_tests.u_dcache.cache_hit;
+    wire [1:0] dc_sb_pending_w = tb_riscv_tests.u_dcache.sb_pending_q;
+    wire dc_stall_event = mem_valid & ~mem_ready_go_w;
+    wire dc_drain_state_w = dc_state_sb_req_w | dc_state_sb_resp_w;
+    wire dc_drain_stall_w = dc_drain_state_w & dc_stall_event;
+    wire dc_pending_w = tb_riscv_tests.u_dcache.sb_any_valid;
+    wire dc_bram_read_w = tb_riscv_tests.u_dcache.bram_rd_en;
+    wire dc_drain_read_overlap_w = dc_pending_w & dc_bram_read_w;
+    wire dc_drain_read_collision_w = dc_drain_read_overlap_w
+                                    & (tb_riscv_tests.u_dcache.sb_head_addr[17:2]
+                                       == tb_riscv_tests.u_dcache.bram_rd_addr);
+    wire dc_drain_push_overlap_w = dc_pending_w
+                                  & tb_riscv_tests.u_dcache.sb_store_enqueue;
 
     wire lsu_s0_load_done = mem_valid & mem_ready_go_w & mem_mem_read_w;
     wire lsu_s0_store_done = mem_valid & mem_ready_go_w & (|mem_store_wea_w);
@@ -632,6 +753,62 @@ module perf_monitor (
     wire        fe_fq_has_slot1_w = tb_riscv_tests.u_cpu.u_frontend_ftq.fq_has_slot1;
     wire [31:0] fe_fq_count_w = tb_riscv_tests.u_cpu.u_frontend_ftq.fq_count;
     wire [31:0] fe_ftq_count_w = tb_riscv_tests.u_cpu.u_frontend_ftq.ftq_count;
+
+    // Exact FQ-head pair-policy inputs.  Reading these existing internal nets
+    // keeps profiling non-invasive and avoids changing timing-sensitive RTL.
+    wire [31:0] pair_head0_pc_w =
+        tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head0.pc;
+    wire [31:0] pair_head1_pc_w =
+        tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head1.pc;
+    wire pair_head0_pred_taken_w =
+        tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head0_pair_meta.pred_taken;
+    wire pair_head0_force_single_w =
+        tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head0_pair_meta.force_single;
+    wire pair_head1_force_single_w =
+        tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head1_pair_meta.force_single;
+    wire pair_head0_is_alu_w =
+        tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head0.is_alu_type;
+    wire pair_head0_is_load_w =
+        tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head0.is_load;
+    wire pair_head0_is_cfi_w =
+        tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head0_pair_meta.is_cfi;
+    wire pair_head0_is_lsu_w =
+        tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head0_pair_meta.is_lsu;
+    wire pair_head1_is_alu_w =
+        tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head1.is_alu_type;
+    wire pair_head1_is_load_w =
+        tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head1.is_load;
+    wire pair_head1_is_store_w =
+        tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head1.is_store;
+    wire pair_head1_is_branch_w =
+        tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head1.is_branch;
+    wire pair_head1_is_jalr_w =
+        tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head1.is_jalr;
+    wire pair_head1_is_cfi_w =
+        tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head1_pair_meta.is_cfi;
+    wire pair_head1_is_lsu_w =
+        tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head1_pair_meta.is_lsu;
+    wire pair_head0_supported_w =
+        tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head0_pair_meta.is_alu_type
+      | pair_head0_is_lsu_w | pair_head0_is_cfi_w;
+    wire pair_head1_supported_w =
+        tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head1_pair_meta.is_alu_type
+      | pair_head1_is_lsu_w | pair_head1_is_cfi_w;
+    wire pair_head_contiguous_w = pair_head1_pc_w == (pair_head0_pc_w + 32'd4);
+    wire pair_head_raw_rs1_w =
+        tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head0_pair_meta.writes_rd
+      & (tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head0_pair_meta.rd != 5'd0)
+      & tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head1_pair_meta.uses_rs1
+      & (tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head1_pair_meta.rs1
+         == tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head0_pair_meta.rd);
+    wire pair_head_raw_rs2_w =
+        tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head0_pair_meta.writes_rd
+      & (tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head0_pair_meta.rd != 5'd0)
+      & tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head1_pair_meta.uses_rs2
+      & (tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head1_pair_meta.rs2
+         == tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head0_pair_meta.rd);
+    wire pair_head_raw_w = pair_head_raw_rs1_w | pair_head_raw_rs2_w;
+    wire pair_exact_block_event = if_accept_w & ~if_s1_valid_w;
 
     wire fe_bp0_block_ftq_full_w = ~fe_redirect_valid_w & ~fe_ftq_alloc_ready_w;
     wire fe_bp0_block_fq_credit_w = ~fe_redirect_valid_w & fe_ftq_alloc_ready_w
@@ -772,6 +949,47 @@ module perf_monitor (
             cnt_dc_primary_refill_lat4plus <= 0;
             dc_primary_refill_waiting <= 1'b0;
             dc_primary_refill_latency <= 16'd0;
+            cnt_dc_drain_req_cycles <= 0;
+            cnt_dc_drain_resp_cycles <= 0;
+            cnt_dc_drain_req_stall <= 0;
+            cnt_dc_drain_resp_stall <= 0;
+            cnt_dc_drain_stall_load <= 0;
+            cnt_dc_drain_stall_store <= 0;
+            cnt_dc_drain_stall_other <= 0;
+            cnt_dc_drain_pending_cycles <= 0;
+            cnt_dc_drain_read_overlap <= 0;
+            cnt_dc_drain_read_collision <= 0;
+            cnt_dc_drain_push_overlap <= 0;
+            cnt_dc_stall_state_idle <= 0;
+            cnt_dc_stall_state_refill_req <= 0;
+            cnt_dc_stall_state_refill_data <= 0;
+            cnt_dc_stall_state_refill_drop <= 0;
+            cnt_dc_stall_state_done <= 0;
+            cnt_dc_stall_state_sb_req <= 0;
+            cnt_dc_stall_state_sb_resp <= 0;
+            cnt_dc_stall_state_other <= 0;
+            cnt_dc_stall_req_load <= 0;
+            cnt_dc_stall_req_store <= 0;
+            cnt_dc_stall_req_other <= 0;
+            cnt_dc_stall_tag_hit <= 0;
+            cnt_dc_stall_tag_miss <= 0;
+            cnt_dc_stall_sb_occ0 <= 0;
+            cnt_dc_stall_sb_occ1 <= 0;
+            cnt_dc_stall_sb_occ2 <= 0;
+            for (muldiv_op_i = 0; muldiv_op_i < 8; muldiv_op_i = muldiv_op_i + 1) begin
+                cnt_muldiv_issue[muldiv_op_i] <= 0;
+                cnt_muldiv_wait_op[muldiv_op_i] <= 0;
+            end
+            cnt_muldiv_complete <= 0;
+            cnt_muldiv_abort <= 0;
+            cnt_muldiv_lat1 <= 0;
+            cnt_muldiv_lat2 <= 0;
+            cnt_muldiv_lat3_4 <= 0;
+            cnt_muldiv_lat5_8 <= 0;
+            cnt_muldiv_lat9_16 <= 0;
+            cnt_muldiv_lat17plus <= 0;
+            muldiv_profile_active <= 1'b0;
+            muldiv_profile_latency <= 8'd0;
             cnt_raw_id_stall   <= 0;
             cnt_raw_not_ready_total <= 0;
             cnt_raw_not_ready_ex_load <= 0;
@@ -885,6 +1103,42 @@ module perf_monitor (
             cnt_id_s1_seen <= 0;
             cnt_ex_s1_seen <= 0;
             cnt_mem_s1_seen <= 0;
+            cnt_pair_block_no_candidate <= 0;
+            cnt_pair_block_noncontiguous <= 0;
+            cnt_pair_block_s0_pred_taken <= 0;
+            cnt_pair_block_s0_force_single <= 0;
+            cnt_pair_block_s1_force_single <= 0;
+            cnt_pair_block_s0_unsupported <= 0;
+            cnt_pair_block_s1_unsupported_exact <= 0;
+            cnt_pair_block_both_lsu <= 0;
+            cnt_pair_block_both_cfi <= 0;
+            cnt_pair_block_stored_other <= 0;
+            cnt_pair_raw_prod_alu <= 0;
+            cnt_pair_raw_prod_load <= 0;
+            cnt_pair_raw_prod_cfi <= 0;
+            cnt_pair_raw_prod_other <= 0;
+            cnt_pair_raw_cons_alu <= 0;
+            cnt_pair_raw_cons_load <= 0;
+            cnt_pair_raw_cons_store <= 0;
+            cnt_pair_raw_cons_branch <= 0;
+            cnt_pair_raw_cons_jalr <= 0;
+            cnt_pair_raw_cons_other <= 0;
+            cnt_pair_raw_alu_to_alu <= 0;
+            cnt_pair_raw_alu_to_load <= 0;
+            cnt_pair_raw_alu_to_store <= 0;
+            cnt_pair_raw_alu_to_branch <= 0;
+            cnt_pair_raw_alu_to_jalr <= 0;
+            cnt_pair_raw_alu_to_other <= 0;
+            cnt_pair_raw_load_to_alu <= 0;
+            cnt_pair_raw_load_to_load <= 0;
+            cnt_pair_raw_load_to_store <= 0;
+            cnt_pair_raw_load_to_branch <= 0;
+            cnt_pair_raw_load_to_jalr <= 0;
+            cnt_pair_raw_load_to_other <= 0;
+            cnt_pair_raw_store_addr <= 0;
+            cnt_pair_raw_store_data <= 0;
+            cnt_pair_raw_alu_to_store_addr <= 0;
+            cnt_pair_raw_alu_to_store_data <= 0;
             cnt_fwd_s1_ex      <= 0;
             cnt_fwd_s0_ex      <= 0;
             cnt_fwd_s1_mem     <= 0;
@@ -997,6 +1251,85 @@ module perf_monitor (
             if (ex_valid & ex_is_muldiv_w & !muldiv_done_w)
                 cnt_muldiv_stall <= cnt_muldiv_stall + 1;
 
+            // Attribute every DCache-induced pipeline stall to the active FSM
+            // state and, independently, to the blocked request and SB depth.
+            if (dc_stall_event) begin
+                if (dc_state_idle_w)
+                    cnt_dc_stall_state_idle <= cnt_dc_stall_state_idle + 1;
+                else if (dc_state_refill_req_w)
+                    cnt_dc_stall_state_refill_req <= cnt_dc_stall_state_refill_req + 1;
+                else if (dc_state_refill_data_w)
+                    cnt_dc_stall_state_refill_data <= cnt_dc_stall_state_refill_data + 1;
+                else if (dc_state_refill_drop_w)
+                    cnt_dc_stall_state_refill_drop <= cnt_dc_stall_state_refill_drop + 1;
+                else if (dc_state_done_w)
+                    cnt_dc_stall_state_done <= cnt_dc_stall_state_done + 1;
+                else if (dc_state_sb_req_w)
+                    cnt_dc_stall_state_sb_req <= cnt_dc_stall_state_sb_req + 1;
+                else if (dc_state_sb_resp_w)
+                    cnt_dc_stall_state_sb_resp <= cnt_dc_stall_state_sb_resp + 1;
+                else
+                    cnt_dc_stall_state_other <= cnt_dc_stall_state_other + 1;
+
+                if (dc_mem_req_w & dc_mem_wr_w)
+                    cnt_dc_stall_req_store <= cnt_dc_stall_req_store + 1;
+                else if (dc_mem_req_w)
+                    cnt_dc_stall_req_load <= cnt_dc_stall_req_load + 1;
+                else
+                    cnt_dc_stall_req_other <= cnt_dc_stall_req_other + 1;
+
+                if (dc_mem_req_w & dc_tag_hit_w)
+                    cnt_dc_stall_tag_hit <= cnt_dc_stall_tag_hit + 1;
+                else if (dc_mem_req_w)
+                    cnt_dc_stall_tag_miss <= cnt_dc_stall_tag_miss + 1;
+
+                case (dc_sb_pending_w)
+                    2'b00: cnt_dc_stall_sb_occ0 <= cnt_dc_stall_sb_occ0 + 1;
+                    2'b11: cnt_dc_stall_sb_occ2 <= cnt_dc_stall_sb_occ2 + 1;
+                    default: cnt_dc_stall_sb_occ1 <= cnt_dc_stall_sb_occ1 + 1;
+                endcase
+            end
+
+            // Count one RV32M request at unit entry, while retaining wait
+            // cycles per op for direct average-latency calculation.
+            if (muldiv_start_event)
+                cnt_muldiv_issue[ex_muldiv_op_w]
+                    <= cnt_muldiv_issue[ex_muldiv_op_w] + 1;
+            if (cpi_muldiv_event)
+                cnt_muldiv_wait_op[ex_muldiv_op_w]
+                    <= cnt_muldiv_wait_op[ex_muldiv_op_w] + 1;
+
+            if (muldiv_start_event) begin
+                muldiv_profile_active <= 1'b1;
+                muldiv_profile_latency <= 8'd1;
+            end else if (muldiv_profile_active) begin
+                if (muldiv_profile_abort_event) begin
+                    cnt_muldiv_abort <= cnt_muldiv_abort + 1;
+                    muldiv_profile_active <= 1'b0;
+                    muldiv_profile_latency <= 8'd0;
+                end else if (muldiv_done_w) begin
+                    cnt_muldiv_complete <= cnt_muldiv_complete + 1;
+                    if (muldiv_profile_latency <= 8'd1)
+                        cnt_muldiv_lat1 <= cnt_muldiv_lat1 + 1;
+                    else if (muldiv_profile_latency == 8'd2)
+                        cnt_muldiv_lat2 <= cnt_muldiv_lat2 + 1;
+                    else if (muldiv_profile_latency <= 8'd4)
+                        cnt_muldiv_lat3_4 <= cnt_muldiv_lat3_4 + 1;
+                    else if (muldiv_profile_latency <= 8'd8)
+                        cnt_muldiv_lat5_8 <= cnt_muldiv_lat5_8 + 1;
+                    else if (muldiv_profile_latency <= 8'd16)
+                        cnt_muldiv_lat9_16 <= cnt_muldiv_lat9_16 + 1;
+                    else
+                        cnt_muldiv_lat17plus <= cnt_muldiv_lat17plus + 1;
+                    muldiv_profile_active <= 1'b0;
+                    muldiv_profile_latency <= 8'd0;
+                end else if (&muldiv_profile_latency) begin
+                    muldiv_profile_latency <= muldiv_profile_latency;
+                end else begin
+                    muldiv_profile_latency <= muldiv_profile_latency + 1'b1;
+                end
+            end
+
             cnt_lsu_cache_load <= cnt_lsu_cache_load
                                 + (lsu_s0_load_done & is_cacheable_mem_w)
                                 + (lsu_s1_load_done & mem_s1_is_cacheable_w);
@@ -1028,6 +1361,31 @@ module perf_monitor (
             if (tb_riscv_tests.u_dcache.sb_conflict) cnt_dc_sb_conflicts <= cnt_dc_sb_conflicts + 1;
             if (dc_store_forward_hit_w)            cnt_dc_store_forward_hits <= cnt_dc_store_forward_hits + 1;
             if (dc_miss_buffer_hit_w)               cnt_dc_miss_buffer_hits <= cnt_dc_miss_buffer_hits + 1;
+
+            if (dc_state_sb_req_w)
+                cnt_dc_drain_req_cycles <= cnt_dc_drain_req_cycles + 1;
+            if (dc_state_sb_resp_w)
+                cnt_dc_drain_resp_cycles <= cnt_dc_drain_resp_cycles + 1;
+            if (dc_state_sb_req_w & dc_stall_event)
+                cnt_dc_drain_req_stall <= cnt_dc_drain_req_stall + 1;
+            if (dc_state_sb_resp_w & dc_stall_event)
+                cnt_dc_drain_resp_stall <= cnt_dc_drain_resp_stall + 1;
+            if (dc_drain_stall_w) begin
+                if (dc_mem_req_w & dc_mem_wr_w)
+                    cnt_dc_drain_stall_store <= cnt_dc_drain_stall_store + 1;
+                else if (dc_mem_req_w)
+                    cnt_dc_drain_stall_load <= cnt_dc_drain_stall_load + 1;
+                else
+                    cnt_dc_drain_stall_other <= cnt_dc_drain_stall_other + 1;
+            end
+            if (dc_pending_w)
+                cnt_dc_drain_pending_cycles <= cnt_dc_drain_pending_cycles + 1;
+            if (dc_drain_read_overlap_w)
+                cnt_dc_drain_read_overlap <= cnt_dc_drain_read_overlap + 1;
+            if (dc_drain_read_collision_w)
+                cnt_dc_drain_read_collision <= cnt_dc_drain_read_collision + 1;
+            if (dc_drain_push_overlap_w)
+                cnt_dc_drain_push_overlap <= cnt_dc_drain_push_overlap + 1;
 
             // Measure only the initiating load's cpu_ready=0 cycles. Remaining
             // line-fill activity and younger memory requests are excluded.
@@ -1238,6 +1596,96 @@ module perf_monitor (
                         else if (if_s1_is_system) cnt_if_s1_unsup_system <= cnt_if_s1_unsup_system + 1;
                         else cnt_if_s1_unsup_other <= cnt_if_s1_unsup_other + 1;
                     end
+
+                    // Exact, mutually-exclusive rejection reason. The old
+                    // opcode heuristic above is retained for log compatibility.
+                    if (!fe_fq_has_slot1_w) begin
+                        cnt_pair_block_no_candidate <= cnt_pair_block_no_candidate + 1;
+                    end else if (!pair_head_contiguous_w) begin
+                        cnt_pair_block_noncontiguous <= cnt_pair_block_noncontiguous + 1;
+                    end else if (pair_head0_pred_taken_w) begin
+                        cnt_pair_block_s0_pred_taken <= cnt_pair_block_s0_pred_taken + 1;
+                    end else if (pair_head0_force_single_w) begin
+                        cnt_pair_block_s0_force_single <= cnt_pair_block_s0_force_single + 1;
+                    end else if (pair_head1_force_single_w) begin
+                        cnt_pair_block_s1_force_single <= cnt_pair_block_s1_force_single + 1;
+                    end else if (pair_head_raw_w) begin
+                        if (pair_head0_is_alu_w)
+                            cnt_pair_raw_prod_alu <= cnt_pair_raw_prod_alu + 1;
+                        else if (pair_head0_is_load_w)
+                            cnt_pair_raw_prod_load <= cnt_pair_raw_prod_load + 1;
+                        else if (pair_head0_is_cfi_w)
+                            cnt_pair_raw_prod_cfi <= cnt_pair_raw_prod_cfi + 1;
+                        else
+                            cnt_pair_raw_prod_other <= cnt_pair_raw_prod_other + 1;
+
+                        if (pair_head1_is_alu_w)
+                            cnt_pair_raw_cons_alu <= cnt_pair_raw_cons_alu + 1;
+                        else if (pair_head1_is_load_w)
+                            cnt_pair_raw_cons_load <= cnt_pair_raw_cons_load + 1;
+                        else if (pair_head1_is_store_w)
+                            cnt_pair_raw_cons_store <= cnt_pair_raw_cons_store + 1;
+                        else if (pair_head1_is_branch_w)
+                            cnt_pair_raw_cons_branch <= cnt_pair_raw_cons_branch + 1;
+                        else if (pair_head1_is_jalr_w)
+                            cnt_pair_raw_cons_jalr <= cnt_pair_raw_cons_jalr + 1;
+                        else
+                            cnt_pair_raw_cons_other <= cnt_pair_raw_cons_other + 1;
+
+                        if (pair_head0_is_alu_w) begin
+                            if (pair_head1_is_alu_w)
+                                cnt_pair_raw_alu_to_alu <= cnt_pair_raw_alu_to_alu + 1;
+                            else if (pair_head1_is_load_w)
+                                cnt_pair_raw_alu_to_load <= cnt_pair_raw_alu_to_load + 1;
+                            else if (pair_head1_is_store_w)
+                                cnt_pair_raw_alu_to_store <= cnt_pair_raw_alu_to_store + 1;
+                            else if (pair_head1_is_branch_w)
+                                cnt_pair_raw_alu_to_branch <= cnt_pair_raw_alu_to_branch + 1;
+                            else if (pair_head1_is_jalr_w)
+                                cnt_pair_raw_alu_to_jalr <= cnt_pair_raw_alu_to_jalr + 1;
+                            else
+                                cnt_pair_raw_alu_to_other <= cnt_pair_raw_alu_to_other + 1;
+                        end else if (pair_head0_is_load_w) begin
+                            if (pair_head1_is_alu_w)
+                                cnt_pair_raw_load_to_alu <= cnt_pair_raw_load_to_alu + 1;
+                            else if (pair_head1_is_load_w)
+                                cnt_pair_raw_load_to_load <= cnt_pair_raw_load_to_load + 1;
+                            else if (pair_head1_is_store_w)
+                                cnt_pair_raw_load_to_store <= cnt_pair_raw_load_to_store + 1;
+                            else if (pair_head1_is_branch_w)
+                                cnt_pair_raw_load_to_branch <= cnt_pair_raw_load_to_branch + 1;
+                            else if (pair_head1_is_jalr_w)
+                                cnt_pair_raw_load_to_jalr <= cnt_pair_raw_load_to_jalr + 1;
+                            else
+                                cnt_pair_raw_load_to_other <= cnt_pair_raw_load_to_other + 1;
+                        end
+
+                        if (pair_head1_is_store_w & pair_head_raw_rs1_w)
+                            cnt_pair_raw_store_addr <= cnt_pair_raw_store_addr + 1;
+                        if (pair_head1_is_store_w & pair_head_raw_rs2_w)
+                            cnt_pair_raw_store_data <= cnt_pair_raw_store_data + 1;
+                        if (pair_head0_is_alu_w & pair_head1_is_store_w
+                            & pair_head_raw_rs1_w)
+                            cnt_pair_raw_alu_to_store_addr
+                                <= cnt_pair_raw_alu_to_store_addr + 1;
+                        if (pair_head0_is_alu_w & pair_head1_is_store_w
+                            & pair_head_raw_rs2_w)
+                            cnt_pair_raw_alu_to_store_data
+                                <= cnt_pair_raw_alu_to_store_data + 1;
+                    end else if (!pair_head0_supported_w) begin
+                        cnt_pair_block_s0_unsupported <= cnt_pair_block_s0_unsupported + 1;
+                    end else if (!pair_head1_supported_w) begin
+                        cnt_pair_block_s1_unsupported_exact
+                            <= cnt_pair_block_s1_unsupported_exact + 1;
+                    end else if (pair_head0_is_lsu_w & pair_head1_is_lsu_w) begin
+                        cnt_pair_block_both_lsu <= cnt_pair_block_both_lsu + 1;
+                    end else if (pair_head0_is_cfi_w & pair_head1_is_cfi_w) begin
+                        cnt_pair_block_both_cfi <= cnt_pair_block_both_cfi + 1;
+                    end else begin
+                        // Captures stored pair-policy mismatches or a future
+                        // frontend rule not represented by the current metadata.
+                        cnt_pair_block_stored_other <= cnt_pair_block_stored_other + 1;
+                    end
                 end
             end
             if (id_s1_valid)  cnt_id_s1_seen  <= cnt_id_s1_seen + 1;
@@ -1272,6 +1720,15 @@ module perf_monitor (
         longint unsigned lost_slots, lost_no_commit_slots, lost_single_issue_slots;
         longint unsigned other_breakdown_total;
         longint signed other_breakdown_mismatch;
+        longint unsigned dc_stall_state_total, dc_stall_req_total;
+        longint signed dc_stall_state_mismatch, dc_stall_req_mismatch;
+        longint unsigned dc_drain_state_cycles, dc_drain_stall_cycles;
+        longint unsigned dc_drain_hidden_cycles, dc_drain_stall_kind_total;
+        longint signed dc_drain_stall_kind_mismatch;
+        longint unsigned muldiv_issue_total, muldiv_wait_op_total;
+        longint signed muldiv_wait_op_mismatch;
+        longint unsigned pair_raw_exact_total, pair_block_exact_total;
+        longint signed pair_block_exact_mismatch;
         real cpi, dual_rate, mispredict_rate, dc_hit_rate, dc_miss_rate;
         real dc_primary_refill_avg;
         real fe_fq_avg, fe_ftq_avg;
@@ -1289,6 +1746,60 @@ module perf_monitor (
             lost_single_issue_slots = cnt_commit1_cycles;
             total_fwd = cnt_fwd_s1_ex + cnt_fwd_s0_ex + cnt_fwd_s1_mem
                        + cnt_fwd_s0_mem + cnt_fwd_s1_wb + cnt_fwd_s0_wb + cnt_fwd_rf;
+            muldiv_issue_total = cnt_muldiv_issue[0] + cnt_muldiv_issue[1]
+                               + cnt_muldiv_issue[2] + cnt_muldiv_issue[3]
+                               + cnt_muldiv_issue[4] + cnt_muldiv_issue[5]
+                               + cnt_muldiv_issue[6] + cnt_muldiv_issue[7];
+            muldiv_wait_op_total = cnt_muldiv_wait_op[0] + cnt_muldiv_wait_op[1]
+                                 + cnt_muldiv_wait_op[2] + cnt_muldiv_wait_op[3]
+                                 + cnt_muldiv_wait_op[4] + cnt_muldiv_wait_op[5]
+                                 + cnt_muldiv_wait_op[6] + cnt_muldiv_wait_op[7];
+            muldiv_wait_op_mismatch = $signed(muldiv_wait_op_total)
+                                    - $signed(cnt_muldiv_stall);
+            dc_stall_state_total = cnt_dc_stall_state_idle
+                                 + cnt_dc_stall_state_refill_req
+                                 + cnt_dc_stall_state_refill_data
+                                 + cnt_dc_stall_state_refill_drop
+                                 + cnt_dc_stall_state_done
+                                 + cnt_dc_stall_state_sb_req
+                                 + cnt_dc_stall_state_sb_resp
+                                 + cnt_dc_stall_state_other;
+            dc_stall_req_total = cnt_dc_stall_req_load
+                               + cnt_dc_stall_req_store
+                               + cnt_dc_stall_req_other;
+            dc_stall_state_mismatch = $signed(dc_stall_state_total)
+                                    - $signed(cnt_dcache_stall);
+            dc_stall_req_mismatch = $signed(dc_stall_req_total)
+                                  - $signed(cnt_dcache_stall);
+            dc_drain_state_cycles = cnt_dc_drain_req_cycles
+                                  + cnt_dc_drain_resp_cycles;
+            dc_drain_stall_cycles = cnt_dc_drain_req_stall
+                                  + cnt_dc_drain_resp_stall;
+            dc_drain_hidden_cycles = dc_drain_state_cycles
+                                   - dc_drain_stall_cycles;
+            dc_drain_stall_kind_total = cnt_dc_drain_stall_load
+                                      + cnt_dc_drain_stall_store
+                                      + cnt_dc_drain_stall_other;
+            dc_drain_stall_kind_mismatch =
+                $signed(dc_drain_stall_kind_total)
+              - $signed(dc_drain_stall_cycles);
+            pair_raw_exact_total = cnt_pair_raw_prod_alu
+                                 + cnt_pair_raw_prod_load
+                                 + cnt_pair_raw_prod_cfi
+                                 + cnt_pair_raw_prod_other;
+            pair_block_exact_total = cnt_pair_block_no_candidate
+                                   + cnt_pair_block_noncontiguous
+                                   + cnt_pair_block_s0_pred_taken
+                                   + cnt_pair_block_s0_force_single
+                                   + cnt_pair_block_s1_force_single
+                                   + pair_raw_exact_total
+                                   + cnt_pair_block_s0_unsupported
+                                   + cnt_pair_block_s1_unsupported_exact
+                                   + cnt_pair_block_both_lsu
+                                   + cnt_pair_block_both_cfi
+                                   + cnt_pair_block_stored_other;
+            pair_block_exact_mismatch = $signed(pair_block_exact_total)
+                                      - $signed(cnt_if_s1_block);
             cpi_stack_total = cnt_cpi_retire + cnt_cpi_redirect + cnt_cpi_dcache
                             + cnt_cpi_muldiv + cnt_cpi_raw_not_ready
                             + cnt_cpi_raw_ready_no_fwd + cnt_cpi_frontend_empty
@@ -1416,6 +1927,24 @@ module perf_monitor (
             $display("[PERF]  DCache miss:   %0d", cnt_dcache_stall);
             $display("[PERF]  MMIO hazard:   %0d", cnt_mmio_stall);
             $display("[PERF]  MUL/DIV wait:  %0d", cnt_muldiv_stall);
+            $display("[PERF]  MULDIV issued: mul=%0d mulh=%0d mulhsu=%0d mulhu=%0d div=%0d divu=%0d rem=%0d remu=%0d total=%0d",
+                     cnt_muldiv_issue[0], cnt_muldiv_issue[1],
+                     cnt_muldiv_issue[2], cnt_muldiv_issue[3],
+                     cnt_muldiv_issue[4], cnt_muldiv_issue[5],
+                     cnt_muldiv_issue[6], cnt_muldiv_issue[7],
+                     muldiv_issue_total);
+            $display("[PERF]  MULDIV wait ops: mul=%0d mulh=%0d mulhsu=%0d mulhu=%0d div=%0d divu=%0d rem=%0d remu=%0d total=%0d original=%0d mismatch=%0d",
+                     cnt_muldiv_wait_op[0], cnt_muldiv_wait_op[1],
+                     cnt_muldiv_wait_op[2], cnt_muldiv_wait_op[3],
+                     cnt_muldiv_wait_op[4], cnt_muldiv_wait_op[5],
+                     cnt_muldiv_wait_op[6], cnt_muldiv_wait_op[7],
+                     muldiv_wait_op_total, cnt_muldiv_stall,
+                     muldiv_wait_op_mismatch);
+            $display("[PERF]  MULDIV latency: complete=%0d abort=%0d lat1=%0d lat2=%0d lat3_4=%0d lat5_8=%0d lat9_16=%0d lat17plus=%0d",
+                     cnt_muldiv_complete, cnt_muldiv_abort,
+                     cnt_muldiv_lat1, cnt_muldiv_lat2,
+                     cnt_muldiv_lat3_4, cnt_muldiv_lat5_8,
+                     cnt_muldiv_lat9_16, cnt_muldiv_lat17plus);
             $display("[PERF]");
             $display("[PERF]  --- DCache Detailed ---");
             $display("[PERF]  Requests:      %0d loads=%0d stores=%0d",
@@ -1440,6 +1969,33 @@ module perf_monitor (
                      cnt_dc_sb_enqueue, cnt_dc_sb_drain, cnt_dc_sb_block_cycles,
                      cnt_dc_sb_conflicts, cnt_dc_store_forward_hits,
                      cnt_dc_miss_buffer_hits);
+            $display("[PERF]  Direct drain impact: req_cycles=%0d resp_cycles=%0d req_stall=%0d resp_stall=%0d stall_total=%0d hidden=%0d load=%0d store=%0d other=%0d kind_total=%0d mismatch=%0d",
+                     cnt_dc_drain_req_cycles, cnt_dc_drain_resp_cycles,
+                     cnt_dc_drain_req_stall, cnt_dc_drain_resp_stall,
+                     dc_drain_stall_cycles, dc_drain_hidden_cycles,
+                     cnt_dc_drain_stall_load, cnt_dc_drain_stall_store,
+                     cnt_dc_drain_stall_other, dc_drain_stall_kind_total,
+                     dc_drain_stall_kind_mismatch);
+            $display("[PERF]  Direct drain probe: pending=%0d read_overlap=%0d same_word=%0d push_overlap=%0d",
+                     cnt_dc_drain_pending_cycles, cnt_dc_drain_read_overlap,
+                     cnt_dc_drain_read_collision, cnt_dc_drain_push_overlap);
+            $display("[PERF]  DCache stall state: idle=%0d refill_req=%0d refill_data=%0d refill_drop=%0d done=%0d sb_req=%0d sb_resp=%0d other=%0d total=%0d original=%0d mismatch=%0d",
+                     cnt_dc_stall_state_idle,
+                     cnt_dc_stall_state_refill_req,
+                     cnt_dc_stall_state_refill_data,
+                     cnt_dc_stall_state_refill_drop,
+                     cnt_dc_stall_state_done,
+                     cnt_dc_stall_state_sb_req,
+                     cnt_dc_stall_state_sb_resp,
+                     cnt_dc_stall_state_other, dc_stall_state_total,
+                     cnt_dcache_stall, dc_stall_state_mismatch);
+            $display("[PERF]  DCache stall request: load=%0d store=%0d other=%0d tag_hit=%0d tag_miss=%0d sb_occ0=%0d sb_occ1=%0d sb_occ2=%0d total=%0d original=%0d mismatch=%0d",
+                     cnt_dc_stall_req_load, cnt_dc_stall_req_store,
+                     cnt_dc_stall_req_other,
+                     cnt_dc_stall_tag_hit, cnt_dc_stall_tag_miss,
+                     cnt_dc_stall_sb_occ0, cnt_dc_stall_sb_occ1,
+                     cnt_dc_stall_sb_occ2, dc_stall_req_total,
+                     cnt_dcache_stall, dc_stall_req_mismatch);
             $display("[PERF]  LSU complete:  cache_load=%0d cache_store=%0d mmio_load=%0d mmio_store=%0d",
                      cnt_lsu_cache_load, cnt_lsu_cache_store,
                      cnt_lsu_mmio_load, cnt_lsu_mmio_store);
@@ -1583,6 +2139,40 @@ module perf_monitor (
             $display("[PERF]    other:       %0d  (%0.1f%% of blocks)",
                      cnt_if_block_other,
                      cnt_if_s1_block > 0 ? 100.0*cnt_if_block_other/cnt_if_s1_block : 0.0);
+            $display("[PERF]  Pair block exact: no_candidate=%0d noncontiguous=%0d s0_pred_taken=%0d s0_force_single=%0d s1_force_single=%0d raw=%0d s0_unsupported=%0d s1_unsupported=%0d both_lsu=%0d both_cfi=%0d stored_other=%0d total=%0d original=%0d mismatch=%0d",
+                     cnt_pair_block_no_candidate,
+                     cnt_pair_block_noncontiguous,
+                     cnt_pair_block_s0_pred_taken,
+                     cnt_pair_block_s0_force_single,
+                     cnt_pair_block_s1_force_single,
+                     pair_raw_exact_total,
+                     cnt_pair_block_s0_unsupported,
+                     cnt_pair_block_s1_unsupported_exact,
+                     cnt_pair_block_both_lsu,
+                     cnt_pair_block_both_cfi,
+                     cnt_pair_block_stored_other,
+                     pair_block_exact_total, cnt_if_s1_block,
+                     pair_block_exact_mismatch);
+            $display("[PERF]  Pair RAW producer: alu=%0d load=%0d cfi=%0d other=%0d total=%0d",
+                     cnt_pair_raw_prod_alu, cnt_pair_raw_prod_load,
+                     cnt_pair_raw_prod_cfi, cnt_pair_raw_prod_other,
+                     pair_raw_exact_total);
+            $display("[PERF]  Pair RAW consumer: alu=%0d load=%0d store=%0d branch=%0d jalr=%0d other=%0d",
+                     cnt_pair_raw_cons_alu, cnt_pair_raw_cons_load,
+                     cnt_pair_raw_cons_store, cnt_pair_raw_cons_branch,
+                     cnt_pair_raw_cons_jalr, cnt_pair_raw_cons_other);
+            $display("[PERF]  Pair RAW ALU matrix: alu=%0d load=%0d store=%0d branch=%0d jalr=%0d other=%0d",
+                     cnt_pair_raw_alu_to_alu, cnt_pair_raw_alu_to_load,
+                     cnt_pair_raw_alu_to_store, cnt_pair_raw_alu_to_branch,
+                     cnt_pair_raw_alu_to_jalr, cnt_pair_raw_alu_to_other);
+            $display("[PERF]  Pair RAW load matrix: alu=%0d load=%0d store=%0d branch=%0d jalr=%0d other=%0d",
+                     cnt_pair_raw_load_to_alu, cnt_pair_raw_load_to_load,
+                     cnt_pair_raw_load_to_store, cnt_pair_raw_load_to_branch,
+                     cnt_pair_raw_load_to_jalr, cnt_pair_raw_load_to_other);
+            $display("[PERF]  Pair RAW store roles: addr=%0d data=%0d alu_addr=%0d alu_data=%0d",
+                     cnt_pair_raw_store_addr, cnt_pair_raw_store_data,
+                     cnt_pair_raw_alu_to_store_addr,
+                     cnt_pair_raw_alu_to_store_data);
             $display("[PERF]  S1 accepted type: ALU=%0d branch=%0d load=%0d store=%0d jal=%0d",
                      cnt_if_s1_alu_accept, cnt_if_s1_branch_accept,
                      cnt_if_s1_load_accept, cnt_if_s1_store_accept,
