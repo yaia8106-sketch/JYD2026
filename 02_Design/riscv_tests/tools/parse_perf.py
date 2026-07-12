@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 FULL_RUN_REASONS = {"stop_pc", "tohost_pass"}
 OK_FULL_STATUSES = {"PASS", "DONE"}
 
@@ -91,6 +91,34 @@ SUMMARY_COLUMNS = [
     "dcache_miss_stall",
     "mmio_hazard",
     "muldiv_wait",
+    "muldiv_issued_mul",
+    "muldiv_issued_mulh",
+    "muldiv_issued_mulhsu",
+    "muldiv_issued_mulhu",
+    "muldiv_issued_div",
+    "muldiv_issued_divu",
+    "muldiv_issued_rem",
+    "muldiv_issued_remu",
+    "muldiv_issued_total",
+    "muldiv_wait_mul",
+    "muldiv_wait_mulh",
+    "muldiv_wait_mulhsu",
+    "muldiv_wait_mulhu",
+    "muldiv_wait_div",
+    "muldiv_wait_divu",
+    "muldiv_wait_rem",
+    "muldiv_wait_remu",
+    "muldiv_wait_total",
+    "muldiv_wait_original",
+    "muldiv_wait_mismatch",
+    "muldiv_latency_complete",
+    "muldiv_latency_abort",
+    "muldiv_latency_lat1",
+    "muldiv_latency_lat2",
+    "muldiv_latency_lat3_4",
+    "muldiv_latency_lat5_8",
+    "muldiv_latency_lat9_16",
+    "muldiv_latency_lat17plus",
     "lsu_cache_load",
     "lsu_cache_store",
     "lsu_mmio_load",
@@ -124,6 +152,28 @@ SUMMARY_COLUMNS = [
     "dc_sb_conflicts",
     "dc_store_forward_hits",
     "dc_miss_buffer_hits",
+    "dc_stall_state_idle",
+    "dc_stall_state_refill_req",
+    "dc_stall_state_refill_data",
+    "dc_stall_state_refill_drop",
+    "dc_stall_state_done",
+    "dc_stall_state_sb_req",
+    "dc_stall_state_sb_resp",
+    "dc_stall_state_other",
+    "dc_stall_state_total",
+    "dc_stall_state_original",
+    "dc_stall_state_mismatch",
+    "dc_stall_req_load",
+    "dc_stall_req_store",
+    "dc_stall_req_other",
+    "dc_stall_req_tag_hit",
+    "dc_stall_req_tag_miss",
+    "dc_stall_req_sb_occ0",
+    "dc_stall_req_sb_occ1",
+    "dc_stall_req_sb_occ2",
+    "dc_stall_req_total",
+    "dc_stall_req_original",
+    "dc_stall_req_mismatch",
     "id_raw_stall",
     "raw_not_ready",
     "raw_ready_no_fwd",
@@ -207,6 +257,47 @@ SUMMARY_COLUMNS = [
     "s1_accepted",
     "s1_committed_if_pct",
     "s1_blocked",
+    "pair_block_no_candidate",
+    "pair_block_noncontiguous",
+    "pair_block_s0_pred_taken",
+    "pair_block_s0_force_single",
+    "pair_block_s1_force_single",
+    "pair_block_raw",
+    "pair_block_s0_unsupported",
+    "pair_block_s1_unsupported",
+    "pair_block_both_lsu",
+    "pair_block_both_cfi",
+    "pair_block_stored_other",
+    "pair_block_total",
+    "pair_block_original",
+    "pair_block_mismatch",
+    "pair_raw_prod_alu",
+    "pair_raw_prod_load",
+    "pair_raw_prod_cfi",
+    "pair_raw_prod_other",
+    "pair_raw_prod_total",
+    "pair_raw_cons_alu",
+    "pair_raw_cons_load",
+    "pair_raw_cons_store",
+    "pair_raw_cons_branch",
+    "pair_raw_cons_jalr",
+    "pair_raw_cons_other",
+    "pair_raw_alu_alu",
+    "pair_raw_alu_load",
+    "pair_raw_alu_store",
+    "pair_raw_alu_branch",
+    "pair_raw_alu_jalr",
+    "pair_raw_alu_other",
+    "pair_raw_load_alu",
+    "pair_raw_load_load",
+    "pair_raw_load_store",
+    "pair_raw_load_branch",
+    "pair_raw_load_jalr",
+    "pair_raw_load_other",
+    "pair_raw_store_addr",
+    "pair_raw_store_data",
+    "pair_raw_store_alu_addr",
+    "pair_raw_store_alu_data",
 ]
 
 COMPARE_METRICS = [
@@ -257,6 +348,24 @@ COMPARE_METRICS = [
     "dc_primary_refill_lat4plus",
     "dc_sb_block_cycles",
     "dc_sb_conflicts",
+    "dc_stall_state_refill_req",
+    "dc_stall_state_refill_data",
+    "dc_stall_state_sb_req",
+    "dc_stall_state_sb_resp",
+    "dc_stall_req_load",
+    "dc_stall_req_store",
+    "dc_stall_req_tag_hit",
+    "dc_stall_req_tag_miss",
+    "muldiv_issued_total",
+    "muldiv_wait_total",
+    "muldiv_latency_lat1",
+    "muldiv_latency_lat2",
+    "muldiv_latency_lat17plus",
+    "pair_block_no_candidate",
+    "pair_block_raw",
+    "pair_block_both_lsu",
+    "pair_block_both_cfi",
+    "pair_raw_store_alu_data",
     "mispredicts",
     "mispredict_rate_pct",
     "jcall_redirects",
@@ -502,6 +611,61 @@ def parse_perf_payload(payload: str, metrics: dict[str, Any]) -> None:
         metrics["lost_slots"] = values.get("lost", 0)
         metrics["lost_no_commit_slots"] = values.get("no_commit_lost", 0)
         metrics["lost_single_issue_slots"] = values.get("single_issue_lost", 0)
+        return
+
+    if payload.startswith("MULDIV issued:"):
+        for key, value in parse_value_pairs(payload).items():
+            metrics[f"muldiv_issued_{key}"] = value
+        return
+
+    if payload.startswith("MULDIV wait ops:"):
+        for key, value in parse_value_pairs(payload).items():
+            metrics[f"muldiv_wait_{key}"] = value
+        return
+
+    if payload.startswith("MULDIV latency:"):
+        for key, value in parse_value_pairs(payload).items():
+            metrics[f"muldiv_latency_{key}"] = value
+        return
+
+    if payload.startswith("DCache stall state:"):
+        for key, value in parse_value_pairs(payload).items():
+            metrics[f"dc_stall_state_{key}"] = value
+        return
+
+    if payload.startswith("DCache stall request:"):
+        for key, value in parse_value_pairs(payload).items():
+            metrics[f"dc_stall_req_{key}"] = value
+        return
+
+    if payload.startswith("Pair block exact:"):
+        for key, value in parse_value_pairs(payload).items():
+            metrics[f"pair_block_{key}"] = value
+        return
+
+    if payload.startswith("Pair RAW producer:"):
+        for key, value in parse_value_pairs(payload).items():
+            metrics[f"pair_raw_prod_{key}"] = value
+        return
+
+    if payload.startswith("Pair RAW consumer:"):
+        for key, value in parse_value_pairs(payload).items():
+            metrics[f"pair_raw_cons_{key}"] = value
+        return
+
+    if payload.startswith("Pair RAW ALU matrix:"):
+        for key, value in parse_value_pairs(payload).items():
+            metrics[f"pair_raw_alu_{key}"] = value
+        return
+
+    if payload.startswith("Pair RAW load matrix:"):
+        for key, value in parse_value_pairs(payload).items():
+            metrics[f"pair_raw_load_{key}"] = value
+        return
+
+    if payload.startswith("Pair RAW store roles:"):
+        for key, value in parse_value_pairs(payload).items():
+            metrics[f"pair_raw_store_{key}"] = value
         return
 
     if payload.startswith("S1 accepted type:"):
@@ -787,6 +951,30 @@ def finalize_metrics(metrics: dict[str, Any], fallback_test: str) -> dict[str, A
     if "ideal_slots" in metrics and "retired_slots" in metrics and "lost_slots" in metrics:
         if int(metrics["ideal_slots"]) - int(metrics["retired_slots"]) != int(metrics["lost_slots"]):
             consistency_errors.append("lost_slots_mismatch")
+    if "dc_stall_state_total" in metrics and "dcache_miss_stall" in metrics:
+        if int(metrics["dc_stall_state_total"]) != int(metrics["dcache_miss_stall"]):
+            consistency_errors.append("dc_stall_state_total_ne_dcache_stall")
+    if "dc_stall_state_mismatch" in metrics:
+        if int(metrics["dc_stall_state_mismatch"]) != 0:
+            consistency_errors.append("dc_stall_state_mismatch_nonzero")
+    if "dc_stall_req_total" in metrics and "dcache_miss_stall" in metrics:
+        if int(metrics["dc_stall_req_total"]) != int(metrics["dcache_miss_stall"]):
+            consistency_errors.append("dc_stall_req_total_ne_dcache_stall")
+    if "dc_stall_req_mismatch" in metrics:
+        if int(metrics["dc_stall_req_mismatch"]) != 0:
+            consistency_errors.append("dc_stall_req_mismatch_nonzero")
+    if "muldiv_wait_total" in metrics and "muldiv_wait" in metrics:
+        if int(metrics["muldiv_wait_total"]) != int(metrics["muldiv_wait"]):
+            consistency_errors.append("muldiv_wait_ops_total_ne_muldiv_wait")
+    if "muldiv_wait_mismatch" in metrics:
+        if int(metrics["muldiv_wait_mismatch"]) != 0:
+            consistency_errors.append("muldiv_wait_ops_mismatch_nonzero")
+    if "pair_block_original" in metrics and "s1_blocked" in metrics:
+        if int(metrics["pair_block_original"]) != int(metrics["s1_blocked"]):
+            consistency_errors.append("pair_block_original_ne_s1_blocked")
+    if "pair_block_mismatch" in metrics:
+        if int(metrics["pair_block_mismatch"]) != 0:
+            consistency_errors.append("pair_block_exact_mismatch_nonzero")
 
     metrics["consistency_errors"] = consistency_errors
     metrics["consistency_error_count"] = len(consistency_errors)
