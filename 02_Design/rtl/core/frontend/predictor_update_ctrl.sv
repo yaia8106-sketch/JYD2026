@@ -13,18 +13,20 @@ module predictor_update_ctrl
 
     input  logic               ex_ready_go,
     input  logic               mem_allowin,
-    input  logic               mem_branch_flush,
+    input  logic               mem_branch_flush, // 打拍到MEM的redirect信号(我们的redirect是在MEM/WB时钟边沿触发的)
 
+    // 即包含了EX执行后的confirm data，也包含了metadata的神秘结构体
     input  predictor_resolve_t slot0_resolve,
     input  predictor_resolve_t slot1_resolve,
 
     output logic               slot0_cfi_valid,
     output logic               slot1_cfi_valid,
-    output predictor_train_t   train,
-    output abtb_update_t       abtb_update,
-    output pht_update_t        pht_update
+    output predictor_train_t   train, // 似乎没什么卵用，历史遗留结构体说是
+    output abtb_update_t       abtb_update, // btb update info
+    output pht_update_t        pht_update // pht update info
 );
 
+    // slot0_cfi_valid = slot0_cfi_candidate
     wire slot0_cfi_candidate = slot0_resolve.valid
                              & (slot0_resolve.is_branch
                               | slot0_resolve.is_jal

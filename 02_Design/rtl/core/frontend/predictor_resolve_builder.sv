@@ -1,8 +1,7 @@
 // ============================================================
 // Module: predictor_resolve_builder
-// Description: Pure combinational construction of predictor resolve events.
+// Description: 将EX计算出的update信息封装进结构体
 // Domain: frontend.
-// Update arbitration and architectural state remain in predictor_update_ctrl.
 // ============================================================
 
 module predictor_resolve_builder

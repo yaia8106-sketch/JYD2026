@@ -7,7 +7,7 @@
 module frontend_stage1_steer_ctrl
     import cpu_defs::*;
 (
-    input  logic                   lookup_valid,
+    input  logic                   lookup_valid, // = ftq_alloc_ready && fq_credit_for_bp0 && !redirect_valid
     input  logic [31:0]            current_pc,
     input  frontend_steer_bank_t   bank0,
     input  frontend_steer_bank_t   bank1,

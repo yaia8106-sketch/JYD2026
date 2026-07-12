@@ -111,8 +111,8 @@ module frontend_fetch_queue
     wire [FQ_PTR_W:0] count_m2 =
         count - {{(FQ_PTR_W-1){1'b0}}, 2'd2};
 
-    // 按出队数量并行预计算三个候选值，让后端的晚到握手信号只经过
-    // 最后一层选择，不再串行经过inc/dec谓词树。
+    // 按出队入队数量并行预计算三个候选值，让后端的晚到握手信号只经过最后一层选择
+    // 对应三种情况：出队(0/1/2)时的不同入队数量(0/1/2)
     wire [FQ_PTR_W:0] count_if_deq_none =
         ({(FQ_PTR_W+1){enq_two}}  & count_p2) |
         ({(FQ_PTR_W+1){enq_one}}  & count_p1) |
@@ -126,14 +126,15 @@ module frontend_fetch_queue
         ({(FQ_PTR_W+1){enq_one}}  & count_m1) |
         ({(FQ_PTR_W+1){enq_none}} & count_m2);
 
+    // count用于记录fifo深度
     wire [FQ_PTR_W:0] count_next =
         ({(FQ_PTR_W+1){deq_dual}}   & count_if_deq_dual) |
         ({(FQ_PTR_W+1){deq_single}} & count_if_deq_single) |
         ({(FQ_PTR_W+1){deq_none}}   & count_if_deq_none);
 
-    wire [31:0] enq_last_next_pc =
+    wire [31:0] enq_last_next_pc = // 入队两条：slot1 PC+4；一条：slot0 PC+4
         enq_two ? (enq_entry1.pc + 32'd4) : (enq_entry0.pc + 32'd4);
-    wire [31:0] tail_next_pc_next =
+    wire [31:0] tail_next_pc_next = // 正常pipeline时，tail_next_pc_next = enq_last_next_pc
         enq0_valid ? enq_last_next_pc : tail_next_pc;
 
     integer entry_i;
@@ -157,8 +158,7 @@ module frontend_fetch_queue
             for (entry_i = 0; entry_i < FQ_DEPTH; entry_i = entry_i + 1)
                 pair_ok_mem[entry_i] <= 1'b0;
         end else begin
-            // A speculative payload write is harmless until count exposes it.
-            // A later cross-packet enqueue overwrites the previous tail policy.
+            // pair_ok_mem的队列本质是基于预测器预测出的指令顺序进行的配对，所以我们在flush时需要对pair_ok_mem的信息进行冲刷
             if (enq0_payload && (count != 0))
                 pair_ok_mem[tail_m1] <= prev_tail_pair_ok;
             if (enq0_payload) begin
