@@ -633,7 +633,10 @@ module perf_monitor (
     wire dc_drain_read_collision_w = dc_drain_read_overlap_w
                                     & (tb_riscv_tests.u_dcache.sb_head_addr[17:2]
                                        == tb_riscv_tests.u_dcache.bram_rd_addr);
-    wire dc_drain_push_overlap_w = dc_pending_w
+    // Count actual simultaneous queue state updates. Merely enqueueing while
+    // an older entry is pending is not necessarily a push/pop overlap when a
+    // same-word BRAM read blocks the drain.
+    wire dc_drain_push_overlap_w = dc_sb_drain_w
                                   & tb_riscv_tests.u_dcache.sb_store_enqueue;
 
     wire lsu_s0_load_done = mem_valid & mem_ready_go_w & mem_mem_read_w;

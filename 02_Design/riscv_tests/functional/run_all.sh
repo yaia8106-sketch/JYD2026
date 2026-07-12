@@ -101,6 +101,10 @@ echo "[INFO] Verifying generated DRAM IP latency contract..."
 bash "$SCRIPT_DIR/special/run_dram_ip_latency.sh"
 echo ""
 
+echo "[INFO] Running store-buffer state/lookup/refill test..."
+bash "$SCRIPT_DIR/memory/run_store_buffer.sh"
+echo ""
+
 echo "[INFO] Running standalone frontend ABTB correctness test..."
 bash "$SCRIPT_DIR/frontend/run_abtb.sh"
 echo ""

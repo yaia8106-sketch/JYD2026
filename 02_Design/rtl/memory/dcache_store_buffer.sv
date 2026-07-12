@@ -25,6 +25,9 @@ module dcache_store_buffer (
     output logic [ 3:0] drain_wea,
     output logic [31:0] drain_data,
 
+    input  logic [15:0] drain_compare_addr,
+    output logic        drain_addr_match,
+
     input  logic [31:0] lookup_addr,
     input  logic [ 3:0] lookup_mask,
     output logic        lookup_covers,
@@ -77,6 +80,14 @@ module dcache_store_buffer (
     assign drain_addr = drain_sel ? addr_q[1] : addr_q[0];
     assign drain_wea  = drain_sel ? wea_q[1]  : wea_q[0];
     assign drain_data = drain_sel ? data_q[1] : data_q[0];
+
+    // Compare both physical entries before the late drain selection. This is
+    // equivalent to comparing drain_addr after its wide mux, but keeps the
+    // alloc_sel/pending_q -> BRAM write-enable path to a one-bit mux.
+    wire drain_addr_match0 = addr_q[0][17:2] == drain_compare_addr;
+    wire drain_addr_match1 = addr_q[1][17:2] == drain_compare_addr;
+    assign drain_addr_match = drain_sel ? drain_addr_match1
+                                        : drain_addr_match0;
 
     // ================================================================
     //  Recent-store load-miss lookup

@@ -360,6 +360,7 @@ module dcache #(
     wire [31:0] sb_head_addr;
     wire [ 3:0] sb_head_wea;
     wire [31:0] sb_head_data;
+    wire        sb_head_addr_match;
     wire        sb_resp_fire;
     wire        sb_store_enqueue;
     wire        direct_sb_drain_fire;
@@ -415,8 +416,7 @@ module dcache #(
     // Port A is dedicated to writes, so a pending store does not need to own
     // the main DCache FSM. Defer only a same-word Port A write / Port B read;
     // cross-port read-during-write behavior is otherwise device-dependent.
-    wire direct_sb_read_collision = bram_rd_en
-                                  & (bram_rd_addr == sb_head_addr[17:2]);
+    wire direct_sb_read_collision = bram_rd_en & sb_head_addr_match;
     assign direct_sb_drain_fire = rst_n & DIRECT_BRAM & sb_any_valid
                                 & ~direct_sb_read_collision;
     assign bram_wr_addr = direct_sb_drain_fire ? sb_head_addr[17:2] : 16'd0;
@@ -472,6 +472,8 @@ module dcache #(
         .drain_addr         (sb_head_addr),
         .drain_wea          (sb_head_wea),
         .drain_data         (sb_head_data),
+        .drain_compare_addr (bram_rd_addr),
+        .drain_addr_match   (sb_head_addr_match),
         .lookup_addr        (mem_addr),
         .lookup_mask        (mem_load_mask),
         .lookup_covers      (miss_buffer_covers_load),
@@ -767,10 +769,26 @@ module dcache #(
 `ifndef SYNTHESIS
     always_ff @(posedge clk) begin
         if (rst_n & DIRECT_BRAM) begin
+            if (sb_head_addr_match
+                !== (sb_head_addr[17:2] == bram_rd_addr))
+                $error("DCache parallel drain-address compare mismatch");
             if ((|bram_wea) & bram_rd_en & (bram_wr_addr == bram_rd_addr))
                 $error("DCache issued a same-word direct-BRAM read/write collision");
             if (direct_sb_drain_fire & ~sb_any_valid)
                 $error("DCache direct drain fired without a pending store");
+            if (direct_sb_read_collision
+                & (direct_sb_drain_fire | sb_pop | (|bram_wea)))
+                $error("DCache direct drain was not blocked by a read collision");
+            if (sb_any_valid & ~direct_sb_read_collision
+                & ~direct_sb_drain_fire)
+                $error("DCache direct drain failed to make progress");
+            if (direct_sb_drain_fire
+                & ((bram_wr_addr != sb_head_addr[17:2])
+                   | (bram_wea != sb_head_wea)
+                   | (bram_wdata != sb_head_data)))
+                $error("DCache direct drain payload mismatch");
+            if (state_sb_drain_req | state_sb_drain_resp)
+                $error("DCache direct-BRAM mode entered generic drain FSM");
         end
     end
 `endif
