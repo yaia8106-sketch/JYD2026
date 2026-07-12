@@ -24,7 +24,13 @@
 # ────────────────────────────────────────────────────────────────
 
 # 输出目录（默认写到本脚本所在目录，每次覆盖旧文件）
-set OUTPUT_DIR [file normalize [file dirname [info script]]]
+if {[info exists STAGE_TIMING_OUTPUT_DIR]
+    && $STAGE_TIMING_OUTPUT_DIR ne ""} {
+    set OUTPUT_DIR [file normalize $STAGE_TIMING_OUTPUT_DIR]
+} else {
+    set OUTPUT_DIR [file normalize [file dirname [info script]]]
+}
+file mkdir $OUTPUT_DIR
 
 # 每组最多报告的路径条数
 set MAX_PATHS 3

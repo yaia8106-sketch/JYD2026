@@ -25,30 +25,33 @@
 #                        (default: 1; 0 means only pass 1)
 #   --bitstream          Write a bitstream from the final optimized design
 #   --bitstream-file F   Override the output bitstream path
+#   --output-dir DIR     Store DCP/reports/bitstream metadata under DIR
 #   --coe-dir DIR        Regenerate IROM64/DRAM4MyOwn from DIR/irom64.coe
 #                        and DIR/dram.coe before a clean build
 #   --no-reset           Reuse completed synthesis/routing results when possible
 #   --dry-run            Open the project and print the intended flow only
 #   --help               Print usage
 #
-# Outputs:
-#   03_Timing_Analysis/results/
+# Outputs (build.sh passes results/<COE-name> as --output-dir):
+#   03_Timing_Analysis/results/<COE-name>/
 #     postroute_physopt_pass1.dcp
 #     timing_postroute_physopt_pass1.rpt
 #     postroute_physopt_pass2.dcp        (default final checkpoint)
 #     timing_postroute_physopt_pass2.rpt
+#     final_timing_summary.txt
 #     utilization_final.rpt
 #     top_physopt_passN.bit              (only with --bitstream)
 #
 # The existing report_stage_timing.tcl is sourced on the final design and
-# continues to write 03_Timing_Analysis/stage_timing_report.txt.
+# writes stage_timing_report.txt under the selected output directory.
 # ================================================================
 
 proc flow_usage {} {
     puts "Usage:"
     puts "  vivado -mode batch -source 03_Timing_Analysis/run_synth_impl.tcl \\"
     puts "         -tclargs ?--jobs N? ?--extra-physopt N? ?--bitstream?"
-    puts "                  ?--bitstream-file FILE? ?--coe-dir DIR?"
+    puts "                  ?--bitstream-file FILE? ?--output-dir DIR?"
+    puts "                  ?--coe-dir DIR?"
     puts "                  ?--no-reset? ?--dry-run?"
 }
 
@@ -138,6 +141,7 @@ set jobs 16
 set extra_physopt_passes 1
 set write_bitstream_enabled 0
 set bitstream_file_arg ""
+set output_dir_arg ""
 set coe_dir_arg ""
 set reset_runs_enabled 1
 set dry_run 0
@@ -171,6 +175,11 @@ while {$arg_index < [llength $argv]} {
             set bitstream_file_arg [lindex $argv $arg_index]
             set write_bitstream_enabled 1
         }
+        --output-dir {
+            incr arg_index
+            if {$arg_index >= [llength $argv]} { flow_fail "missing value after --output-dir" }
+            set output_dir_arg [lindex $argv $arg_index]
+        }
         --coe-dir {
             incr arg_index
             if {$arg_index >= [llength $argv]} { flow_fail "missing value after --coe-dir" }
@@ -199,8 +208,17 @@ while {$arg_index < [llength $argv]} {
 set script_dir [file normalize [file dirname [info script]]]
 set workspace [file normalize [file join $script_dir ".."]]
 set project_path [file join $workspace "JYD2025_Contest-rv32i" "digital_twin.xpr"]
-set output_dir [file join $script_dir "results"]
 set stage_timing_script [file join $script_dir "report_stage_timing.tcl"]
+
+if {$output_dir_arg ne ""} {
+    if {[file pathtype $output_dir_arg] eq "absolute"} {
+        set output_dir [file normalize $output_dir_arg]
+    } else {
+        set output_dir [file normalize [file join $workspace $output_dir_arg]]
+    }
+} else {
+    set output_dir [file join $script_dir "results"]
+}
 
 set coe_dir ""
 set irom64_coe ""
@@ -421,14 +439,35 @@ report_route_status -file [file join $output_dir "route_status_final.rpt"]
 
 puts ""
 puts "Generating pipeline-stage timing analysis from final pass"
+set STAGE_TIMING_OUTPUT_DIR $output_dir
 source $stage_timing_script
 
+set final_setup_paths [get_timing_paths -quiet -setup -max_paths 1]
+if {[llength $final_setup_paths] == 0} {
+    flow_fail "no setup timing path was found in the final design"
+}
+set final_setup_slack [get_property SLACK [lindex $final_setup_paths 0]]
+set final_timing_status [expr {$final_setup_slack >= 0.0 ? "MET" : "VIOLATED"}]
+set final_timing_report [file join $output_dir "timing_postroute_physopt_pass${final_pass_number}.rpt"]
+set final_timing_summary_file [file join $output_dir "final_timing_summary.txt"]
+
+set summary_handle [open $final_timing_summary_file w]
+puts $summary_handle "Final post-route pass: $final_pass_number"
+puts $summary_handle "Setup WNS (ns): $final_setup_slack"
+puts $summary_handle "Timing status: $final_timing_status"
+puts $summary_handle "Timing report: $final_timing_report"
+close $summary_handle
+
+puts ""
+puts "================================================================"
+puts " FINAL TIMING SUMMARY"
+puts " Setup WNS : $final_setup_slack ns"
+puts " Status    : $final_timing_status"
+puts " Report    : $final_timing_report"
+puts " Summary   : $final_timing_summary_file"
+puts "================================================================"
+
 if {$write_bitstream_enabled} {
-    set final_setup_paths [get_timing_paths -quiet -setup -max_paths 1]
-    if {[llength $final_setup_paths] == 0} {
-        flow_fail "cannot write bitstream because no setup timing path was found"
-    }
-    set final_setup_slack [get_property SLACK [lindex $final_setup_paths 0]]
     if {$final_setup_slack < 0.0} {
         flow_fail "refusing to write a timing-failing bitstream (WNS=${final_setup_slack} ns)"
     }
@@ -440,7 +479,6 @@ if {$write_bitstream_enabled} {
     }
     file mkdir [file dirname $bitstream_file]
     puts ""
-    puts "Final setup WNS: $final_setup_slack ns"
     puts "Writing bitstream: $bitstream_file"
     write_bitstream -force $bitstream_file
 }
@@ -448,9 +486,11 @@ if {$write_bitstream_enabled} {
 puts ""
 puts "================================================================"
 puts " Flow complete"
+puts " Setup WNS       : $final_setup_slack ns ($final_timing_status)"
 puts " Final checkpoint: [file join $output_dir postroute_physopt_pass${final_pass_number}.dcp]"
-puts " Final timing rpt : [file join $output_dir timing_postroute_physopt_pass${final_pass_number}.rpt]"
-puts " Stage timing rpt : [file join $script_dir stage_timing_report.txt]"
+puts " Final timing rpt : $final_timing_report"
+puts " Timing summary  : $final_timing_summary_file"
+puts " Stage timing rpt : [file join $output_dir stage_timing_report.txt]"
 if {$write_bitstream_enabled} {
     puts " Bitstream        : $bitstream_file"
 }
