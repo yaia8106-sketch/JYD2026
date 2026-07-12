@@ -362,7 +362,8 @@ module dcache #(
     wire [31:0] sb_head_data;
     wire        sb_resp_fire;
     wire        sb_store_enqueue;
-    wire        sb_pop   = sb_resp_fire;
+    wire        direct_sb_drain_fire;
+    wire        sb_pop   = DIRECT_BRAM ? direct_sb_drain_fire : sb_resp_fire;
     wire        sb_push  = sb_store_enqueue;
     wire [31:0] sb_push_addr = {mem_addr[31:2], 2'b00};
 
@@ -411,8 +412,15 @@ module dcache #(
     assign bram_rd_addr = state_idle
                         ? direct_start_addr_candidate
                         : direct_stream_addr_candidate;
-    assign bram_wr_addr = (DIRECT_BRAM & state_sb_drain_req) ? sb_head_addr[17:2] : 16'd0;
-    assign bram_wea     = (DIRECT_BRAM & state_sb_drain_req) ? sb_head_wea : 4'd0;
+    // Port A is dedicated to writes, so a pending store does not need to own
+    // the main DCache FSM. Defer only a same-word Port A write / Port B read;
+    // cross-port read-during-write behavior is otherwise device-dependent.
+    wire direct_sb_read_collision = bram_rd_en
+                                  & (bram_rd_addr == sb_head_addr[17:2]);
+    assign direct_sb_drain_fire = rst_n & DIRECT_BRAM & sb_any_valid
+                                & ~direct_sb_read_collision;
+    assign bram_wr_addr = direct_sb_drain_fire ? sb_head_addr[17:2] : 16'd0;
+    assign bram_wea     = direct_sb_drain_fire ? sb_head_wea : 4'd0;
     assign bram_wdata   = sb_head_data;
 
     always_ff @(posedge clk) begin
@@ -507,8 +515,12 @@ module dcache #(
     assign sb_store_enqueue = idle_store_accept;
 
     wire idle_refill_start = idle_load_miss & ~miss_buffer_hit;
-    wire idle_drain_start  = sb_conflict
-                           | (sb_any_valid & ~idle_store_accept & ~idle_load_miss);
+    // The generic backend serializes drains through the main FSM. Direct
+    // BRAM drains independently through its dedicated write port above.
+    wire idle_drain_start  = ~DIRECT_BRAM
+                           & (sb_conflict
+                              | (sb_any_valid & ~idle_store_accept
+                                 & ~idle_load_miss));
     assign refill_start = idle_refill_start;
 
     wire refill_req_fire = state_refill_req & backend_req_ready;
@@ -748,9 +760,19 @@ module dcache #(
                      | idle_cpu_ready;
 
     // ================================================================
-    //  Background SB drain: when idle, SB valid, and no higher-priority
-    //  load-miss refill or store-hit conflict -> S_SB_DRAIN_REQ
-    //  Already handled in FSM next-state logic above.
+    //  Direct BRAM drains independently through Port A. Generic backends use
+    //  the S_SB_DRAIN_REQ/S_SB_DRAIN_RESP handshake in the main FSM.
     // ================================================================
+
+`ifndef SYNTHESIS
+    always_ff @(posedge clk) begin
+        if (rst_n & DIRECT_BRAM) begin
+            if ((|bram_wea) & bram_rd_en & (bram_wr_addr == bram_rd_addr))
+                $error("DCache issued a same-word direct-BRAM read/write collision");
+            if (direct_sb_drain_fire & ~sb_any_valid)
+                $error("DCache direct drain fired without a pending store");
+        end
+    end
+`endif
 
 endmodule

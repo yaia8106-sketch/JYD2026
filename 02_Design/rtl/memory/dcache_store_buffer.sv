@@ -185,14 +185,16 @@ module dcache_store_buffer (
 `ifndef SYNTHESIS
     always_ff @(posedge clk) begin
         if (rst_n) begin
-            if (push && pending_q[alloc_sel])
+            // Simultaneous pop/push is legal for an independent direct-BRAM
+            // drain. A full queue may replace the just-drained oldest slot;
+            // the later push assignment intentionally keeps its pending bit.
+            if (push && pending_q[alloc_sel]
+                     && !(pop && (drain_sel == alloc_sel)))
                 $error("DCache store buffer overwrote a pending entry");
             if (pop && !pending_q[drain_sel])
                 $error("DCache store buffer popped a non-pending entry");
             if (|(pending_q & ~recent_valid_q))
                 $error("DCache pending entry lost recent-store validity");
-            if (push && pop)
-                $error("DCache store buffer push/pop must be mutually exclusive");
         end
     end
 `endif

@@ -352,8 +352,15 @@ module tb_riscv_tests;
     reg [256*8-1:0] trace_file_r;
     wire miss_buffer_directed_test = (test_name_r == "dcache_miss_buffer");
     wire miss_buffer_coverage_failed = miss_buffer_directed_test
-                                     & ((miss_buffer_pending_seen != 4'b1111)
-                                        | (miss_buffer_hit_count < 4));
+                                     & (((miss_buffer_pending_seen & 4'b0111)
+                                         != 4'b0111)
+                                        | (miss_buffer_hit_count < 4)
+                                        | (u_perf.cnt_dc_drain_read_collision < 1)
+                                        | (u_perf.cnt_dc_drain_push_overlap < 1)
+                                        | (u_perf.cnt_dc_sb_enqueue
+                                           != u_perf.cnt_dc_sb_drain)
+                                        | (u_perf.cnt_dc_drain_req_cycles != 0)
+                                        | (u_perf.cnt_dc_drain_resp_cycles != 0));
     wire refill_early_directed_test = (test_name_r == "dcache_refill_early");
     wire refill_early_coverage_failed = refill_early_directed_test
                                       & ((u_perf.cnt_dc_primary_refill_starts != 4)
@@ -477,9 +484,15 @@ module tb_riscv_tests;
         end else if (!stop_pc_enable && tohost_detected) begin
             if (tohost_value == 32'd1) begin
                 if (miss_buffer_coverage_failed) begin
-                    $display("[FAIL] %0s  miss-buffer coverage incomplete hits=%0d pending_seen=%04b",
+                    $display("[FAIL] %0s  miss-buffer/direct-drain coverage incomplete hits=%0d pending_seen=%04b collisions=%0d push_overlap=%0d enq=%0d drain=%0d req_cycles=%0d resp_cycles=%0d",
                              test_name_r, miss_buffer_hit_count,
-                             miss_buffer_pending_seen);
+                             miss_buffer_pending_seen,
+                             u_perf.cnt_dc_drain_read_collision,
+                             u_perf.cnt_dc_drain_push_overlap,
+                             u_perf.cnt_dc_sb_enqueue,
+                             u_perf.cnt_dc_sb_drain,
+                             u_perf.cnt_dc_drain_req_cycles,
+                             u_perf.cnt_dc_drain_resp_cycles);
                 end else if (refill_early_coverage_failed) begin
                     $display("[FAIL] %0s  early-refill coverage mismatch starts=%0d completes=%0d aborts=%0d lat1=%0d lat2=%0d lat3=%0d lat4plus=%0d discarded_spec=%0d",
                              test_name_r,
