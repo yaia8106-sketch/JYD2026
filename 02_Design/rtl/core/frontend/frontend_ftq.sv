@@ -8,11 +8,11 @@
 // ============================================================
 
 `ifdef SYNTHESIS
-`ifdef ABTB_MEASUREMENT
-`define FRONTEND_FTQ_ABTB_WIDE_META
-`endif
-`else
-`define FRONTEND_FTQ_ABTB_WIDE_META
+    `ifdef ABTB_MEASUREMENT
+        `define FRONTEND_FTQ_ABTB_WIDE_META
+    `endif
+    `else
+        `define FRONTEND_FTQ_ABTB_WIDE_META
 `endif
 
 module frontend_ftq
@@ -88,9 +88,9 @@ module frontend_ftq
 );
 
     localparam logic [31:0] RESET_PC = 32'h8000_0000;
-    localparam logic [FTQ_PTR_W:0] FTQ_DEPTH_COUNT = (FTQ_PTR_W+1)'(FTQ_DEPTH);
-    localparam logic [FQ_PTR_W:0]  FQ_DEPTH_MINUS_2 = (FQ_PTR_W+1)'(FQ_DEPTH - 2);
-    localparam logic [FQ_PTR_W:0]  FQ_DEPTH_MINUS_4 = (FQ_PTR_W+1)'(FQ_DEPTH - 4);
+    localparam logic [FTQ_PTR_W:0] FTQ_DEPTH_COUNT = (FTQ_PTR_W+1)'(FTQ_DEPTH); // FTQ_DEPTH_COUNT = FTQ_DEPTH = 8
+    localparam logic [FQ_PTR_W:0]  FQ_DEPTH_MINUS_2 = (FQ_PTR_W+1)'(FQ_DEPTH - 2); // 8 - 2 = 6
+    localparam logic [FQ_PTR_W:0]  FQ_DEPTH_MINUS_4 = (FQ_PTR_W+1)'(FQ_DEPTH - 4); // 8 - 4 = 4
 `ifdef FRONTEND_FTQ_ABTB_WIDE_META
     localparam bit FQ_ABTB_WIDE_META = 1'b1;
 `else

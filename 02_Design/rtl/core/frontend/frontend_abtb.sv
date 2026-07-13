@@ -18,7 +18,7 @@ module frontend_abtb (
 
     // Stage-1 lookup. lookup_valid also qualifies LRU updates.
     input  logic        lookup_valid,
-    input  logic [31:0] predict_pc,
+    input  logic [31:0] predict_pc, // pred PC + sequential PC
 
     // Future PHT/RAS result inputs. J type instruction's directions are generated locally from the stored CFI type.
     input  logic        bank0_branch_taken,
