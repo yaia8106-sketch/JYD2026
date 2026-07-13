@@ -148,13 +148,20 @@ module muldiv_unit
     assign done = done_w;
     assign result = mul_done_w ? mul_result_w : result_r;
 
+    // The product is intentionally free-running and has no reset/enable.  Its
+    // value is architecturally observed only in S_MUL_DONE, one cycle after
+    // S_MUL_EXEC.  This simple register shape allows Vivado to absorb the
+    // destination into the final DSP48 PREG instead of routing the cascade
+    // output to a fabric FDRE.
+    always_ff @(posedge clk)
+        mul_product_r <= mul_product_w;
+
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             state         <= S_IDLE;
             op_r          <= 3'd0;
             mul_a_r       <= 33'd0;
             mul_b_r       <= 33'd0;
-            mul_product_r <= '0;
             result_r      <= 32'd0;
             div_divisor_1x_r <= 34'd0;
             div_divisor_2x_r <= 34'd0;
@@ -209,8 +216,8 @@ module muldiv_unit
                 end
 
                 S_MUL_EXEC: begin
-                    // Capture the DSP product one cycle after loading operands.
-                    mul_product_r <= mul_product_w;
+                    // The free-running DSP PREG captures this request's product
+                    // at the same edge as the transition to S_MUL_DONE.
                     state <= S_MUL_DONE;
                 end
 

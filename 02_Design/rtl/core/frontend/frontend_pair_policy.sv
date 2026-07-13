@@ -35,17 +35,35 @@ module frontend_pair_policy
     logic slot1_supported;
     logic both_lsu;
     logic both_cfi;
+    logic raw_rs1_dep;
+    logic raw_rs2_dep;
+    logic slot1_is_store;
+    logic store_data_bypassable;
+    logic blocking_raw_dep;
 
-    // Pairing is conservative: only supported instruction classes, no RAW from
-    // Slot 0 to Slot 1, no two LSU ops, and no two CFIs in one pair.
+    // Pairing is conservative: only supported instruction classes, no two LSU
+    // ops, no two CFIs, and no Slot 0 -> Slot 1 RAW except the explicit
+    // ALU-to-store-data bypass below.
     always_comb begin
-        raw_dep =
-            slot0_meta.writes_rd
-            && (slot0_meta.rd != 5'd0)
-            && ((slot1_meta.uses_rs1
-                 && (slot1_meta.rs1 == slot0_meta.rd))
-                || (slot1_meta.uses_rs2
-                    && (slot1_meta.rs2 == slot0_meta.rd)));
+        raw_rs1_dep = slot0_meta.writes_rd
+                    && (slot0_meta.rd != 5'd0)
+                    && slot1_meta.uses_rs1
+                    && (slot1_meta.rs1 == slot0_meta.rd);
+        raw_rs2_dep = slot0_meta.writes_rd
+                    && (slot0_meta.rd != 5'd0)
+                    && slot1_meta.uses_rs2
+                    && (slot1_meta.rs2 == slot0_meta.rd);
+        raw_dep = raw_rs1_dep | raw_rs2_dep;
+
+        // In the current ISA subset, a store is the only LSU class that uses
+        // rs2. Its address (rs1) must remain independent, while its data can
+        // consume the Slot 0 ALU result through the EX same-pair bypass.
+        slot1_is_store = slot1_meta.is_lsu & slot1_meta.uses_rs2;
+        store_data_bypassable = slot0_meta.is_alu_type
+                              & slot1_is_store
+                              & raw_rs2_dep
+                              & ~raw_rs1_dep;
+        blocking_raw_dep = raw_dep & ~store_data_bypassable;
 
         slot0_supported =
             slot0_meta.is_alu_type | slot0_meta.is_lsu | slot0_meta.is_cfi;
@@ -63,7 +81,7 @@ module frontend_pair_policy
             && !slot0_meta.pred_taken
             && !slot0_meta.force_single // slot0不强制单发射
             && !slot1_meta.force_single // slot1不强制单发射
-            && !raw_dep
+            && !blocking_raw_dep
             && pair_supported;
     end
 

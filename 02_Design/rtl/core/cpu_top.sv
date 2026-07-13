@@ -30,7 +30,7 @@ module cpu_top
     output logic        cache_wr,        // EX stage: 0=load, 1=store
     output logic [31:0] cache_addr,      // EX stage: memory address
     output logic [ 3:0] cache_wea,       // EX stage: byte write enable
-    output logic [31:0] cache_wdata,     // EX stage: write data
+    output logic [31:0] cache_wdata,     // EX stage: raw store data
     output logic [ 3:0] cache_load_mask, // EX stage: load byte lanes
     input  logic [31:0] cache_rdata,     // MEM stage: read data from DCache
     input  logic        cache_ready,     // MEM stage: hit or completed miss
@@ -278,13 +278,10 @@ module cpu_top
     wire        frontend_branch_flush;
     wire [31:0] frontend_branch_target;
 
-    // ---- Store interface (EX stage) ----
-    wire [31:0] store_data_shifted;
-    wire [31:0] s1_store_data_shifted;
-
     // ---- Memory interface ----
     wire [ 3:0] dram_wea;
     wire [ 3:0] dram_wea_s1;
+    wire [31:0] ex_s1_store_data_raw;
     wire [31:0] mem_load_data;         // MEM stage: raw cacheable/MMIO load data
     wire [31:0] mem_load_data_ext;
     wire        mem_load_ready;        // ready S0_MEM load can repair S0 ALU in EX
@@ -359,6 +356,7 @@ module cpu_top
     wire [ 1:0] wb_wb_sel = wb_s0_payload.wb_sel;
     wire        wb_is_load = wb_s0_payload.is_load;
     wire [31:0] wb_load_data = wb_s0_payload.load_data;
+    wire [31:0] wb_load_data_ex;
 
     // ---- Slot 1 shadow WB ----
     wire        wb_s1_valid;
@@ -453,6 +451,15 @@ module cpu_top
     wire        id_s1_rs2_used;
     wire        id_s0_alu_only;
     wire        id_s1_repair_ok;
+    // Qualify the same-pair bypass in ID and carry one registered bit into EX.
+    // This keeps the rd/rs comparisons off the ALU-to-store-data timing path.
+    wire id_s0_alu_store_data_bypass = id_s1_valid
+                                     & id_s0_alu_only
+                                     & dec1_mem_write_en
+                                     & dec_reg_write_en
+                                     & (id_rd_addr != 5'd0)
+                                     & (id_s1_rs2_addr == id_rd_addr)
+                                     & (id_s1_rs1_addr != id_rd_addr);
     // The LSU bridge arbitrates Slot 0/Slot 1 memory requests, routes them to
     // cache or MMIO, and returns the raw load word to the MEM load formatter.
     memory_access_unit u_memory_access_unit (
@@ -462,14 +469,14 @@ module cpu_top
         .ex_alu_addr         (alu_addr),
         .ex_mem_size         (ex_mem_size),
         .ex_store_wea        (dram_wea),
-        .ex_store_data       (store_data_shifted),
+        .ex_store_data       (ex_rs2_data_repair),
         .ex_s1_valid         (ex_s1_valid),
         .ex_s1_mem_read_en   (ex_s1_mem_read_en),
         .ex_s1_mem_write_en  (ex_s1_mem_write_en),
         .ex_s1_alu_addr      (alu_s1_addr),
         .ex_s1_mem_size      (ex_s1_mem_size),
         .ex_s1_store_wea     (dram_wea_s1),
-        .ex_s1_store_data    (s1_store_data_shifted),
+        .ex_s1_store_data    (ex_s1_store_data_raw),
         .mem_valid           (mem_valid),
         .mem_alu_result      (mem_alu_result),
         .mem_mem_read_en     (mem_mem_read_en),
@@ -1400,6 +1407,18 @@ module cpu_top
         .ex_payload          (ex_s1_payload)
     );
 
+    // Keep this timing-sensitive one-bit control separate from the wide Slot 1
+    // payload.  It follows exactly the same accept/hold/flush protocol as the
+    // ID/EX register without perturbing the packed payload layout and fanout.
+    logic ex_s0_alu_store_data_bypass_r;
+    always_ff @(posedge clk) begin
+        if (!rst_n || ex_flush)
+            ex_s0_alu_store_data_bypass_r <= 1'b0;
+        else if (ex_allowin)
+            ex_s0_alu_store_data_bypass_r <= id_ready_go
+                                             & id_s0_alu_store_data_bypass;
+    end
+
     // ==================== EX stage ====================
     // MEM-ready load consumers repair their operands from WB here. The
     // repaired result is allowed to feed younger ID consumers after moving CFI
@@ -1410,7 +1429,7 @@ module cpu_top
         .ex_valid                   (ex_valid),
         .ex_rs1_wb_repair           (ex_rs1_wb_repair),
         .ex_rs2_wb_repair           (ex_rs2_wb_repair),
-        .wb_load_data               (wb_load_data),
+        .wb_load_data               (wb_load_data_ex),
         .ex_alu_src1                (ex_alu_src1),
         .ex_alu_src2                (ex_alu_src2),
         .ex_alu_src1_wb_repair      (ex_alu_src1_wb_repair),
@@ -1577,7 +1596,7 @@ module cpu_top
         .store_mem_size  (ex_mem_size),
         .store_data_in   (ex_rs2_data_repair),
         .store_wea       (dram_wea),
-        .store_data_out  (store_data_shifted),
+        .store_data_out  (),
         // Shared load side (MEM stage, single LSU)
         .load_en         (mem_selected_load_en),
         .load_addr_low   (mem_selected_load_addr_low),
@@ -1587,15 +1606,23 @@ module cpu_top
         .load_data_out   (mem_load_data_ext)
     );
 
+    // Same-pair Slot 0 ALU forwarding is younger than every ordinary
+    // forwarding/WB-repair source captured for Slot 1, so it has priority.
+    // Carry only raw data across the EX and cache request boundaries; DCache
+    // and MMIO perform byte-lane alignment after their pipeline register.
+    assign ex_s1_store_data_raw = ex_s0_alu_store_data_bypass_r
+                                ? alu_result
+                                : ex_s1_rs2_data_repair;
+
     mem_interface u_mem_interface_s1_load (
         // Store side (EX stage, shares the single LSU when Slot0 is non-LSU)
         .store_valid     (ex_s1_valid),
         .store_en        (ex_s1_mem_write_en),
         .store_addr_low  (alu_s1_addr[1:0]),
         .store_mem_size  (ex_s1_mem_size),
-        .store_data_in   (ex_s1_rs2_data_repair),
+        .store_data_in   (ex_s1_store_data_raw),
         .store_wea       (dram_wea_s1),
-        .store_data_out  (s1_store_data_shifted),
+        .store_data_out  (),
         // Load formatting is shared by the Slot0 instance above.
         .load_en         (1'b0),
         .load_addr_low   (2'd0),
@@ -1604,6 +1631,22 @@ module cpu_top
         .load_dram_dout  (32'd0),
         .load_data_out   ()
     );
+
+`ifndef SYNTHESIS
+    always_ff @(posedge clk) begin
+        if (rst_n && ex_s1_valid
+                  && ex_s0_alu_store_data_bypass_r) begin
+            if (!(ex_valid && ex_reg_write_en && (ex_rd != 5'd0)
+                  && ex_s1_mem_write_en && (ex_s1_rs2_addr == ex_rd)
+                  && (ex_s1_rs1_addr != ex_rd)
+                  && !ex_mem_read_en && !ex_mem_write_en
+                  && !ex_is_csr && !ex_is_muldiv && !ex_is_bitmanip))
+                $fatal(1, "Invalid Slot0-ALU to Slot1-store-data bypass tag");
+            if (ex_s1_store_data_raw !== alu_result)
+                $fatal(1, "Slot1 store-data bypass did not select Slot0 ALU result");
+        end
+    end
+`endif
 
     // ==================== EX/MEM ====================
 
@@ -1620,7 +1663,7 @@ module cpu_top
         .s0_mem_size     (ex_mem_size),
         .s0_mem_unsigned (ex_mem_unsigned),
         .s0_store_wea    (dram_wea),
-        .s0_store_data   (store_data_shifted),
+        .s0_store_data   (ex_rs2_data_repair),
         .s0_is_cacheable (is_cacheable),
         .s1_pc           (ex_s1_pc),
         .s1_inst         (ex_s1_inst),
@@ -1634,7 +1677,7 @@ module cpu_top
         .s1_mem_size     (ex_s1_mem_size),
         .s1_mem_unsigned (ex_s1_mem_unsigned),
         .s1_store_wea    (dram_wea_s1),
-        .s1_store_data   (s1_store_data_shifted),
+        .s1_store_data   (ex_s1_store_data_raw),
         .s1_is_cacheable (is_cacheable_s1),
         .redirect        (ex_mem_redirect),
         .slot0_payload   (ex_mem_s0_payload),
@@ -1700,7 +1743,8 @@ module cpu_top
         .wb_valid       (wb_valid),
         .mem_load_valid (mem_load_valid),
         .mem_payload    (mem_wb_s0_payload),
-        .wb_payload     (wb_s0_payload)
+        .wb_payload     (wb_s0_payload),
+        .wb_load_data_ex(wb_load_data_ex)
     );
 
     mem_wb_reg_s1 u_mem_wb_reg_s1 (

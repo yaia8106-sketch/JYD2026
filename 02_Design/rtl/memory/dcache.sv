@@ -36,7 +36,7 @@ module dcache #(
     input  logic        cpu_wr,
     input  logic [31:0] cpu_addr,
     input  logic [ 3:0] cpu_wea,
-    input  logic [31:0] cpu_wdata,
+    input  logic [31:0] cpu_wdata,       // raw, aligned after the EX->MEM register
     input  logic [ 3:0] cpu_load_mask,
 
     // --- MEM stage outputs ---
@@ -459,13 +459,18 @@ module dcache #(
     wire [31:0] miss_buffer_rdata;
     wire        miss_buffer_covers_load;
 
+    // Delay byte-lane alignment until after the internal EX->MEM register.
+    // This removes the variable shift from the CPU ALU/store-bypass path while
+    // preserving the aligned payload expected by the cache and store buffer.
+    wire [31:0] mem_wdata_aligned = mem_wdata << {mem_addr[1:0], 3'b0};
+
     dcache_store_buffer u_store_buffer (
         .clk                (clk),
         .rst_n              (rst_n),
         .push               (sb_push),
         .push_addr          (sb_push_addr),
         .push_wea           (mem_wea),
-        .push_data          (mem_wdata),
+        .push_data          (mem_wdata_aligned),
         .pop                (sb_pop),
         .any_pending        (sb_any_valid),
         .full               (sb_full),
@@ -643,7 +648,7 @@ module dcache #(
     wire        store_cache_write = store_hit_accept;
     wire        store_cache_write_way = hit_way;
     wire [INDEX_W+WORD_W-1:0] store_cache_write_addr = store_data_addr;
-    wire [31:0] store_cache_write_data = mem_wdata;
+    wire [31:0] store_cache_write_data = mem_wdata_aligned;
     wire [ 3:0] store_cache_write_wea = mem_wea;
 
     // Refill write: one cache data RAM write per accepted backend read beat.

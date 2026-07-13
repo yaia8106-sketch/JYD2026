@@ -336,6 +336,7 @@ module tb_riscv_tests;
     integer direct_drain_push_pop_count = 0;
     integer direct_drain_read_parallel_count = 0;
     integer direct_drain_collision_block_count = 0;
+    integer same_pair_store_data_bypass_count = 0;
     integer refill_early_discarded_spec_reads = 0;
     reg [3:0] miss_buffer_pending_seen = 4'b0000;
     reg [1:0] direct_drain_collision_sel_seen = 2'b00;
@@ -381,6 +382,9 @@ module tb_riscv_tests;
                                          | (u_perf.cnt_dc_primary_refill_lat3 != 0)
                                          | (u_perf.cnt_dc_primary_refill_lat4plus != 0)
                                          | (refill_early_discarded_spec_reads < 2));
+    wire slot1_store_directed_test = (test_name_r == "slot1_store");
+    wire slot1_store_coverage_failed = slot1_store_directed_test
+                                     & (same_pair_store_data_bypass_count < 4);
 
     initial begin
         // ---- Parse plusargs ----
@@ -519,6 +523,10 @@ module tb_riscv_tests;
                              u_perf.cnt_dc_primary_refill_lat3,
                              u_perf.cnt_dc_primary_refill_lat4plus,
                              refill_early_discarded_spec_reads);
+                end else if (slot1_store_coverage_failed) begin
+                    $display("[FAIL] %0s  same-pair ALU-to-store-data bypass coverage incomplete hits=%0d expected_at_least=4",
+                             test_name_r,
+                             same_pair_store_data_bypass_count);
                 end else begin
                     $display("[PASS] %0s  commits=%0d first_led=0x%08x last_led=0x%08x led_writes=%0d pc=0x%08x last_wb0_pc=0x%08x last_wb1_pc=0x%08x  (%0d cycles)",
                              test_name_r, commit_cnt, tohost_value,
@@ -570,6 +578,17 @@ module tb_riscv_tests;
 
     always @(posedge clk) begin
         if (rst_n) cycle_cnt <= cycle_cnt + 1;
+    end
+
+    always @(posedge clk) begin
+        if (!rst_n)
+            same_pair_store_data_bypass_count <= 0;
+        else if (u_cpu.ex_valid && u_cpu.ex_s1_valid
+                 && u_cpu.ex_s0_alu_store_data_bypass_r
+                 && u_cpu.ex_ready_go_w && u_cpu.mem_allowin
+                 && !u_cpu.mem_branch_flush)
+            same_pair_store_data_bypass_count
+                <= same_pair_store_data_bypass_count + 1;
     end
 
     always @(posedge clk) begin

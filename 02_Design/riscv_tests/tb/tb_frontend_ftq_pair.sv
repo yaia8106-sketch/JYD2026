@@ -390,6 +390,22 @@ module tb_frontend_ftq_pair;
                       r_add(5'd5, 5'd0, 5'd0),
                       r_add(5'd6, 5'd0, 5'd5),
                       1'b0);
+        run_pair_case("ALU to store-data RAW bypass",
+                      r_add(5'd5, 5'd1, 5'd2),
+                      sw_inst(5'd5, 5'd3),
+                      1'b1);
+        run_pair_case("ALU to store-address RAW remains blocked",
+                      r_add(5'd5, 5'd1, 5'd2),
+                      sw_inst(5'd3, 5'd5),
+                      1'b0);
+        run_pair_case("ALU to store address and data RAW remains blocked",
+                      r_add(5'd5, 5'd1, 5'd2),
+                      sw_inst(5'd5, 5'd5),
+                      1'b0);
+        run_pair_case("JAL link to store-data RAW remains blocked",
+                      jal_inst(5'd5),
+                      sw_inst(5'd5, 5'd3),
+                      1'b0);
         run_pair_case("rd x0 does not form RAW",
                       r_add(5'd0, 5'd1, 5'd2),
                       r_add(5'd6, 5'd0, 5'd3),

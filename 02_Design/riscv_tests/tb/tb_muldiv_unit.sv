@@ -147,6 +147,13 @@ module tb_muldiv_unit;
         run_operand_set(32'hffff_ffff, 32'd2);
         run_operand_set(32'h8000_0001, 32'h7fff_ffff);
 
+        // Exercise carries and signs exactly around the multiplier's 17-bit
+        // low-limb boundary used by the parallel partial-product RTL.
+        run_operand_set(32'h0001_ffff, 32'h0002_0000);
+        run_operand_set(32'h0002_0001, 32'h0001_ffff);
+        run_operand_set(32'hfffe_0000, 32'h0001_ffff);
+        run_operand_set(32'h8001_ffff, 32'hfffe_0001);
+
         for (int n = 0; n < 1000; n++)
             run_operand_set($urandom(seed), $urandom(seed));
 

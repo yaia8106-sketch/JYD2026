@@ -332,6 +332,7 @@ module perf_monitor (
     longint unsigned cnt_pair_raw_store_data;
     longint unsigned cnt_pair_raw_alu_to_store_addr;
     longint unsigned cnt_pair_raw_alu_to_store_data;
+    longint unsigned cnt_pair_bypass_alu_to_store_data;
 
     // -- Forwarding source distribution (slot0 rs1 as representative) --
     longint unsigned cnt_fwd_s1_ex;
@@ -401,6 +402,9 @@ module perf_monitor (
     wire        branch_flush_w  = tb_riscv_tests.u_cpu.branch_flush;
     wire        mem_branch_flush_w = tb_riscv_tests.u_cpu.mem_branch_flush;
     wire        frontend_branch_flush_w = tb_riscv_tests.u_cpu.frontend_branch_flush;
+    wire pair_bypass_alu_to_store_data_w = ex_valid & ex_s1_valid
+        & tb_riscv_tests.u_cpu.ex_s0_alu_store_data_bypass_r
+        & ex_ready_go_w & mem_allowin_w & ~mem_branch_flush_w;
     wire        muldiv_profile_abort_event = muldiv_profile_active
                                            & (frontend_branch_flush_w
                                               | mem_branch_flush_w);
@@ -1142,6 +1146,7 @@ module perf_monitor (
             cnt_pair_raw_store_data <= 0;
             cnt_pair_raw_alu_to_store_addr <= 0;
             cnt_pair_raw_alu_to_store_data <= 0;
+            cnt_pair_bypass_alu_to_store_data <= 0;
             cnt_fwd_s1_ex      <= 0;
             cnt_fwd_s0_ex      <= 0;
             cnt_fwd_s1_mem     <= 0;
@@ -1693,6 +1698,9 @@ module perf_monitor (
             end
             if (id_s1_valid)  cnt_id_s1_seen  <= cnt_id_s1_seen + 1;
             if (ex_s1_valid)  cnt_ex_s1_seen  <= cnt_ex_s1_seen + 1;
+            if (pair_bypass_alu_to_store_data_w)
+                cnt_pair_bypass_alu_to_store_data
+                    <= cnt_pair_bypass_alu_to_store_data + 1;
             if (mem_s1_valid) cnt_mem_s1_seen <= cnt_mem_s1_seen + 1;
 
             // skip_inst0 analysis
@@ -2176,6 +2184,8 @@ module perf_monitor (
                      cnt_pair_raw_store_addr, cnt_pair_raw_store_data,
                      cnt_pair_raw_alu_to_store_addr,
                      cnt_pair_raw_alu_to_store_data);
+            $display("[PERF]  Pair RAW bypass: alu_to_store_data=%0d",
+                     cnt_pair_bypass_alu_to_store_data);
             $display("[PERF]  S1 accepted type: ALU=%0d branch=%0d load=%0d store=%0d jal=%0d",
                      cnt_if_s1_alu_accept, cnt_if_s1_branch_accept,
                      cnt_if_s1_load_accept, cnt_if_s1_store_accept,

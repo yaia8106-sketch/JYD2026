@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 FULL_RUN_REASONS = {"stop_pc", "tohost_pass"}
 OK_FULL_STATUSES = {"PASS", "DONE"}
 
@@ -318,6 +318,7 @@ SUMMARY_COLUMNS = [
     "pair_raw_store_data",
     "pair_raw_store_alu_addr",
     "pair_raw_store_alu_data",
+    "pair_raw_bypass_alu_to_store_data",
 ]
 
 COMPARE_METRICS = [
@@ -386,6 +387,7 @@ COMPARE_METRICS = [
     "pair_block_both_lsu",
     "pair_block_both_cfi",
     "pair_raw_store_alu_data",
+    "pair_raw_bypass_alu_to_store_data",
     "mispredicts",
     "mispredict_rate_pct",
     "jcall_redirects",
@@ -686,6 +688,11 @@ def parse_perf_payload(payload: str, metrics: dict[str, Any]) -> None:
     if payload.startswith("Pair RAW store roles:"):
         for key, value in parse_value_pairs(payload).items():
             metrics[f"pair_raw_store_{key}"] = value
+        return
+
+    if payload.startswith("Pair RAW bypass:"):
+        for key, value in parse_value_pairs(payload).items():
+            metrics[f"pair_raw_bypass_{key}"] = value
         return
 
     if payload.startswith("S1 accepted type:"):
