@@ -12,7 +12,7 @@
 #            route_design               AggressiveExplore
 #            route checkpoint opened by this script
 #            post-route phys_opt_design Explore        (pass 1)
-#            iterative phys_opt_design  Explore        (pass 2)
+#            optional iterative phys_opt_design Explore (direct use only)
 #
 # Batch usage:
 #   vivado -mode batch \
@@ -21,8 +21,9 @@
 #
 # Useful options:
 #   --jobs N             Parallel jobs for project runs (default: 16)
-#   --extra-physopt N    Extra post-route Explore passes after pass 1
-#                        (default: 1; 0 means only pass 1)
+#   --extra-physopt N    Extra same-process post-route Explore passes after
+#                        pass 1 (default: 0). build.sh deliberately keeps this
+#                        at 0 and runs pass-2 candidates in fresh processes.
 #   --bitstream          Write a bitstream from the final optimized design
 #   --bitstream-file F   Override the output bitstream path
 #   --output-dir DIR     Store DCP/reports/bitstream metadata under DIR
@@ -32,11 +33,11 @@
 #   --dry-run            Open the project and print the intended flow only
 #   --help               Print usage
 #
-# Outputs (build.sh passes results/<COE-name> as --output-dir):
-#   03_Timing_Analysis/results/<COE-name>/
+# Outputs for a direct invocation (build.sh uses a timestamped pass-1 dir):
+#   <output-dir>/
 #     postroute_physopt_pass1.dcp
 #     timing_postroute_physopt_pass1.rpt
-#     postroute_physopt_pass2.dcp        (default final checkpoint)
+#     postroute_physopt_pass2.dcp        (only with --extra-physopt >= 1)
 #     timing_postroute_physopt_pass2.rpt
 #     final_timing_summary.txt
 #     utilization_final.rpt
@@ -135,10 +136,37 @@ proc report_and_checkpoint {output_dir pass_number} {
     puts "  report    : $timing_file"
 }
 
+proc worst_slack {analysis_type} {
+    if {$analysis_type eq "setup"} {
+        set paths [get_timing_paths -quiet -setup -max_paths 1]
+    } else {
+        set paths [get_timing_paths -quiet -hold -max_paths 1]
+    }
+    if {[llength $paths] == 0} {
+        flow_fail "no $analysis_type timing path was found"
+    }
+    return [get_property SLACK [lindex $paths 0]]
+}
+
+proc total_negative_slack {analysis_type} {
+    if {$analysis_type eq "setup"} {
+        set paths [get_timing_paths -quiet -setup -slack_lesser_than 0.0 \
+            -max_paths 100000 -nworst 1]
+    } else {
+        set paths [get_timing_paths -quiet -hold -slack_lesser_than 0.0 \
+            -max_paths 100000 -nworst 1]
+    }
+    set total 0.0
+    foreach path $paths {
+        set total [expr {$total + [get_property SLACK $path]}]
+    }
+    return $total
+}
+
 # ---- Command-line options -------------------------------------------------
 
 set jobs 16
-set extra_physopt_passes 1
+set extra_physopt_passes 0
 set write_bitstream_enabled 0
 set bitstream_file_arg ""
 set output_dir_arg ""
@@ -436,51 +464,68 @@ for {set pass_number 1} {$pass_number <= $total_physopt_passes} {incr pass_numbe
 set final_pass_number $total_physopt_passes
 report_utilization -file [file join $output_dir "utilization_final.rpt"]
 report_route_status -file [file join $output_dir "route_status_final.rpt"]
+report_drc -file [file join $output_dir "drc_final.rpt"]
 
 puts ""
 puts "Generating pipeline-stage timing analysis from final pass"
 set STAGE_TIMING_OUTPUT_DIR $output_dir
 source $stage_timing_script
 
-set final_setup_paths [get_timing_paths -quiet -setup -max_paths 1]
-if {[llength $final_setup_paths] == 0} {
-    flow_fail "no setup timing path was found in the final design"
-}
-set final_setup_slack [get_property SLACK [lindex $final_setup_paths 0]]
-set final_timing_status [expr {$final_setup_slack >= 0.0 ? "MET" : "VIOLATED"}]
+set final_setup_slack [worst_slack setup]
+set final_setup_tns [total_negative_slack setup]
+set final_hold_slack [worst_slack hold]
+set final_hold_ths [total_negative_slack hold]
+set final_timing_met [expr {$final_setup_slack >= 0.0 && $final_hold_slack >= 0.0}]
+set final_timing_status [expr {$final_timing_met ? "MET" : "VIOLATED"}]
+set programming_status [expr {$final_timing_met ? "SAFE_TO_PROGRAM" : "DO_NOT_PROGRAM"}]
 set final_timing_report [file join $output_dir "timing_postroute_physopt_pass${final_pass_number}.rpt"]
 set final_timing_summary_file [file join $output_dir "final_timing_summary.txt"]
 
 set summary_handle [open $final_timing_summary_file w]
+puts $summary_handle "Pass: $final_pass_number"
 puts $summary_handle "Final post-route pass: $final_pass_number"
+puts $summary_handle "Strategy: explore"
+puts $summary_handle "Strategy command: phys_opt_design -directive Explore"
 puts $summary_handle "Setup WNS (ns): $final_setup_slack"
+puts $summary_handle "Setup TNS (ns): $final_setup_tns"
+puts $summary_handle "Hold WHS (ns): $final_hold_slack"
+puts $summary_handle "Hold THS (ns): $final_hold_ths"
 puts $summary_handle "Timing status: $final_timing_status"
+puts $summary_handle "Hardware recommendation: $programming_status"
 puts $summary_handle "Timing report: $final_timing_report"
+puts $summary_handle "Checkpoint: [file join $output_dir postroute_physopt_pass${final_pass_number}.dcp]"
 close $summary_handle
 
 puts ""
 puts "================================================================"
 puts " FINAL TIMING SUMMARY"
 puts " Setup WNS : $final_setup_slack ns"
+puts " Setup TNS : $final_setup_tns ns"
+puts " Hold WHS  : $final_hold_slack ns"
+puts " Hold THS  : $final_hold_ths ns"
 puts " Status    : $final_timing_status"
 puts " Report    : $final_timing_report"
 puts " Summary   : $final_timing_summary_file"
 puts "================================================================"
 
 if {$write_bitstream_enabled} {
-    if {$final_setup_slack < 0.0} {
-        flow_fail "refusing to write a timing-failing bitstream (WNS=${final_setup_slack} ns)"
-    }
-
     if {$requested_bitstream_file ne ""} {
         set bitstream_file $requested_bitstream_file
     } else {
         set bitstream_file [file join $output_dir "top_physopt_pass${final_pass_number}.bit"]
     }
     file mkdir [file dirname $bitstream_file]
+    if {!$final_timing_met} {
+        puts "WARNING: writing a comparison bitstream with timing status $final_timing_status."
+        puts "WARNING: this bitstream is marked $programming_status in $final_timing_summary_file."
+    }
     puts ""
     puts "Writing bitstream: $bitstream_file"
     write_bitstream -force $bitstream_file
+
+    set summary_handle [open $final_timing_summary_file a]
+    puts $summary_handle "Bitstream: $bitstream_file"
+    close $summary_handle
 }
 
 puts ""
