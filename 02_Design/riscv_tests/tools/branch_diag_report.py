@@ -219,13 +219,20 @@ def classify(row: dict[str, Any]) -> tuple[str, str]:
 
 def derive(row: dict[str, Any]) -> dict[str, Any]:
     s0_resolved = as_float(row, "pred_s0_resolved")
-    if s0_resolved == 0:
+    if row.get("pred_s0_resolved") in (None, ""):
         s0_resolved = as_float(row, "total_branch")
 
-    total_branch = as_float(row, "total_branch")
-    mispredicts = as_float(row, "mispredicts")
+    # Schema 7 adds a slot-complete CFI view.  Prefer it so Slot 1 redirects
+    # and JAL/JALR misses participate in the top-line accuracy; retain the
+    # legacy Slot 0 counters for older summaries.
+    if row.get("control_resolved") not in (None, ""):
+        total_branch = as_float(row, "control_resolved")
+        mispredicts = as_float(row, "control_mispredicts")
+    else:
+        total_branch = as_float(row, "total_branch")
+        mispredicts = as_float(row, "mispredicts")
     s0_miss = as_float(row, "pred_s0_mispredict")
-    if s0_miss == 0:
+    if row.get("pred_s0_mispredict") in (None, ""):
         s0_miss = mispredicts
 
     s1_branch = as_float(row, "pred_s1_branch")
@@ -241,7 +248,7 @@ def derive(row: dict[str, Any]) -> dict[str, Any]:
     out["total_branch"] = int(total_branch)
     out["mispredicts"] = int(mispredicts)
     out["accuracy_pct"] = 100.0 - pct(mispredicts, total_branch)
-    out["mispredict_rate_pct"] = as_float(row, "mispredict_rate_pct", pct(mispredicts, total_branch))
+    out["mispredict_rate_pct"] = pct(mispredicts, total_branch)
     out["s0_pred_taken_rate_pct"] = pct(as_float(row, "pred_s0_pred_taken"), s0_resolved)
     out["s0_actual_taken_rate_pct"] = pct(as_float(row, "pred_s0_actual_taken"), s0_resolved)
     out["s0_taken_gap_pct"] = out["s0_actual_taken_rate_pct"] - out["s0_pred_taken_rate_pct"]
@@ -294,7 +301,7 @@ def markdown_report(path: Path, rows: list[dict[str, Any]], inputs: list[tuple[s
         "",
         "## Top Rows",
         "",
-        "| suite | test | status | branches | acc% | predT% | actualT% | target-wrong% | train% | redirect-cycle% | class |",
+        "| suite | test | status | resolved CFI | acc% | predT% | actualT% | target-wrong% | train% | redirect-cycle% | class |",
         "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|",
     ]
     for row in suspicious[:20]:

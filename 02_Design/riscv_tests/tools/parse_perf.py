@@ -6,13 +6,14 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import re
 import sys
 from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 FULL_RUN_REASONS = {"stop_pc", "tohost_pass"}
 OK_FULL_STATUSES = {"PASS", "DONE"}
 
@@ -31,6 +32,10 @@ SUMMARY_COLUMNS = [
     "status_stop_pc",
     "status_cycle_limit",
     "cycles",
+    "clock_period_ns",
+    "runtime_ns",
+    "runtime_us",
+    "throughput_mips",
     "total_insts",
     "s0_commits",
     "s1_commits",
@@ -46,15 +51,42 @@ SUMMARY_COLUMNS = [
     "lost_slots",
     "lost_no_commit_slots",
     "lost_single_issue_slots",
+    "no_commit_cycle_pct",
+    "single_commit_cycle_pct",
+    "dual_commit_cycle_pct",
+    "slot_utilization_pct",
+    "lost_slot_pct",
     "cpi_stack_retire",
     "cpi_stack_redirect",
     "cpi_stack_dcache",
     "cpi_stack_muldiv",
+    "cpi_stack_bitmanip",
     "cpi_stack_raw_not_ready",
     "cpi_stack_raw_ready_no_fwd",
     "cpi_stack_frontend_empty",
     "cpi_stack_other_no_commit",
     "cpi_stack_total",
+    "loss_stack_productive",
+    "loss_stack_redirect",
+    "loss_stack_dcache",
+    "loss_stack_muldiv",
+    "loss_stack_bitmanip",
+    "loss_stack_raw_not_ready",
+    "loss_stack_raw_ready_no_fwd",
+    "loss_stack_frontend_empty",
+    "loss_stack_other",
+    "loss_stack_no_commit",
+    "loss_stack_total",
+    "loss_stack_cycles",
+    "loss_stack_mismatch",
+    "loss_stack_no_commit_mismatch",
+    "loss_recovery_redirect",
+    "loss_recovery_dcache",
+    "loss_recovery_muldiv",
+    "loss_recovery_bitmanip",
+    "primary_bottleneck",
+    "primary_bottleneck_cycles",
+    "primary_bottleneck_pct",
     "other_id_not_ready",
     "other_id_downstream",
     "other_ex_not_ready",
@@ -91,6 +123,7 @@ SUMMARY_COLUMNS = [
     "dcache_miss_stall",
     "mmio_hazard",
     "muldiv_wait",
+    "bitmanip_wait",
     "muldiv_issued_mul",
     "muldiv_issued_mulh",
     "muldiv_issued_mulhsu",
@@ -119,6 +152,21 @@ SUMMARY_COLUMNS = [
     "muldiv_latency_lat5_8",
     "muldiv_latency_lat9_16",
     "muldiv_latency_lat17plus",
+    "bitmanip_issued",
+    "bitmanip_fast",
+    "bitmanip_clmul",
+    "bitmanip_issue_classified",
+    "bitmanip_issue_mismatch",
+    "bitmanip_complete",
+    "bitmanip_abort",
+    "bitmanip_lat1",
+    "bitmanip_lat2",
+    "bitmanip_lat3_4",
+    "bitmanip_lat5_8",
+    "bitmanip_lat9_16",
+    "bitmanip_lat17plus",
+    "bitmanip_latency_total",
+    "bitmanip_latency_mismatch",
     "lsu_cache_load",
     "lsu_cache_store",
     "lsu_mmio_load",
@@ -183,11 +231,6 @@ SUMMARY_COLUMNS = [
     "dc_stall_req_other",
     "dc_stall_req_tag_hit",
     "dc_stall_req_tag_miss",
-    "dc_drain_req_stall",
-    "dc_drain_resp_stall",
-    "dc_drain_stall_total",
-    "dc_drain_probe_same_word",
-    "dc_drain_probe_push_overlap",
     "dc_stall_req_sb_occ0",
     "dc_stall_req_sb_occ1",
     "dc_stall_req_sb_occ2",
@@ -227,6 +270,7 @@ SUMMARY_COLUMNS = [
     "pred_s1_resolved",
     "pred_s1_branch",
     "pred_s1_jal",
+    "pred_s1_jalr",
     "pred_s0_pred_taken",
     "pred_s0_actual_taken",
     "pred_s0_mispredict",
@@ -319,6 +363,118 @@ SUMMARY_COLUMNS = [
     "pair_raw_store_alu_addr",
     "pair_raw_store_alu_data",
     "pair_raw_bypass_alu_to_store_data",
+    "mix_s0_accept",
+    "mix_s1_accept",
+    "mix_total",
+    "mix_alu",
+    "mix_load",
+    "mix_store",
+    "mix_branch",
+    "mix_jal",
+    "mix_jalr",
+    "mix_muldiv",
+    "mix_system",
+    "mix_bitmanip",
+    "mix_other",
+    "mix_classified",
+    "mix_mismatch",
+    "mix_commit_delta",
+    "control_resolved",
+    "control_s0_resolved",
+    "control_s1_resolved",
+    "control_branch",
+    "control_jal",
+    "control_jalr",
+    "control_mispredicts",
+    "control_s0_mispredicts",
+    "control_s1_mispredicts",
+    "control_branch_mispredicts",
+    "control_jal_mispredicts",
+    "control_jalr_mispredicts",
+    "control_mispredict_rate_pct",
+    "control_mismatch",
+    "control_miss_mpki",
+    "dc_miss_mpki",
+    "dc_stall_cycles_per_miss",
+    "load_use_cpki",
+    "raw_not_ready_cpki",
+    "raw_ready_no_fwd_cpki",
+    "muldiv_wait_cpki",
+    "bitmanip_wait_cpki",
+    "load_use_src_ex",
+    "load_use_src_mem_only",
+    "load_use_src_mem_ready",
+    "load_use_src_mem_blocked",
+    "load_use_src_s0_consumer",
+    "load_use_src_s1_consumer",
+    "load_use_s0_role_alu",
+    "load_use_s0_role_branch",
+    "load_use_s0_role_jalr",
+    "load_use_s0_role_load_addr",
+    "load_use_s0_role_store_addr",
+    "load_use_s0_role_store_data",
+    "load_use_s0_role_other",
+    "load_use_mem_ready_role_alu",
+    "load_use_mem_ready_role_branch",
+    "load_use_mem_ready_role_jalr",
+    "load_use_mem_ready_role_load_addr",
+    "load_use_mem_ready_role_store_addr",
+    "load_use_mem_ready_role_store_data",
+    "load_use_mem_ready_role_other",
+    "raw_nr_ex_load",
+    "raw_nr_mem_load_wait",
+    "raw_nr_muldiv_dep",
+    "raw_rnf_mem_load",
+    "raw_rnf_mem_s0_branch",
+    "raw_rnf_mem_s0_jalr",
+    "raw_rnf_mem_s0_load_addr",
+    "raw_rnf_mem_s0_store_addr",
+    "raw_rnf_mem_s0_store_data",
+    "raw_rnf_mem_s1",
+    "raw_rnf_repair",
+    "raw_rnf_branch_ex",
+    "raw_rnf_jalr_ex",
+    "raw_rnf_other",
+    "if_block_not_seq",
+    "if_block_raw",
+    "if_block_s0_muldiv",
+    "if_block_s0_jump",
+    "if_block_s1_policy",
+    "if_block_s1_unsupported",
+    "if_block_other",
+    "if_block_total",
+    "s1_unsup_type_load",
+    "s1_unsup_type_store",
+    "s1_unsup_type_muldiv",
+    "s1_unsup_type_jal",
+    "s1_unsup_type_jalr",
+    "s1_unsup_type_system",
+    "s1_unsup_type_other",
+    "s1_accept_type_alu",
+    "s1_accept_type_branch",
+    "s1_accept_type_load",
+    "s1_accept_type_store",
+    "s1_accept_type_jal",
+    "s0_if_accept_mix_alu",
+    "s0_if_accept_mix_load",
+    "s0_if_accept_mix_store",
+    "s0_if_accept_mix_control",
+    "s0_if_accept_mix_muldiv",
+    "s1_valid_cycles_id",
+    "s1_valid_cycles_ex",
+    "s1_valid_cycles_mem",
+    "s1_valid_cycles_wb_commits",
+    "fwd_s1_ex",
+    "fwd_s0_ex",
+    "fwd_s1_mem",
+    "fwd_s0_mem",
+    "fwd_s1_wb",
+    "fwd_s0_wb",
+    "fwd_rf",
+    "fwd_total",
+    "skip_inst0",
+    "skip_and_pred_taken",
+    "predict_dual_errors",
 ]
 
 COMPARE_METRICS = [
@@ -326,7 +482,11 @@ COMPARE_METRICS = [
     "total_insts",
     "cpi",
     "ipc",
+    "runtime_ns",
+    "throughput_mips",
     "dual_issue_pct",
+    "slot_utilization_pct",
+    "lost_slot_pct",
     "commit0_cycles",
     "commit1_cycles",
     "commit2_cycles",
@@ -338,10 +498,24 @@ COMPARE_METRICS = [
     "cpi_stack_redirect",
     "cpi_stack_dcache",
     "cpi_stack_muldiv",
+    "cpi_stack_bitmanip",
     "cpi_stack_raw_not_ready",
     "cpi_stack_raw_ready_no_fwd",
     "cpi_stack_frontend_empty",
     "cpi_stack_other_no_commit",
+    "loss_stack_redirect",
+    "loss_stack_dcache",
+    "loss_stack_muldiv",
+    "loss_stack_bitmanip",
+    "loss_stack_raw_not_ready",
+    "loss_stack_raw_ready_no_fwd",
+    "loss_stack_frontend_empty",
+    "loss_stack_other",
+    "loss_recovery_redirect",
+    "loss_recovery_dcache",
+    "loss_recovery_muldiv",
+    "loss_recovery_bitmanip",
+    "primary_bottleneck_cycles",
     "other_id_not_ready",
     "other_id_downstream",
     "other_ex_not_ready",
@@ -357,6 +531,8 @@ COMPARE_METRICS = [
     "dc_hits",
     "dc_misses",
     "dc_hit_rate_pct",
+    "dc_miss_mpki",
+    "dc_stall_cycles_per_miss",
     "dc_refill_cycles",
     "dc_primary_refill_starts",
     "dc_primary_refill_completes",
@@ -382,6 +558,15 @@ COMPARE_METRICS = [
     "muldiv_latency_lat1",
     "muldiv_latency_lat2",
     "muldiv_latency_lat17plus",
+    "bitmanip_wait",
+    "bitmanip_wait_cpki",
+    "bitmanip_issued",
+    "bitmanip_fast",
+    "bitmanip_clmul",
+    "bitmanip_complete",
+    "bitmanip_abort",
+    "bitmanip_lat2",
+    "bitmanip_lat17plus",
     "pair_block_no_candidate",
     "pair_block_raw",
     "pair_block_both_lsu",
@@ -390,6 +575,9 @@ COMPARE_METRICS = [
     "pair_raw_bypass_alu_to_store_data",
     "mispredicts",
     "mispredict_rate_pct",
+    "control_mispredicts",
+    "control_mispredict_rate_pct",
+    "control_miss_mpki",
     "jcall_redirects",
     "abtb_direct_lookup",
     "abtb_direct_steer",
@@ -423,6 +611,34 @@ COMPARE_METRICS = [
     "fe_ftq_avg",
 ]
 
+if len(SUMMARY_COLUMNS) != len(set(SUMMARY_COLUMNS)):
+    duplicates = sorted(
+        name for name in set(SUMMARY_COLUMNS) if SUMMARY_COLUMNS.count(name) > 1
+    )
+    raise RuntimeError(f"duplicate summary columns: {duplicates}")
+
+LOSS_CATEGORIES = [
+    ("redirect", "loss_stack_redirect"),
+    ("dcache", "loss_stack_dcache"),
+    ("muldiv", "loss_stack_muldiv"),
+    ("bitmanip", "loss_stack_bitmanip"),
+    ("raw_not_ready", "loss_stack_raw_not_ready"),
+    ("raw_ready_no_fwd", "loss_stack_raw_ready_no_fwd"),
+    ("frontend_empty", "loss_stack_frontend_empty"),
+    ("other", "loss_stack_other"),
+]
+
+LEGACY_LOSS_CATEGORIES = [
+    ("redirect_legacy_priority", "cpi_stack_redirect"),
+    ("dcache_legacy_priority", "cpi_stack_dcache"),
+    ("muldiv_legacy_priority", "cpi_stack_muldiv"),
+    ("bitmanip_legacy_priority", "cpi_stack_bitmanip"),
+    ("raw_not_ready_legacy_priority", "cpi_stack_raw_not_ready"),
+    ("raw_ready_no_fwd_legacy_priority", "cpi_stack_raw_ready_no_fwd"),
+    ("frontend_empty_legacy_priority", "cpi_stack_frontend_empty"),
+    ("other_legacy_priority", "cpi_stack_other_no_commit"),
+]
+
 INT_PATTERNS = [
     ("perf_cycles", r"^Cycles:\s+(\d+)"),
     ("s0_commits", r"^S0 commits:\s+(\d+)"),
@@ -435,6 +651,7 @@ INT_PATTERNS = [
     ("dcache_miss_stall", r"^DCache miss:\s+(\d+)"),
     ("mmio_hazard", r"^MMIO hazard:\s+(\d+)"),
     ("muldiv_wait", r"^MUL/DIV wait:\s+(\d+)"),
+    ("bitmanip_wait", r"^Bitmanip wait:\s+(\d+)"),
     ("id_raw_stall", r"^ID RAW stall cycles:\s+(\d+)"),
     ("raw_not_ready", r"^Not-ready RAW cycles:\s+(\d+)"),
     ("raw_ready_no_fwd", r"^Ready-no-forward RAW cycles:\s+(\d+)"),
@@ -585,11 +802,123 @@ def parse_perf_payload(payload: str, metrics: dict[str, Any]) -> None:
         metrics["cpi_stack_redirect"] = values.get("redirect", 0)
         metrics["cpi_stack_dcache"] = values.get("dcache", 0)
         metrics["cpi_stack_muldiv"] = values.get("muldiv", 0)
+        metrics["cpi_stack_bitmanip"] = values.get("bitmanip", 0)
         metrics["cpi_stack_raw_not_ready"] = values.get("raw_not_ready", 0)
         metrics["cpi_stack_raw_ready_no_fwd"] = values.get("raw_ready_no_fwd", 0)
         metrics["cpi_stack_frontend_empty"] = values.get("frontend_empty", 0)
         metrics["cpi_stack_other_no_commit"] = values.get("other_no_commit", 0)
         metrics["cpi_stack_total"] = values.get("total", 0)
+        return
+
+    if payload.startswith("Loss stack:"):
+        values = parse_value_pairs(payload)
+        for key in [
+            "productive",
+            "redirect",
+            "dcache",
+            "muldiv",
+            "bitmanip",
+            "raw_not_ready",
+            "raw_ready_no_fwd",
+            "frontend_empty",
+            "other",
+            "no_commit",
+            "total",
+            "cycles",
+            "mismatch",
+            "no_commit_mismatch",
+        ]:
+            metrics[f"loss_stack_{key}"] = values.get(key, 0)
+        return
+
+    if payload.startswith("Loss recovery:"):
+        for key, value in parse_value_pairs(payload).items():
+            metrics[f"loss_recovery_{key}"] = value
+        return
+
+    if payload.startswith("Accepted mix:"):
+        values = parse_value_pairs(payload)
+        for key in [
+            "s0",
+            "s1",
+            "total",
+            "alu",
+            "load",
+            "store",
+            "branch",
+            "jal",
+            "jalr",
+            "muldiv",
+            "system",
+            "bitmanip",
+            "other",
+            "classified",
+            "mismatch",
+            "commit_delta",
+        ]:
+            output_key = {"s0": "s0_accept", "s1": "s1_accept"}.get(key, key)
+            metrics[f"mix_{output_key}"] = values.get(key, 0)
+        return
+
+    if payload.startswith("Control prediction:"):
+        values = parse_value_pairs(payload)
+        mapping = {
+            "resolved": "control_resolved",
+            "s0": "control_s0_resolved",
+            "s1": "control_s1_resolved",
+            "branch": "control_branch",
+            "jal": "control_jal",
+            "jalr": "control_jalr",
+            "misses": "control_mispredicts",
+            "s0_miss": "control_s0_mispredicts",
+            "s1_miss": "control_s1_mispredicts",
+            "branch_miss": "control_branch_mispredicts",
+            "jal_miss": "control_jal_mispredicts",
+            "jalr_miss": "control_jalr_mispredicts",
+            "mismatch": "control_mismatch",
+        }
+        for source, target in mapping.items():
+            metrics[target] = values.get(source, 0)
+        return
+
+    if payload.startswith("Load-use source:"):
+        for key, value in parse_value_pairs(payload).items():
+            metrics[f"load_use_src_{key}"] = value
+        return
+
+    if payload.startswith("Load-use S0 roles:"):
+        for key, value in parse_value_pairs(payload).items():
+            metrics[f"load_use_s0_role_{key}"] = value
+        return
+
+    if payload.startswith("Load-use MEM-ready roles:"):
+        for key, value in parse_value_pairs(payload).items():
+            metrics[f"load_use_mem_ready_role_{key}"] = value
+        return
+
+    if payload.startswith("RAW not-ready detail:"):
+        for key, value in parse_value_pairs(payload).items():
+            metrics[f"raw_nr_{key}"] = value
+        return
+
+    if payload.startswith("RAW ready-no-fwd detail:"):
+        for key, value in parse_value_pairs(payload).items():
+            metrics[f"raw_rnf_{key}"] = value
+        return
+
+    if payload.startswith("IF block heuristic:"):
+        for key, value in parse_value_pairs(payload).items():
+            metrics[f"if_block_{key}"] = value
+        return
+
+    if payload.startswith("S1 unsupported type:"):
+        for key, value in parse_value_pairs(payload).items():
+            metrics[f"s1_unsup_type_{key}"] = value
+        return
+
+    if payload.startswith("Forwarding source:"):
+        for key, value in parse_value_pairs(payload).items():
+            metrics[f"fwd_{key}"] = value
         return
 
     if payload.startswith("Other no-commit:"):
@@ -648,6 +977,11 @@ def parse_perf_payload(payload: str, metrics: dict[str, Any]) -> None:
     if payload.startswith("MULDIV latency:"):
         for key, value in parse_value_pairs(payload).items():
             metrics[f"muldiv_latency_{key}"] = value
+        return
+
+    if payload.startswith("Bitmanip profile:"):
+        for key, value in parse_value_pairs(payload).items():
+            metrics[f"bitmanip_{key}"] = value
         return
 
     if payload.startswith("DCache stall state:"):
@@ -808,6 +1142,7 @@ def parse_perf_payload(payload: str, metrics: dict[str, Any]) -> None:
         metrics["pred_s1_resolved"] = values.get("s1", 0)
         metrics["pred_s1_branch"] = values.get("s1_branch", 0)
         metrics["pred_s1_jal"] = values.get("s1_jal", 0)
+        metrics["pred_s1_jalr"] = values.get("s1_jalr", 0)
         return
 
     if payload.startswith("Pred s0 pred:"):
@@ -918,7 +1253,19 @@ def parse_perf_payload(payload: str, metrics: dict[str, Any]) -> None:
         return
 
 
-def finalize_metrics(metrics: dict[str, Any], fallback_test: str) -> dict[str, Any]:
+def percent(numerator: float, denominator: float) -> float:
+    return 100.0 * numerator / denominator if denominator else 0.0
+
+
+def per_kilo(numerator: float, denominator: float) -> float:
+    return 1000.0 * numerator / denominator if denominator else 0.0
+
+
+def finalize_metrics(
+    metrics: dict[str, Any],
+    fallback_test: str,
+    clock_period_ns: float | None = None,
+) -> dict[str, Any]:
     metrics["schema_version"] = SCHEMA_VERSION
     metrics.setdefault("test", fallback_test)
     metrics.setdefault("status", "UNKNOWN")
@@ -944,6 +1291,15 @@ def finalize_metrics(metrics: dict[str, Any], fallback_test: str) -> dict[str, A
     if cycles and total_insts:
         metrics["ipc"] = float(total_insts) / float(cycles)
         metrics["cpi"] = float(cycles) / float(total_insts)
+
+    if clock_period_ns is not None:
+        metrics["clock_period_ns"] = clock_period_ns
+        if cycles is not None:
+            runtime_ns = float(cycles) * clock_period_ns
+            metrics["runtime_ns"] = runtime_ns
+            metrics["runtime_us"] = runtime_ns / 1000.0
+            if runtime_ns > 0 and total_insts is not None:
+                metrics["throughput_mips"] = 1000.0 * float(total_insts) / runtime_ns
 
     s0 = metrics.get("s0_commits")
     s1 = metrics.get("s1_commits")
@@ -972,6 +1328,77 @@ def finalize_metrics(metrics: dict[str, Any], fallback_test: str) -> dict[str, A
             + int(metrics["commit2_cycles"]),
         )
 
+    if cycles:
+        metrics["no_commit_cycle_pct"] = percent(
+            float(metrics.get("commit0_cycles", 0)), float(cycles)
+        )
+        metrics["single_commit_cycle_pct"] = percent(
+            float(metrics.get("commit1_cycles", 0)), float(cycles)
+        )
+        metrics["dual_commit_cycle_pct"] = percent(
+            float(metrics.get("commit2_cycles", 0)), float(cycles)
+        )
+    if metrics.get("ideal_slots"):
+        metrics["slot_utilization_pct"] = percent(
+            float(metrics.get("retired_slots", 0)),
+            float(metrics["ideal_slots"]),
+        )
+        metrics["lost_slot_pct"] = percent(
+            float(metrics.get("lost_slots", 0)),
+            float(metrics["ideal_slots"]),
+        )
+
+    if total_insts:
+        metrics["control_miss_mpki"] = per_kilo(
+            float(metrics.get("control_mispredicts", metrics.get("mispredicts", 0))),
+            float(total_insts),
+        )
+        metrics["dc_miss_mpki"] = per_kilo(
+            float(metrics.get("dc_misses", 0)), float(total_insts)
+        )
+        metrics["load_use_cpki"] = per_kilo(
+            float(metrics.get("load_use", 0)), float(total_insts)
+        )
+        metrics["raw_not_ready_cpki"] = per_kilo(
+            float(metrics.get("raw_not_ready", 0)), float(total_insts)
+        )
+        metrics["raw_ready_no_fwd_cpki"] = per_kilo(
+            float(metrics.get("raw_ready_no_fwd", 0)), float(total_insts)
+        )
+        metrics["muldiv_wait_cpki"] = per_kilo(
+            float(metrics.get("muldiv_wait", 0)), float(total_insts)
+        )
+        metrics["bitmanip_wait_cpki"] = per_kilo(
+            float(metrics.get("bitmanip_wait", 0)), float(total_insts)
+        )
+    if metrics.get("dc_misses"):
+        metrics["dc_stall_cycles_per_miss"] = (
+            float(metrics.get("dcache_miss_stall", 0))
+            / float(metrics["dc_misses"])
+        )
+    if metrics.get("control_resolved"):
+        metrics["control_mispredict_rate_pct"] = percent(
+            float(metrics.get("control_mispredicts", 0)),
+            float(metrics["control_resolved"]),
+        )
+
+    loss_categories = (
+        LOSS_CATEGORIES
+        if "loss_stack_no_commit" in metrics
+        else LEGACY_LOSS_CATEGORIES
+    )
+    ranked_losses = sorted(
+        ((name, int(metrics.get(key, 0))) for name, key in loss_categories),
+        key=lambda item: (-item[1], item[0]),
+    )
+    if ranked_losses:
+        primary_name, primary_cycles = ranked_losses[0]
+        metrics["primary_bottleneck"] = primary_name
+        metrics["primary_bottleneck_cycles"] = primary_cycles
+        metrics["primary_bottleneck_pct"] = percent(
+            float(primary_cycles), float(cycles or 0)
+        )
+
     metrics["is_full_run"] = (
         metrics.get("status") in OK_FULL_STATUSES
         and metrics.get("completion_reason") in FULL_RUN_REASONS
@@ -986,14 +1413,28 @@ def finalize_metrics(metrics: dict[str, Any], fallback_test: str) -> dict[str, A
     if total_insts is not None and s0 is not None and s1 is not None:
         if int(total_insts) != int(s0) + int(s1):
             consistency_errors.append("total_insts_ne_s0_plus_s1")
+    if total_insts is not None and all(
+        key in metrics for key in ["commit1_cycles", "commit2_cycles"]
+    ):
+        if int(total_insts) != int(metrics["commit1_cycles"]) + 2 * int(
+            metrics["commit2_cycles"]
+        ):
+            consistency_errors.append("total_insts_ne_commit1_plus_2commit2")
     if cycles is not None and "cpi_stack_total" in metrics:
         if int(metrics["cpi_stack_total"]) != int(cycles):
             consistency_errors.append("cpi_stack_total_ne_cycles")
-    if "other_breakdown_total" in metrics and "cpi_stack_other_no_commit" in metrics:
-        if int(metrics["other_breakdown_total"]) != int(metrics["cpi_stack_other_no_commit"]):
+    other_reference_key = (
+        "loss_stack_other"
+        if "loss_stack_other" in metrics
+        else "cpi_stack_other_no_commit"
+    )
+    if "other_breakdown_total" in metrics and other_reference_key in metrics:
+        if int(metrics["other_breakdown_total"]) != int(
+            metrics[other_reference_key]
+        ):
             consistency_errors.append("other_breakdown_total_ne_other_no_commit")
-    if "other_original" in metrics and "cpi_stack_other_no_commit" in metrics:
-        if int(metrics["other_original"]) != int(metrics["cpi_stack_other_no_commit"]):
+    if "other_original" in metrics and other_reference_key in metrics:
+        if int(metrics["other_original"]) != int(metrics[other_reference_key]):
             consistency_errors.append("other_original_ne_other_no_commit")
     if "other_mismatch" in metrics:
         if int(metrics["other_mismatch"]) != 0:
@@ -1001,6 +1442,120 @@ def finalize_metrics(metrics: dict[str, Any], fallback_test: str) -> dict[str, A
     if "ideal_slots" in metrics and "retired_slots" in metrics and "lost_slots" in metrics:
         if int(metrics["ideal_slots"]) - int(metrics["retired_slots"]) != int(metrics["lost_slots"]):
             consistency_errors.append("lost_slots_mismatch")
+    if all(
+        key in metrics
+        for key in ["lost_slots", "commit0_cycles", "commit1_cycles"]
+    ):
+        if int(metrics["lost_slots"]) != 2 * int(
+            metrics["commit0_cycles"]
+        ) + int(metrics["commit1_cycles"]):
+            consistency_errors.append("lost_slots_ne_2commit0_plus_commit1")
+    if cycles is not None and "loss_stack_total" in metrics:
+        if int(metrics["loss_stack_total"]) != int(cycles):
+            consistency_errors.append("loss_stack_total_ne_cycles")
+    if "loss_stack_no_commit" in metrics and "commit0_cycles" in metrics:
+        if int(metrics["loss_stack_no_commit"]) != int(metrics["commit0_cycles"]):
+            consistency_errors.append("loss_stack_no_commit_ne_commit0")
+    if all(
+        key in metrics
+        for key in ["loss_stack_productive", "commit1_cycles", "commit2_cycles"]
+    ):
+        if int(metrics["loss_stack_productive"]) != int(
+            metrics["commit1_cycles"]
+        ) + int(metrics["commit2_cycles"]):
+            consistency_errors.append("loss_stack_productive_ne_commit_cycles")
+    for key, error in [
+        ("loss_stack_mismatch", "loss_stack_mismatch_nonzero"),
+        ("loss_stack_no_commit_mismatch", "loss_stack_no_commit_mismatch_nonzero"),
+        ("mix_mismatch", "mix_classification_mismatch_nonzero"),
+        ("control_mismatch", "control_mismatch_nonzero"),
+    ]:
+        if key in metrics and int(metrics[key]) != 0:
+            consistency_errors.append(error)
+    for resource in ["redirect", "dcache", "muldiv", "bitmanip"]:
+        recovery_key = f"loss_recovery_{resource}"
+        category_key = f"loss_stack_{resource}"
+        if recovery_key in metrics and category_key in metrics:
+            if int(metrics[recovery_key]) > int(metrics[category_key]):
+                consistency_errors.append(
+                    f"{resource}_recovery_exceeds_loss_category"
+                )
+    if all(
+        key in metrics
+        for key in ["control_resolved", "control_branch", "control_jal", "control_jalr"]
+    ):
+        if int(metrics["control_resolved"]) != (
+            int(metrics["control_branch"])
+            + int(metrics["control_jal"])
+            + int(metrics["control_jalr"])
+        ):
+            consistency_errors.append("control_class_total_ne_resolved")
+    if all(
+        key in metrics
+        for key in ["control_resolved", "control_s0_resolved", "control_s1_resolved"]
+    ):
+        if int(metrics["control_resolved"]) != int(
+            metrics["control_s0_resolved"]
+        ) + int(metrics["control_s1_resolved"]):
+            consistency_errors.append("control_slot_total_ne_resolved")
+    if all(key in metrics for key in ["mix_total", "mix_s0_accept", "mix_s1_accept"]):
+        if int(metrics["mix_total"]) != int(metrics["mix_s0_accept"]) + int(
+            metrics["mix_s1_accept"]
+        ):
+            consistency_errors.append("mix_slot_total_mismatch")
+    if "if_block_total" in metrics:
+        if int(metrics["if_block_total"]) != sum(
+            int(metrics.get(key, 0))
+            for key in [
+                "if_block_not_seq",
+                "if_block_raw",
+                "if_block_s0_muldiv",
+                "if_block_s0_jump",
+                "if_block_s1_policy",
+                "if_block_s1_unsupported",
+                "if_block_other",
+            ]
+        ):
+            consistency_errors.append("if_block_heuristic_total_mismatch")
+    if "fwd_total" in metrics:
+        if int(metrics["fwd_total"]) != sum(
+            int(metrics.get(key, 0))
+            for key in [
+                "fwd_s1_ex",
+                "fwd_s0_ex",
+                "fwd_s1_mem",
+                "fwd_s0_mem",
+                "fwd_s1_wb",
+                "fwd_s0_wb",
+                "fwd_rf",
+            ]
+        ):
+            consistency_errors.append("forwarding_total_mismatch")
+    if all(key in metrics for key in ["dc_hits", "dc_misses", "dc_requests"]):
+        if int(metrics["dc_hits"]) + int(metrics["dc_misses"]) != int(
+            metrics["dc_requests"]
+        ):
+            consistency_errors.append("dc_hits_plus_misses_ne_requests")
+    if all(key in metrics for key in ["dc_load_hits", "dc_store_hits", "dc_hits"]):
+        if int(metrics["dc_load_hits"]) + int(metrics["dc_store_hits"]) != int(
+            metrics["dc_hits"]
+        ):
+            consistency_errors.append("dc_load_plus_store_hits_ne_hits")
+    if all(
+        key in metrics for key in ["dc_load_misses", "dc_store_misses", "dc_misses"]
+    ):
+        if int(metrics["dc_load_misses"]) + int(
+            metrics["dc_store_misses"]
+        ) != int(metrics["dc_misses"]):
+            consistency_errors.append("dc_load_plus_store_misses_ne_misses")
+    if all(
+        key in metrics
+        for key in ["dc_load_requests", "dc_store_requests", "dc_requests"]
+    ):
+        if int(metrics["dc_load_requests"]) + int(
+            metrics["dc_store_requests"]
+        ) != int(metrics["dc_requests"]):
+            consistency_errors.append("dc_load_plus_store_requests_ne_requests")
     if "dc_stall_state_total" in metrics and "dcache_miss_stall" in metrics:
         if int(metrics["dc_stall_state_total"]) != int(metrics["dcache_miss_stall"]):
             consistency_errors.append("dc_stall_state_total_ne_dcache_stall")
@@ -1019,6 +1574,45 @@ def finalize_metrics(metrics: dict[str, Any], fallback_test: str) -> dict[str, A
     if "muldiv_wait_mismatch" in metrics:
         if int(metrics["muldiv_wait_mismatch"]) != 0:
             consistency_errors.append("muldiv_wait_ops_mismatch_nonzero")
+    if all(
+        key in metrics
+        for key in ["bitmanip_issued", "bitmanip_fast", "bitmanip_clmul"]
+    ):
+        if int(metrics["bitmanip_issued"]) != int(
+            metrics["bitmanip_fast"]
+        ) + int(metrics["bitmanip_clmul"]):
+            consistency_errors.append("bitmanip_issue_class_total_mismatch")
+    if "bitmanip_issue_mismatch" in metrics:
+        if int(metrics["bitmanip_issue_mismatch"]) != 0:
+            consistency_errors.append("bitmanip_issue_mismatch_nonzero")
+    if all(
+        key in metrics
+        for key in [
+            "bitmanip_complete",
+            "bitmanip_lat1",
+            "bitmanip_lat2",
+            "bitmanip_lat3_4",
+            "bitmanip_lat5_8",
+            "bitmanip_lat9_16",
+            "bitmanip_lat17plus",
+        ]
+    ):
+        latency_total = sum(
+            int(metrics[key])
+            for key in [
+                "bitmanip_lat1",
+                "bitmanip_lat2",
+                "bitmanip_lat3_4",
+                "bitmanip_lat5_8",
+                "bitmanip_lat9_16",
+                "bitmanip_lat17plus",
+            ]
+        )
+        if int(metrics["bitmanip_complete"]) != latency_total:
+            consistency_errors.append("bitmanip_latency_total_mismatch")
+    if "bitmanip_latency_mismatch" in metrics:
+        if int(metrics["bitmanip_latency_mismatch"]) != 0:
+            consistency_errors.append("bitmanip_latency_mismatch_nonzero")
     if "pair_block_original" in metrics and "s1_blocked" in metrics:
         if int(metrics["pair_block_original"]) != int(metrics["s1_blocked"]):
             consistency_errors.append("pair_block_original_ne_s1_blocked")
@@ -1043,7 +1637,7 @@ def finalize_metrics(metrics: dict[str, Any], fallback_test: str) -> dict[str, A
     return metrics
 
 
-def parse_log(path: Path) -> dict[str, Any]:
+def parse_log(path: Path, clock_period_ns: float | None = None) -> dict[str, Any]:
     metrics: dict[str, Any] = {"log": str(path), "perf_lines": []}
     fallback_test = path.stem
 
@@ -1075,10 +1669,12 @@ def parse_log(path: Path) -> dict[str, Any]:
                 except ValueError:
                     pass
 
-    return finalize_metrics(metrics, fallback_test)
+    return finalize_metrics(metrics, fallback_test, clock_period_ns)
 
 
-def missing_log_row(test: str, log_dir: Path) -> dict[str, Any]:
+def missing_log_row(
+    test: str, log_dir: Path, clock_period_ns: float | None = None
+) -> dict[str, Any]:
     return finalize_metrics(
         {
             "test": test,
@@ -1089,6 +1685,7 @@ def missing_log_row(test: str, log_dir: Path) -> dict[str, Any]:
             "log_has_error": 1,
         },
         test,
+        clock_period_ns,
     )
 
 
@@ -1098,6 +1695,255 @@ def write_csv(path: Path, rows: list[dict[str, Any]], columns: list[str]) -> Non
         writer.writeheader()
         for row in rows:
             writer.writerow({key: row.get(key, "") for key in columns})
+
+
+def build_hotspots(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    hotspots: list[dict[str, Any]] = []
+    for row in rows:
+        categories = (
+            LOSS_CATEGORIES
+            if "loss_stack_no_commit" in row
+            else LEGACY_LOSS_CATEGORIES
+        )
+        source = "strict_no_commit" if categories is LOSS_CATEGORIES else "legacy_priority"
+        cycles = float(row.get("cycles") or 0)
+        insts = float(row.get("total_insts") or 0)
+        no_commit = float(
+            row.get("loss_stack_no_commit", row.get("commit0_cycles", 0)) or 0
+        )
+        ranked = sorted(
+            (
+                (category, int(row.get(key, 0) or 0))
+                for category, key in categories
+            ),
+            key=lambda item: (-item[1], item[0]),
+        )
+        for rank, (category, value) in enumerate(ranked, start=1):
+            if value == 0:
+                continue
+            hotspots.append(
+                {
+                    "test": row.get("test", ""),
+                    "rank": rank,
+                    "category": category,
+                    "cycles": value,
+                    "pct_cycles": percent(float(value), cycles),
+                    "pct_no_commit": percent(float(value), no_commit),
+                    "cycles_per_ki": per_kilo(float(value), insts),
+                    "attribution": source,
+                }
+            )
+    return hotspots
+
+
+def markdown_value(value: Any, digits: int = 2) -> str:
+    if value in (None, ""):
+        return "-"
+    if isinstance(value, float):
+        return f"{value:.{digits}f}"
+    return str(value)
+
+
+def markdown_percent(value: Any) -> str:
+    rendered = markdown_value(value)
+    return rendered if rendered == "-" else f"{rendered}%"
+
+
+def write_findings(
+    path: Path,
+    rows: list[dict[str, Any]],
+    hotspots: list[dict[str, Any]],
+    comparisons: list[dict[str, Any]],
+) -> None:
+    lines = [
+        "# Performance Findings",
+        "",
+        "The ranking uses the strict no-commit loss stack when schema 7 data is available. "
+        "Legacy logs are explicitly marked because their priority CPI stack may include productive cycles.",
+        "",
+        "## Priority overview",
+        "",
+        "| Test | Status | Cycles | IPC | Slot util. | Lost slots | Primary loss | Loss cycles | Control miss | DCache MPKI | Data errors |",
+        "|---|---:|---:|---:|---:|---:|---|---:|---:|---:|---:|",
+    ]
+    for row in rows:
+        lines.append(
+            "| {test} | {status} | {cycles} | {ipc} | {slot} | {lost} | "
+            "{primary} | {primary_cycles} ({primary_pct}) | {ctrl} | {dc} | {errors} |".format(
+                test=row.get("test", ""),
+                status=row.get("status", "UNKNOWN"),
+                cycles=markdown_value(row.get("cycles"), 0),
+                ipc=markdown_value(row.get("ipc"), 3),
+                slot=markdown_percent(row.get("slot_utilization_pct")),
+                lost=markdown_percent(row.get("lost_slot_pct")),
+                primary=row.get("primary_bottleneck", "-"),
+                primary_cycles=markdown_value(row.get("primary_bottleneck_cycles"), 0),
+                primary_pct=markdown_percent(row.get("primary_bottleneck_pct")),
+                ctrl=markdown_percent(row.get("control_mispredict_rate_pct")),
+                dc=markdown_value(row.get("dc_miss_mpki")),
+                errors=row.get("consistency_error_count", 0),
+            )
+        )
+
+    lines += ["", "## Ranked loss cycles", ""]
+    hotspot_by_test: dict[str, list[dict[str, Any]]] = {}
+    for item in hotspots:
+        hotspot_by_test.setdefault(str(item["test"]), []).append(item)
+    for row in rows:
+        test = str(row.get("test", ""))
+        items = hotspot_by_test.get(test, [])[:3]
+        if not items:
+            lines.append(f"- `{test}`: no attributed loss cycles.")
+            continue
+        rendered = ", ".join(
+            f"{item['category']}={item['cycles']} cycles "
+            f"({item['pct_cycles']:.2f}% of run, {item['cycles_per_ki']:.2f} cycles/ki)"
+            for item in items
+        )
+        lines.append(f"- `{test}`: {rendered}.")
+
+    recovery_resources = ["redirect", "dcache", "muldiv", "bitmanip"]
+    if any(
+        int(row.get(f"loss_recovery_{resource}", 0) or 0) > 0
+        for row in rows
+        for resource in recovery_resources
+    ):
+        lines += [
+            "",
+            "## Causal recovery tails",
+            "",
+            "Recovery cycles are no-commit refill cycles after a blocking resource releases; they remain part of that resource's ranked loss total.",
+            "",
+        ]
+        for row in rows:
+            test = str(row.get("test", ""))
+            items: list[str] = []
+            for resource in recovery_resources:
+                recovery = int(row.get(f"loss_recovery_{resource}", 0) or 0)
+                if recovery == 0:
+                    continue
+                parent = float(row.get(f"loss_stack_{resource}", 0) or 0)
+                items.append(
+                    f"{resource}={recovery} ({percent(float(recovery), parent):.2f}% of its loss bucket)"
+                )
+            if items:
+                lines.append(f"- `{test}`: {', '.join(items)}.")
+
+    pair_block_keys = [
+        ("no_candidate", "pair_block_no_candidate"),
+        ("noncontiguous", "pair_block_noncontiguous"),
+        ("s0_pred_taken", "pair_block_s0_pred_taken"),
+        ("s0_force_single", "pair_block_s0_force_single"),
+        ("s1_force_single", "pair_block_s1_force_single"),
+        ("same_pair_raw", "pair_block_raw"),
+        ("s0_unsupported", "pair_block_s0_unsupported"),
+        ("s1_unsupported", "pair_block_s1_unsupported"),
+        ("both_lsu", "pair_block_both_lsu"),
+        ("both_cfi", "pair_block_both_cfi"),
+        ("stored_other", "pair_block_stored_other"),
+    ]
+    if any(row.get("pair_block_total") is not None for row in rows):
+        lines += ["", "## Dual-issue opportunity blockers", ""]
+        for row in rows:
+            test = str(row.get("test", ""))
+            total = int(row.get("pair_block_total", 0) or 0)
+            ranked = sorted(
+                (
+                    (name, int(row.get(key, 0) or 0))
+                    for name, key in pair_block_keys
+                ),
+                key=lambda item: (-item[1], item[0]),
+            )
+            top = [(name, count) for name, count in ranked if count][:3]
+            if not top:
+                lines.append(f"- `{test}`: no exact pair-policy blocks.")
+                continue
+            rendered = ", ".join(
+                f"{name}={count} ({percent(float(count), float(total)):.2f}%)"
+                for name, count in top
+            )
+            lines.append(
+                f"- `{test}`: {total} blocked head-pair opportunities; {rendered}. "
+                f"Commit1 cycles={row.get('commit1_cycles', 0)}."
+            )
+
+    mix_rows = [row for row in rows if row.get("mix_total")]
+    if mix_rows:
+        lines += [
+            "",
+            "## Accepted instruction mix",
+            "",
+            "Counts are sampled once at EX-to-MEM acceptance; the commit delta exposes the small pipeline tail at simulation end.",
+            "",
+            "| Test | Accepted | ALU | Load | Store | Branch | JAL/JALR | MULDIV | System | Bitmanip | Commit delta |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        ]
+        for row in mix_rows:
+            lines.append(
+                "| {test} | {total} | {alu} | {load} | {store} | {branch} | {jump} | "
+                "{muldiv} | {system} | {bitmanip} | {delta} |".format(
+                    test=row.get("test", ""),
+                    total=row.get("mix_total", 0),
+                    alu=row.get("mix_alu", 0),
+                    load=row.get("mix_load", 0),
+                    store=row.get("mix_store", 0),
+                    branch=row.get("mix_branch", 0),
+                    jump=int(row.get("mix_jal", 0)) + int(row.get("mix_jalr", 0)),
+                    muldiv=row.get("mix_muldiv", 0),
+                    system=row.get("mix_system", 0),
+                    bitmanip=row.get("mix_bitmanip", 0),
+                    delta=row.get("mix_commit_delta", 0),
+                )
+            )
+
+    if comparisons:
+        lines += [
+            "",
+            "## Baseline comparison",
+            "",
+            "Negative cycle/runtime delta is an improvement. Speedup is only aggregated when the retired instruction count is unchanged.",
+            "",
+            "| Test | Cycles old | Cycles new | Delta | Delta % | Runtime delta % |",
+            "|---|---:|---:|---:|---:|---:|",
+        ]
+        speedups: list[float] = []
+        for row in comparisons:
+            old_insts = to_float(row.get("old_total_insts"))
+            new_insts = to_float(row.get("new_total_insts"))
+            old_runtime = to_float(row.get("old_runtime_ns"))
+            new_runtime = to_float(row.get("new_runtime_ns"))
+            old_cycles = to_float(row.get("old_cycles"))
+            new_cycles = to_float(row.get("new_cycles"))
+            if old_insts == new_insts and old_insts is not None:
+                old_cost = old_runtime if old_runtime and new_runtime else old_cycles
+                new_cost = new_runtime if old_runtime and new_runtime else new_cycles
+                if old_cost and new_cost and new_cost > 0:
+                    speedups.append(old_cost / new_cost)
+            lines.append(
+                "| {test} | {old} | {new} | {delta} | {delta_pct} | {runtime_pct} |".format(
+                    test=row.get("test", ""),
+                    old=markdown_value(old_cycles, 0),
+                    new=markdown_value(new_cycles, 0),
+                    delta=markdown_value(row.get("cycles_delta"), 0),
+                    delta_pct=markdown_value(row.get("cycles_delta_pct")),
+                    runtime_pct=markdown_value(row.get("runtime_ns_delta_pct")),
+                )
+            )
+        if speedups:
+            geomean = math.exp(sum(math.log(value) for value in speedups) / len(speedups))
+            lines += ["", f"Comparable-test geometric-mean speedup: **{geomean:.4f}x**."]
+
+    lines += [
+        "",
+        "## Interpretation order",
+        "",
+        "1. Reject rows with non-zero data errors or incomplete status.",
+        "2. Compare runtime when a post-implementation clock period is supplied; otherwise compare cycles.",
+        "3. Rank strict loss cycles, then inspect causal recovery tails, lost-slot rate, and exact pair-block reasons.",
+        "4. Use MPKI/cycles-per-ki values to compare runs with different instruction counts.",
+        "",
+    ]
+    path.write_text("\n".join(lines), encoding="utf-8")
 
 
 def load_summary(path: Path) -> dict[str, dict[str, Any]]:
@@ -1202,6 +2048,8 @@ def write_manifest(
         "produced_logs": [str(path) for path in produced_logs],
         "summary_csv": str(path / "summary.csv"),
         "summary_json": str(path / "summary.json"),
+        "hotspots_csv": str(path / "hotspots.csv"),
+        "performance_findings": str(path / "performance_findings.md"),
         "tests": row_status,
     }
     with (path / "manifest.json").open("w", encoding="utf-8") as handle:
@@ -1225,7 +2073,14 @@ def main() -> int:
         action="store_true",
         help="return nonzero unless every expected log is a full, clean run",
     )
+    parser.add_argument(
+        "--clock-period-ns",
+        type=float,
+        help="optional post-implementation clock period for runtime estimates",
+    )
     args = parser.parse_args()
+    if args.clock_period_ns is not None and args.clock_period_ns <= 0:
+        parser.error("--clock-period-ns must be greater than zero")
 
     run_dir = Path(args.run_dir)
     log_dir = run_dir / "logs"
@@ -1245,27 +2100,28 @@ def main() -> int:
 
     if expected_tests:
         rows = [
-            parse_log(log_by_stem[test]) if test in log_by_stem else missing_log_row(test, log_dir)
+            parse_log(log_by_stem[test], args.clock_period_ns)
+            if test in log_by_stem
+            else missing_log_row(test, log_dir, args.clock_period_ns)
             for test in expected_tests
         ]
         expected_set = set(expected_tests)
         for path in produced_logs:
             if path.stem not in expected_set:
-                row = parse_log(path)
+                row = parse_log(path, args.clock_period_ns)
                 row["unexpected_log"] = 1
                 rows.append(row)
     else:
-        rows = [parse_log(path) for path in produced_logs]
+        rows = [parse_log(path, args.clock_period_ns) for path in produced_logs]
         rows.sort(key=lambda item: str(item.get("test", "")))
 
     write_csv(run_dir / "summary.csv", rows, SUMMARY_COLUMNS)
     with (run_dir / "summary.json").open("w", encoding="utf-8") as handle:
         json.dump(rows, handle, indent=2, sort_keys=True)
         handle.write("\n")
-    write_manifest(run_dir, rows, expected_tests, produced_logs)
-
+    comparisons: list[dict[str, Any]] = []
     if args.baseline:
-        compare = compare_rows(load_summary(Path(args.baseline)), rows)
+        comparisons = compare_rows(load_summary(Path(args.baseline)), rows)
         compare_columns = ["test", "old_status", "new_status"]
         for metric in COMPARE_METRICS:
             compare_columns += [
@@ -1274,7 +2130,25 @@ def main() -> int:
                 f"{metric}_delta",
                 f"{metric}_delta_pct",
             ]
-        write_csv(run_dir / "compare.csv", compare, compare_columns)
+        write_csv(run_dir / "compare.csv", comparisons, compare_columns)
+
+    hotspots = build_hotspots(rows)
+    write_csv(
+        run_dir / "hotspots.csv",
+        hotspots,
+        [
+            "test",
+            "rank",
+            "category",
+            "cycles",
+            "pct_cycles",
+            "pct_no_commit",
+            "cycles_per_ki",
+            "attribution",
+        ],
+    )
+    write_findings(run_dir / "performance_findings.md", rows, hotspots, comparisons)
+    write_manifest(run_dir, rows, expected_tests, produced_logs)
 
     status_counts: dict[str, int] = {}
     for row in rows:
