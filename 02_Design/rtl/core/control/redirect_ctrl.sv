@@ -1,6 +1,8 @@
 // ============================================================
 // Module: redirect_ctrl
-// Description: EX fast redirect and MEM replay frontend flush control.
+// Description: 跳转共有三种：
+// unpri： cfi ins
+// pri： 中断(由外部事件触发），例外(由指令触发)
 // Domain: architectural control.
 // ============================================================
 
@@ -10,8 +12,8 @@ module redirect_ctrl (
 
     input  logic        ex_ready_go,
     input  logic        mem_allowin,
-    input  logic        mem_branch_flush,
-    input  logic [31:0] mem_branch_target,
+    input  logic        mem_branch_flush, // from mem stage
+    input  logic [31:0] mem_branch_target, // from mem stage
 
     input  logic        ex_system_redirect,
     input  logic [31:0] ex_system_target,
@@ -19,30 +21,29 @@ module redirect_ctrl (
     input  logic [31:0] timer_irq_target,
 
     output logic        ex_redirect_fire,
-    output logic        ex_fast_redirect,
-    output logic [31:0] ex_fast_redirect_target,
-    output logic        mem_branch_replay,
+    output logic        ex_fast_redirect, // 外部悬空 timer导致的redirect
+    output logic [31:0] ex_fast_redirect_target, // 外部悬空
+    output logic        mem_branch_replay, // 外部悬空 包含 unpri cfi指令的redirect和ecall/mret的redirect
     output logic        frontend_branch_flush,
     output logic [31:0] frontend_branch_target
 );
 
     logic fast_branch_redirect_r;
 
-    // EX redirects may fire only when the instruction can leave EX cleanly.
+    //
     assign ex_redirect_fire = ~mem_branch_flush & ex_ready_go & mem_allowin;
-    // ECALL/MRET already enter the registered EX/MEM redirect payload.  Do not
-    // also send them over the fast frontend path: that path would otherwise
-    // carry DCache mem_allowin all the way to the fetch PC.  Timer entry remains
-    // fast because timer_irq_take is already a registered, pipe-empty event.
+    // timer中断在EX发生redirect
     assign ex_fast_redirect = timer_irq_redirect;
     assign ex_fast_redirect_target = timer_irq_target;
-    // A fast EX redirect suppresses replay of the previous cycle's registered
-    // MEM redirect, preventing a stale target from overwriting the newer one.
+
+    // 防止EX冲刷后MEM二次冲刷
     assign mem_branch_replay = mem_branch_flush & ~fast_branch_redirect_r;
+    // 正常flush || timer导致的中断
     assign frontend_branch_flush = mem_branch_replay | ex_fast_redirect;
+    // MEM的旧指令跳转优先于EX的新指令
     assign frontend_branch_target = mem_branch_replay ? mem_branch_target
                                                       : ex_fast_redirect_target;
-
+    // 打一拍，防止ex冲刷后mem二次冲刷
     always_ff @(posedge clk) begin
         if (!rst_n)
             fast_branch_redirect_r <= 1'b0;

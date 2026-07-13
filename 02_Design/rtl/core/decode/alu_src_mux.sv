@@ -1,7 +1,6 @@
 // ============================================================
 // Module: alu_src_mux
-// Description: ALU operand selection (ID stage, pure combinational)
-//              Selected operands are registered by ID/EX before EX.
+// Description: ALU 两个操作数的选择逻辑
 // Domain: decode and issue.
 // ============================================================
 
