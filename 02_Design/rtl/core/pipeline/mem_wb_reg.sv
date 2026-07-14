@@ -23,20 +23,21 @@ module mem_wb_reg
     input  mem_wb_slot0_t mem_payload,
     output mem_wb_slot0_t wb_payload,
 
-    // Physical replica used only by EX-stage load-data repair.
-    output logic [31:0]   wb_load_data_ex
+    // Physical copy used only by EX-stage load-data repair.
+    (* keep = "true" *) output logic [31:0] wb_load_data_ex
 );
 
     wire wb_ready_go = 1'b1;
     assign wb_allowin = !wb_valid || wb_ready_go;
 
-    // This copy deliberately has no reset and is only observed when a repair
-    // tag proves that a completed load exists.  Giving it a different control
-    // shape prevents synthesis from merging it back into wb_payload.load_data,
-    // allowing the ID-forwarding and EX-repair consumers to be placed around
-    // separate source registers.
+    // Synchronous zero reset gives synthesis an ordinary zero-reset FF shape
+    // instead of an FDSE set-pin implementation. KEEP prevents merging this
+    // placement copy into wb_payload.load_data. Its reset value is irrelevant
+    // architecturally because every repair tag is invalid during reset.
     always_ff @(posedge clk) begin
-        if (rst_n && mem_load_valid && mem_ready_go)
+        if (!rst_n)
+            wb_load_data_ex <= 32'd0;
+        else if (mem_load_valid && mem_ready_go)
             wb_load_data_ex <= mem_payload.load_data;
     end
 
