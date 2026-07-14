@@ -5,6 +5,8 @@
 # Vivado process, run one independent pass-2 strategy, and emit a complete
 # comparison artifact set.  The Bash orchestrator is responsible for
 # isolating crashes and recording FAILED status when Vivado exits non-zero.
+# Any routing invalidated by physopt is completed with route_design -preserve
+# before the candidate checkpoint, reports, and bitstream are generated.
 # ================================================================
 
 proc candidate_usage {} {
@@ -50,6 +52,32 @@ proc total_negative_slack {analysis_type} {
         set total [expr {$total + [get_property SLACK $path]}]
     }
     return $total
+}
+
+proc complete_post_physopt_routing {context} {
+    set unrouted_before [get_nets -quiet -hierarchical \
+        -filter {ROUTE_STATUS == UNROUTED}]
+    set unrouted_count [llength $unrouted_before]
+
+    if {$unrouted_count > 0} {
+        puts "WARNING: $context left $unrouted_count unrouted logical net(s)."
+        puts "Running route_design -preserve to complete post-physopt routing."
+        route_design -preserve
+    } else {
+        puts "$context routing check: fully routed; no repair required."
+    }
+
+    set unrouted_after [get_nets -quiet -hierarchical \
+        -filter {ROUTE_STATUS == UNROUTED}]
+    if {[llength $unrouted_after] > 0} {
+        set sample [join [lrange $unrouted_after 0 7] ", "]
+        candidate_fail "$context still has [llength $unrouted_after] unrouted logical net(s) after route_design -preserve: $sample"
+    }
+
+    if {$unrouted_count > 0} {
+        puts "$context routing repair completed successfully."
+    }
+    return $unrouted_count
 }
 
 set input_dcp_arg ""
@@ -153,6 +181,9 @@ switch -- $strategy {
     }
 }
 
+set repaired_unrouted_count \
+    [complete_post_physopt_routing "Pass-2 $strategy physopt"]
+
 set checkpoint_file [file join $output_dir "postroute_physopt_pass2.dcp"]
 set timing_file [file join $output_dir "timing_postroute_physopt_pass2.rpt"]
 set summary_file [file join $output_dir "final_timing_summary.txt"]
@@ -180,6 +211,7 @@ puts $summary_handle "Pass: 2"
 puts $summary_handle "Final post-route pass: 2"
 puts $summary_handle "Strategy: $strategy"
 puts $summary_handle "Strategy command: $strategy_command"
+puts $summary_handle "Post-physopt unrouted logical nets before repair: $repaired_unrouted_count"
 puts $summary_handle "Parent checkpoint: $input_dcp"
 puts $summary_handle "Setup WNS (ns): $setup_wns"
 puts $summary_handle "Setup TNS (ns): $setup_tns"

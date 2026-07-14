@@ -5,9 +5,9 @@
 #   2. Independent pass-2 routing_opt candidate from pass 1.
 #   3. Independent pass-2 AggressiveExplore candidate from pass 1.
 #
-# Each physopt stage runs in its own Vivado process.  A pass-2 crash is
-# recorded as a failed candidate and does not invalidate pass 1 or prevent
-# the other pass-2 candidate from running.
+# Each physopt stage runs in its own Vivado process. A failed AggressiveExplore
+# candidate is retried once in a fresh single-threaded process. A final pass-2
+# failure is recorded without invalidating pass 1 or the other candidate.
 #
 # Usage:
 #   ./03_Timing_Analysis/build.sh <parallel jobs> <COE configuration>
@@ -47,7 +47,8 @@ usage() {
         '  Swap is reported but is not counted as safe Vivado capacity.' \
         '' \
         'Flow:' \
-        '  pass1_explore -> {pass2_routing_opt, pass2_aggressive_explore}'
+        '  pass1_explore -> {pass2_routing_opt, pass2_aggressive_explore}' \
+        '  Failed AggressiveExplore is retried once with one Vivado thread.'
 }
 
 require_nonnegative_integer() {
@@ -252,6 +253,7 @@ RUN_DIR="${RESULT_ROOT}/runs/${RUN_ID}"
 PASS1_DIR="${RUN_DIR}/pass1_explore"
 PASS2_ROUTING_DIR="${RUN_DIR}/pass2_routing_opt"
 PASS2_AGGRESSIVE_DIR="${RUN_DIR}/pass2_aggressive_explore"
+PASS2_AGGRESSIVE_ATTEMPT1_DIR="${RUN_DIR}/pass2_aggressive_explore_attempt1_failed"
 MANIFEST="${RUN_DIR}/manifest.txt"
 COMPARISON="${RUN_DIR}/comparison.txt"
 
@@ -408,7 +410,7 @@ echo "COE           : ${COE_NAME} (${COE_DIR})"
 echo "Jobs          : ${JOBS}"
 echo "Pass 1        : Explore (mandatory)"
 echo "Pass 2A       : routing_opt (independent)"
-echo "Pass 2B       : AggressiveExplore (independent)"
+echo "Pass 2B       : AggressiveExplore (one single-thread retry on failure)"
 echo "================================================================"
 
 if run_vivado_stage "Mandatory pass 1 Explore" "${PASS1_TCL}" "${PASS1_DIR}" \
@@ -436,6 +438,8 @@ fi
 PASS1_DCP="${PASS1_DIR}/postroute_physopt_pass1.dcp"
 ROUTING_STATUS="FAILED"
 AGGRESSIVE_STATUS="FAILED"
+AGGRESSIVE_INITIAL_STATUS="FAILED"
+AGGRESSIVE_RETRY_STATUS="NOT_NEEDED"
 
 if run_vivado_stage "Pass 2 routing-only candidate" "${PASS2_TCL}" \
     "${PASS2_ROUTING_DIR}" --jobs "${JOBS}" \
@@ -457,13 +461,38 @@ if run_vivado_stage "Pass 2 AggressiveExplore candidate" "${PASS2_TCL}" \
     --strategy aggressive_explore \
     --bitstream-file "${PASS2_AGGRESSIVE_DIR}/design.bit"; then
     if candidate_artifacts_complete "${PASS2_AGGRESSIVE_DIR}" 2; then
+        AGGRESSIVE_INITIAL_STATUS="SUCCESS"
         AGGRESSIVE_STATUS="SUCCESS"
     else
         write_stage_status "${PASS2_AGGRESSIVE_DIR}" FAILED 1 \
             "Vivado returned success but required candidate artifacts are incomplete"
     fi
 else
-    echo "WARNING: AggressiveExplore candidate failed; continuing." >&2
+    echo "WARNING: initial AggressiveExplore candidate failed." >&2
+fi
+
+if [[ "${AGGRESSIVE_INITIAL_STATUS}" != "SUCCESS" ]]; then
+    echo "WARNING: retrying AggressiveExplore once with one Vivado thread." >&2
+    mv -- "${PASS2_AGGRESSIVE_DIR}" "${PASS2_AGGRESSIVE_ATTEMPT1_DIR}"
+    AGGRESSIVE_RETRY_STATUS="FAILED"
+
+    if run_vivado_stage \
+        "Pass 2 AggressiveExplore single-thread retry" \
+        "${PASS2_TCL}" "${PASS2_AGGRESSIVE_DIR}" --jobs 1 \
+        --input-dcp "${PASS1_DCP}" \
+        --output-dir "${PASS2_AGGRESSIVE_DIR}" \
+        --strategy aggressive_explore \
+        --bitstream-file "${PASS2_AGGRESSIVE_DIR}/design.bit"; then
+        if candidate_artifacts_complete "${PASS2_AGGRESSIVE_DIR}" 2; then
+            AGGRESSIVE_RETRY_STATUS="SUCCESS"
+            AGGRESSIVE_STATUS="SUCCESS"
+        else
+            write_stage_status "${PASS2_AGGRESSIVE_DIR}" FAILED 1 \
+                "single-thread retry returned success but required candidate artifacts are incomplete"
+        fi
+    else
+        echo "WARNING: AggressiveExplore single-thread retry failed; continuing." >&2
+    fi
 fi
 
 BEST_NAME="pass1_explore"
@@ -518,6 +547,23 @@ append_candidate_report() {
         "${PASS2_ROUTING_DIR}"
     append_candidate_report "pass2_aggressive_explore" "${AGGRESSIVE_STATUS}" \
         "${PASS2_AGGRESSIVE_DIR}"
+    printf '%s\n' '[pass2_aggressive_explore_attempts]'
+    printf 'Initial jobs: %s\n' "${JOBS}"
+    printf 'Initial status: %s\n' "${AGGRESSIVE_INITIAL_STATUS}"
+    if [[ "${AGGRESSIVE_RETRY_STATUS}" == "NOT_NEEDED" ]]; then
+        printf 'Retry attempted: NO\n'
+    else
+        printf 'Retry attempted: YES\n'
+        printf 'Retry jobs: 1\n'
+        printf 'Retry status: %s\n' "${AGGRESSIVE_RETRY_STATUS}"
+        printf 'Initial failure directory: %s\n' \
+            "${PASS2_AGGRESSIVE_ATTEMPT1_DIR}"
+        printf 'Initial failure report: %s/status.txt\n' \
+            "${PASS2_AGGRESSIVE_ATTEMPT1_DIR}"
+        printf 'Initial failure log: %s/vivado.log\n' \
+            "${PASS2_AGGRESSIVE_ATTEMPT1_DIR}"
+    fi
+    printf '\n'
     printf '[Recommendation]\n'
     printf 'Selected candidate: %s\n' "${BEST_NAME}"
     printf 'Selected directory: %s\n' "${BEST_DIR}"
@@ -545,6 +591,10 @@ fi
     printf 'Completed: %s\n' "$(date --iso-8601=seconds)"
     printf 'Status: %s\n' "${OVERALL_STATUS}"
     printf 'Pass 2 routing_opt: %s\n' "${ROUTING_STATUS}"
+    printf 'Pass 2 aggressive initial: %s\n' \
+        "${AGGRESSIVE_INITIAL_STATUS}"
+    printf 'Pass 2 aggressive retry: %s\n' \
+        "${AGGRESSIVE_RETRY_STATUS}"
     printf 'Pass 2 aggressive_explore: %s\n' "${AGGRESSIVE_STATUS}"
     printf 'Selected candidate: %s\n' "${BEST_NAME}"
     printf 'Comparison: %s\n' "${COMPARISON}"

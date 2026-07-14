@@ -12,6 +12,7 @@
 #            route_design               AggressiveExplore
 #            route checkpoint opened by this script
 #            post-route phys_opt_design Explore        (pass 1)
+#            conditional route_design -preserve        (repair only)
 #            optional iterative phys_opt_design Explore (direct use only)
 #
 # Batch usage:
@@ -111,6 +112,32 @@ proc require_routed_run {run_name} {
         flow_fail "run '$run_name' did not produce a routed checkpoint"
     }
     puts "  routed checkpoint: $checkpoint"
+}
+
+proc complete_post_physopt_routing {context} {
+    set unrouted_before [get_nets -quiet -hierarchical \
+        -filter {ROUTE_STATUS == UNROUTED}]
+    set unrouted_count [llength $unrouted_before]
+
+    if {$unrouted_count > 0} {
+        puts "WARNING: $context left $unrouted_count unrouted logical net(s)."
+        puts "Running route_design -preserve to complete post-physopt routing."
+        route_design -preserve
+    } else {
+        puts "$context routing check: fully routed; no repair required."
+    }
+
+    set unrouted_after [get_nets -quiet -hierarchical \
+        -filter {ROUTE_STATUS == UNROUTED}]
+    if {[llength $unrouted_after] > 0} {
+        set sample [join [lrange $unrouted_after 0 7] ", "]
+        flow_fail "$context still has [llength $unrouted_after] unrouted logical net(s) after route_design -preserve: $sample"
+    }
+
+    if {$unrouted_count > 0} {
+        puts "$context routing repair completed successfully."
+    }
+    return $unrouted_count
 }
 
 proc report_and_checkpoint {output_dir pass_number} {
@@ -454,10 +481,13 @@ open_checkpoint $final_routed_checkpoint
 # the result of the previous pass. This avoids Vivado-version-dependent names
 # for the optional project-run post-route physopt step.
 set total_physopt_passes [expr {$extra_physopt_passes + 1}]
+set repaired_unrouted_count 0
 for {set pass_number 1} {$pass_number <= $total_physopt_passes} {incr pass_number} {
     puts ""
     puts "Running post-route phys_opt_design pass $pass_number (Explore)"
     phys_opt_design -directive Explore
+    set repaired_unrouted_count \
+        [complete_post_physopt_routing "Post-route physopt pass $pass_number"]
     report_and_checkpoint $output_dir $pass_number
 }
 
@@ -486,6 +516,7 @@ puts $summary_handle "Pass: $final_pass_number"
 puts $summary_handle "Final post-route pass: $final_pass_number"
 puts $summary_handle "Strategy: explore"
 puts $summary_handle "Strategy command: phys_opt_design -directive Explore"
+puts $summary_handle "Post-physopt unrouted logical nets before repair: $repaired_unrouted_count"
 puts $summary_handle "Setup WNS (ns): $final_setup_slack"
 puts $summary_handle "Setup TNS (ns): $final_setup_tns"
 puts $summary_handle "Hold WHS (ns): $final_hold_slack"
