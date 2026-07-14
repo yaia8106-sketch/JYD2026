@@ -126,27 +126,35 @@ module frontend_fetch_queue
     wire [31:0] tail_next_pc_next =
         enq0_valid ? enq_last_next_pc : tail_next_pc;
 
-    integer entry_i;
-
+    // Only these pointers/counters define which queue entries are valid.
+    // Payload storage is intentionally left unreset: stale words cannot be
+    // observed while count is zero, and every newly allocated slot is written
+    // before count exposes it.
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             head <= '0;
             tail <= '0;
             count <= '0;
             tail_next_pc <= 32'd0;
-            for (entry_i = 0; entry_i < FQ_DEPTH; entry_i = entry_i + 1) begin
-                entry_mem[entry_i] <= '0;
-                pair_meta_mem[entry_i] <= '0;
-                pair_ok_mem[entry_i] <= 1'b0;
-            end
         end else if (flush) begin
             head <= '0;
             tail <= '0;
             count <= '0;
             tail_next_pc <= 32'd0;
-            for (entry_i = 0; entry_i < FQ_DEPTH; entry_i = entry_i + 1)
-                pair_ok_mem[entry_i] <= 1'b0;
         end else begin
+            head <= head_next;
+            tail <= tail_next;
+            count <= count_next;
+            tail_next_pc <= tail_next_pc_next;
+        end
+    end
+
+    // Keep payload arrays off the reset/flush fanout.  The pair bit belonging
+    // to packet slot 1 is not initialized here: it is ignored while that entry
+    // has no successor, then overwritten by prev_tail_pair_ok when the next
+    // packet arrives.
+    always_ff @(posedge clk) begin
+        if (rst_n && !flush) begin
             // A speculative payload write is harmless until count exposes it.
             // A later cross-packet enqueue overwrites the previous tail policy.
             if (enq0_payload && (count != 0))
@@ -159,13 +167,7 @@ module frontend_fetch_queue
             if (enq1_payload) begin
                 entry_mem[tail_p1] <= enq_entry1;
                 pair_meta_mem[tail_p1] <= enq_pair_meta1;
-                pair_ok_mem[tail_p1] <= 1'b0;
             end
-
-            head <= head_next;
-            tail <= tail_next;
-            count <= count_next;
-            tail_next_pc <= tail_next_pc_next;
         end
     end
 

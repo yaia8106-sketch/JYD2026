@@ -12,10 +12,16 @@ module muldiv_unit
     input  logic        clk,
     input  logic        rst_n,
 
+    // A MUL launches on the same edge that accepts it into ID/EX. The wide
+    // operands feed free-running local input registers; prestart_valid only
+    // establishes ownership and never gates those payload registers.
+    input  logic        mul_prestart_valid,
+    input  logic [ 2:0] mul_prestart_op,
+    input  logic [31:0] mul_prestart_rs1,
+    input  logic [31:0] mul_prestart_rs2,
+
     input  logic        req_valid,
     input  logic [ 2:0] req_op,
-    input  logic [31:0] req_mul_rs1,
-    input  logic [31:0] req_mul_rs2,
     input  logic [31:0] req_div_rs1,
     input  logic [31:0] req_div_rs2,
     input  logic        consume,
@@ -38,8 +44,8 @@ module muldiv_unit
     state_t state;
 
     logic [ 2:0] op_r;
-    logic signed [32:0] mul_a_r;
-    logic signed [32:0] mul_b_r;
+    logic signed [32:0] mul_a_pipe;
+    logic signed [32:0] mul_b_pipe;
     (* use_dsp = "yes" *) logic signed [65:0] mul_product_r;
     logic [31:0] result_r;
 
@@ -52,16 +58,21 @@ module muldiv_unit
     logic        div_quot_neg;
     logic        div_rem_neg;
 
-    // req_op[2] separates the multiplier family from DIV/REM operations.
-    wire req_is_mul = ~req_op[2];
+    // op[2] separates the multiplier family from DIV/REM operations.
     wire req_is_rem = req_op[1];
     wire req_is_signed_div = (req_op == M_OP_DIV) | (req_op == M_OP_REM);
 
-    wire mul_signed_a = (req_op == M_OP_MULH) | (req_op == M_OP_MULHSU);
-    wire mul_signed_b = (req_op == M_OP_MULH);
-    wire signed [32:0] mul_a = {mul_signed_a & req_mul_rs1[31], req_mul_rs1};
-    wire signed [32:0] mul_b = {mul_signed_b & req_mul_rs2[31], req_mul_rs2};
-    (* use_dsp = "yes" *) wire signed [65:0] mul_product_w = mul_a_r * mul_b_r;
+    wire mul_prestart_signed_a = (mul_prestart_op == M_OP_MULH)
+                               | (mul_prestart_op == M_OP_MULHSU);
+    wire mul_prestart_signed_b = (mul_prestart_op == M_OP_MULH);
+    wire signed [32:0] mul_prestart_a = {
+        mul_prestart_signed_a & mul_prestart_rs1[31], mul_prestart_rs1
+    };
+    wire signed [32:0] mul_prestart_b = {
+        mul_prestart_signed_b & mul_prestart_rs2[31], mul_prestart_rs2
+    };
+    (* use_dsp = "yes" *) wire signed [65:0] mul_product_w =
+        mul_a_pipe * mul_b_pipe;
 
     // Division runs on magnitudes and applies signs only to the final result.
     wire [31:0] req_abs_rs1 = (req_is_signed_div & req_div_rs1[31]) ? (~req_div_rs1 + 32'd1) : req_div_rs1;
@@ -75,7 +86,7 @@ module muldiv_unit
                                                         32'd0;
     wire        req_div_fast_lt = (req_abs_rs1 < req_abs_rs2);
     wire        req_div_fast_one = (req_abs_rs2 == 32'd1);
-    wire        req_div_fast_valid = ~req_is_mul
+    wire        req_div_fast_valid = req_op[2]
                                    & ~req_div_by_zero
                                    & ~req_div_overflow
                                    & (req_div_fast_lt | req_div_fast_one);
@@ -148,21 +159,29 @@ module muldiv_unit
     assign done = done_w;
     assign result = mul_done_w ? mul_result_w : result_r;
 
-    // The product is intentionally free-running and has no reset/enable.  Its
-    // value is architecturally observed only in S_MUL_DONE, one cycle after
-    // S_MUL_EXEC.  This simple register shape allows Vivado to absorb the
-    // destination into the final DSP48 PREG instead of routing the cascade
-    // output to a fabric FDRE.
-    always_ff @(posedge clk)
-        mul_product_r <= mul_product_w;
+    // Payload and validity are deliberately separated. These signed operands
+    // update every edge, even for non-MUL ID traffic. Invalid/speculative data
+    // is ignored unless mul_prestart_valid updates the narrow state/op owner.
+    // With no reset or CE, Vivado can place/absorb these registers next to the
+    // DSP A/B inputs without routing cache-ready control to 66 data bits.
+    always_ff @(posedge clk) begin
+        mul_a_pipe <= mul_prestart_a;
+        mul_b_pipe <= mul_prestart_b;
+    end
 
+    // Capture one product only while a registered MUL owner is executing.
+    // This local-state CE keeps the completed result stable across arbitrary
+    // MEM backpressure while remaining independent of same-cycle consume.
+    always_ff @(posedge clk) begin
+        if (state == S_MUL_EXEC)
+            mul_product_r <= mul_product_w;
+    end
+
+    // Divider payload updates depend only on the registered local state and
+    // EX-owned divide request. Flush/consume invalidate it through the FSM;
+    // they never gate these wide registers directly.
     always_ff @(posedge clk) begin
         if (!rst_n) begin
-            state         <= S_IDLE;
-            op_r          <= 3'd0;
-            mul_a_r       <= 33'd0;
-            mul_b_r       <= 33'd0;
-            result_r      <= 32'd0;
             div_divisor_1x_r <= 34'd0;
             div_divisor_2x_r <= 34'd0;
             div_divisor_3x_r <= 34'd0;
@@ -171,67 +190,75 @@ module muldiv_unit
             div_count     <= 6'd0;
             div_quot_neg  <= 1'b0;
             div_rem_neg   <= 1'b0;
+        end else if ((state == S_IDLE) && req_valid && req_op[2]) begin
+            // Always preload the iterative payload. Fast/special divides
+            // ignore it, but keeping their late compares off the write enable
+            // preserves a shallow CE path.
+            div_divisor_1x_r <= req_divisor_1x;
+            div_divisor_2x_r <= req_divisor_2x;
+            div_divisor_3x_r <= req_divisor_3x;
+            div_remainder <= 33'd0;
+            div_quotient  <= req_abs_rs1;
+            div_count     <= 6'd16;
+            div_quot_neg  <= req_is_signed_div
+                           & (req_div_rs1[31] ^ req_div_rs2[31]);
+            div_rem_neg   <= req_is_signed_div & req_div_rs1[31];
+        end else if (state == S_DIV_RUN) begin
+            // Sixteen radix-4 iterations produce all 32 quotient bits.
+            div_remainder <= div_rem_next;
+            div_quotient  <= div_quot_next;
+            div_count     <= div_count - 6'd1;
+        end
+    end
+
+    // Only narrow ownership/control and the architecturally held DIV result
+    // see launch/consume/flush. A same-edge younger MUL prestart has priority
+    // over releasing the old completed owner.
+    always_ff @(posedge clk) begin
+        if (!rst_n) begin
+            state    <= S_IDLE;
+            op_r     <= 3'd0;
+            result_r <= 32'd0;
         end else if (flush) begin
-            state         <= S_IDLE;
-            op_r          <= 3'd0;
-            mul_a_r       <= 33'd0;
-            mul_b_r       <= 33'd0;
-            result_r      <= 32'd0;
-            div_count     <= 6'd0;
+            state    <= S_IDLE;
+            op_r     <= 3'd0;
+            result_r <= 32'd0;
         end else begin
             case (state)
                 S_IDLE: begin
-                    if (req_valid) begin
+                    if (mul_prestart_valid) begin
+                        op_r <= mul_prestart_op;
+                        state <= S_MUL_EXEC;
+                    end else if (req_valid && req_op[2]) begin
                         op_r <= req_op;
-                        if (req_is_mul) begin
-                            mul_a_r <= mul_a;
-                            mul_b_r <= mul_b;
-                            state <= S_MUL_EXEC;
+                        if (req_div_by_zero | req_div_overflow) begin
+                            result_r <= req_special_result;
+                            state <= S_DONE;
+                        end else if (req_div_fast_valid) begin
+                            result_r <= req_div_fast_result;
+                            state <= S_DONE;
                         end else begin
-                            // Preload the iterative-divider payload for every
-                            // divide request. Fast/special requests transition
-                            // directly to S_DONE, so this payload is ignored;
-                            // keeping its write enable independent of the late
-                            // fast-path compare shortens the register CE path.
-                            div_divisor_1x_r <= req_divisor_1x;
-                            div_divisor_2x_r <= req_divisor_2x;
-                            div_divisor_3x_r <= req_divisor_3x;
-                            div_remainder <= 33'd0;
-                            div_quotient  <= req_abs_rs1;
-                            div_count     <= 6'd16;
-                            div_quot_neg  <= req_is_signed_div & (req_div_rs1[31] ^ req_div_rs2[31]);
-                            div_rem_neg   <= req_is_signed_div & req_div_rs1[31];
-
-                            if (req_div_by_zero | req_div_overflow) begin
-                                result_r <= req_special_result;
-                                state <= S_DONE;
-                            end else if (req_div_fast_valid) begin
-                                result_r <= req_div_fast_result;
-                                state <= S_DONE;
-                            end else begin
-                                state <= S_DIV_RUN;
-                            end
+                            state <= S_DIV_RUN;
                         end
                     end
                 end
 
                 S_MUL_EXEC: begin
-                    // The free-running DSP PREG captures this request's product
-                    // at the same edge as the transition to S_MUL_DONE.
+                    // mul_product_r captures the local input-register product
+                    // on this edge, then exposes it throughout S_MUL_DONE.
                     state <= S_MUL_DONE;
                 end
 
                 S_MUL_DONE: begin
-                    // Hold done high until EX consumes the result or drops req_valid.
-                    if (consume | !req_valid)
+                    if (mul_prestart_valid) begin
+                        op_r <= mul_prestart_op;
+                        state <= S_MUL_EXEC;
+                    end else if (consume | !req_valid) begin
                         state <= S_IDLE;
+                    end
                 end
 
                 S_DIV_RUN: begin
-                    // Sixteen radix-4 iterations produce all 32 quotient bits.
-                    div_remainder <= div_rem_next;
-                    div_quotient  <= div_quot_next;
-                    div_count     <= div_count - 6'd1;
                     if (div_count == 6'd1)
                         state <= S_DIV_FINISH;
                 end
@@ -242,8 +269,12 @@ module muldiv_unit
                 end
 
                 S_DONE: begin
-                    if (consume | !req_valid)
+                    if (mul_prestart_valid) begin
+                        op_r <= mul_prestart_op;
+                        state <= S_MUL_EXEC;
+                    end else if (consume | !req_valid) begin
                         state <= S_IDLE;
+                    end
                 end
 
                 default: begin
@@ -252,5 +283,30 @@ module muldiv_unit
             endcase
         end
     end
+
+`ifndef SYNTHESIS
+    // The in-order single-EX pipeline guarantees every MUL was prestarted on
+    // its ID/EX acceptance edge and that turnover can occur only while the old
+    // done owner is consumed. Keep these assumptions out of synthesis timing.
+    always_ff @(posedge clk) begin
+        if (rst_n && !flush) begin
+            if (mul_prestart_valid
+                    && (mul_prestart_op[2]
+                        || !((state == S_IDLE)
+                             || (((state == S_MUL_DONE) || (state == S_DONE))
+                                 && consume))))
+                $fatal(1, "Invalid or unserviceable MUL prestart");
+            if ((state == S_IDLE) && req_valid && !req_op[2]
+                    && !mul_prestart_valid)
+                $fatal(1, "EX MUL reached idle unit without ID prestart");
+            if ((state == S_MUL_EXEC)
+                    && !(req_valid && !req_op[2]))
+                $fatal(1, "Prestarted MUL has no matching EX owner");
+            if (done && !(req_valid && ((state == S_MUL_DONE)
+                                      || (state == S_DONE))))
+                $fatal(1, "MulDiv done has no matching EX owner");
+        end
+    end
+`endif
 
 endmodule

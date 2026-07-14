@@ -14,6 +14,11 @@
 # Example:
 #   ./03_Timing_Analysis/build.sh 16 withM
 #
+# Memory admission defaults (MiB):
+#   VIVADO_MEM_BASE_MIB=4096
+#   VIVADO_MEM_PER_JOB_MIB=768
+#   VIVADO_MEM_RESERVE_MIB=2048
+#
 # COE configuration:
 #   current | src0 | src1 | src2 | withM | withoutM
 # ================================================================
@@ -35,8 +40,139 @@ usage() {
         'COE configuration:' \
         '  current | src0 | src1 | src2 | withM | withoutM' \
         '' \
+        'Memory admission check:' \
+        '  required = 4096 MiB + jobs * 768 MiB + 2048 MiB system reserve' \
+        '  Override the three terms with VIVADO_MEM_BASE_MIB,' \
+        '  VIVADO_MEM_PER_JOB_MIB, and VIVADO_MEM_RESERVE_MIB.' \
+        '  Swap is reported but is not counted as safe Vivado capacity.' \
+        '' \
         'Flow:' \
         '  pass1_explore -> {pass2_routing_opt, pass2_aggressive_explore}'
+}
+
+require_nonnegative_integer() {
+    local name="$1"
+    local value="$2"
+    if [[ ! "${value}" =~ ^[0-9]+$ ]]; then
+        echo "ERROR: ${name} must be a non-negative integer, got '${value}'." >&2
+        exit 2
+    fi
+}
+
+require_positive_integer() {
+    local name="$1"
+    local value="$2"
+    if [[ ! "${value}" =~ ^[1-9][0-9]*$ ]]; then
+        echo "ERROR: ${name} must be a positive integer, got '${value}'." >&2
+        exit 2
+    fi
+}
+
+detect_available_memory() {
+    local mem_available_kib swap_free_kib
+    local cgroup_max cgroup_current cgroup_headroom_mib
+
+    if [[ ! -r /proc/meminfo ]]; then
+        echo "ERROR: cannot read /proc/meminfo; refusing to start Vivado without a memory check." >&2
+        return 1
+    fi
+
+    mem_available_kib="$(awk '$1 == "MemAvailable:" {print $2; exit}' /proc/meminfo)"
+    swap_free_kib="$(awk '$1 == "SwapFree:" {print $2; exit}' /proc/meminfo)"
+    if [[ ! "${mem_available_kib}" =~ ^[0-9]+$ ]]; then
+        echo "ERROR: MemAvailable is missing from /proc/meminfo; refusing to start Vivado." >&2
+        return 1
+    fi
+
+    MEMORY_AVAILABLE_MIB=$((mem_available_kib / 1024))
+    MEMORY_SWAP_FREE_MIB=0
+    if [[ "${swap_free_kib}" =~ ^[0-9]+$ ]]; then
+        MEMORY_SWAP_FREE_MIB=$((swap_free_kib / 1024))
+    fi
+    MEMORY_LIMIT_SOURCE="/proc/meminfo MemAvailable"
+
+    # In a cgroup, the host's MemAvailable can exceed this process's actual
+    # allowance. Use the smaller headroom so containers also fail safely.
+    if [[ -r /sys/fs/cgroup/memory.max \
+          && -r /sys/fs/cgroup/memory.current ]]; then
+        cgroup_max="$(</sys/fs/cgroup/memory.max)"
+        cgroup_current="$(</sys/fs/cgroup/memory.current)"
+        if [[ "${cgroup_max}" =~ ^[0-9]+$ \
+              && "${cgroup_current}" =~ ^[0-9]+$ ]]; then
+            if (( cgroup_max > cgroup_current )); then
+                cgroup_headroom_mib=$(((cgroup_max - cgroup_current) / 1048576))
+            else
+                cgroup_headroom_mib=0
+            fi
+            if (( cgroup_headroom_mib < MEMORY_AVAILABLE_MIB )); then
+                MEMORY_AVAILABLE_MIB="${cgroup_headroom_mib}"
+                MEMORY_LIMIT_SOURCE="cgroup v2 remaining allowance"
+            fi
+        fi
+    elif [[ -r /sys/fs/cgroup/memory/memory.limit_in_bytes \
+            && -r /sys/fs/cgroup/memory/memory.usage_in_bytes ]]; then
+        cgroup_max="$(</sys/fs/cgroup/memory/memory.limit_in_bytes)"
+        cgroup_current="$(</sys/fs/cgroup/memory/memory.usage_in_bytes)"
+        if [[ "${cgroup_max}" =~ ^[0-9]+$ \
+              && "${cgroup_current}" =~ ^[0-9]+$ \
+              && ${#cgroup_max} -lt 19 ]]; then
+            if (( cgroup_max > cgroup_current )); then
+                cgroup_headroom_mib=$(((cgroup_max - cgroup_current) / 1048576))
+            else
+                cgroup_headroom_mib=0
+            fi
+            if (( cgroup_headroom_mib < MEMORY_AVAILABLE_MIB )); then
+                MEMORY_AVAILABLE_MIB="${cgroup_headroom_mib}"
+                MEMORY_LIMIT_SOURCE="cgroup v1 remaining allowance"
+            fi
+        fi
+    fi
+}
+
+check_memory_admission() {
+    if ! detect_available_memory; then
+        return 1
+    fi
+
+    MEMORY_VIVADO_ESTIMATE_MIB=$((MEMORY_BASE_MIB
+                                  + JOBS * MEMORY_PER_JOB_MIB))
+    MEMORY_REQUIRED_MIB=$((MEMORY_VIVADO_ESTIMATE_MIB
+                           + MEMORY_RESERVE_MIB))
+    MEMORY_MAX_SAFE_JOBS=0
+    if (( MEMORY_AVAILABLE_MIB > MEMORY_BASE_MIB + MEMORY_RESERVE_MIB )); then
+        MEMORY_MAX_SAFE_JOBS=$(((MEMORY_AVAILABLE_MIB
+                                - MEMORY_BASE_MIB
+                                - MEMORY_RESERVE_MIB)
+                               / MEMORY_PER_JOB_MIB))
+    fi
+
+    echo "================================================================"
+    echo " Vivado memory admission check"
+    echo "================================================================"
+    printf 'Detected available RAM : %s MiB (%s)\n' \
+        "${MEMORY_AVAILABLE_MIB}" "${MEMORY_LIMIT_SOURCE}"
+    printf 'Estimated Vivado RAM  : %s MiB = %s + %s jobs * %s\n' \
+        "${MEMORY_VIVADO_ESTIMATE_MIB}" "${MEMORY_BASE_MIB}" \
+        "${JOBS}" "${MEMORY_PER_JOB_MIB}"
+    printf 'System reserve        : %s MiB\n' "${MEMORY_RESERVE_MIB}"
+    printf 'Required available RAM: %s MiB\n' "${MEMORY_REQUIRED_MIB}"
+    printf 'Free swap (not counted): %s MiB\n' "${MEMORY_SWAP_FREE_MIB}"
+
+    if (( MEMORY_AVAILABLE_MIB < MEMORY_REQUIRED_MIB )); then
+        echo "Memory check          : FAILED" >&2
+        if (( MEMORY_MAX_SAFE_JOBS > 0 )); then
+            printf 'ERROR: %s jobs are unsafe with current free RAM; retry with at most %s jobs or free more RAM.\n' \
+                "${JOBS}" "${MEMORY_MAX_SAFE_JOBS}" >&2
+        else
+            echo "ERROR: current free RAM is insufficient even for one Vivado job; free memory first." >&2
+        fi
+        echo "Vivado has not been started and no result directory has been changed." >&2
+        return 1
+    fi
+
+    echo "Memory check          : PASSED"
+    printf 'Current safe job limit: %s\n' "${MEMORY_MAX_SAFE_JOBS}"
+    echo "================================================================"
 }
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
@@ -52,10 +188,18 @@ fi
 JOBS="$1"
 COE_NAME="$2"
 
-if [[ ! "${JOBS}" =~ ^[1-9][0-9]*$ ]]; then
-    echo "ERROR: parallel jobs must be a positive integer, got '${JOBS}'." >&2
-    exit 2
-fi
+require_positive_integer "parallel jobs" "${JOBS}"
+
+# Existing withM logs peak near 4 GiB for this design. Add conservative
+# per-job headroom and preserve enough physical RAM for Linux/the desktop.
+# Swap is intentionally excluded so a check cannot pass by accepting a
+# machine-freezing amount of paging.
+MEMORY_BASE_MIB="${VIVADO_MEM_BASE_MIB:-4096}"
+MEMORY_PER_JOB_MIB="${VIVADO_MEM_PER_JOB_MIB:-768}"
+MEMORY_RESERVE_MIB="${VIVADO_MEM_RESERVE_MIB:-2048}"
+require_nonnegative_integer "VIVADO_MEM_BASE_MIB" "${MEMORY_BASE_MIB}"
+require_positive_integer "VIVADO_MEM_PER_JOB_MIB" "${MEMORY_PER_JOB_MIB}"
+require_nonnegative_integer "VIVADO_MEM_RESERVE_MIB" "${MEMORY_RESERVE_MIB}"
 
 case "${COE_NAME}" in
     current|src0|src1|src2)
@@ -82,6 +226,13 @@ fi
 if [[ ! -f "${PASS1_TCL}" || ! -f "${PASS2_TCL}" ]]; then
     echo "ERROR: timing-flow Tcl scripts are incomplete under ${SCRIPT_DIR}." >&2
     exit 2
+fi
+
+# This gate deliberately runs before sourcing Vivado and before creating or
+# replacing any result paths. An unsafe invocation therefore has no build-side
+# effects beyond its diagnostic output.
+if ! check_memory_admission; then
+    exit 3
 fi
 
 if ! command -v vivado >/dev/null 2>&1; then
@@ -230,6 +381,14 @@ fi
     printf 'COE configuration: %s\n' "${COE_NAME}"
     printf 'COE directory: %s\n' "${COE_DIR}"
     printf 'Parallel jobs: %s\n' "${JOBS}"
+    printf 'Memory check: PASSED\n'
+    printf 'Available RAM at admission: %s MiB (%s)\n' \
+        "${MEMORY_AVAILABLE_MIB}" "${MEMORY_LIMIT_SOURCE}"
+    printf 'Estimated Vivado RAM: %s MiB\n' \
+        "${MEMORY_VIVADO_ESTIMATE_MIB}"
+    printf 'Reserved system RAM: %s MiB\n' "${MEMORY_RESERVE_MIB}"
+    printf 'Required available RAM: %s MiB\n' "${MEMORY_REQUIRED_MIB}"
+    printf 'Safe job limit at admission: %s\n' "${MEMORY_MAX_SAFE_JOBS}"
     printf 'Flow: pass1_explore -> {pass2_routing_opt, pass2_aggressive_explore}\n'
     printf 'Status: RUNNING\n'
 } > "${MANIFEST}"

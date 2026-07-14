@@ -463,10 +463,11 @@ module perf_monitor (
     wire        muldiv_done_w   = tb_riscv_tests.u_cpu.muldiv_done;
     wire        muldiv_busy_w   = tb_riscv_tests.u_cpu.muldiv_busy;
     wire        id_mul_prestart_w = tb_riscv_tests.u_cpu.id_mul_prestart;
-    wire [ 2:0] id_mul_prestart_op_w = tb_riscv_tests.u_cpu.id_inst[14:12];
+    wire [ 2:0] id_mul_prestart_op_w =
+        tb_riscv_tests.u_cpu.id_inst[14:12];
     // MUL is accepted one stage earlier than DIV. Count the architectural
-    // launch exactly once at its real interface and preserve EX-start timing
-    // for DIV/REM.
+    // launch exactly once at its real interface and retain EX-start timing for
+    // DIV/REM, whose op[2] bit is set.
     wire        muldiv_ex_start_event = ex_muldiv_req_w & ex_muldiv_op_w[2]
                                       & ~muldiv_busy_w & ~muldiv_done_w;
     wire        muldiv_start_event = id_mul_prestart_w

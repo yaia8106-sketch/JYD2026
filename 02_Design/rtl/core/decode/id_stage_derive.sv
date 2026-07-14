@@ -86,12 +86,13 @@ module id_stage_derive
     assign id_s1_rs2_used = id_s1_alu_src2_is_rs2 | dec1_is_branch | dec1_mem_write_en;
 
     // Only simple ALU-like Slot 0 consumers can advance with a MEM-load repair
-    // tag. DIV/REM stay out because the multi-cycle unit captures operands.
-    wire id_s0_divrem = dec_is_muldiv & id_inst[14];
+    // tag. All RV32M operations stay out: MUL captures its local DSP-input
+    // payload on the ID/EX acceptance edge, while DIV/REM capture iterative
+    // state at unit entry.
     assign id_s0_alu_only = dec_reg_write_en & (dec_wb_sel == 2'b00)
                           & ~dec_mem_read_en & ~dec_mem_write_en
                           & ~dec_is_branch & ~dec_is_jal & ~dec_is_jalr
-                          & ~dec_is_csr & ~id_s0_divrem;
+                          & ~dec_is_csr & ~dec_is_muldiv;
     assign id_s1_repair_ok = id_s1_alu_src1_is_rs1
                             | id_s1_alu_src2_is_rs2
                             | dec1_mem_read_en

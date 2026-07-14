@@ -212,10 +212,9 @@ module contest_mmio_adapter (
     input  logic [31:0] perip_rdata
 );
 
-    localparam logic [31:0] MTIME_LO_ADDR    = 32'h8020_0070;
-    localparam logic [31:0] MTIME_HI_ADDR    = 32'h8020_0074;
-    localparam logic [31:0] MTIMECMP_LO_ADDR = 32'h8020_0078;
-    localparam logic [31:0] MTIMECMP_HI_ADDR = 32'h8020_007C;
+    // The four timer registers occupy one aligned 16-byte window.  Decode the
+    // common upper bits once, then use word-select bits [3:2] locally.
+    localparam logic [27:0] TIMER_WORD_WINDOW = 28'h8020_007;
 
     logic [31:0] read_addr_mem;
     logic [63:0] mtime;
@@ -228,20 +227,25 @@ module contest_mmio_adapter (
             read_addr_mem <= read_addr_ex;
     end
 
-    wire read_mtime_lo = read_addr_mem == MTIME_LO_ADDR;
-    wire read_mtime_hi = read_addr_mem == MTIME_HI_ADDR;
-    wire read_mtimecmp_lo = read_addr_mem == MTIMECMP_LO_ADDR;
-    wire read_mtimecmp_hi = read_addr_mem == MTIMECMP_HI_ADDR;
-    wire read_internal = read_mtime_lo | read_mtime_hi
-                       | read_mtimecmp_lo | read_mtimecmp_hi;
+    wire read_timer_word = (read_addr_mem[31:4] == TIMER_WORD_WINDOW)
+                         & (read_addr_mem[1:0] == 2'b00);
+    wire [1:0] read_timer_index = read_addr_mem[3:2];
+    wire read_mtime_lo = read_timer_word & (read_timer_index == 2'd0);
+    wire read_mtime_hi = read_timer_word & (read_timer_index == 2'd1);
+    wire read_mtimecmp_lo = read_timer_word & (read_timer_index == 2'd2);
+    wire read_mtimecmp_hi = read_timer_word & (read_timer_index == 2'd3);
+    wire read_internal = read_timer_word;
 
     wire write_valid = |write_wea_mem;
-    wire write_mtime_lo = write_valid & (write_addr_mem == MTIME_LO_ADDR);
-    wire write_mtime_hi = write_valid & (write_addr_mem == MTIME_HI_ADDR);
-    wire write_mtimecmp_lo = write_valid & (write_addr_mem == MTIMECMP_LO_ADDR);
-    wire write_mtimecmp_hi = write_valid & (write_addr_mem == MTIMECMP_HI_ADDR);
-    wire write_internal = write_mtime_lo | write_mtime_hi
-                        | write_mtimecmp_lo | write_mtimecmp_hi;
+    wire write_timer_word = write_valid
+                          & (write_addr_mem[31:4] == TIMER_WORD_WINDOW)
+                          & (write_addr_mem[1:0] == 2'b00);
+    wire [1:0] write_timer_index = write_addr_mem[3:2];
+    wire write_mtime_lo = write_timer_word & (write_timer_index == 2'd0);
+    wire write_mtime_hi = write_timer_word & (write_timer_index == 2'd1);
+    wire write_mtimecmp_lo = write_timer_word & (write_timer_index == 2'd2);
+    wire write_mtimecmp_hi = write_timer_word & (write_timer_index == 2'd3);
+    wire write_internal = write_timer_word;
 
     wire read_platform_space = read_addr_mem[31:8] == 24'h8020_00;
     wire write_platform_space = write_addr_mem[31:8] == 24'h8020_00;

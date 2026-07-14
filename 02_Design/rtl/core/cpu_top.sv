@@ -138,6 +138,8 @@ module cpu_top
     // ---- Forwarding ----
     wire [31:0] fwd_rs1_data;
     wire [31:0] fwd_rs2_data;
+    wire [31:0] mul_fwd_rs1_data;
+    wire [31:0] mul_fwd_rs2_data;
     wire [31:0] fwd_s1_rs1_data;
     wire [31:0] fwd_s1_rs2_data;
     wire        fwd_rs1_wb_repair;
@@ -239,6 +241,8 @@ module cpu_top
     wire [31:0] ex_rs2_data_repair;
     wire [31:0] ex_s1_rs1_data_repair;
     wire [31:0] ex_s1_rs2_data_repair;
+    wire [ 1:0] ex_store_addr_low;
+    wire [ 1:0] ex_s1_store_addr_low;
 
     // ---- Branch ----
     wire        branch_flush;          // EX stage combinational (for predictor update)
@@ -401,6 +405,17 @@ module cpu_top
     wire        bitmanip_flush = frontend_branch_flush
                                | mem_branch_flush;
 
+    wire        ex_forward_reg_write = ex_reg_write_en
+                                             & (~ex_is_muldiv | muldiv_done)
+                                             & (~ex_is_bitmanip | bitmanip_done);
+    // Normal ALU payload takes the dedicated fast path. CSR/MUL results are
+    // precomputed independently so the fallback path has no hidden ALU arc.
+    wire        ex_mul_fast_alu = ~ex_is_csr & ~ex_is_muldiv
+                                & (ex_wb_sel != 2'b10);
+    wire [31:0] ex_special_forward_result =
+        ({32{ex_is_csr}}    & ex_csr_rdata)
+      | ({32{ex_is_muldiv}} & muldiv_result);
+
     // ---- Dual-issue performance counter ----
     wire [31:0] dual_issue_count;
 
@@ -429,6 +444,11 @@ module cpu_top
     // ---- Flush / redirect ----
     wire id_flush = frontend_branch_flush;
     wire ex_flush = frontend_branch_flush;
+    // This is the exact ID/EX acceptance edge. A Slot 0 MUL establishes its
+    // narrow MulDiv owner here while its forwarded rs payload is duplicated
+    // into free-running local DSP input registers.
+    wire id_to_ex_fire = id_valid & id_ready_go & ex_allowin & ~id_flush;
+    wire id_mul_prestart = id_to_ex_fire & dec_is_muldiv & ~id_inst[14];
 
     // ---- Register addresses from instruction (ID stage, from IF/ID reg) ----
     wire [4:0] id_rs1_addr;
@@ -1237,9 +1257,7 @@ module cpu_top
         .rf_s1_rs1_data (rf_s1_rs1_data),
         .rf_s1_rs2_data (rf_s1_rs2_data),
         .ex_valid       (ex_valid),
-        .ex_reg_write   (ex_reg_write_en
-                        & (~ex_is_muldiv | muldiv_done)
-                        & (~ex_is_bitmanip | bitmanip_done)),
+        .ex_reg_write   (ex_forward_reg_write),
         .ex_is_bitmanip (ex_is_bitmanip),
         .ex_mem_read    (ex_mem_read_en),
         .ex_rd          (ex_rd),
@@ -1285,6 +1303,55 @@ module cpu_top
         .id_s1_rs1_wb_repair(fwd_s1_rs1_wb_repair),
         .id_s1_rs2_wb_repair(fwd_s1_rs2_wb_repair),
         .id_ready_go    (id_ready_go_raw)
+    );
+
+    // Keep the DSP operand mux physically independent from the ordinary
+    // ID/EX forwarding outputs. The logic priority is intentionally identical;
+    // only ordinary EX ALU data receives a direct final-selector path.
+    (* keep_hierarchy = "yes" *) mul_operand_forwarding u_mul_operand_forwarding (
+        .id_rs1_addr          (id_rs1_addr),
+        .id_rs2_addr          (id_rs2_addr),
+        .rf_rs1_data          (rf_rs1_data),
+        .rf_rs2_data          (rf_rs2_data),
+        .ex_valid             (ex_valid),
+        .ex_reg_write         (ex_forward_reg_write),
+        .ex_is_bitmanip       (ex_is_bitmanip),
+        .ex_fast_alu          (ex_mul_fast_alu),
+        .ex_rd                (ex_rd),
+        .ex_alu_result        (alu_result),
+        .ex_special_result    (ex_special_forward_result),
+        .ex_pc_plus_4         (ex_pc_plus_4),
+        .ex_wb_sel            (ex_wb_sel),
+        .ex_s1_valid          (ex_s1_valid),
+        .ex_s1_reg_write      (ex_s1_reg_write_en),
+        .ex_s1_rd             (ex_s1_rd),
+        .ex_s1_alu_result     (alu_s1_result),
+        .ex_s1_pc_plus_4      (ex_s1_pc_plus_4),
+        .ex_s1_wb_sel         (ex_s1_wb_sel),
+        .mem_valid            (mem_valid),
+        .mem_reg_write        (mem_reg_write_en),
+        .mem_is_load          (mem_mem_read_en),
+        .mem_rd               (mem_rd),
+        .mem_alu_result       (mem_alu_result),
+        .mem_pc_plus_4        (mem_pc_plus_4),
+        .mem_wb_sel           (mem_wb_sel),
+        .mem_s1_valid         (mem_s1_valid),
+        .mem_s1_reg_write     (mem_s1_reg_write_en),
+        .mem_s1_is_load       (mem_s1_mem_read_en),
+        .mem_s1_rd            (mem_s1_rd),
+        .mem_s1_alu_result    (mem_s1_alu_result),
+        .mem_s1_pc_plus_4     (mem_s1_pc_plus_4),
+        .mem_s1_wb_sel        (mem_s1_wb_sel),
+        .wb_valid             (wb_valid),
+        .wb_reg_write         (wb_reg_write_en),
+        .wb_rd                (wb_rd),
+        .wb_write_data        (wb_write_data),
+        .wb_s1_valid          (wb_s1_valid),
+        .wb_s1_reg_write      (wb_s1_reg_write_en),
+        .wb_s1_rd             (wb_s1_rd),
+        .wb_s1_write_data     (wb_s1_write_data),
+        .mul_rs1_data         (mul_fwd_rs1_data),
+        .mul_rs2_data         (mul_fwd_rs2_data)
     );
 
     // ALU operand selection (in ID stage to reduce EX critical path)
@@ -1506,22 +1573,49 @@ module cpu_top
         .alu_addr   (alu_s1_addr)
     );
 
+    // Byte-lane selection only depends on addition modulo four.  Compute that
+    // small result beside the full address adders so a repaired WB operand does
+    // not have to traverse a 32-bit carry chain before reaching store_wea.
+    assign ex_store_addr_low = ex_alu_src1_repair[1:0]
+                             + ex_alu_src2_repair[1:0];
+    assign ex_s1_store_addr_low = ex_s1_alu_src1_repair[1:0]
+                                + ex_s1_alu_src2_repair[1:0];
+
     // MUL/DIV requests hold EX until the multi-cycle unit reports done.
     muldiv_unit u_muldiv_unit (
-        .clk       (clk),
-        .rst_n     (rst_n),
-        .req_valid (ex_muldiv_req),
-        .req_op    (ex_muldiv_op),
-        .req_mul_rs1(ex_alu_src1_repair),
-        .req_mul_rs2(ex_alu_src2_repair),
-        .req_div_rs1(ex_alu_src1),
-        .req_div_rs2(ex_alu_src2),
-        .consume   (muldiv_consume),
-        .flush     (muldiv_flush),
-        .busy      (muldiv_busy),
-        .done      (muldiv_done),
-        .result    (muldiv_result)
+        .clk                (clk),
+        .rst_n              (rst_n),
+        .mul_prestart_valid (id_mul_prestart),
+        .mul_prestart_op    (id_inst[14:12]),
+        // RV32M is R-type. Its physically independent forwarding copy keeps
+        // ordinary EX ALU dependencies on a one-selector path to DSP A/B.
+        .mul_prestart_rs1   (mul_fwd_rs1_data),
+        .mul_prestart_rs2   (mul_fwd_rs2_data),
+        .req_valid          (ex_muldiv_req),
+        .req_op             (ex_muldiv_op),
+        .req_div_rs1        (ex_alu_src1),
+        .req_div_rs2        (ex_alu_src2),
+        .consume            (muldiv_consume),
+        .flush              (muldiv_flush),
+        .busy               (muldiv_busy),
+        .done               (muldiv_done),
+        .result             (muldiv_result)
     );
+
+`ifndef SYNTHESIS
+    // The DSP launch deliberately bypasses the EX WB-repair mux. Any future
+    // hazard-policy change that lets load-dependent MUL enter EX early would
+    // therefore be a correctness bug, so make the invariant executable.
+    always_ff @(posedge clk) begin
+        if (rst_n && id_mul_prestart
+                  && ((mul_fwd_rs1_data !== fwd_rs1_data)
+                      || (mul_fwd_rs2_data !== fwd_rs2_data)))
+            $fatal(1, "MUL forwarding copy disagrees with architectural forwarding");
+        if (rst_n && ex_valid && ex_is_muldiv && !ex_muldiv_op[2]
+                  && (ex_alu_src1_wb_repair | ex_alu_src2_wb_repair))
+            $fatal(1, "MUL entered EX with an unsupported WB-repair tag");
+    end
+`endif
 
     bitmanip_unit u_bitmanip_unit (
         .clk       (clk),
@@ -1592,7 +1686,7 @@ module cpu_top
         // Store side (EX stage)
         .store_valid     (ex_valid),
         .store_en        (ex_mem_write_en),
-        .store_addr_low  (alu_addr[1:0]),
+        .store_addr_low  (ex_store_addr_low),
         .store_mem_size  (ex_mem_size),
         .store_data_in   (ex_rs2_data_repair),
         .store_wea       (dram_wea),
@@ -1618,7 +1712,7 @@ module cpu_top
         // Store side (EX stage, shares the single LSU when Slot0 is non-LSU)
         .store_valid     (ex_s1_valid),
         .store_en        (ex_s1_mem_write_en),
-        .store_addr_low  (alu_s1_addr[1:0]),
+        .store_addr_low  (ex_s1_store_addr_low),
         .store_mem_size  (ex_s1_mem_size),
         .store_data_in   (ex_s1_store_data_raw),
         .store_wea       (dram_wea_s1),
@@ -1634,6 +1728,12 @@ module cpu_top
 
 `ifndef SYNTHESIS
     always_ff @(posedge clk) begin
+        if (rst_n && ex_valid && ex_mem_write_en
+                  && (ex_store_addr_low !== alu_addr[1:0]))
+            $fatal(1, "Slot0 store low-address adder disagrees with full address");
+        if (rst_n && ex_s1_valid && ex_s1_mem_write_en
+                  && (ex_s1_store_addr_low !== alu_s1_addr[1:0]))
+            $fatal(1, "Slot1 store low-address adder disagrees with full address");
         if (rst_n && ex_s1_valid
                   && ex_s0_alu_store_data_bypass_r) begin
             if (!(ex_valid && ex_reg_write_en && (ex_rd != 5'd0)
