@@ -250,6 +250,38 @@ module tb_forwarding;
         end
     endtask
 
+    function automatic logic [31:0] reference_forward(
+        input logic [ 4:0] src_addr,
+        input logic [31:0] rf_data
+    );
+        begin
+            if (ex_s1_valid && ex_s1_reg_write && (ex_s1_rd != 5'd0)
+                    && (ex_s1_rd == src_addr))
+                reference_forward = (ex_s1_wb_sel == 2'b10)
+                                  ? ex_s1_pc_plus_4 : ex_s1_alu_result;
+            else if (ex_valid && ex_reg_write && !ex_is_bitmanip
+                    && (ex_rd != 5'd0) && (ex_rd == src_addr))
+                reference_forward = (ex_wb_sel == 2'b10)
+                                  ? ex_pc_plus_4 : ex_alu_result;
+            else if (mem_s1_valid && mem_s1_reg_write && !mem_s1_is_load
+                    && (mem_s1_rd != 5'd0) && (mem_s1_rd == src_addr))
+                reference_forward = (mem_s1_wb_sel == 2'b10)
+                                  ? mem_s1_pc_plus_4 : mem_s1_alu_result;
+            else if (mem_valid && mem_reg_write && !mem_is_load
+                    && (mem_rd != 5'd0) && (mem_rd == src_addr))
+                reference_forward = (mem_wb_sel == 2'b10)
+                                  ? mem_pc_plus_4 : mem_alu_result;
+            else if (wb_s1_valid && wb_s1_reg_write && (wb_s1_rd != 5'd0)
+                    && (wb_s1_rd == src_addr))
+                reference_forward = wb_s1_write_data;
+            else if (wb_valid && wb_reg_write && (wb_rd != 5'd0)
+                    && (wb_rd == src_addr))
+                reference_forward = wb_write_data;
+            else
+                reference_forward = rf_data;
+        end
+    endfunction
+
     initial begin
         clear_inputs();
         #1;
@@ -462,6 +494,158 @@ module tb_forwarding;
         ex_rd = 5'd15;
         #1;
         check(id_ready_go, "unrelated EX B producer must not stall ID");
+
+        clear_inputs();
+        id_rs1_addr = 5'd5;
+        id_rs1_used = 1'b1;
+        ex_valid = 1'b1;
+        ex_reg_write = 1'b1;
+        ex_rd = 5'd5;
+        ex_alu_result = 32'hA100_0005;
+        wb_valid = 1'b1;
+        wb_reg_write = 1'b1;
+        wb_rd = 5'd5;
+        wb_write_data = 32'hB100_0005;
+        #1;
+        check(id_rs1_data == 32'hA100_0005,
+              "S0 EX producer must beat S0 WB");
+
+        clear_inputs();
+        id_rs1_addr = 5'd6;
+        id_rs1_used = 1'b1;
+        ex_valid = 1'b1;
+        ex_reg_write = 1'b1;
+        ex_rd = 5'd6;
+        ex_alu_result = 32'hA100_0006;
+        ex_s1_valid = 1'b1;
+        ex_s1_reg_write = 1'b1;
+        ex_s1_rd = 5'd6;
+        ex_s1_alu_result = 32'hA200_0006;
+        #1;
+        check(id_rs1_data == 32'hA200_0006,
+              "S1 EX producer must retain youngest priority");
+
+        clear_inputs();
+        id_rs1_addr = 5'd7;
+        id_rs1_used = 1'b1;
+        ex_s1_valid = 1'b1;
+        ex_s1_reg_write = 1'b1;
+        ex_s1_rd = 5'd7;
+        ex_s1_wb_sel = 2'b10;
+        ex_s1_alu_result = 32'hBAD0_0007;
+        ex_s1_pc_plus_4 = 32'hA200_0007;
+        #1;
+        check(id_rs1_data == 32'hA200_0007,
+              "S1 link must remain on the architectural fallback");
+
+        clear_inputs();
+        id_rs1_addr = 5'd8;
+        id_rs1_used = 1'b1;
+        wb_valid = 1'b1;
+        wb_reg_write = 1'b1;
+        wb_rd = 5'd8;
+        wb_write_data = 32'hB100_0008;
+        #1;
+        check(id_rs1_data == 32'hB100_0008,
+              "S0 WB producer selected wrong payload");
+
+        clear_inputs();
+        id_rs1_addr = 5'd9;
+        id_rs1_used = 1'b1;
+        mem_valid = 1'b1;
+        mem_reg_write = 1'b1;
+        mem_rd = 5'd9;
+        mem_alu_result = 32'hC100_0009;
+        wb_valid = 1'b1;
+        wb_reg_write = 1'b1;
+        wb_rd = 5'd9;
+        wb_write_data = 32'hB100_0009;
+        #1;
+        check(id_rs1_data == 32'hC100_0009,
+              "younger MEM producer must beat S0 WB");
+
+        clear_inputs();
+        id_rs1_addr = 5'd10;
+        id_rs1_used = 1'b1;
+        wb_s1_valid = 1'b1;
+        wb_s1_reg_write = 1'b1;
+        wb_s1_rd = 5'd10;
+        wb_s1_write_data = 32'hB200_0010;
+        wb_valid = 1'b1;
+        wb_reg_write = 1'b1;
+        wb_rd = 5'd10;
+        wb_write_data = 32'hB100_0010;
+        #1;
+        check(id_rs1_data == 32'hB200_0010,
+              "S1 WB producer must beat S0 WB");
+
+        // Randomized equivalence check against the architectural priority
+        // tree for every operand output.
+        for (int trial = 0; trial < 1000; trial = trial + 1) begin
+            clear_inputs();
+            id_rs1_addr = $urandom_range(0, 31);
+            id_rs2_addr = $urandom_range(0, 31);
+            id_s1_rs1_addr = $urandom_range(0, 31);
+            id_s1_rs2_addr = $urandom_range(0, 31);
+            rf_rs1_data = $urandom;
+            rf_rs2_data = $urandom;
+            rf_s1_rs1_data = $urandom;
+            rf_s1_rs2_data = $urandom;
+
+            ex_valid = $urandom_range(0, 1);
+            ex_reg_write = $urandom_range(0, 1);
+            ex_is_bitmanip = $urandom_range(0, 1);
+            ex_mem_read = $urandom_range(0, 1);
+            ex_rd = $urandom_range(0, 31);
+            ex_wb_sel = $urandom_range(0, 2);
+            ex_alu_result = $urandom;
+            ex_pc_plus_4 = $urandom;
+
+            ex_s1_valid = $urandom_range(0, 1);
+            ex_s1_reg_write = $urandom_range(0, 1);
+            ex_s1_mem_read = $urandom_range(0, 1);
+            ex_s1_rd = $urandom_range(0, 31);
+            ex_s1_wb_sel = $urandom_range(0, 2);
+            ex_s1_alu_result = $urandom;
+            ex_s1_pc_plus_4 = $urandom;
+
+            mem_valid = $urandom_range(0, 1);
+            mem_reg_write = $urandom_range(0, 1);
+            mem_is_load = $urandom_range(0, 1);
+            mem_rd = $urandom_range(0, 31);
+            mem_wb_sel = $urandom_range(0, 2);
+            mem_alu_result = $urandom;
+            mem_pc_plus_4 = $urandom;
+
+            mem_s1_valid = $urandom_range(0, 1);
+            mem_s1_reg_write = $urandom_range(0, 1);
+            mem_s1_is_load = $urandom_range(0, 1);
+            mem_s1_rd = $urandom_range(0, 31);
+            mem_s1_wb_sel = $urandom_range(0, 2);
+            mem_s1_alu_result = $urandom;
+            mem_s1_pc_plus_4 = $urandom;
+
+            wb_valid = $urandom_range(0, 1);
+            wb_reg_write = $urandom_range(0, 1);
+            wb_rd = $urandom_range(0, 31);
+            wb_write_data = $urandom;
+            wb_s1_valid = $urandom_range(0, 1);
+            wb_s1_reg_write = $urandom_range(0, 1);
+            wb_s1_rd = $urandom_range(0, 31);
+            wb_s1_write_data = $urandom;
+            #1;
+
+            check(id_rs1_data === reference_forward(id_rs1_addr, rf_rs1_data),
+                  "random S0 rs1 forwarding mismatch");
+            check(id_rs2_data === reference_forward(id_rs2_addr, rf_rs2_data),
+                  "random S0 rs2 forwarding mismatch");
+            check(id_s1_rs1_data
+                    === reference_forward(id_s1_rs1_addr, rf_s1_rs1_data),
+                  "random S1 rs1 forwarding mismatch");
+            check(id_s1_rs2_data
+                    === reference_forward(id_s1_rs2_addr, rf_s1_rs2_data),
+                  "random S1 rs2 forwarding mismatch");
+        end
 
         $display("[PASS] forwarding directed test");
         $finish;
