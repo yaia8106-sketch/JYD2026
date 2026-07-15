@@ -1,6 +1,6 @@
 // ============================================================
 // Module: decoder
-// Description: RV32I instruction decoder (pure combinational)
+// Description: 译码模块
 // Domain: decode and issue.
 // Spec: 02_Design/spec/decoder_spec.md
 // Style: packed constant LUT + funct3/funct7 passthrough
