@@ -175,6 +175,8 @@ module cpu_top
         ex_s0_payload.common.alu_src1_wb_repair;
     wire        ex_alu_src2_wb_repair =
         ex_s0_payload.common.alu_src2_wb_repair;
+    wire        ex_fast_alu_src1_wb_repair;
+    wire        ex_fast_alu_src2_wb_repair;
     wire [ 3:0] ex_alu_op = ex_s0_payload.common.alu_op;
     wire        ex_reg_write_en = ex_s0_payload.common.reg_write_en;
     wire [ 1:0] ex_wb_sel = ex_s0_payload.common.wb_sel;
@@ -228,6 +230,8 @@ module cpu_top
         ex_s1_payload.common.alu_src1_wb_repair;
     wire        ex_s1_alu_src2_wb_repair =
         ex_s1_payload.common.alu_src2_wb_repair;
+    wire        ex_s1_fast_alu_src1_wb_repair;
+    wire        ex_s1_fast_alu_src2_wb_repair;
 
     // ---- ALU ----
     wire [31:0] alu_result;
@@ -244,6 +248,10 @@ module cpu_top
     wire [31:0] ex_rs2_data_repair;
     wire [31:0] ex_s1_rs1_data_repair;
     wire [31:0] ex_s1_rs2_data_repair;
+    wire [31:0] ex_fast_alu_src1;
+    wire [31:0] ex_fast_alu_src2;
+    wire [31:0] ex_s1_fast_alu_src1;
+    wire [31:0] ex_s1_fast_alu_src2;
     wire [ 1:0] ex_store_addr_low;
     wire [ 1:0] ex_s1_store_addr_low;
 
@@ -366,6 +374,15 @@ module cpu_top
     wire [31:0] wb_load_data = wb_s0_payload.load_data;
     wire [31:0] wb_load_data_ex;
 
+    assign ex_fast_alu_src1 = ex_fast_alu_src1_wb_repair
+                            ? wb_load_data_ex : ex_alu_src1;
+    assign ex_fast_alu_src2 = ex_fast_alu_src2_wb_repair
+                            ? wb_load_data_ex : ex_alu_src2;
+    assign ex_s1_fast_alu_src1 = ex_s1_fast_alu_src1_wb_repair
+                               ? wb_load_data_ex : ex_s1_alu_src1;
+    assign ex_s1_fast_alu_src2 = ex_s1_fast_alu_src2_wb_repair
+                               ? wb_load_data_ex : ex_s1_alu_src2;
+
     // ---- Slot 1 shadow WB ----
     wire        wb_s1_valid;
     wire cpu_defs::mem_wb_slot1_t mem_wb_s1_payload;
@@ -387,6 +404,8 @@ module cpu_top
     wire [31:0] ex_csr_rdata;
     wire [31:0] ex_forward_result;
     wire [31:0] ex_pipe_alu_result;
+    wire        ex_fast_alu_forward = ~ex_is_csr & ~ex_is_muldiv
+                                    & (ex_wb_sel != 2'b10);
 
     // ---- RV32M multi-cycle unit ----
     wire        muldiv_busy;
@@ -1362,6 +1381,8 @@ module cpu_top
         .ex_mem_read    (ex_mem_read_en),
         .ex_rd          (ex_rd),
         .ex_alu_result  (ex_forward_result),
+        .ex_fast_alu    (ex_fast_alu_forward),
+        .ex_fast_alu_result(alu_result),
         .ex_pc_plus_4   (ex_pc_plus_4),
         .ex_wb_sel      (ex_wb_sel),
         .ex_s1_valid       (ex_s1_valid),
@@ -1560,7 +1581,9 @@ module cpu_top
         .ex_valid         (ex_valid),
         .ex_flush         (ex_flush),
         .id_payload       (id_ex_s0_payload),
-        .ex_payload       (ex_s0_payload)
+        .ex_payload       (ex_s0_payload),
+        .ex_fast_alu_src1_wb_repair(ex_fast_alu_src1_wb_repair),
+        .ex_fast_alu_src2_wb_repair(ex_fast_alu_src2_wb_repair)
     );
 
     id_ex_reg_s1 u_id_ex_reg_s1 (
@@ -1572,7 +1595,9 @@ module cpu_top
         .ex_flush            (ex_flush),
         .ex_s1_valid         (ex_s1_valid),
         .id_payload          (id_ex_s1_payload),
-        .ex_payload          (ex_s1_payload)
+        .ex_payload          (ex_s1_payload),
+        .ex_fast_alu_src1_wb_repair(ex_s1_fast_alu_src1_wb_repair),
+        .ex_fast_alu_src2_wb_repair(ex_s1_fast_alu_src2_wb_repair)
     );
 
     // Keep this timing-sensitive one-bit control separate from the wide Slot 1
@@ -1657,21 +1682,25 @@ module cpu_top
     );
 
     alu u_alu (
-        .alu_op     (ex_alu_op),
-        .alu_src1   (ex_alu_src1_repair),
-        .alu_src2   (ex_alu_src2_repair),
-        .alu_result (alu_result),
-        .alu_sum    (alu_sum),
-        .alu_addr   (alu_addr)
+        .alu_op       (ex_alu_op),
+        .alu_src1     (ex_fast_alu_src1),
+        .alu_src2     (ex_fast_alu_src2),
+        .alu_addr_src1(ex_alu_src1_repair),
+        .alu_addr_src2(ex_alu_src2_repair),
+        .alu_result   (alu_result),
+        .alu_sum      (alu_sum),
+        .alu_addr     (alu_addr)
     );
 
     alu u_alu_s1 (
-        .alu_op     (ex_s1_alu_op),
-        .alu_src1   (ex_s1_alu_src1_repair),
-        .alu_src2   (ex_s1_alu_src2_repair),
-        .alu_result (alu_s1_result),
-        .alu_sum    (alu_s1_sum),
-        .alu_addr   (alu_s1_addr)
+        .alu_op       (ex_s1_alu_op),
+        .alu_src1     (ex_s1_fast_alu_src1),
+        .alu_src2     (ex_s1_fast_alu_src2),
+        .alu_addr_src1(ex_s1_alu_src1_repair),
+        .alu_addr_src2(ex_s1_alu_src2_repair),
+        .alu_result   (alu_s1_result),
+        .alu_sum      (alu_s1_sum),
+        .alu_addr     (alu_s1_addr)
     );
 
     // Byte-lane selection only depends on addition modulo four.  Compute that
@@ -1725,6 +1754,25 @@ module cpu_top
                   && ((id_s1_alu_src1 !== id_s1_alu_src1_reference)
                       || (id_s1_alu_src2 !== id_s1_alu_src2_reference)))
             $fatal(1, "Slot-1 parallel ALU source selection changed value");
+        if (rst_n
+                  && ((ex_fast_alu_src1_wb_repair
+                       !== ex_alu_src1_wb_repair)
+                      || (ex_fast_alu_src2_wb_repair
+                          !== ex_alu_src2_wb_repair)
+                      || (ex_s1_fast_alu_src1_wb_repair
+                          !== ex_s1_alu_src1_wb_repair)
+                      || (ex_s1_fast_alu_src2_wb_repair
+                          !== ex_s1_alu_src2_wb_repair)))
+            $fatal(1, "Fast ALU repair tags changed ID/EX state");
+        if (rst_n
+                  && ((ex_fast_alu_src1 !== ex_alu_src1_repair)
+                      || (ex_fast_alu_src2 !== ex_alu_src2_repair)
+                      || (ex_s1_fast_alu_src1 !== ex_s1_alu_src1_repair)
+                      || (ex_s1_fast_alu_src2 !== ex_s1_alu_src2_repair)))
+            $fatal(1, "Fast ALU repair operands changed value");
+        if (rst_n && ex_fast_alu_forward
+                  && (alu_result !== ex_forward_result))
+            $fatal(1, "Fast EX ALU forwarding candidate changed value");
         if (rst_n && id_mul_prestart
                   && u_forwarding.mul_launch_ex_raw_hazard)
             $fatal(1, "MUL launched across an EX RAW interlock");

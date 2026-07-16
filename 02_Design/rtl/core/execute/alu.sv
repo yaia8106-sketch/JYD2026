@@ -12,6 +12,8 @@ module alu
     input  logic [ 3:0] alu_op,
     input  logic [31:0] alu_src1,
     input  logic [31:0] alu_src2,
+    input  logic [31:0] alu_addr_src1,
+    input  logic [31:0] alu_addr_src2,
     output logic [31:0] alu_result,
     output logic [31:0] alu_sum,       // Raw shared adder output, before result MUX
     output logic [31:0] alu_addr       // Independent address adder, does not depend on alu_op
@@ -20,7 +22,7 @@ module alu
 
     // Pure src1+src2 adder for load/store address calculation. This bypasses
     // the subtract/compare negate logic and removes alu_op from the address path.
-    assign alu_addr = alu_src1 + alu_src2;
+    assign alu_addr = alu_addr_src1 + alu_addr_src2;
 
     // ---- 3.1 Shared adder/subtractor ----
     // negate src2 for SUB(1_000), SLT(0_010), SLTU(0_011)

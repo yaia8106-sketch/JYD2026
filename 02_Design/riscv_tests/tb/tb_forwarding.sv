@@ -40,6 +40,7 @@ module tb_forwarding;
     logic [31:0] ex_alu_result;
     logic [31:0] ex_pc_plus_4;
     logic [ 1:0] ex_wb_sel;
+    wire         ex_fast_alu = ~ex_is_muldiv & (ex_wb_sel != 2'b10);
 
     logic        ex_s1_valid;
     logic        ex_s1_reg_write;
@@ -137,6 +138,8 @@ module tb_forwarding;
         .ex_mem_read      (ex_mem_read),
         .ex_rd            (ex_rd),
         .ex_alu_result    (ex_alu_result),
+        .ex_fast_alu      (ex_fast_alu),
+        .ex_fast_alu_result(ex_alu_result),
         .ex_pc_plus_4     (ex_pc_plus_4),
         .ex_wb_sel        (ex_wb_sel),
         .ex_s1_valid      (ex_s1_valid),

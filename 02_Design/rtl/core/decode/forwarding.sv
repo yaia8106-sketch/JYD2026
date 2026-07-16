@@ -53,6 +53,8 @@ module forwarding (
     input  logic        ex_mem_read,
     input  logic [ 4:0] ex_rd,
     input  logic [31:0] ex_alu_result,
+    input  logic        ex_fast_alu,
+    input  logic [31:0] ex_fast_alu_result,
     input  logic [31:0] ex_pc_plus_4,   // pre-computed in EX stage
     input  logic [ 1:0] ex_wb_sel,      // 00=ALU, 01=DRAM, 10=PC+4
 
@@ -130,8 +132,8 @@ module forwarding (
     //  Repaired EX results are valid forwarding sources now that branch/JALR
     //  target work no longer sits in ID.
     // ================================================================
-    wire [31:0] ex_fwd_val     = (ex_wb_sel     == 2'b10) ? ex_pc_plus_4     : ex_alu_result;
-    wire [31:0] ex_s1_fwd_val  = (ex_s1_wb_sel  == 2'b10) ? ex_s1_pc_plus_4  : ex_s1_alu_result;
+    wire [31:0] ex_fwd_val     = (ex_wb_sel == 2'b10)
+                               ? ex_pc_plus_4 : ex_alu_result;
     wire mem_select_pc4 = mem_wb_sel == 2'b10;
     wire [31:0] mem_nonmul_fwd_val = mem_select_pc4
                                    ? mem_pc_plus_4 : mem_alu_result;
@@ -153,6 +155,26 @@ module forwarding (
             2'b01: select_forward_group = mem_data;
             2'b10: select_forward_group = wb_data;
             default: select_forward_group = rf_data;
+        endcase
+    endfunction
+
+    // Fold the two inner EX choices into one LUT-sized 4-way selection:
+    //   00 = Slot 1 ALU, 01 = Slot 1 PC+4,
+    //   10 = Slot 0 ordinary ALU fast path, 11 = Slot 0 special/PC+4.
+    // The final EX/MEM/WB/RF selector remains unchanged, so older-stage paths
+    // do not gain an extra data-mux level.
+    function automatic logic [31:0] select_ex_group_data(
+        input logic [ 1:0] select,
+        input logic [31:0] s1_alu_data,
+        input logic [31:0] s1_pc4_data,
+        input logic [31:0] s0_fast_data,
+        input logic [31:0] s0_fallback_data
+    );
+        case (select)
+            2'b00: select_ex_group_data = s1_alu_data;
+            2'b01: select_ex_group_data = s1_pc4_data;
+            2'b10: select_ex_group_data = s0_fast_data;
+            default: select_ex_group_data = s0_fallback_data;
         endcase
     endfunction
 
@@ -201,8 +223,12 @@ module forwarding (
                               && !mem_select_pc4; \
     wire TAG``_wb_select_hit = TAG``_wb_group_hit \
                              && !TAG``_mem_mul_select; \
-    wire [31:0] TAG``_ex_group_data = \
-        TAG``_s1_ex_hit ? ex_s1_fwd_val : ex_fwd_val; \
+    wire [1:0] TAG``_ex_data_select = TAG``_s1_ex_hit \
+        ? {1'b0, ex_s1_wb_sel == 2'b10} \
+        : {1'b1, ~ex_fast_alu}; \
+    wire [31:0] TAG``_ex_group_data = select_ex_group_data( \
+        TAG``_ex_data_select, ex_s1_alu_result, ex_s1_pc_plus_4, \
+        ex_fast_alu_result, ex_fwd_val); \
     wire [31:0] TAG``_mem_group_data = \
         TAG``_s1_mem_hit ? mem_s1_fwd_val : mem_nonmul_fwd_val; \
     wire [31:0] TAG``_wb_group_data = \
