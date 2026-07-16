@@ -10,17 +10,13 @@
 # failure is recorded without invalidating pass 1 or the other candidate.
 #
 # Usage:
-#   ./03_Timing_Analysis/build.sh <parallel jobs> <COE configuration>
+#   ./build <parallel jobs> <COE configuration> [frequency MHz]
 # Example:
-#   ./03_Timing_Analysis/build.sh 16 withM
-#
-# Memory admission defaults (MiB):
-#   VIVADO_MEM_BASE_MIB=4096
-#   VIVADO_MEM_PER_JOB_MIB=768
-#   VIVADO_MEM_RESERVE_MIB=2048
+#   ./build 16 withM
+#   ./build 16 withM 180
 #
 # COE configuration:
-#   current | src0 | src1 | src2 | withM | withoutM
+#   current | src0 | src1 | src2 | withM | withoutM | new
 # ================================================================
 set -euo pipefail
 
@@ -32,32 +28,22 @@ PASS2_TCL="${SCRIPT_DIR}/run_physopt_candidate.tcl"
 usage() {
     printf '%s\n' \
         'Usage:' \
-        '  ./03_Timing_Analysis/build.sh <parallel jobs> <COE configuration>' \
+        '  ./build <parallel jobs> <COE configuration> [frequency MHz]' \
         '' \
         'Example:' \
-        '  ./03_Timing_Analysis/build.sh 16 withM' \
+        '  ./build 16 withM' \
+        '  ./build 16 withM 180' \
+        '' \
+        'Frequency:' \
+        '  Optional positive MHz value; default: 200' \
+        '  Both 180 and 180MHz forms are accepted.' \
         '' \
         'COE configuration:' \
-        '  current | src0 | src1 | src2 | withM | withoutM' \
-        '' \
-        'Memory admission check:' \
-        '  required = 4096 MiB + jobs * 768 MiB + 2048 MiB system reserve' \
-        '  Override the three terms with VIVADO_MEM_BASE_MIB,' \
-        '  VIVADO_MEM_PER_JOB_MIB, and VIVADO_MEM_RESERVE_MIB.' \
-        '  Swap is reported but is not counted as safe Vivado capacity.' \
+        '  current | src0 | src1 | src2 | withM | withoutM | new' \
         '' \
         'Flow:' \
         '  pass1_explore -> {pass2_routing_opt, pass2_aggressive_explore}' \
         '  Failed AggressiveExplore is retried once with one Vivado thread.'
-}
-
-require_nonnegative_integer() {
-    local name="$1"
-    local value="$2"
-    if [[ ! "${value}" =~ ^[0-9]+$ ]]; then
-        echo "ERROR: ${name} must be a non-negative integer, got '${value}'." >&2
-        exit 2
-    fi
 }
 
 require_positive_integer() {
@@ -69,111 +55,19 @@ require_positive_integer() {
     fi
 }
 
-detect_available_memory() {
-    local mem_available_kib swap_free_kib
-    local cgroup_max cgroup_current cgroup_headroom_mib
-
-    if [[ ! -r /proc/meminfo ]]; then
-        echo "ERROR: cannot read /proc/meminfo; refusing to start Vivado without a memory check." >&2
-        return 1
+normalize_frequency_mhz() {
+    local value="$1"
+    if [[ "${value}" =~ ^([0-9]+([.][0-9]+)?)([mM][hH][zZ])?$ ]]; then
+        value="${BASH_REMATCH[1]}"
+    else
+        echo "ERROR: frequency must be a positive MHz value, got '${1}'." >&2
+        exit 2
     fi
-
-    mem_available_kib="$(awk '$1 == "MemAvailable:" {print $2; exit}' /proc/meminfo)"
-    swap_free_kib="$(awk '$1 == "SwapFree:" {print $2; exit}' /proc/meminfo)"
-    if [[ ! "${mem_available_kib}" =~ ^[0-9]+$ ]]; then
-        echo "ERROR: MemAvailable is missing from /proc/meminfo; refusing to start Vivado." >&2
-        return 1
+    if ! awk -v value="${value}" 'BEGIN { exit !(value > 0) }'; then
+        echo "ERROR: frequency must be greater than zero, got '${1}'." >&2
+        exit 2
     fi
-
-    MEMORY_AVAILABLE_MIB=$((mem_available_kib / 1024))
-    MEMORY_SWAP_FREE_MIB=0
-    if [[ "${swap_free_kib}" =~ ^[0-9]+$ ]]; then
-        MEMORY_SWAP_FREE_MIB=$((swap_free_kib / 1024))
-    fi
-    MEMORY_LIMIT_SOURCE="/proc/meminfo MemAvailable"
-
-    # In a cgroup, the host's MemAvailable can exceed this process's actual
-    # allowance. Use the smaller headroom so containers also fail safely.
-    if [[ -r /sys/fs/cgroup/memory.max \
-          && -r /sys/fs/cgroup/memory.current ]]; then
-        cgroup_max="$(</sys/fs/cgroup/memory.max)"
-        cgroup_current="$(</sys/fs/cgroup/memory.current)"
-        if [[ "${cgroup_max}" =~ ^[0-9]+$ \
-              && "${cgroup_current}" =~ ^[0-9]+$ ]]; then
-            if (( cgroup_max > cgroup_current )); then
-                cgroup_headroom_mib=$(((cgroup_max - cgroup_current) / 1048576))
-            else
-                cgroup_headroom_mib=0
-            fi
-            if (( cgroup_headroom_mib < MEMORY_AVAILABLE_MIB )); then
-                MEMORY_AVAILABLE_MIB="${cgroup_headroom_mib}"
-                MEMORY_LIMIT_SOURCE="cgroup v2 remaining allowance"
-            fi
-        fi
-    elif [[ -r /sys/fs/cgroup/memory/memory.limit_in_bytes \
-            && -r /sys/fs/cgroup/memory/memory.usage_in_bytes ]]; then
-        cgroup_max="$(</sys/fs/cgroup/memory/memory.limit_in_bytes)"
-        cgroup_current="$(</sys/fs/cgroup/memory/memory.usage_in_bytes)"
-        if [[ "${cgroup_max}" =~ ^[0-9]+$ \
-              && "${cgroup_current}" =~ ^[0-9]+$ \
-              && ${#cgroup_max} -lt 19 ]]; then
-            if (( cgroup_max > cgroup_current )); then
-                cgroup_headroom_mib=$(((cgroup_max - cgroup_current) / 1048576))
-            else
-                cgroup_headroom_mib=0
-            fi
-            if (( cgroup_headroom_mib < MEMORY_AVAILABLE_MIB )); then
-                MEMORY_AVAILABLE_MIB="${cgroup_headroom_mib}"
-                MEMORY_LIMIT_SOURCE="cgroup v1 remaining allowance"
-            fi
-        fi
-    fi
-}
-
-check_memory_admission() {
-    if ! detect_available_memory; then
-        return 1
-    fi
-
-    MEMORY_VIVADO_ESTIMATE_MIB=$((MEMORY_BASE_MIB
-                                  + JOBS * MEMORY_PER_JOB_MIB))
-    MEMORY_REQUIRED_MIB=$((MEMORY_VIVADO_ESTIMATE_MIB
-                           + MEMORY_RESERVE_MIB))
-    MEMORY_MAX_SAFE_JOBS=0
-    if (( MEMORY_AVAILABLE_MIB > MEMORY_BASE_MIB + MEMORY_RESERVE_MIB )); then
-        MEMORY_MAX_SAFE_JOBS=$(((MEMORY_AVAILABLE_MIB
-                                - MEMORY_BASE_MIB
-                                - MEMORY_RESERVE_MIB)
-                               / MEMORY_PER_JOB_MIB))
-    fi
-
-    echo "================================================================"
-    echo " Vivado memory admission check"
-    echo "================================================================"
-    printf 'Detected available RAM : %s MiB (%s)\n' \
-        "${MEMORY_AVAILABLE_MIB}" "${MEMORY_LIMIT_SOURCE}"
-    printf 'Estimated Vivado RAM  : %s MiB = %s + %s jobs * %s\n' \
-        "${MEMORY_VIVADO_ESTIMATE_MIB}" "${MEMORY_BASE_MIB}" \
-        "${JOBS}" "${MEMORY_PER_JOB_MIB}"
-    printf 'System reserve        : %s MiB\n' "${MEMORY_RESERVE_MIB}"
-    printf 'Required available RAM: %s MiB\n' "${MEMORY_REQUIRED_MIB}"
-    printf 'Free swap (not counted): %s MiB\n' "${MEMORY_SWAP_FREE_MIB}"
-
-    if (( MEMORY_AVAILABLE_MIB < MEMORY_REQUIRED_MIB )); then
-        echo "Memory check          : FAILED" >&2
-        if (( MEMORY_MAX_SAFE_JOBS > 0 )); then
-            printf 'ERROR: %s jobs are unsafe with current free RAM; retry with at most %s jobs or free more RAM.\n' \
-                "${JOBS}" "${MEMORY_MAX_SAFE_JOBS}" >&2
-        else
-            echo "ERROR: current free RAM is insufficient even for one Vivado job; free memory first." >&2
-        fi
-        echo "Vivado has not been started and no result directory has been changed." >&2
-        return 1
-    fi
-
-    echo "Memory check          : PASSED"
-    printf 'Current safe job limit: %s\n' "${MEMORY_MAX_SAFE_JOBS}"
-    echo "================================================================"
+    printf '%s\n' "${value}"
 }
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
@@ -181,26 +75,18 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
     exit 0
 fi
 
-if [[ $# -ne 2 ]]; then
+if [[ $# -lt 2 || $# -gt 3 ]]; then
     usage >&2
     exit 2
 fi
 
 JOBS="$1"
 COE_NAME="$2"
+FREQUENCY_MHZ="$(normalize_frequency_mhz "${3:-200}")"
+CLOCK_PERIOD_NS="$(awk -v frequency="${FREQUENCY_MHZ}" \
+    'BEGIN { printf "%.9f", 1000.0 / frequency }')"
 
 require_positive_integer "parallel jobs" "${JOBS}"
-
-# Existing withM logs peak near 4 GiB for this design. Add conservative
-# per-job headroom and preserve enough physical RAM for Linux/the desktop.
-# Swap is intentionally excluded so a check cannot pass by accepting a
-# machine-freezing amount of paging.
-MEMORY_BASE_MIB="${VIVADO_MEM_BASE_MIB:-4096}"
-MEMORY_PER_JOB_MIB="${VIVADO_MEM_PER_JOB_MIB:-768}"
-MEMORY_RESERVE_MIB="${VIVADO_MEM_RESERVE_MIB:-2048}"
-require_nonnegative_integer "VIVADO_MEM_BASE_MIB" "${MEMORY_BASE_MIB}"
-require_positive_integer "VIVADO_MEM_PER_JOB_MIB" "${MEMORY_PER_JOB_MIB}"
-require_nonnegative_integer "VIVADO_MEM_RESERVE_MIB" "${MEMORY_RESERVE_MIB}"
 
 case "${COE_NAME}" in
     current|src0|src1|src2)
@@ -212,9 +98,18 @@ case "${COE_NAME}" in
     withoutM)
         COE_SOURCE_NAME="new_without_Mext"
         ;;
+    new)
+        COE_SOURCE_NAME="new"
+        NEW_COE_PREPARER="${ROOT}/02_Design/coe/prepare_new_coe.py"
+        if [[ ! -f "${NEW_COE_PREPARER}" ]]; then
+            echo "ERROR: contest COE converter not found: ${NEW_COE_PREPARER}" >&2
+            exit 2
+        fi
+        python3 "${NEW_COE_PREPARER}"
+        ;;
     *)
         echo "ERROR: unknown COE configuration '${COE_NAME}'." >&2
-        echo "Valid configurations: current | src0 | src1 | src2 | withM | withoutM" >&2
+        echo "Valid configurations: current | src0 | src1 | src2 | withM | withoutM | new" >&2
         exit 2
         ;;
 esac
@@ -227,13 +122,6 @@ fi
 if [[ ! -f "${PASS1_TCL}" || ! -f "${PASS2_TCL}" ]]; then
     echo "ERROR: timing-flow Tcl scripts are incomplete under ${SCRIPT_DIR}." >&2
     exit 2
-fi
-
-# This gate deliberately runs before sourcing Vivado and before creating or
-# replacing any result paths. An unsafe invocation therefore has no build-side
-# effects beyond its diagnostic output.
-if ! check_memory_admission; then
-    exit 3
 fi
 
 if ! command -v vivado >/dev/null 2>&1; then
@@ -383,14 +271,8 @@ fi
     printf 'COE configuration: %s\n' "${COE_NAME}"
     printf 'COE directory: %s\n' "${COE_DIR}"
     printf 'Parallel jobs: %s\n' "${JOBS}"
-    printf 'Memory check: PASSED\n'
-    printf 'Available RAM at admission: %s MiB (%s)\n' \
-        "${MEMORY_AVAILABLE_MIB}" "${MEMORY_LIMIT_SOURCE}"
-    printf 'Estimated Vivado RAM: %s MiB\n' \
-        "${MEMORY_VIVADO_ESTIMATE_MIB}"
-    printf 'Reserved system RAM: %s MiB\n' "${MEMORY_RESERVE_MIB}"
-    printf 'Required available RAM: %s MiB\n' "${MEMORY_REQUIRED_MIB}"
-    printf 'Safe job limit at admission: %s\n' "${MEMORY_MAX_SAFE_JOBS}"
+    printf 'Requested frequency: %s MHz\n' "${FREQUENCY_MHZ}"
+    printf 'Requested clock period: %s ns\n' "${CLOCK_PERIOD_NS}"
     printf 'Flow: pass1_explore -> {pass2_routing_opt, pass2_aggressive_explore}\n'
     printf 'Status: RUNNING\n'
 } > "${MANIFEST}"
@@ -408,13 +290,14 @@ echo "================================================================"
 echo "Run directory : ${RUN_DIR}"
 echo "COE           : ${COE_NAME} (${COE_DIR})"
 echo "Jobs          : ${JOBS}"
+echo "Frequency     : ${FREQUENCY_MHZ} MHz (${CLOCK_PERIOD_NS} ns)"
 echo "Pass 1        : Explore (mandatory)"
 echo "Pass 2A       : routing_opt (independent)"
 echo "Pass 2B       : AggressiveExplore (one single-thread retry on failure)"
 echo "================================================================"
 
 if run_vivado_stage "Mandatory pass 1 Explore" "${PASS1_TCL}" "${PASS1_DIR}" \
-    --jobs "${JOBS}" --extra-physopt 0 \
+    --jobs "${JOBS}" --freq-mhz "${FREQUENCY_MHZ}" --extra-physopt 0 \
     --coe-dir "${COE_DIR}" --output-dir "${PASS1_DIR}" \
     --bitstream-file "${PASS1_DIR}/design.bit"; then
     :
@@ -443,6 +326,7 @@ AGGRESSIVE_RETRY_STATUS="NOT_NEEDED"
 
 if run_vivado_stage "Pass 2 routing-only candidate" "${PASS2_TCL}" \
     "${PASS2_ROUTING_DIR}" --jobs "${JOBS}" \
+    --freq-mhz "${FREQUENCY_MHZ}" \
     --input-dcp "${PASS1_DCP}" --output-dir "${PASS2_ROUTING_DIR}" \
     --strategy routing_opt --bitstream-file "${PASS2_ROUTING_DIR}/design.bit"; then
     if candidate_artifacts_complete "${PASS2_ROUTING_DIR}" 2; then
@@ -457,6 +341,7 @@ fi
 
 if run_vivado_stage "Pass 2 AggressiveExplore candidate" "${PASS2_TCL}" \
     "${PASS2_AGGRESSIVE_DIR}" --jobs "${JOBS}" \
+    --freq-mhz "${FREQUENCY_MHZ}" \
     --input-dcp "${PASS1_DCP}" --output-dir "${PASS2_AGGRESSIVE_DIR}" \
     --strategy aggressive_explore \
     --bitstream-file "${PASS2_AGGRESSIVE_DIR}/design.bit"; then
@@ -479,6 +364,7 @@ if [[ "${AGGRESSIVE_INITIAL_STATUS}" != "SUCCESS" ]]; then
     if run_vivado_stage \
         "Pass 2 AggressiveExplore single-thread retry" \
         "${PASS2_TCL}" "${PASS2_AGGRESSIVE_DIR}" --jobs 1 \
+        --freq-mhz "${FREQUENCY_MHZ}" \
         --input-dcp "${PASS1_DCP}" \
         --output-dir "${PASS2_AGGRESSIVE_DIR}" \
         --strategy aggressive_explore \
@@ -542,6 +428,8 @@ append_candidate_report() {
 
 {
     printf 'Run ID: %s\n\n' "${RUN_ID}"
+    printf 'Requested frequency: %s MHz\n' "${FREQUENCY_MHZ}"
+    printf 'Requested clock period: %s ns\n\n' "${CLOCK_PERIOD_NS}"
     append_candidate_report "pass1_explore" SUCCESS "${PASS1_DIR}"
     append_candidate_report "pass2_routing_opt" "${ROUTING_STATUS}" \
         "${PASS2_ROUTING_DIR}"

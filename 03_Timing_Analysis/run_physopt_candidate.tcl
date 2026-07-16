@@ -13,7 +13,7 @@ proc candidate_usage {} {
     puts "Usage:"
     puts "  vivado -mode batch -source 03_Timing_Analysis/run_physopt_candidate.tcl \\"
     puts "         -tclargs --input-dcp FILE --output-dir DIR --strategy NAME"
-    puts "                  ?--jobs N? ?--bitstream-file FILE?"
+    puts "                  ?--jobs N? ?--freq-mhz F? ?--bitstream-file FILE?"
     puts "Strategies: routing_opt | aggressive_explore"
 }
 
@@ -24,6 +24,12 @@ proc candidate_fail {message} {
 proc require_positive_integer {option value} {
     if {![string is integer -strict $value] || $value < 1} {
         candidate_fail "$option requires a positive integer, got '$value'"
+    }
+}
+
+proc require_positive_number {option value} {
+    if {![string is double -strict $value] || $value <= 0.0} {
+        candidate_fail "$option requires a positive number, got '$value'"
     }
 }
 
@@ -84,6 +90,7 @@ set input_dcp_arg ""
 set output_dir_arg ""
 set strategy ""
 set jobs 8
+set frequency_mhz 200.0
 set bitstream_file_arg ""
 
 if {![info exists argv]} {
@@ -115,6 +122,12 @@ while {$arg_index < [llength $argv]} {
             set jobs [lindex $argv $arg_index]
             require_positive_integer --jobs $jobs
         }
+        --freq-mhz {
+            incr arg_index
+            if {$arg_index >= [llength $argv]} { candidate_fail "missing value after --freq-mhz" }
+            set frequency_mhz [lindex $argv $arg_index]
+            require_positive_number --freq-mhz $frequency_mhz
+        }
         --bitstream-file {
             incr arg_index
             if {$arg_index >= [llength $argv]} { candidate_fail "missing value after --bitstream-file" }
@@ -137,6 +150,7 @@ if {$output_dir_arg eq ""} { candidate_fail "--output-dir is required" }
 if {$strategy ni {routing_opt aggressive_explore}} {
     candidate_fail "unsupported strategy '$strategy'"
 }
+set clock_period_ns [expr {1000.0 / double($frequency_mhz)}]
 
 set script_dir [file normalize [file dirname [info script]]]
 set stage_timing_script [file join $script_dir "report_stage_timing.tcl"]
@@ -163,6 +177,7 @@ puts "================================================================"
 puts "Input DCP       : $input_dcp"
 puts "Strategy        : $strategy"
 puts "Jobs            : $jobs"
+puts "CPU clock       : $frequency_mhz MHz ($clock_period_ns ns)"
 puts "Output directory: $output_dir"
 puts "Bitstream       : $bitstream_file"
 
@@ -196,6 +211,7 @@ report_route_status -file [file join $output_dir "route_status_final.rpt"]
 report_drc -file [file join $output_dir "drc_final.rpt"]
 
 set STAGE_TIMING_OUTPUT_DIR $output_dir
+set STAGE_TIMING_CLK_PERIOD $clock_period_ns
 source $stage_timing_script
 
 set setup_wns [worst_slack setup]
@@ -211,6 +227,8 @@ puts $summary_handle "Pass: 2"
 puts $summary_handle "Final post-route pass: 2"
 puts $summary_handle "Strategy: $strategy"
 puts $summary_handle "Strategy command: $strategy_command"
+puts $summary_handle "Requested frequency (MHz): $frequency_mhz"
+puts $summary_handle "Requested clock period (ns): $clock_period_ns"
 puts $summary_handle "Post-physopt unrouted logical nets before repair: $repaired_unrouted_count"
 puts $summary_handle "Parent checkpoint: $input_dcp"
 puts $summary_handle "Setup WNS (ns): $setup_wns"

@@ -22,6 +22,7 @@
 #
 # Useful options:
 #   --jobs N             Parallel jobs for project runs (default: 16)
+#   --freq-mhz F         CPU clock frequency in MHz (default: 200)
 #   --extra-physopt N    Extra same-process post-route Explore passes after
 #                        pass 1 (default: 0). build.sh deliberately keeps this
 #                        at 0 and runs pass-2 candidates in fresh processes.
@@ -51,7 +52,8 @@
 proc flow_usage {} {
     puts "Usage:"
     puts "  vivado -mode batch -source 03_Timing_Analysis/run_synth_impl.tcl \\"
-    puts "         -tclargs ?--jobs N? ?--extra-physopt N? ?--bitstream?"
+    puts "         -tclargs ?--jobs N? ?--freq-mhz F? ?--extra-physopt N?"
+    puts "                  ?--bitstream?"
     puts "                  ?--bitstream-file FILE? ?--output-dir DIR?"
     puts "                  ?--coe-dir DIR?"
     puts "                  ?--no-reset? ?--dry-run?"
@@ -70,6 +72,12 @@ proc require_nonnegative_integer {option value} {
 proc require_positive_integer {option value} {
     if {![string is integer -strict $value] || $value < 1} {
         flow_fail "$option requires a positive integer, got '$value'"
+    }
+}
+
+proc require_positive_number {option value} {
+    if {![string is double -strict $value] || $value <= 0.0} {
+        flow_fail "$option requires a positive number, got '$value'"
     }
 }
 
@@ -193,6 +201,7 @@ proc total_negative_slack {analysis_type} {
 # ---- Command-line options -------------------------------------------------
 
 set jobs 16
+set frequency_mhz 200.0
 set extra_physopt_passes 0
 set write_bitstream_enabled 0
 set bitstream_file_arg ""
@@ -214,6 +223,12 @@ while {$arg_index < [llength $argv]} {
             if {$arg_index >= [llength $argv]} { flow_fail "missing value after --jobs" }
             set jobs [lindex $argv $arg_index]
             require_positive_integer --jobs $jobs
+        }
+        --freq-mhz {
+            incr arg_index
+            if {$arg_index >= [llength $argv]} { flow_fail "missing value after --freq-mhz" }
+            set frequency_mhz [lindex $argv $arg_index]
+            require_positive_number --freq-mhz $frequency_mhz
         }
         --extra-physopt {
             incr arg_index
@@ -257,6 +272,8 @@ while {$arg_index < [llength $argv]} {
     }
     incr arg_index
 }
+
+set clock_period_ns [expr {1000.0 / double($frequency_mhz)}]
 
 # ---- Project paths --------------------------------------------------------
 
@@ -318,6 +335,7 @@ puts " CPU synthesis and timing-oriented implementation"
 puts "================================================================"
 puts "Project              : $project_path"
 puts "Jobs                 : $jobs"
+puts "CPU clock            : $frequency_mhz MHz ($clock_period_ns ns)"
 puts "Reset synth/impl     : $reset_runs_enabled"
 puts "Post-route physopt   : Explore (pass 1)"
 puts "Extra physopt passes : $extra_physopt_passes"
@@ -346,9 +364,26 @@ set impl_run [get_runs -quiet impl_1]
 if {[llength $synth_run] == 0} { flow_fail "synth_1 does not exist" }
 if {[llength $impl_run] == 0} { flow_fail "impl_1 does not exist" }
 
+set pll_ip [get_ips -quiet pll]
+if {[llength $pll_ip] != 1} {
+    flow_fail "expected exactly one pll Clocking Wizard IP"
+}
+set current_pll_frequency \
+    [get_property CONFIG.CLKOUT2_REQUESTED_OUT_FREQ $pll_ip]
+if {$current_pll_frequency eq "" || \
+    ![string is double -strict $current_pll_frequency]} {
+    flow_fail "pll has no numeric CONFIG.CLKOUT2_REQUESTED_OUT_FREQ"
+}
+set frequency_change_required [expr {
+    abs(double($current_pll_frequency) - double($frequency_mhz)) > 0.0005
+}]
+
 if {$dry_run} {
     puts ""
     puts "Dry run: no project settings or run results were changed."
+    puts "PLL clk_out2 current  : $current_pll_frequency MHz"
+    puts "PLL clk_out2 requested: $frequency_mhz MHz"
+    puts "PLL regeneration      : [expr {$frequency_change_required ? "required" : "not required"}]"
     if {$coe_dir ne ""} {
         set dry_irom64_ip [get_ips -quiet IROM64]
         set dry_dram_ip [get_ips -quiet DRAM4MyOwn]
@@ -386,6 +421,25 @@ if {$dry_run} {
     }
     close_project
     return
+}
+
+if {!$reset_runs_enabled && $frequency_change_required} {
+    flow_fail "--freq-mhz cannot change pll frequency with --no-reset; a clean build is required"
+}
+
+puts ""
+puts "Configuring CPU clock"
+if {$frequency_change_required} {
+    puts "  pll clk_out2: $current_pll_frequency MHz -> $frequency_mhz MHz"
+    set_property CONFIG.CLKOUT2_REQUESTED_OUT_FREQ $frequency_mhz $pll_ip
+    reset_target all $pll_ip
+    generate_target all $pll_ip
+    if {[llength [get_runs -quiet pll_synth_1]] > 0} {
+        catch {reset_run pll_synth_1}
+    }
+    puts "  regenerated pll output products"
+} else {
+    puts "  pll clk_out2 already requests $frequency_mhz MHz"
 }
 
 # Update only the two private memories used by Core_cpu. The template IROM and
@@ -499,6 +553,7 @@ report_drc -file [file join $output_dir "drc_final.rpt"]
 puts ""
 puts "Generating pipeline-stage timing analysis from final pass"
 set STAGE_TIMING_OUTPUT_DIR $output_dir
+set STAGE_TIMING_CLK_PERIOD $clock_period_ns
 source $stage_timing_script
 
 set final_setup_slack [worst_slack setup]
@@ -516,6 +571,8 @@ puts $summary_handle "Pass: $final_pass_number"
 puts $summary_handle "Final post-route pass: $final_pass_number"
 puts $summary_handle "Strategy: explore"
 puts $summary_handle "Strategy command: phys_opt_design -directive Explore"
+puts $summary_handle "Requested frequency (MHz): $frequency_mhz"
+puts $summary_handle "Requested clock period (ns): $clock_period_ns"
 puts $summary_handle "Post-physopt unrouted logical nets before repair: $repaired_unrouted_count"
 puts $summary_handle "Setup WNS (ns): $final_setup_slack"
 puts $summary_handle "Setup TNS (ns): $final_setup_tns"

@@ -47,7 +47,12 @@ set GLOBAL_CANDIDATE_MULTIPLIER 20
 # 时钟端口名与周期（当设计中没有时钟约束时自动创建）
 # cpu_clk 频率：200MHz → 5.0ns；100MHz → 10.0ns；50MHz → 20ns
 set CLK_PORT   "w_cpu_clk"
-set CLK_PERIOD 5.0
+if {[info exists STAGE_TIMING_CLK_PERIOD]
+    && $STAGE_TIMING_CLK_PERIOD ne ""} {
+    set CLK_PERIOD $STAGE_TIMING_CLK_PERIOD
+} else {
+    set CLK_PERIOD 5.0
+}
 
 # ---- 前置检查：必须已经 open_run synth_1/impl_1 或打开综合/实现设计 ----
 if {[catch {current_design} _current_design_name] || $_current_design_name eq ""} {
