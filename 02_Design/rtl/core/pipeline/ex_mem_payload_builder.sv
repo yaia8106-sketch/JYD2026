@@ -17,6 +17,7 @@ module ex_mem_payload_builder
     input  logic [ 4:0]        s0_rd,
     input  logic               s0_reg_write_en,
     input  logic [ 1:0]        s0_wb_sel,
+    input  logic               s0_is_mul,
     input  logic               s0_mem_read_en,
     input  logic [ 1:0]        s0_mem_size,
     input  logic               s0_mem_unsigned,
@@ -57,6 +58,7 @@ module ex_mem_payload_builder
         slot0_payload.rd = s0_rd;
         slot0_payload.reg_write_en = s0_reg_write_en;
         slot0_payload.wb_sel = s0_wb_sel;
+        slot0_payload.is_mul = s0_is_mul;
         slot0_payload.mem_read_en = s0_mem_read_en;
         slot0_payload.mem_size = s0_mem_size;
         slot0_payload.mem_unsigned = s0_mem_unsigned;

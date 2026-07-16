@@ -143,6 +143,7 @@ module frontend_f0_packet_builder
             make_pair_meta = '0;
             make_pair_meta.pred_taken = pred_taken;
             make_pair_meta.force_single = force_single;
+            make_pair_meta.is_muldiv = decoded.is_muldiv;
             make_pair_meta.is_alu_type = decoded.is_alu_type;
             make_pair_meta.is_lsu = decoded.is_lsu;
             make_pair_meta.is_cfi = decoded.is_cfi;

@@ -67,6 +67,8 @@ module cpu_top
     (* max_fanout = 16 *) wire        id_allowin;
     wire        id_ready_go;
     wire        id_ready_go_raw;
+    wire        id_ready_go_raw_if_mem_ready;
+    wire        id_ready_go_raw_if_mem_wait;
     // Structured payloads keep per-slot prediction metadata adjacent to the
     // instruction as it crosses the pipeline boundary.
     wire cpu_defs::if_id_payload_t if_id_payload;
@@ -99,6 +101,7 @@ module cpu_top
     wire        dec_is_ecall;
     wire        dec_is_mret;
     wire        dec_is_muldiv;
+    wire        id_is_mul = dec_is_muldiv & ~id_inst[14];
     wire        dec_is_bitmanip;
     wire cpu_defs::bitmanip_op_t dec_bitmanip_op;
     wire [ 2:0] dec_imm_type;
@@ -147,7 +150,7 @@ module cpu_top
     wire        fwd_s1_rs1_wb_repair;
     wire        fwd_s1_rs2_wb_repair;
 
-    // ---- ALU src MUX (in ID stage) ----
+    // ---- Timing-parallelized ALU sources from forwarding ----
     wire [31:0] id_alu_src1;
     wire [31:0] id_alu_src2;
     wire [31:0] id_s1_alu_src1;
@@ -307,6 +310,7 @@ module cpu_top
     wire [ 4:0] mem_rd = mem_s0_payload.rd;
     wire        mem_reg_write_en = mem_s0_payload.reg_write_en;
     wire [ 1:0] mem_wb_sel = mem_s0_payload.wb_sel;
+    wire        mem_is_mul = mem_s0_payload.is_mul;
     wire        mem_mem_read_en = mem_s0_payload.mem_read_en;
     wire [ 1:0] mem_mem_size = mem_s0_payload.mem_size;
     wire        mem_mem_unsigned = mem_s0_payload.mem_unsigned;
@@ -389,9 +393,25 @@ module cpu_top
     wire        muldiv_done;
     wire [31:0] muldiv_result;
     wire        ex_muldiv_req = ex_valid & ex_is_muldiv & ~mem_branch_flush;
-    wire        muldiv_consume = ex_valid & ex_is_muldiv & muldiv_done
-                               & mem_allowin & ~mem_branch_flush;
+    // DIV/REM retain the original EX completion handshake. Multipliers leave
+    // EX one cycle earlier, so their owner is released only when the aligned
+    // MEM token advances. This keeps the registered product stable across MEM
+    // backpressure.
+    wire        ex_div_consume = ex_valid & ex_is_muldiv & ex_muldiv_op[2]
+                               & muldiv_done & mem_allowin
+                               & ~mem_branch_flush;
+    wire        mem_mul_consume = mem_valid & mem_is_mul
+                                & cache_ready & wb_allowin;
+    wire        muldiv_consume = ex_div_consume | mem_mul_consume;
     wire        muldiv_flush = frontend_branch_flush | mem_branch_flush;
+
+    // The MEM/WB payload must carry the architectural multiplier result because
+    // the early EX/MEM ALU field was sampled before that product was ready.
+    // Forwarding receives the raw candidates separately and folds MUL/PC+4/ALU
+    // selection into its existing one-level MEM value selector.
+    wire [31:0] mem_wb_alu_result =
+        ({32{mem_is_mul}}  & muldiv_result)
+      | ({32{~mem_is_mul}} & mem_alu_result);
 
     // ---- RV32 bit-manipulation multi-cycle unit ----
     wire        bitmanip_busy;
@@ -408,38 +428,77 @@ module cpu_top
     wire        ex_forward_reg_write = ex_reg_write_en
                                              & (~ex_is_muldiv | muldiv_done)
                                              & (~ex_is_bitmanip | bitmanip_done);
-    // Normal ALU payload takes the dedicated fast path. CSR/MUL results are
-    // precomputed independently so the fallback path has no hidden ALU arc.
-    wire        ex_mul_fast_alu = ~ex_is_csr & ~ex_is_muldiv
-                                & (ex_wb_sel != 2'b10);
-    wire [31:0] ex_special_forward_result =
-        ({32{ex_is_csr}}    & ex_csr_rdata)
-      | ({32{ex_is_muldiv}} & muldiv_result);
-
     // ---- Dual-issue performance counter ----
     wire [31:0] dual_issue_count;
 
     // ---- Handshake ----
     wire if_ready_go_w;             // driven by frontend_ftq
     wire mmio_st_ld_hazard;
-    wire ex_muldiv_ready = mem_branch_flush | ~ex_muldiv_req | muldiv_done;
+    wire ex_muldiv_ready = mem_branch_flush | ~ex_muldiv_req
+                         | ~ex_muldiv_op[2] | muldiv_done;
     wire ex_bitmanip_ready = mem_branch_flush | ~ex_bitmanip_req
                            | bitmanip_done;
     wire ex_ready_go_w  = ~mmio_st_ld_hazard
                         & ex_muldiv_ready & ex_bitmanip_ready;
     wire mem_ready_go_w = cache_ready; // DCache controls MEM stage flow
-    assign id_ready_go = id_ready_go_raw & ~timer_irq_hold;
+    wire mem_can_advance = ~mem_valid | mem_ready_go_w;
+    // A completed multiplier may accept a new M owner on the same edge that
+    // its MEM token advances. If MEM is held, block only a new M instruction;
+    // independent ID traffic remains governed by normal pipeline capacity.
+    wire mem_mul_owner_releases = ~mem_valid | ~mem_is_mul
+                                | mem_ready_go_w;
+    wire id_muldiv_unit_ready = ~dec_is_muldiv | ~muldiv_busy;
 
-    // wb_allowin is permanently true, so the ordinary ready chain is exactly:
-    //   mem_allowin = !mem_valid || mem_ready_go_w
-    //   ex_allowin  = !ex_valid  || (ex_ready_go_w && mem_allowin)
-    // Compute the frontend-visible result directly.  Six inputs fit one LUT6
-    // and avoid serially routing DCache ready through the MEM and EX modules.
-    assign id_allowin = !id_valid
-                      || (id_ready_go
-                          && (!ex_valid
-                              || (ex_ready_go_w
-                                  && (!mem_valid || mem_ready_go_w))));
+    // Evaluate the complete pipeline handshake for both values of the late
+    // DCache-ready bit. cache_ready then selects each one-bit result only once;
+    // it no longer traverses load-hazard, M-owner and downstream-allow logic.
+    wire id_base_ready_if_cache_ready = id_ready_go_raw_if_mem_ready
+                                      & ~timer_irq_hold;
+    wire id_base_ready_if_cache_wait = id_ready_go_raw_if_mem_wait
+                                     & ~timer_irq_hold;
+    wire id_muldiv_owner_ready_if_cache_wait = ~dec_is_muldiv
+                                             | ~mem_valid | ~mem_is_mul;
+
+    (* keep = "true" *) wire id_ready_go_if_cache_ready =
+        id_base_ready_if_cache_ready & id_muldiv_unit_ready;
+    (* keep = "true" *) wire id_ready_go_if_cache_wait =
+        id_base_ready_if_cache_wait & id_muldiv_unit_ready
+                                    & id_muldiv_owner_ready_if_cache_wait;
+
+    // wb_allowin is permanently true. Therefore MEM is always able to advance
+    // when cache_ready=1, while cache_ready=0 permits EX to advance only into
+    // an empty MEM stage.
+    (* keep = "true" *) wire ex_allowin_if_cache_ready =
+        ~ex_valid | ex_ready_go_w;
+    (* keep = "true" *) wire ex_allowin_if_cache_wait =
+        ~ex_valid | (ex_ready_go_w & ~mem_valid);
+
+    (* keep = "true" *) wire id_allowin_if_cache_ready =
+        ~id_valid | (id_ready_go_if_cache_ready
+                     & ex_allowin_if_cache_ready);
+    (* keep = "true" *) wire id_allowin_if_cache_wait =
+        ~id_valid | (id_ready_go_if_cache_wait
+                     & ex_allowin_if_cache_wait);
+
+    assign id_ready_go = cache_ready ? id_ready_go_if_cache_ready
+                                     : id_ready_go_if_cache_wait;
+    assign ex_allowin = cache_ready ? ex_allowin_if_cache_ready
+                                    : ex_allowin_if_cache_wait;
+    assign id_allowin = cache_ready ? id_allowin_if_cache_ready
+                                    : id_allowin_if_cache_wait;
+
+`ifndef SYNTHESIS
+    // Executable references retain the original serial equations.
+    wire id_ready_go_reference = id_ready_go_raw & ~timer_irq_hold
+                               & id_muldiv_unit_ready
+                               & (~dec_is_muldiv
+                                  | mem_mul_owner_releases);
+    wire ex_allowin_reference = ~ex_valid
+                              | (ex_ready_go_w & mem_can_advance);
+    wire id_allowin_reference = ~id_valid
+                              | (id_ready_go_reference
+                                 & ex_allowin_reference);
+`endif
 
     // ---- Flush / redirect ----
     wire id_flush = frontend_branch_flush;
@@ -447,8 +506,21 @@ module cpu_top
     // This is the exact ID/EX acceptance edge. A Slot 0 MUL establishes its
     // narrow MulDiv owner here while its forwarded rs payload is duplicated
     // into free-running local DSP input registers.
-    wire id_to_ex_fire = id_valid & id_ready_go & ex_allowin & ~id_flush;
-    wire id_mul_prestart = id_to_ex_fire & dec_is_muldiv & ~id_inst[14];
+    wire id_to_ex_fire_if_cache_ready = id_valid
+                                      & id_ready_go_if_cache_ready
+                                      & ex_allowin_if_cache_ready
+                                      & ~id_flush;
+    wire id_to_ex_fire_if_cache_wait = id_valid
+                                     & id_ready_go_if_cache_wait
+                                     & ex_allowin_if_cache_wait
+                                     & ~id_flush;
+    wire id_to_ex_fire = cache_ready ? id_to_ex_fire_if_cache_ready
+                                     : id_to_ex_fire_if_cache_wait;
+`ifndef SYNTHESIS
+    wire id_to_ex_fire_reference = id_valid & id_ready_go_reference
+                                 & ex_allowin_reference & ~id_flush;
+`endif
+    wire id_mul_prestart = id_to_ex_fire & id_is_mul;
 
     // ---- Register addresses from instruction (ID stage, from IF/ID reg) ----
     wire [4:0] id_rs1_addr;
@@ -733,6 +805,8 @@ module cpu_top
     wire cpu_defs::predictor_train_t predictor_train;
     wire cpu_defs::abtb_update_t predictor_abtb_update;
     wire cpu_defs::pht_update_t predictor_pht_update;
+    wire cpu_defs::abtb_update_t predictor_abtb_write;
+    wire cpu_defs::pht_update_t predictor_pht_write;
 
     // PHT updates use the prediction-time index and counter carried to EX.
     wire        stage1_direction_update_valid =
@@ -741,6 +815,14 @@ module cpu_top
         predictor_pht_update.index;
     wire [ 1:0] stage1_direction_update_counter =
         predictor_pht_update.counter;
+    wire        stage1_direction_write_valid =
+        predictor_pht_write.valid;
+    wire [ 7:0] stage1_direction_write_index =
+        predictor_pht_write.index;
+    wire [ 1:0] stage1_direction_write_counter =
+        predictor_pht_write.counter;
+    wire        stage1_direction_write_actual_taken =
+        predictor_pht_write.actual_taken;
 
     wire        abtb_update_valid = predictor_abtb_update.valid;
     wire        abtb_update_hit = predictor_abtb_update.hit;
@@ -749,6 +831,12 @@ module cpu_top
     wire [ 1:0] abtb_update_cfi_type =
         predictor_abtb_update.cfi_type;
     wire [31:0] abtb_update_target = predictor_abtb_update.target;
+    wire        abtb_write_valid = predictor_abtb_write.valid;
+    wire        abtb_write_hit = predictor_abtb_write.hit;
+    wire        abtb_write_way = predictor_abtb_write.way;
+    wire [31:0] abtb_write_pc = predictor_abtb_write.pc;
+    wire [ 1:0] abtb_write_cfi_type = predictor_abtb_write.cfi_type;
+    wire [31:0] abtb_write_target = predictor_abtb_write.target;
     wire        stage1_steer_valid;
     wire        stage1_steer_source_abtb;
     wire        stage1_steer_branch_owned;
@@ -874,7 +962,9 @@ module cpu_top
         .slot1_cfi_valid  (s1_pred_update_valid_raw),
         .train            (predictor_train),
         .abtb_update      (predictor_abtb_update),
-        .pht_update       (predictor_pht_update)
+        .pht_update       (predictor_pht_update),
+        .abtb_write       (predictor_abtb_write),
+        .pht_write        (predictor_pht_write)
     );
 
     frontend_stage1_direction u_frontend_stage1_direction (
@@ -888,10 +978,10 @@ module cpu_top
         .bank1_index         (stage1_bank1_pht_index),
         .bank1_counter       (stage1_bank1_pht_counter),
         .bank1_taken         (stage1_bank1_pht_taken),
-        .update_valid        (stage1_direction_update_valid),
-        .update_index        (stage1_direction_update_index),
-        .update_counter      (stage1_direction_update_counter),
-        .update_actual_taken (pred_train_actual_taken),
+        .update_valid        (stage1_direction_write_valid),
+        .update_index        (stage1_direction_write_index),
+        .update_counter      (stage1_direction_write_counter),
+        .update_actual_taken (stage1_direction_write_actual_taken),
         .committed_ghr       (stage1_committed_ghr)
     );
 
@@ -930,12 +1020,12 @@ module cpu_top
         .pred_cfi_type        (abtb_shadow_pred_cfi_type),
         .pred_target          (abtb_shadow_pred_target),
         .pred_next_pc         (abtb_shadow_pred_next_pc),
-        .update_valid         (abtb_update_valid),
-        .update_hit           (abtb_update_hit),
-        .update_way           (abtb_update_way),
-        .update_pc            (abtb_update_pc),
-        .update_cfi_type      (abtb_update_cfi_type),
-        .update_target        (abtb_update_target)
+        .update_valid         (abtb_write_valid),
+        .update_hit           (abtb_write_hit),
+        .update_way           (abtb_write_way),
+        .update_pc            (abtb_write_pc),
+        .update_cfi_type      (abtb_write_cfi_type),
+        .update_target        (abtb_write_target)
     );
 
 `ifdef CPU_TOP_ABTB_OBSERVE
@@ -1246,6 +1336,11 @@ module cpu_top
         .id_s0_branch   (dec_is_branch),
         .id_s0_mem_read (dec_mem_read_en),
         .id_s0_mem_write(dec_mem_write_en),
+        .id_s0_is_mul   (id_is_mul),
+        .id_s0_pc       (id_pc),
+        .id_s0_imm      (id_imm),
+        .id_s0_alu_src1_sel(dec_alu_src1_sel),
+        .id_s0_alu_src2_sel(dec_alu_src2_sel),
         .rf_rs1_data    (rf_rs1_data),
         .rf_rs2_data    (rf_rs2_data),
         .id_s1_valid    (id_s1_valid),
@@ -1254,11 +1349,16 @@ module cpu_top
         .id_s1_rs1_used (id_s1_rs1_used),
         .id_s1_rs2_used (id_s1_rs2_used),
         .id_s1_repair_ok(id_s1_repair_ok),
+        .id_s1_pc       (id_s1_pc),
+        .id_s1_imm      (id_s1_imm),
+        .id_s1_alu_src1_sel(dec1_alu_src1_sel),
+        .id_s1_alu_src2_sel(dec1_alu_src2_sel),
         .rf_s1_rs1_data (rf_s1_rs1_data),
         .rf_s1_rs2_data (rf_s1_rs2_data),
         .ex_valid       (ex_valid),
         .ex_reg_write   (ex_forward_reg_write),
         .ex_is_bitmanip (ex_is_bitmanip),
+        .ex_is_muldiv   (ex_is_muldiv),
         .ex_mem_read    (ex_mem_read_en),
         .ex_rd          (ex_rd),
         .ex_alu_result  (ex_forward_result),
@@ -1274,8 +1374,10 @@ module cpu_top
         .mem_valid      (mem_valid),
         .mem_reg_write  (mem_reg_write_en),
         .mem_is_load    (mem_mem_read_en),
+        .mem_is_mul     (mem_is_mul),
         .mem_rd         (mem_rd),
         .mem_alu_result (mem_alu_result),
+        .mem_mul_result (muldiv_result),
         .mem_pc_plus_4  (mem_pc_plus_4),
         .mem_load_ready (mem_load_ready),
         .mem_wb_sel     (mem_wb_sel),
@@ -1298,41 +1400,34 @@ module cpu_top
         .id_rs2_data    (fwd_rs2_data),
         .id_s1_rs1_data (fwd_s1_rs1_data),
         .id_s1_rs2_data (fwd_s1_rs2_data),
+        .id_s0_alu_src1 (id_alu_src1),
+        .id_s0_alu_src2 (id_alu_src2),
+        .id_s1_alu_src1 (id_s1_alu_src1),
+        .id_s1_alu_src2 (id_s1_alu_src2),
         .id_rs1_wb_repair(fwd_rs1_wb_repair),
         .id_rs2_wb_repair(fwd_rs2_wb_repair),
         .id_s1_rs1_wb_repair(fwd_s1_rs1_wb_repair),
         .id_s1_rs2_wb_repair(fwd_s1_rs2_wb_repair),
-        .id_ready_go    (id_ready_go_raw)
+        .id_ready_go    (id_ready_go_raw),
+        .id_ready_go_if_mem_ready(id_ready_go_raw_if_mem_ready),
+        .id_ready_go_if_mem_wait(id_ready_go_raw_if_mem_wait)
     );
 
-    // Keep the DSP operand mux physically independent from the ordinary
-    // ID/EX forwarding outputs. The logic priority is intentionally identical;
-    // only ordinary EX ALU data receives a direct final-selector path.
+    // Keep the DSP operand mux physically independent from the ordinary ID/EX
+    // outputs. A true EX -> MUL RAW is interlocked above, so only registered
+    // MEM/WB/RF candidates can reach the local DSP input registers.
     (* keep_hierarchy = "yes" *) mul_operand_forwarding u_mul_operand_forwarding (
         .id_rs1_addr          (id_rs1_addr),
         .id_rs2_addr          (id_rs2_addr),
         .rf_rs1_data          (rf_rs1_data),
         .rf_rs2_data          (rf_rs2_data),
-        .ex_valid             (ex_valid),
-        .ex_reg_write         (ex_forward_reg_write),
-        .ex_is_bitmanip       (ex_is_bitmanip),
-        .ex_fast_alu          (ex_mul_fast_alu),
-        .ex_rd                (ex_rd),
-        .ex_alu_result        (alu_result),
-        .ex_special_result    (ex_special_forward_result),
-        .ex_pc_plus_4         (ex_pc_plus_4),
-        .ex_wb_sel            (ex_wb_sel),
-        .ex_s1_valid          (ex_s1_valid),
-        .ex_s1_reg_write      (ex_s1_reg_write_en),
-        .ex_s1_rd             (ex_s1_rd),
-        .ex_s1_alu_result     (alu_s1_result),
-        .ex_s1_pc_plus_4      (ex_s1_pc_plus_4),
-        .ex_s1_wb_sel         (ex_s1_wb_sel),
         .mem_valid            (mem_valid),
         .mem_reg_write        (mem_reg_write_en),
         .mem_is_load          (mem_mem_read_en),
+        .mem_is_mul           (mem_is_mul),
         .mem_rd               (mem_rd),
         .mem_alu_result       (mem_alu_result),
+        .mem_mul_result       (muldiv_result),
         .mem_pc_plus_4        (mem_pc_plus_4),
         .mem_wb_sel           (mem_wb_sel),
         .mem_s1_valid         (mem_s1_valid),
@@ -1354,28 +1449,36 @@ module cpu_top
         .mul_rs2_data         (mul_fwd_rs2_data)
     );
 
-    // ALU operand selection (in ID stage to reduce EX critical path)
-    alu_src_mux u_alu_src_mux (
+`ifndef SYNTHESIS
+    // Simulation-only cycle-equivalence references for the timing-parallelized
+    // ALU source outputs returned by u_forwarding.
+    wire [31:0] id_alu_src1_reference;
+    wire [31:0] id_alu_src2_reference;
+    wire [31:0] id_s1_alu_src1_reference;
+    wire [31:0] id_s1_alu_src2_reference;
+
+    alu_src_mux u_alu_src_mux_reference (
         .rs1_data      (fwd_rs1_data),
         .rs2_data      (fwd_rs2_data),
         .pc            (id_pc),
         .imm           (id_imm),
         .alu_src1_sel  (dec_alu_src1_sel),
         .alu_src2_sel  (dec_alu_src2_sel),
-        .alu_src1      (id_alu_src1),
-        .alu_src2      (id_alu_src2)
+        .alu_src1      (id_alu_src1_reference),
+        .alu_src2      (id_alu_src2_reference)
     );
 
-    alu_src_mux u_alu_src_mux_s1 (
+    alu_src_mux u_alu_src_mux_s1_reference (
         .rs1_data      (fwd_s1_rs1_data),
         .rs2_data      (fwd_s1_rs2_data),
         .pc            (id_s1_pc),
         .imm           (id_s1_imm),
         .alu_src1_sel  (dec1_alu_src1_sel),
         .alu_src2_sel  (dec1_alu_src2_sel),
-        .alu_src1      (id_s1_alu_src1),
-        .alu_src2      (id_s1_alu_src2)
+        .alu_src1      (id_s1_alu_src1_reference),
+        .alu_src2      (id_s1_alu_src2_reference)
     );
+`endif
 
     // ==================== ID/EX ====================
 
@@ -1455,8 +1558,6 @@ module cpu_top
         .id_ready_go      (id_ready_go),
         .ex_allowin       (ex_allowin),
         .ex_valid         (ex_valid),
-        .ex_ready_go      (ex_ready_go_w),
-        .mem_allowin      (mem_allowin),
         .ex_flush         (ex_flush),
         .id_payload       (id_ex_s0_payload),
         .ex_payload       (ex_s0_payload)
@@ -1581,14 +1682,15 @@ module cpu_top
     assign ex_s1_store_addr_low = ex_s1_alu_src1_repair[1:0]
                                 + ex_s1_alu_src2_repair[1:0];
 
-    // MUL/DIV requests hold EX until the multi-cycle unit reports done.
+    // DIV/REM hold EX until completion; prestarted MUL operations advance to
+    // MEM after one EX cycle and rendezvous there with the registered product.
     muldiv_unit u_muldiv_unit (
         .clk                (clk),
         .rst_n              (rst_n),
         .mul_prestart_valid (id_mul_prestart),
         .mul_prestart_op    (id_inst[14:12]),
-        // RV32M is R-type. Its physically independent forwarding copy keeps
-        // ordinary EX ALU dependencies on a one-selector path to DSP A/B.
+        // RV32M is R-type. The physically independent forwarding copy contains
+        // only registered MEM/WB/RF payloads; EX RAW dependencies interlock.
         .mul_prestart_rs1   (mul_fwd_rs1_data),
         .mul_prestart_rs2   (mul_fwd_rs2_data),
         .req_valid          (ex_muldiv_req),
@@ -1603,10 +1705,29 @@ module cpu_top
     );
 
 `ifndef SYNTHESIS
-    // The DSP launch deliberately bypasses the EX WB-repair mux. Any future
-    // hazard-policy change that lets load-dependent MUL enter EX early would
-    // therefore be a correctness bug, so make the invariant executable.
+    // The DSP launch deliberately accepts only registered MEM/WB/RF payloads.
+    // Keep both the RAW interlock and the timing-parallelized ALU source
+    // selection cycle-equivalent to their architectural references.
     always_ff @(posedge clk) begin
+        if (rst_n && (id_ready_go !== id_ready_go_reference))
+            $fatal(1, "Timing-factored id_ready_go changed pipeline handshake");
+        if (rst_n && (ex_allowin !== ex_allowin_reference))
+            $fatal(1, "Timing-factored ex_allowin changed pipeline handshake");
+        if (rst_n && (id_allowin !== id_allowin_reference))
+            $fatal(1, "Timing-factored id_allowin changed pipeline handshake");
+        if (rst_n && (id_to_ex_fire !== id_to_ex_fire_reference))
+            $fatal(1, "Timing-factored ID-to-EX fire changed pipeline handshake");
+        if (rst_n && id_to_ex_fire
+                  && ((id_alu_src1 !== id_alu_src1_reference)
+                      || (id_alu_src2 !== id_alu_src2_reference)))
+            $fatal(1, "Slot-0 parallel ALU source selection changed value");
+        if (rst_n && id_to_ex_fire && id_s1_valid
+                  && ((id_s1_alu_src1 !== id_s1_alu_src1_reference)
+                      || (id_s1_alu_src2 !== id_s1_alu_src2_reference)))
+            $fatal(1, "Slot-1 parallel ALU source selection changed value");
+        if (rst_n && id_mul_prestart
+                  && u_forwarding.mul_launch_ex_raw_hazard)
+            $fatal(1, "MUL launched across an EX RAW interlock");
         if (rst_n && id_mul_prestart
                   && ((mul_fwd_rs1_data !== fwd_rs1_data)
                       || (mul_fwd_rs2_data !== fwd_rs2_data)))
@@ -1614,6 +1735,12 @@ module cpu_top
         if (rst_n && ex_valid && ex_is_muldiv && !ex_muldiv_op[2]
                   && (ex_alu_src1_wb_repair | ex_alu_src2_wb_repair))
             $fatal(1, "MUL entered EX with an unsupported WB-repair tag");
+        if (rst_n && mem_valid && mem_is_mul && !muldiv_done)
+            $fatal(1, "MEM MUL token is not aligned with registered result");
+        if (rst_n && muldiv_done
+                  && !((mem_valid && mem_is_mul)
+                       || (ex_valid && ex_is_muldiv && ex_muldiv_op[2])))
+            $fatal(1, "Completed MulDiv result has no matching pipeline owner");
     end
 `endif
 
@@ -1759,6 +1886,7 @@ module cpu_top
         .s0_rd           (ex_rd),
         .s0_reg_write_en (ex_reg_write_en),
         .s0_wb_sel       (ex_wb_sel),
+        .s0_is_mul       (ex_is_muldiv & ~ex_muldiv_op[2]),
         .s0_mem_read_en  (ex_mem_read_en),
         .s0_mem_size     (ex_mem_size),
         .s0_mem_unsigned (ex_mem_unsigned),
@@ -1815,7 +1943,7 @@ module cpu_top
     // ==================== MEM/WB ====================
 
     mem_wb_payload_builder u_mem_wb_payload_builder (
-        .s0_alu_result   (mem_alu_result),
+        .s0_alu_result   (mem_wb_alu_result),
         .s0_pc_plus_4    (mem_pc_plus_4),
         .s0_rd           (mem_rd),
         .s0_reg_write_en (mem_reg_write_en),

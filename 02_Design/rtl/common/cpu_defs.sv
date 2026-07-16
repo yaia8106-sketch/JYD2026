@@ -148,8 +148,8 @@ package cpu_defs;
         // pair logic
         // some ins couldn't be issued with other instructions, so we need to force them to be issued alone.
         // for example, force_signle_slot0 means that the instruction in slot0 should be issued alone, and the instruction in slot1 should be issued as NOP ins.
-        logic force_single_slot0; // force_single_slot0=(jalr|system|fence|illegal|muldiv)
-        logic force_single_slot1; // force_single_slot1=(system|fence|illegal|muldiv)
+        logic force_single_slot0; // jalr/system/fence/illegal/non-base/DIV/REM
+        logic force_single_slot1; // system/fence/illegal/non-base/all RV32M
     } frontend_predecode_t;
 
     typedef struct packed {
@@ -222,6 +222,7 @@ package cpu_defs;
     typedef struct packed {
         logic       pred_taken;
         logic       force_single;
+        logic       is_muldiv;
         logic       is_alu_type;
         logic       is_lsu;
         logic       is_cfi;
@@ -416,6 +417,7 @@ package cpu_defs;
         logic [ 4:0] rd;
         logic        reg_write_en;
         logic [ 1:0] wb_sel;
+        logic        is_mul;
         logic        mem_read_en;
         logic [ 1:0] mem_size;
         logic        mem_unsigned;

@@ -22,7 +22,12 @@ module predictor_update_ctrl
     output logic               slot1_cfi_valid,
     output predictor_train_t   train,
     output abtb_update_t       abtb_update,
-    output pht_update_t        pht_update
+    output pht_update_t        pht_update,
+
+    // Registered predictor write events. The raw outputs above remain aligned
+    // with EX for redirect/observation; only these events mutate ABTB/PHT/GHR.
+    output abtb_update_t       abtb_write,
+    output pht_update_t        pht_write
 );
 
     wire slot0_cfi_candidate = slot0_resolve.valid
@@ -112,10 +117,60 @@ module predictor_update_ctrl
         pht_update.actual_taken = train.actual_taken;
     end
 
+    // EX resolve and frontend predictor state are separated by a real clock
+    // boundary. Payload fields are deliberately free-running; reset and late
+    // wrong-path suppression affect only valid. Once captured, an older event
+    // must write on the next edge even if a new MEM redirect is then present.
+    // This pipeline accepts one event every cycle, so consecutive CFIs retain
+    // their original order without a queue or backpressure path.
+    always_ff @(posedge clk) begin
+        if (!rst_n) begin
+            abtb_write.valid <= 1'b0;
+            pht_write.valid  <= 1'b0;
+        end else begin
+            abtb_write.valid <= abtb_update.valid;
+            pht_write.valid  <= pht_update.valid;
+        end
+
+        abtb_write.hit      <= abtb_update.hit;
+        abtb_write.way      <= abtb_update.way;
+        abtb_write.pc       <= abtb_update.pc;
+        abtb_write.cfi_type <= abtb_update.cfi_type;
+        abtb_write.target   <= abtb_update.target;
+
+        pht_write.index        <= pht_update.index;
+        pht_write.counter      <= pht_update.counter;
+        pht_write.actual_taken <= pht_update.actual_taken;
+    end
+
 `ifndef SYNTHESIS
+    abtb_update_t expected_abtb_write;
+    pht_update_t  expected_pht_write;
+
     always @(posedge clk) begin
         if (rst_n && slot0_cfi_valid && slot1_cfi_valid)
             $error("Single predictor update port saw simultaneous slot0 and slot1 control flow");
+    end
+
+    always_ff @(posedge clk) begin
+        if (!rst_n) begin
+            expected_abtb_write <= '0;
+            expected_pht_write  <= '0;
+        end else begin
+            if (abtb_write.valid !== expected_abtb_write.valid)
+                $error("ABTB write event is not exactly one cycle after EX capture");
+            if (pht_write.valid !== expected_pht_write.valid)
+                $error("PHT write event is not exactly one cycle after EX capture");
+            if (expected_abtb_write.valid
+                && (abtb_write !== expected_abtb_write))
+                $error("Registered ABTB write payload changed across the boundary");
+            if (expected_pht_write.valid
+                && (pht_write !== expected_pht_write))
+                $error("Registered PHT write payload changed across the boundary");
+
+            expected_abtb_write <= abtb_update;
+            expected_pht_write  <= pht_update;
+        end
     end
 `endif
 

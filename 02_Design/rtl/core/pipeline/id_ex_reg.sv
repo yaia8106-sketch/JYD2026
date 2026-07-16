@@ -13,10 +13,8 @@ module id_ex_reg
     // Handshake
     input  logic          id_valid,
     input  logic          id_ready_go,
-    output logic          ex_allowin,
+    input  logic          ex_allowin,
     output logic          ex_valid,
-    input  logic          ex_ready_go,
-    input  logic          mem_allowin,
 
     // Flush
     input  logic          ex_flush,
@@ -34,8 +32,6 @@ module id_ex_reg
                 2'b01;
         end
     endfunction
-
-    assign ex_allowin = !ex_valid || (ex_ready_go & mem_allowin);
 
     always_ff @(posedge clk) begin
         if (!rst_n) begin

@@ -149,20 +149,39 @@ module frontend_fetch_queue
         end
     end
 
-    // Keep payload arrays off the reset/flush fanout.  The pair bit belonging
-    // to packet slot 1 is not initialized here: it is ignored while that entry
-    // has no successor, then overwritten by prev_tail_pair_ok when the next
-    // packet arrives.
+    // Decode pair-bit write addresses into per-entry enables. The old indexed
+    // nonblocking assignments made each pair_ok D input depend on a synthesized
+    // array-wide priority mux. Here pointer comparisons feed CE, while the D
+    // input sees only a shallow current/previous-tail candidate selector.
+    generate
+        for (genvar pair_idx = 0; pair_idx < FQ_DEPTH; pair_idx++) begin : g_pair_ok_write
+            localparam logic [FQ_PTR_W-1:0] PAIR_INDEX = pair_idx;
+            wire pair_write_current = enq0_payload & (tail == PAIR_INDEX);
+            wire pair_write_previous = enq0_payload & (count != 0)
+                                     & (tail_m1 == PAIR_INDEX);
+            wire pair_write_enable = pair_write_current
+                                   | pair_write_previous;
+            wire pair_write_data = pair_write_current
+                                 ? enq_entry0_pair_ok
+                                 : prev_tail_pair_ok;
+
+            always_ff @(posedge clk) begin
+                if (rst_n && !flush && pair_write_enable)
+                    pair_ok_mem[pair_idx] <= pair_write_data;
+            end
+        end
+    endgenerate
+
+    // Keep payload arrays off the reset/flush fanout. The pair bit belonging
+    // to packet slot 1 is not initialized: it is ignored while that entry has
+    // no successor, then overwritten through the per-entry block above when
+    // the next packet arrives.
     always_ff @(posedge clk) begin
         if (rst_n && !flush) begin
             // A speculative payload write is harmless until count exposes it.
-            // A later cross-packet enqueue overwrites the previous tail policy.
-            if (enq0_payload && (count != 0))
-                pair_ok_mem[tail_m1] <= prev_tail_pair_ok;
             if (enq0_payload) begin
                 entry_mem[tail] <= enq_entry0;
                 pair_meta_mem[tail] <= enq_pair_meta0;
-                pair_ok_mem[tail] <= enq_entry0_pair_ok;
             end
             if (enq1_payload) begin
                 entry_mem[tail_p1] <= enq_entry1;

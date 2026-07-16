@@ -104,19 +104,21 @@ module tb_bitmanip_unit;
 
     task automatic check_frontend_single_policy(
         input logic [31:0] encoded,
-        input logic expected_force_single
+        input logic expected_force_single_s0,
+        input logic expected_force_single_s1
     );
         begin
             inst = encoded;
             #1;
             if ((frontend_decoded.force_single_slot0
-                 !== expected_force_single)
+                 !== expected_force_single_s0)
                 || (frontend_decoded.force_single_slot1
-                    !== expected_force_single)) begin
-                $error("frontend single-issue mismatch inst=%08x got_s0=%0d got_s1=%0d expected=%0d",
+                    !== expected_force_single_s1)) begin
+                $error("frontend single-issue mismatch inst=%08x got_s0=%0d got_s1=%0d expected_s0=%0d expected_s1=%0d",
                        encoded, frontend_decoded.force_single_slot0,
                        frontend_decoded.force_single_slot1,
-                       expected_force_single);
+                       expected_force_single_s0,
+                       expected_force_single_s1);
                 $fatal(1);
             end
         end
@@ -538,19 +540,23 @@ module tb_bitmanip_unit;
         // The shallow frontend policy must preserve the original base/M
         // classification while forcing all non-base ALU encodings to Slot 0.
         check_frontend_single_policy(
-            make_r_inst(7'h00, 5'd2, 3'b000), 1'b0); // ADD
+            make_r_inst(7'h00, 5'd2, 3'b000), 1'b0, 1'b0); // ADD
         check_frontend_single_policy(
-            make_r_inst(7'h20, 5'd2, 3'b000), 1'b0); // SUB
+            make_r_inst(7'h20, 5'd2, 3'b000), 1'b0, 1'b0); // SUB
         check_frontend_single_policy(
-            make_r_inst(7'h20, 5'd2, 3'b101), 1'b0); // SRA
+            make_r_inst(7'h20, 5'd2, 3'b101), 1'b0, 1'b0); // SRA
         check_frontend_single_policy(
-            make_r_inst(MULDIV_FUNCT7, 5'd2, 3'b000), 1'b1); // MUL
+            make_r_inst(MULDIV_FUNCT7, 5'd2, 3'b000),
+            1'b0, 1'b1); // MUL: Slot 0 pairable, Slot 1 unsupported
+        check_frontend_single_policy(
+            make_r_inst(MULDIV_FUNCT7, 5'd2, 3'b100),
+            1'b1, 1'b1); // DIV remains serializing
         check_frontend_single_policy(make_i_inst(12'h005, 3'b001),
-                                     1'b0); // SLLI
+                                     1'b0, 1'b0); // SLLI
         check_frontend_single_policy(make_i_inst(12'h405, 3'b101),
-                                     1'b0); // SRAI
+                                     1'b0, 1'b0); // SRAI
         check_frontend_single_policy(make_i_inst({7'h30, 5'd3}, 3'b001),
-                                     1'b1); // reserved non-base I encoding
+                                     1'b1, 1'b1); // reserved non-base I encoding
 
         for (int op_index = 1; op_index <= 34; op_index = op_index + 1) begin
             run_case(bitmanip_op_t'(op_index), 32'd0, 32'd0);

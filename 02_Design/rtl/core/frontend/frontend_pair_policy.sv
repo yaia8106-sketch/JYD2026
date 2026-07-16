@@ -31,19 +31,23 @@ module frontend_pair_policy
     output logic                pair_ok
 );
 
-    logic slot0_supported;
     logic slot1_supported;
-    logic both_lsu;
     logic both_cfi;
     logic raw_rs1_dep;
     logic raw_rs2_dep;
     logic slot1_is_store;
-    logic store_data_bypassable;
     logic blocking_raw_dep;
+    logic slot0_non_lsu_supported;
+    logic pair_supported_if_slot0_lsu;
+    logic pair_supported_if_slot0_non_lsu;
+    logic pair_common_ok;
+    (* keep = "true" *) logic pair_ok_if_slot0_lsu;
+    (* keep = "true" *) logic pair_ok_if_slot0_non_lsu;
 
     // Pairing is conservative: only supported instruction classes, no two LSU
     // ops, no two CFIs, and no Slot 0 -> Slot 1 RAW except the explicit
-    // ALU-to-store-data bypass below.
+    // ALU-to-store-data bypass below. A multiplier may be the Slot 0 producer,
+    // but cannot use that same-cycle ALU-to-store-data bypass.
     always_comb begin
         raw_rs1_dep = slot0_meta.writes_rd
                     && (slot0_meta.rd != 5'd0)
@@ -59,30 +63,45 @@ module frontend_pair_policy
         // rs2. Its address (rs1) must remain independent, while its data can
         // consume the Slot 0 ALU result through the EX same-pair bypass.
         slot1_is_store = slot1_meta.is_lsu & slot1_meta.uses_rs2;
-        store_data_bypassable = slot0_meta.is_alu_type
-                              & slot1_is_store
-                              & raw_rs2_dep
-                              & ~raw_rs1_dep;
-        blocking_raw_dep = raw_dep & ~store_data_bypassable;
+        // Exact reduction of raw_dep & ~store_data_bypassable: an rs1 RAW
+        // always blocks; an rs2-only RAW is allowed only for ALU -> store data.
+        blocking_raw_dep = raw_rs1_dep
+                         | (raw_rs2_dep
+                            & ~(slot0_meta.is_alu_type & slot1_is_store));
 
-        slot0_supported =
-            slot0_meta.is_alu_type | slot0_meta.is_lsu | slot0_meta.is_cfi;
+        slot0_non_lsu_supported = slot0_meta.is_alu_type
+                                | slot0_meta.is_cfi
+                                | slot0_meta.is_muldiv;
         slot1_supported =
             slot1_meta.is_alu_type | slot1_meta.is_lsu | slot1_meta.is_cfi;
-        both_lsu = slot0_meta.is_lsu & slot1_meta.is_lsu;
         both_cfi = slot0_meta.is_cfi & slot1_meta.is_cfi;
 
-        pair_supported =
-            slot0_supported & slot1_supported & ~both_lsu & ~both_cfi;
-        pair_ok =
-               slot0_valid
-            && slot1_valid
-            && contiguous // 两条指令的PC连续
-            && !slot0_meta.pred_taken
-            && !slot0_meta.force_single // slot0不强制单发射
-            && !slot1_meta.force_single // slot1不强制单发射
-            && !blocking_raw_dep
-            && pair_supported;
+        // Cofactor the class policy on Slot 0 LSU. Its late predecode bit now
+        // selects between two precomputed one-bit candidates instead of
+        // reconverging through supported and both_lsu terms.
+        pair_supported_if_slot0_lsu = slot1_supported
+                                    & ~slot1_meta.is_lsu
+                                    & ~both_cfi;
+        pair_supported_if_slot0_non_lsu = slot0_non_lsu_supported
+                                        & slot1_supported
+                                        & ~both_cfi;
+        pair_supported = slot0_meta.is_lsu
+                       ? pair_supported_if_slot0_lsu
+                       : pair_supported_if_slot0_non_lsu;
+
+        pair_common_ok = slot0_valid
+                      && slot1_valid
+                      && contiguous // 两条指令的PC连续
+                      && !slot0_meta.pred_taken
+                      && !slot0_meta.force_single // slot0不强制单发射
+                      && !slot1_meta.force_single // slot1不强制单发射
+                      && !blocking_raw_dep;
+        pair_ok_if_slot0_lsu = pair_common_ok
+                             & pair_supported_if_slot0_lsu;
+        pair_ok_if_slot0_non_lsu = pair_common_ok
+                                 & pair_supported_if_slot0_non_lsu;
+        pair_ok = slot0_meta.is_lsu ? pair_ok_if_slot0_lsu
+                                    : pair_ok_if_slot0_non_lsu;
     end
 
 endmodule

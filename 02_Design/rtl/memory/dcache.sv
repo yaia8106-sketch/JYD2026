@@ -760,7 +760,13 @@ module dcache #(
     // ================================================================
     wire refill_cpu_ready = refill_target_fire
                           | (state_done & refill_cpu_pending);
-    wire idle_cpu_ready = idle_load_hit | miss_buffer_hit | idle_store_accept;
+    // idle_load_hit | miss_buffer_hit
+    //   = idle_load & (cache_hit | miss_buffer_covers_load).
+    // This exact factoring prevents the late StoreBuffer address match from
+    // first traversing the cache-miss-qualified miss_buffer_hit cone.
+    wire idle_load_ready = idle_load
+                         & (cache_hit | miss_buffer_covers_load);
+    wire idle_cpu_ready = idle_load_ready | idle_store_accept;
 
     assign cpu_ready = ~mem_req
                      | refill_cpu_ready

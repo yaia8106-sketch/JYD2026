@@ -44,7 +44,7 @@ TESTS="app_calc \
        fwd_s1 waw_fwd flush_instbuf pc_align loaduse_cross fwd_repair_lsu slot1_load slot1_store slot1_jal slot1_jump slot1_cfi_matrix lui_auipc_s1 \
        dcache_dual dcache_wna_edge dcache_miss_buffer dcache_refill_early instbuf_stall bp_dual slot1_bp_update \
        sb_stress ras_overflow \
-       m_ext m_dcache_edge b_ext \
+       m_ext m_mem_fwd m_dcache_edge b_ext \
        zicsr_basic zicsr_edge csr_forwarding csr_trap_stall trap_mret trap_slot1 trap_flush trap_nested timer_irq_basic"
 
 mkdir -p "$HEX_DIR"

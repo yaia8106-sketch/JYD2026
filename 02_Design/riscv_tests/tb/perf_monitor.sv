@@ -104,6 +104,7 @@ module perf_monitor (
     longint unsigned cnt_dcache_stall;    // ~mem_ready_go & mem_valid
     longint unsigned cnt_mmio_stall;      // ~ex_ready_go & ex_valid
     longint unsigned cnt_muldiv_stall;    // RV32M multi-cycle EX wait
+    longint unsigned cnt_mul_launch_ex_wait; // true EX RAW before MUL prestart
     longint unsigned cnt_bitmanip_stall;  // Bitmanip multi-cycle EX wait
 
     // -- DCache / LSU breakdown --
@@ -453,6 +454,8 @@ module perf_monitor (
     wire        jalr_ex_wait_hazard_w = tb_riscv_tests.u_cpu.u_forwarding.jalr_ex_wait_hazard;
     wire        branch_ex_wait_hazard_w = tb_riscv_tests.u_cpu.u_forwarding.branch_ex_wait_hazard;
     wire        s1_wb_wait_hazard_w = tb_riscv_tests.u_cpu.u_forwarding.s1_wb_wait_hazard;
+    wire        mul_launch_ex_raw_hazard_w =
+        tb_riscv_tests.u_cpu.u_forwarding.mul_launch_ex_raw_hazard;
     wire        ex_ready_go_w   = tb_riscv_tests.u_cpu.ex_ready_go_w;
     wire        mem_ready_go_w  = tb_riscv_tests.u_cpu.mem_ready_go_w;
     wire        mem_load_ready_w = tb_riscv_tests.u_cpu.mem_load_ready;
@@ -605,6 +608,7 @@ module perf_monitor (
 
     wire if_s0_is_muldiv = (if_s0_opcode == OP_R_TYPE) & (if_s0_funct7 == MULDIV_FUNCT7);
     wire if_s1_is_muldiv = (if_s1_opcode == OP_R_TYPE) & (if_s1_funct7 == MULDIV_FUNCT7);
+    wire if_s0_is_divrem = if_s0_is_muldiv & if_inst0_out_w[14];
     wire if_s0_is_load   = (if_s0_opcode == OP_LOAD);
     wire if_s0_is_store  = (if_s0_opcode == OP_STORE);
     wire if_s0_is_branch = (if_s0_opcode == OP_BRANCH);
@@ -652,11 +656,11 @@ module perf_monitor (
                               | if_s1_is_store | if_s1_is_jal);
     wire if_s1_s0_policy_blocked = (if_s1_is_branch & (if_s0_is_control | if_s0_is_lsu))
                                  | ((if_s1_is_load | if_s1_is_store | if_s1_is_jal)
-                                  & ~if_s0_is_alu_type);
+                                  & ~(if_s0_is_alu_type | if_s0_is_muldiv));
     wire if_s1_blocked = if_accept_w & ~if_s1_valid_w;
     wire if_s1_unsup_reason = if_s1_blocked & if_seq_fetch & ~if_skip_out_w
                             & (if_pc_out_w != 32'h7FFF_FFFC)
-                            & ~if_pair_raw & ~if_s0_is_muldiv
+                            & ~if_pair_raw
                             & if_s1_unsupported;
 
     wire s0_rs1_ex_load_dep = id_rs1_used_w & ex_valid & ex_mem_read_w
@@ -795,17 +799,25 @@ module perf_monitor (
                                 & ~raw_nr_mem_load_wait_event
                                 & ~raw_ready_mem_load_no_fwd_event
                                 & repair_use_hazard_w;
+    wire raw_ready_mul_launch_event = raw_id_stall_event
+                                    & ~raw_nr_ex_load_event
+                                    & ~raw_nr_mem_load_wait_event
+                                    & ~raw_ready_mem_load_no_fwd_event
+                                    & ~raw_ready_repair_event
+                                    & mul_launch_ex_raw_hazard_w;
     wire raw_ready_branch_ex_event = raw_id_stall_event
                                    & ~raw_nr_ex_load_event
                                    & ~raw_nr_mem_load_wait_event
                                    & ~raw_ready_mem_load_no_fwd_event
                                    & ~raw_ready_repair_event
+                                   & ~raw_ready_mul_launch_event
                                    & branch_ex_wait_hazard_w;
     wire raw_ready_jalr_ex_event = raw_id_stall_event
                                  & ~raw_nr_ex_load_event
                                  & ~raw_nr_mem_load_wait_event
                                  & ~raw_ready_mem_load_no_fwd_event
                                  & ~raw_ready_repair_event
+                                 & ~raw_ready_mul_launch_event
                                  & ~raw_ready_branch_ex_event
                                  & jalr_ex_wait_hazard_w;
     wire raw_ready_other_event = raw_id_stall_event
@@ -813,6 +825,7 @@ module perf_monitor (
                                & ~raw_nr_mem_load_wait_event
                                & ~raw_ready_mem_load_no_fwd_event
                                & ~raw_ready_repair_event
+                               & ~raw_ready_mul_launch_event
                                & ~raw_ready_branch_ex_event
                                & ~raw_ready_jalr_ex_event
                                & (s1_wb_wait_hazard_w | load_use_hazard_w
@@ -820,6 +833,7 @@ module perf_monitor (
                                 | branch_ex_wait_hazard_w);
     wire raw_classified_id_stall = raw_nr_ex_load_event | raw_nr_mem_load_wait_event
                                  | raw_ready_mem_load_no_fwd_event | raw_ready_repair_event
+                                 | raw_ready_mul_launch_event
                                  | raw_ready_branch_ex_event | raw_ready_jalr_ex_event
                                  | raw_ready_other_event;
 
@@ -886,6 +900,8 @@ module perf_monitor (
         tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head0.is_load;
     wire pair_head0_is_cfi_w =
         tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head0_pair_meta.is_cfi;
+    wire pair_head0_is_muldiv_w =
+        tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head0_pair_meta.is_muldiv;
     wire pair_head0_is_lsu_w =
         tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head0_pair_meta.is_lsu;
     wire pair_head1_is_alu_w =
@@ -904,7 +920,8 @@ module perf_monitor (
         tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head1_pair_meta.is_lsu;
     wire pair_head0_supported_w =
         tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head0_pair_meta.is_alu_type
-      | pair_head0_is_lsu_w | pair_head0_is_cfi_w;
+      | pair_head0_is_lsu_w | pair_head0_is_cfi_w
+      | pair_head0_is_muldiv_w;
     wire pair_head1_supported_w =
         tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head1_pair_meta.is_alu_type
       | pair_head1_is_lsu_w | pair_head1_is_cfi_w;
@@ -934,13 +951,17 @@ module perf_monitor (
                             | pred_s0_mispredict_event
                             | ex_s1_branch_redirect_w;
     wire cpi_dcache_event = mem_valid & ~mem_ready_go_w;
-    wire cpi_muldiv_event = ex_valid & ex_is_muldiv_w & ~muldiv_done_w;
+    // Only DIV/REM hold EX. The multiplier family advances to MEM while its
+    // registered product becomes the MEM forwarding candidate.
+    wire cpi_muldiv_event = ex_valid & ex_is_muldiv_w
+                           & ex_muldiv_op_w[2] & ~muldiv_done_w;
     wire cpi_bitmanip_event = ex_valid & ex_is_bitmanip_w
                             & ~bitmanip_done_w;
     wire cpi_raw_not_ready_event = raw_nr_ex_load_event | raw_nr_mem_load_wait_event
                                  | raw_nr_muldiv_event;
     wire cpi_raw_ready_no_fwd_event = raw_ready_mem_load_no_fwd_event
                                     | raw_ready_repair_event
+                                    | raw_ready_mul_launch_event
                                     | raw_ready_branch_ex_event
                                     | raw_ready_jalr_ex_event
                                     | raw_ready_other_event;
@@ -961,7 +982,8 @@ module perf_monitor (
     wire dcache_loss_recovery_event = dcache_loss_recovery_pending
                                     & mem_valid & mem_ready_go_w;
     wire muldiv_complete_accept_event = ex_s0_accept_event
-                                      & ex_is_muldiv_w & muldiv_done_w;
+                                      & ex_is_muldiv_w & ex_muldiv_op_w[2]
+                                      & muldiv_done_w;
     wire muldiv_loss_recovery_event = muldiv_complete_accept_event
                                     | muldiv_loss_tail_pending;
     wire bitmanip_complete_accept_event = ex_s0_accept_event
@@ -1096,6 +1118,7 @@ module perf_monitor (
             cnt_dcache_stall   <= 0;
             cnt_mmio_stall     <= 0;
             cnt_muldiv_stall   <= 0;
+            cnt_mul_launch_ex_wait <= 0;
             cnt_bitmanip_stall <= 0;
             cnt_lsu_cache_load <= 0;
             cnt_lsu_cache_store <= 0;
@@ -1517,8 +1540,10 @@ module perf_monitor (
             if (id_valid & s1_wb_wait_hazard_w)     cnt_s1_wb_wait     <= cnt_s1_wb_wait + 1;
             if (mem_valid & !mem_ready_go_w) cnt_dcache_stall   <= cnt_dcache_stall + 1;
             if (ex_valid & mmio_st_ld_hazard_w) cnt_mmio_stall  <= cnt_mmio_stall + 1;
-            if (ex_valid & ex_is_muldiv_w & !muldiv_done_w)
+            if (cpi_muldiv_event)
                 cnt_muldiv_stall <= cnt_muldiv_stall + 1;
+            if (id_valid & mul_launch_ex_raw_hazard_w)
+                cnt_mul_launch_ex_wait <= cnt_mul_launch_ex_wait + 1;
             if (cpi_bitmanip_event)
                 cnt_bitmanip_stall <= cnt_bitmanip_stall + 1;
 
@@ -1936,7 +1961,7 @@ module perf_monitor (
                         cnt_if_block_raw <= cnt_if_block_raw + 1;
                         if (if_pair_raw_rs1) cnt_if_block_raw_rs1 <= cnt_if_block_raw_rs1 + 1;
                         if (if_pair_raw_rs2) cnt_if_block_raw_rs2 <= cnt_if_block_raw_rs2 + 1;
-                    end else if (if_s0_is_muldiv) begin
+                    end else if (if_s0_is_divrem) begin
                         cnt_if_block_s0_muldiv <= cnt_if_block_s0_muldiv + 1;
                     end else if (if_s1_is_alu_type & if_s0_is_jump) begin
                         cnt_if_block_s0_jump <= cnt_if_block_s0_jump + 1;
@@ -2394,6 +2419,7 @@ module perf_monitor (
             $display("[PERF]  DCache miss:   %0d", cnt_dcache_stall);
             $display("[PERF]  MMIO hazard:   %0d", cnt_mmio_stall);
             $display("[PERF]  MUL/DIV wait:  %0d", cnt_muldiv_stall);
+            $display("[PERF]  MUL EX-RAW wait:%0d", cnt_mul_launch_ex_wait);
             $display("[PERF]  Bitmanip wait: %0d", cnt_bitmanip_stall);
             $display("[PERF]  MULDIV issued: mul=%0d mulh=%0d mulhsu=%0d mulhu=%0d div=%0d divu=%0d rem=%0d remu=%0d total=%0d",
                      cnt_muldiv_issue[0], cnt_muldiv_issue[1],

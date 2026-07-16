@@ -89,8 +89,10 @@ module frontend_abtb (
     logic bank1_way0_valid [0:SETS-1];
     logic bank1_way1_valid [0:SETS-1];
 
-    // 16(set) * 41(entry) bit
-    // tag(7) + cfi_type(2) + target(32) = 41 bit
+    // Keep each bank/way payload as one compact logical memory. Predictor
+    // training is registered before this module, so its write enable no
+    // longer contains the backend resolve/allow chain that motivated the
+    // former payload chunking experiment.
     (* ram_style = "distributed" *)
     logic [PAYLOAD_W-1:0] bank0_way0_payload [0:SETS-1];
     (* ram_style = "distributed" *)
@@ -356,6 +358,8 @@ module frontend_abtb (
         end
     end
 
+    // Payload contents are irrelevant until the corresponding valid bit is
+    // set, so these LUTRAM arrays intentionally have no reset.
     always_ff @(posedge clk) begin
         if (bank0_update_fire && !bank0_update_selected_way)
             bank0_way0_payload[update_set] <=

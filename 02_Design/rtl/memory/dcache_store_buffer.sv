@@ -101,22 +101,56 @@ module dcache_store_buffer (
                        & (addr_q[0][17:2] == lookup_addr[17:2]);
     wire lookup_match1 = recent_valid_q[1]
                        & (addr_q[1][17:2] == lookup_addr[17:2]);
-    wire [3:0] lookup_entry_mask0 = lookup_match0 ? wea_q[0] : 4'b0000;
-    wire [3:0] lookup_entry_mask1 = lookup_match1 ? wea_q[1] : 4'b0000;
-    wire [3:0] lookup_covered_mask = lookup_entry_mask0 | lookup_entry_mask1;
+
+    // Coverage and data candidates do not depend on the late address matches.
+    // Keeping those matches out of the byte-mask/merge cones leaves only one
+    // small selector between the address equality and DCache cpu_ready.
+    wire lookup_mask_nonzero = |lookup_mask;
+    (* keep = "true" *) wire lookup_cover_entry0_candidate =
+        lookup_mask_nonzero
+        & ((wea_q[0] & lookup_mask) == lookup_mask);
+    (* keep = "true" *) wire lookup_cover_entry1_candidate =
+        lookup_mask_nonzero
+        & ((wea_q[1] & lookup_mask) == lookup_mask);
+    (* keep = "true" *) wire lookup_cover_both_candidate =
+        lookup_mask_nonzero
+        & (((wea_q[0] | wea_q[1]) & lookup_mask) == lookup_mask);
+
+    wire [31:0] lookup_entry0_candidate =
+        merge_bytes(32'd0, data_q[0], wea_q[0]);
+    wire [31:0] lookup_entry1_candidate =
+        merge_bytes(32'd0, data_q[1], wea_q[1]);
 
     // alloc=0: entry0 is older, entry1 is newer.
     // alloc=1: entry1 is older, entry0 is newer.
-    wire [31:0] lookup_after_0 = merge_bytes(32'd0, data_q[0], lookup_entry_mask0);
-    wire [31:0] lookup_after_1 = merge_bytes(32'd0, data_q[1], lookup_entry_mask1);
-    wire [31:0] lookup_0_then_1 =
-        merge_bytes(lookup_after_0, data_q[1], lookup_entry_mask1);
-    wire [31:0] lookup_1_then_0 =
-        merge_bytes(lookup_after_1, data_q[0], lookup_entry_mask0);
+    wire [31:0] lookup_both_0_then_1_candidate =
+        merge_bytes(lookup_entry0_candidate, data_q[1], wea_q[1]);
+    wire [31:0] lookup_both_1_then_0_candidate =
+        merge_bytes(lookup_entry1_candidate, data_q[0], wea_q[0]);
+    wire [31:0] lookup_both_candidate = alloc_sel
+        ? lookup_both_1_then_0_candidate
+        : lookup_both_0_then_1_candidate;
 
-    assign lookup_data = alloc_sel ? lookup_1_then_0 : lookup_0_then_1;
-    assign lookup_covers = |lookup_mask
-                         & ((lookup_covered_mask & lookup_mask) == lookup_mask);
+    always_comb begin
+        case ({lookup_match1, lookup_match0})
+            2'b01: begin
+                lookup_covers = lookup_cover_entry0_candidate;
+                lookup_data = lookup_entry0_candidate;
+            end
+            2'b10: begin
+                lookup_covers = lookup_cover_entry1_candidate;
+                lookup_data = lookup_entry1_candidate;
+            end
+            2'b11: begin
+                lookup_covers = lookup_cover_both_candidate;
+                lookup_data = lookup_both_candidate;
+            end
+            default: begin
+                lookup_covers = 1'b0;
+                lookup_data = 32'd0;
+            end
+        endcase
+    end
 
     // ================================================================
     //  Refill overlay

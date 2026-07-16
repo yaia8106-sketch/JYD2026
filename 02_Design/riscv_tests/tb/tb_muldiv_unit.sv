@@ -172,7 +172,7 @@ module tb_muldiv_unit;
                 start_mul(op, a, b);
                 wait_and_check(op, a, b, wait_cycles);
                 if (wait_cycles != 1) begin
-                    $error("prestarted MUL EX-wait latency changed: op=%0d cycles=%0d",
+                    $error("prestarted MUL result latency changed: op=%0d cycles=%0d",
                            op, wait_cycles);
                     $fatal(1);
                 end
