@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
 # ================================================================
-# Three-candidate timing flow:
-#   1. Clean synthesis + route + mandatory pass-1 Explore.
-#   2. Independent pass-2 routing_opt candidate from pass 1.
-#   3. Independent pass-2 AggressiveExplore candidate from pass 1.
+# Restartable three-candidate timing flow:
+#   1. Synthesis + route, followed by a persisted routed checkpoint.
+#   2. Mandatory pass-1 Explore in an independent Vivado process.
+#   3. Independent pass-2 routing_opt candidate from pass 1.
+#   4. Independent pass-2 AggressiveExplore candidate from pass 1.
 #
-# Each physopt stage runs in its own Vivado process. A failed AggressiveExplore
-# candidate is retried once in a fresh single-threaded process. A final pass-2
-# failure is recorded without invalidating pass 1 or the other candidate.
+# An incomplete run with an identical input fingerprint is resumed
+# automatically. Each physopt stage runs in its own Vivado process. Failed
+# pass-1 Explore and AggressiveExplore stages are retried once in a fresh
+# single-threaded process. A final pass-2 failure is recorded without
+# invalidating pass 1 or the other candidate, and is retried on the next call.
 #
 # Usage:
-#   ./build <parallel jobs> <COE configuration> [frequency MHz]
+#   ./build [--fresh] <parallel jobs> <COE configuration> [frequency MHz]
 # Example:
 #   ./build 16 withM
 #   ./build 16 withM 180
@@ -22,17 +25,19 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT_DIR="${ROOT}/03_Timing_Analysis"
-PASS1_TCL="${SCRIPT_DIR}/run_synth_impl.tcl"
-PASS2_TCL="${SCRIPT_DIR}/run_physopt_candidate.tcl"
+ROUTE_TCL="${SCRIPT_DIR}/run_synth_impl.tcl"
+PHYSOPT_TCL="${SCRIPT_DIR}/run_physopt_candidate.tcl"
+FLOW_FINGERPRINT_SCHEMA="restartable-timing-flow-v1"
 
 usage() {
     printf '%s\n' \
         'Usage:' \
-        '  ./build <parallel jobs> <COE configuration> [frequency MHz]' \
+        '  ./build [--fresh] <parallel jobs> <COE configuration> [frequency MHz]' \
         '' \
         'Example:' \
         '  ./build 16 withM' \
         '  ./build 16 withM 180' \
+        '  ./build --fresh 16 withM 180' \
         '' \
         'Frequency:' \
         '  Optional positive MHz value; default: 200' \
@@ -41,9 +46,13 @@ usage() {
         'COE configuration:' \
         '  current | src0 | src1 | src2 | withM | withoutM | new' \
         '' \
+        'Recovery:' \
+        '  An incomplete run is resumed only when its complete input fingerprint' \
+        '  matches. --fresh always starts a new clean synthesis/implementation.' \
+        '' \
         'Flow:' \
-        '  pass1_explore -> {pass2_routing_opt, pass2_aggressive_explore}' \
-        '  Failed AggressiveExplore is retried once with one Vivado thread.'
+        '  route -> pass1_explore -> {pass2_routing_opt, pass2_aggressive_explore}' \
+        '  Failed pass-1 Explore and AggressiveExplore get one single-thread retry.'
 }
 
 require_positive_integer() {
@@ -67,12 +76,42 @@ normalize_frequency_mhz() {
         echo "ERROR: frequency must be greater than zero, got '${1}'." >&2
         exit 2
     fi
-    printf '%s\n' "${value}"
+    awk -v value="${value}" 'BEGIN {
+        text = sprintf("%.9f", value)
+        sub(/0+$/, "", text)
+        sub(/[.]$/, "", text)
+        print text
+    }'
 }
 
-if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-    usage
-    exit 0
+FORCE_FRESH=0
+POSITIONAL_ARGS=()
+for arg in "$@"; do
+    case "${arg}" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        --fresh)
+            FORCE_FRESH=1
+            ;;
+        --)
+            ;;
+        --*)
+            echo "ERROR: unknown option '${arg}'." >&2
+            usage >&2
+            exit 2
+            ;;
+        *)
+            POSITIONAL_ARGS+=("${arg}")
+            ;;
+    esac
+done
+set -- "${POSITIONAL_ARGS[@]}"
+if (( FORCE_FRESH )); then
+    FRESH_REQUESTED="YES"
+else
+    FRESH_REQUESTED="NO"
 fi
 
 if [[ $# -lt 2 || $# -gt 3 ]]; then
@@ -119,7 +158,7 @@ if [[ ! -f "${COE_DIR}/irom64.coe" || ! -f "${COE_DIR}/dram.coe" ]]; then
     echo "ERROR: ${COE_DIR} must contain irom64.coe and dram.coe." >&2
     exit 2
 fi
-if [[ ! -f "${PASS1_TCL}" || ! -f "${PASS2_TCL}" ]]; then
+if [[ ! -f "${ROUTE_TCL}" || ! -f "${PHYSOPT_TCL}" ]]; then
     echo "ERROR: timing-flow Tcl scripts are incomplete under ${SCRIPT_DIR}." >&2
     exit 2
 fi
@@ -135,18 +174,21 @@ if ! command -v vivado >/dev/null 2>&1; then
     exit 127
 fi
 
-RUN_ID="$(date +%Y%m%d_%H%M%S)_$$"
-RESULT_ROOT="${SCRIPT_DIR}/results/${COE_NAME}"
-RUN_DIR="${RESULT_ROOT}/runs/${RUN_ID}"
-PASS1_DIR="${RUN_DIR}/pass1_explore"
-PASS2_ROUTING_DIR="${RUN_DIR}/pass2_routing_opt"
-PASS2_AGGRESSIVE_DIR="${RUN_DIR}/pass2_aggressive_explore"
-PASS2_AGGRESSIVE_ATTEMPT1_DIR="${RUN_DIR}/pass2_aggressive_explore_attempt1_failed"
-MANIFEST="${RUN_DIR}/manifest.txt"
-COMPARISON="${RUN_DIR}/comparison.txt"
+RESULTS_BASE="${CPU_TIMING_RESULTS_BASE:-${SCRIPT_DIR}/results}"
+RESULT_ROOT="${RESULTS_BASE}/${COE_NAME}"
+PROJECT_STATE_FILE="${RESULTS_BASE}/.project_state"
+BUILD_LOCK_FILE="${SCRIPT_DIR}/results/.build.lock"
+mkdir -p "${RESULT_ROOT}/runs" "$(dirname "${BUILD_LOCK_FILE}")"
 
-mkdir -p "${PASS1_DIR}" \
-    "${PASS2_ROUTING_DIR}" "${PASS2_AGGRESSIVE_DIR}"
+if ! command -v flock >/dev/null 2>&1; then
+    echo "ERROR: flock is required for safe restartable builds." >&2
+    exit 127
+fi
+exec 9>"${BUILD_LOCK_FILE}"
+if ! flock -n 9; then
+    echo "ERROR: another timing build is already using the shared Vivado project." >&2
+    exit 75
+fi
 
 replace_link() {
     local target="$1"
@@ -255,6 +297,221 @@ candidate_is_better() {
         }'
 }
 
+manifest_last_value() {
+    local manifest_file="$1"
+    local key="$2"
+    awk -v key="${key}" '
+        index($0, key ": ") == 1 {
+            value = substr($0, length(key) + 3)
+        }
+        END { print value }
+    ' "${manifest_file}"
+}
+
+fingerprint_payload() {
+    local input_file relative_path digest
+
+    printf 'schema=%s\n' "${FLOW_FINGERPRINT_SCHEMA}"
+    printf 'coe=%s\n' "${COE_NAME}"
+    printf 'frequency_mhz=%s\n' "${FREQUENCY_MHZ}"
+    printf 'vivado=%s\n' "${VIVADO_VERSION}"
+
+    while IFS= read -r -d '' input_file; do
+        [[ -f "${input_file}" ]] || continue
+        relative_path="${input_file#"${ROOT}/"}"
+        digest="$(sha256sum "${input_file}" | awk '{print $1}')"
+        printf 'file=%s\nsha256=%s\n' "${relative_path}" "${digest}"
+    done < <(
+        {
+            find "${ROOT}/02_Design/rtl" \
+                "${ROOT}/02_Design/contest_readonly/rtl" \
+                "${ROOT}/JYD2025_Contest-rv32i/digital_twin.srcs/sources_1/new" \
+                -type f \( -name '*.sv' -o -name '*.v' -o -name '*.svh' \
+                    -o -name '*.vh' \) -print0
+            find "${ROOT}/JYD2025_Contest-rv32i/digital_twin.srcs/sources_1/ip" \
+                -type f -name '*.xci' \
+                ! -path '*/IROM64/*' ! -path '*/DRAM4MyOwn/*' \
+                ! -path '*/pll_1/*' -print0
+            printf '%s\0' \
+                "${ROOT}/JYD2025_Contest-rv32i/digital_twin.xpr" \
+                "${ROOT}/JYD2025_Contest-rv32i/digital_twin.srcs/constrs_1/new/digital_twin.xdc" \
+                "${COE_DIR}/irom64.coe" "${COE_DIR}/dram.coe" \
+                "${BASH_SOURCE[0]}" "${ROUTE_TCL}" "${PHYSOPT_TCL}" \
+                "${SCRIPT_DIR}/report_stage_timing.tcl"
+        } | sort -zu
+    )
+}
+
+legacy_source_compatible() {
+    local commit="$1"
+    local coe_relative="${COE_DIR#"${ROOT}/"}"
+
+    [[ "${commit}" != "unknown" ]] || return 1
+    git -C "${ROOT}" rev-parse --verify "${commit}^{commit}" >/dev/null 2>&1 \
+        || return 1
+    git -C "${ROOT}" diff --quiet "${commit}" -- \
+        02_Design/rtl \
+        02_Design/contest_readonly/rtl \
+        JYD2025_Contest-rv32i/digital_twin.xpr \
+        JYD2025_Contest-rv32i/digital_twin.srcs/constrs_1/new/digital_twin.xdc \
+        JYD2025_Contest-rv32i/digital_twin.srcs/sources_1/ip/IROMEven32/IROMEven32.xci \
+        JYD2025_Contest-rv32i/digital_twin.srcs/sources_1/ip/IROMOdd32/IROMOdd32.xci \
+        "${coe_relative}"
+}
+
+legacy_routed_checkpoint_matches_run() {
+    local manifest_file="$1"
+    local project_dcp="${ROOT}/JYD2025_Contest-rv32i/digital_twin.runs/impl_1/top_routed.dcp"
+    local started completed started_epoch completed_epoch dcp_epoch
+
+    [[ -s "${project_dcp}" ]] || return 1
+    started="$(manifest_last_value "${manifest_file}" Started)"
+    completed="$(manifest_last_value "${manifest_file}" Completed)"
+    started_epoch="$(date -d "${started}" +%s 2>/dev/null)" || return 1
+    dcp_epoch="$(stat -c %Y "${project_dcp}")"
+    (( dcp_epoch >= started_epoch )) || return 1
+    if [[ -n "${completed}" ]]; then
+        completed_epoch="$(date -d "${completed}" +%s 2>/dev/null)" || return 1
+        (( dcp_epoch <= completed_epoch )) || return 1
+    fi
+}
+
+find_resume_run() {
+    local manifest_file fingerprint status
+
+    while IFS= read -r manifest_file; do
+        fingerprint="$(manifest_last_value "${manifest_file}" 'Build fingerprint')"
+        [[ "${fingerprint}" == "${BUILD_FINGERPRINT}" ]] || continue
+        status="$(manifest_last_value "${manifest_file}" Status)"
+        case "${status}" in
+            FAILED|RUNNING|SUCCESS_WITH_WARNINGS)
+                printf '%s\t%s\n' "$(dirname "${manifest_file}")" exact
+                return 0
+                ;;
+            SUCCESS)
+                return 1
+                ;;
+        esac
+    done < <(find "${RESULT_ROOT}/runs" -mindepth 2 -maxdepth 2 \
+        -type f -name manifest.txt -printf '%T@ %p\n' \
+        | sort -nr | cut -d' ' -f2-)
+    return 1
+}
+
+matching_fingerprint_exists() {
+    local manifest_file fingerprint
+
+    while IFS= read -r manifest_file; do
+        fingerprint="$(manifest_last_value "${manifest_file}" 'Build fingerprint')"
+        [[ "${fingerprint}" == "${BUILD_FINGERPRINT}" ]] && return 0
+    done < <(find "${RESULT_ROOT}/runs" -mindepth 2 -maxdepth 2 \
+        -type f -name manifest.txt -print)
+    return 1
+}
+
+find_legacy_resume_run() {
+    local manifest_file fingerprint status manifest_coe manifest_frequency
+    local legacy_commit run_dir
+
+    while IFS= read -r manifest_file; do
+        fingerprint="$(manifest_last_value "${manifest_file}" 'Build fingerprint')"
+        [[ -z "${fingerprint}" ]] || continue
+        manifest_coe="$(manifest_last_value "${manifest_file}" 'COE configuration')"
+        [[ "${manifest_coe}" == "${COE_NAME}" ]] || continue
+        manifest_frequency="$(manifest_last_value "${manifest_file}" 'Requested frequency')"
+        manifest_frequency="${manifest_frequency% MHz}"
+        awk -v old="${manifest_frequency}" -v new="${FREQUENCY_MHZ}" \
+            'BEGIN { exit !(old != "" && (old - new < 0.0000005) && (new - old < 0.0000005)) }' \
+            || continue
+
+        status="$(manifest_last_value "${manifest_file}" Status)"
+        case "${status}" in
+            FAILED|RUNNING) ;;
+            SUCCESS|SUCCESS_WITH_WARNINGS) return 1 ;;
+            *) continue ;;
+        esac
+
+        legacy_commit="$(manifest_last_value "${manifest_file}" 'Git commit')"
+        legacy_source_compatible "${legacy_commit}" || continue
+        run_dir="$(dirname "${manifest_file}")"
+        if candidate_artifacts_complete "${run_dir}/pass1_explore" 1 \
+            || legacy_routed_checkpoint_matches_run "${manifest_file}"; then
+            printf '%s\t%s\n' "${run_dir}" legacy
+            return 0
+        fi
+    done < <(find "${RESULT_ROOT}/runs" -mindepth 2 -maxdepth 2 \
+        -type f -name manifest.txt -printf '%T@ %p\n' \
+        | sort -nr | cut -d' ' -f2-)
+    return 1
+}
+
+archive_failed_stage() {
+    local stage_dir="$1"
+    local archive_dir
+
+    ARCHIVED_STAGE_DIR=""
+    if [[ -d "${stage_dir}" ]] \
+        && find "${stage_dir}" -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then
+        archive_dir="${stage_dir}_attempt_failed_$(date +%Y%m%d_%H%M%S)_$$"
+        mv -- "${stage_dir}" "${archive_dir}"
+        ARCHIVED_STAGE_DIR="${archive_dir}"
+        echo ">>> Archived incomplete stage: ${archive_dir}"
+    fi
+    mkdir -p "${stage_dir}"
+}
+
+write_project_state() {
+    local temporary_file="${PROJECT_STATE_FILE}.tmp.$$"
+    {
+        printf 'Build fingerprint: %s\n' "${BUILD_FINGERPRINT}"
+        printf 'Run ID: %s\n' "${RUN_ID}"
+        printf 'Status: PREPARING\n'
+        printf 'Updated: %s\n' "$(date --iso-8601=seconds)"
+    } > "${temporary_file}"
+    mv -f "${temporary_file}" "${PROJECT_STATE_FILE}"
+}
+
+project_state_matches() {
+    [[ -f "${PROJECT_STATE_FILE}" ]] \
+        && [[ "$(manifest_last_value "${PROJECT_STATE_FILE}" 'Build fingerprint')" \
+            == "${BUILD_FINGERPRINT}" ]] \
+        && [[ "$(manifest_last_value "${PROJECT_STATE_FILE}" 'Run ID')" == "${RUN_ID}" ]] \
+        && [[ "$(manifest_last_value "${PROJECT_STATE_FILE}" Status)" == "READY" ]]
+}
+
+VIVADO_VERSION="$(vivado -version 2>/dev/null | sed -n '1p')"
+BUILD_FINGERPRINT="$(fingerprint_payload | sha256sum | awk '{print $1}')"
+
+RESUMING=0
+RESUME_KIND="none"
+RESUME_SELECTION=""
+if (( ! FORCE_FRESH )); then
+    RESUME_SELECTION="$(find_resume_run || true)"
+    if [[ -z "${RESUME_SELECTION}" ]] && ! matching_fingerprint_exists; then
+        RESUME_SELECTION="$(find_legacy_resume_run || true)"
+    fi
+fi
+
+if [[ -n "${RESUME_SELECTION}" ]]; then
+    RUN_DIR="${RESUME_SELECTION%%$'\t'*}"
+    RESUME_KIND="${RESUME_SELECTION#*$'\t'}"
+    RUN_ID="$(basename "${RUN_DIR}")"
+    RESUMING=1
+else
+    RUN_ID="$(date +%Y%m%d_%H%M%S)_$$"
+    RUN_DIR="${RESULT_ROOT}/runs/${RUN_ID}"
+fi
+
+ROUTE_DIR="${RUN_DIR}/route"
+ROUTED_DCP="${ROUTE_DIR}/pre_physopt_routed.dcp"
+PASS1_DIR="${RUN_DIR}/pass1_explore"
+PASS2_ROUTING_DIR="${RUN_DIR}/pass2_routing_opt"
+PASS2_AGGRESSIVE_DIR="${RUN_DIR}/pass2_aggressive_explore"
+MANIFEST="${RUN_DIR}/manifest.txt"
+COMPARISON="${RUN_DIR}/comparison.txt"
+mkdir -p "${ROUTE_DIR}" "${PASS1_DIR}" \
+    "${PASS2_ROUTING_DIR}" "${PASS2_AGGRESSIVE_DIR}"
+
 GIT_COMMIT="$(git -C "${ROOT}" rev-parse --short HEAD 2>/dev/null || printf 'unknown')"
 if [[ -n "$(git -C "${ROOT}" status --porcelain 2>/dev/null)" ]]; then
     GIT_STATE="dirty"
@@ -262,59 +519,176 @@ else
     GIT_STATE="clean"
 fi
 
-{
-    printf 'Run ID: %s\n' "${RUN_ID}"
-    printf 'Started: %s\n' "$(date --iso-8601=seconds)"
-    printf 'Workspace: %s\n' "${ROOT}"
-    printf 'Git commit: %s\n' "${GIT_COMMIT}"
-    printf 'Git state: %s\n' "${GIT_STATE}"
-    printf 'COE configuration: %s\n' "${COE_NAME}"
-    printf 'COE directory: %s\n' "${COE_DIR}"
-    printf 'Parallel jobs: %s\n' "${JOBS}"
-    printf 'Requested frequency: %s MHz\n' "${FREQUENCY_MHZ}"
-    printf 'Requested clock period: %s ns\n' "${CLOCK_PERIOD_NS}"
-    printf 'Flow: pass1_explore -> {pass2_routing_opt, pass2_aggressive_explore}\n'
-    printf 'Status: RUNNING\n'
-} > "${MANIFEST}"
+if (( RESUMING )); then
+    if [[ "${RESUME_KIND}" == "legacy" ]]; then
+        if [[ ! -s "${ROUTED_DCP}" ]] \
+            && ! candidate_artifacts_complete "${PASS1_DIR}" 1; then
+            cp --reflink=auto \
+                "${ROOT}/JYD2025_Contest-rv32i/digital_twin.runs/impl_1/top_routed.dcp" \
+                "${ROUTED_DCP}"
+            write_stage_status "${ROUTE_DIR}" SUCCESS 0 \
+                "adopted routed checkpoint from the matching legacy failed run"
+        fi
+        printf 'Build fingerprint: %s\n' "${BUILD_FINGERPRINT}" >> "${MANIFEST}"
+        printf 'Recovery schema: %s\n' "${FLOW_FINGERPRINT_SCHEMA}" >> "${MANIFEST}"
+    fi
+    {
+        printf 'Resumed: %s\n' "$(date --iso-8601=seconds)"
+        printf 'Resume kind: %s\n' "${RESUME_KIND}"
+        printf 'Resume parallel jobs: %s\n' "${JOBS}"
+        printf 'Status: RUNNING\n'
+    } >> "${MANIFEST}"
+else
+    {
+        printf 'Run ID: %s\n' "${RUN_ID}"
+        printf 'Started: %s\n' "$(date --iso-8601=seconds)"
+        printf 'Workspace: %s\n' "${ROOT}"
+        printf 'Git commit: %s\n' "${GIT_COMMIT}"
+        printf 'Git state: %s\n' "${GIT_STATE}"
+        printf 'Build fingerprint: %s\n' "${BUILD_FINGERPRINT}"
+        printf 'Recovery schema: %s\n' "${FLOW_FINGERPRINT_SCHEMA}"
+        printf 'COE configuration: %s\n' "${COE_NAME}"
+        printf 'COE directory: %s\n' "${COE_DIR}"
+        printf 'Parallel jobs: %s\n' "${JOBS}"
+        printf 'Fresh requested: %s\n' "${FRESH_REQUESTED}"
+        printf 'Requested frequency: %s MHz\n' "${FREQUENCY_MHZ}"
+        printf 'Requested clock period: %s ns\n' "${CLOCK_PERIOD_NS}"
+        printf 'Vivado version: %s\n' "${VIVADO_VERSION}"
+        printf 'Flow: route -> pass1_explore -> {pass2_routing_opt, pass2_aggressive_explore}\n'
+        printf 'Status: RUNNING\n'
+    } > "${MANIFEST}"
+fi
 
 replace_link "runs/${RUN_ID}" "${RESULT_ROOT}/latest"
-rm -f "${RESULT_ROOT}/final_timing_summary.txt" \
-    "${RESULT_ROOT}/stage_timing_report.txt" \
-    "${RESULT_ROOT}/recommended.dcp" \
-    "${RESULT_ROOT}/recommended.bit" \
-    "${RESULT_ROOT}/comparison.txt"
+if (( ! RESUMING )); then
+    rm -f "${RESULT_ROOT}/final_timing_summary.txt" \
+        "${RESULT_ROOT}/stage_timing_report.txt" \
+        "${RESULT_ROOT}/recommended.dcp" \
+        "${RESULT_ROOT}/recommended.bit" \
+        "${RESULT_ROOT}/comparison.txt"
+fi
+
+if (( RESUMING )); then
+    RECOVERY_LABEL="RESUME (${RESUME_KIND})"
+else
+    RECOVERY_LABEL="NEW"
+fi
 
 echo "================================================================"
 echo " Multi-candidate synthesis / implementation flow"
 echo "================================================================"
 echo "Run directory : ${RUN_DIR}"
+echo "Recovery      : ${RECOVERY_LABEL}"
+echo "Fingerprint   : ${BUILD_FINGERPRINT}"
 echo "COE           : ${COE_NAME} (${COE_DIR})"
 echo "Jobs          : ${JOBS}"
 echo "Frequency     : ${FREQUENCY_MHZ} MHz (${CLOCK_PERIOD_NS} ns)"
+echo "Route DCP     : ${ROUTED_DCP}"
 echo "Pass 1        : Explore (mandatory)"
 echo "Pass 2A       : routing_opt (independent)"
 echo "Pass 2B       : AggressiveExplore (one single-thread retry on failure)"
 echo "================================================================"
 
-if run_vivado_stage "Mandatory pass 1 Explore" "${PASS1_TCL}" "${PASS1_DIR}" \
-    --jobs "${JOBS}" --freq-mhz "${FREQUENCY_MHZ}" --extra-physopt 0 \
-    --coe-dir "${COE_DIR}" --output-dir "${PASS1_DIR}" \
-    --bitstream-file "${PASS1_DIR}/design.bit"; then
-    :
+if [[ -s "${ROUTED_DCP}" ]]; then
+    echo ">>> Reusing completed synthesis/route checkpoint"
+    echo "    checkpoint: ${ROUTED_DCP}"
 else
-    PASS1_EXIT=$?
-    printf 'Completed: %s\nStatus: FAILED\nFailure: mandatory pass 1\n' \
-        "$(date --iso-8601=seconds)" >> "${MANIFEST}"
-    echo "ERROR: mandatory pass 1 failed; see ${PASS1_DIR}/vivado.log" >&2
-    exit "${PASS1_EXIT}"
+    RESUME_PROJECT_RUNS=0
+    if (( RESUMING )) && project_state_matches; then
+        RESUME_PROJECT_RUNS=1
+    fi
+    archive_failed_stage "${ROUTE_DIR}"
+    write_project_state
+
+    ROUTE_ARGS=(
+        --jobs "${JOBS}"
+        --freq-mhz "${FREQUENCY_MHZ}"
+        --extra-physopt 0
+        --output-dir "${ROUTE_DIR}"
+        --stop-after-route
+        --routed-checkpoint-file "${ROUTED_DCP}"
+        --resume-state-file "${PROJECT_STATE_FILE}"
+    )
+    if (( RESUME_PROJECT_RUNS )); then
+        echo ">>> Retrying the failed Vivado project run from its last completed step"
+        ROUTE_ARGS+=(--no-reset)
+    else
+        ROUTE_ARGS+=(--coe-dir "${COE_DIR}")
+    fi
+
+    if run_vivado_stage "Synthesis and implementation through route" \
+        "${ROUTE_TCL}" "${ROUTE_DIR}" "${ROUTE_ARGS[@]}"; then
+        if [[ ! -s "${ROUTED_DCP}" ]]; then
+            write_stage_status "${ROUTE_DIR}" FAILED 1 \
+                "route stage returned success without a persisted routed checkpoint"
+        fi
+    else
+        ROUTE_EXIT=$?
+        printf 'Completed: %s\nStatus: FAILED\nFailure: synthesis/route\n' \
+            "$(date --iso-8601=seconds)" >> "${MANIFEST}"
+        echo "ERROR: synthesis/route failed; the next identical call will resume this run." >&2
+        exit "${ROUTE_EXIT}"
+    fi
+
+    if [[ ! -s "${ROUTED_DCP}" ]]; then
+        printf 'Completed: %s\nStatus: FAILED\nFailure: missing routed checkpoint\n' \
+            "$(date --iso-8601=seconds)" >> "${MANIFEST}"
+        echo "ERROR: routed checkpoint was not persisted." >&2
+        exit 1
+    fi
+fi
+
+PASS1_INITIAL_STATUS="REUSED"
+PASS1_RETRY_STATUS="NOT_NEEDED"
+PASS1_INITIAL_FAILURE_DIR=""
+if candidate_artifacts_complete "${PASS1_DIR}" 1; then
+    echo ">>> Reusing completed mandatory pass 1 Explore"
+else
+    archive_failed_stage "${PASS1_DIR}"
+    PASS1_INITIAL_STATUS="FAILED"
+    if run_vivado_stage "Mandatory pass 1 Explore" "${PHYSOPT_TCL}" \
+        "${PASS1_DIR}" --jobs "${JOBS}" --freq-mhz "${FREQUENCY_MHZ}" \
+        --input-dcp "${ROUTED_DCP}" --output-dir "${PASS1_DIR}" \
+        --strategy explore --pass-number 1 \
+        --bitstream-file "${PASS1_DIR}/design.bit"; then
+        if candidate_artifacts_complete "${PASS1_DIR}" 1; then
+            PASS1_INITIAL_STATUS="SUCCESS"
+        else
+            write_stage_status "${PASS1_DIR}" FAILED 1 \
+                "pass 1 returned success but required artifacts are incomplete"
+        fi
+    fi
+
+    if [[ "${PASS1_INITIAL_STATUS}" != "SUCCESS" ]]; then
+        echo "WARNING: retrying mandatory pass 1 with one Vivado thread." >&2
+        archive_failed_stage "${PASS1_DIR}"
+        PASS1_INITIAL_FAILURE_DIR="${ARCHIVED_STAGE_DIR}"
+        PASS1_RETRY_STATUS="FAILED"
+        if run_vivado_stage "Mandatory pass 1 single-thread retry" \
+            "${PHYSOPT_TCL}" "${PASS1_DIR}" --jobs 1 \
+            --freq-mhz "${FREQUENCY_MHZ}" \
+            --input-dcp "${ROUTED_DCP}" --output-dir "${PASS1_DIR}" \
+            --strategy explore --pass-number 1 \
+            --bitstream-file "${PASS1_DIR}/design.bit"; then
+            if candidate_artifacts_complete "${PASS1_DIR}" 1; then
+                PASS1_RETRY_STATUS="SUCCESS"
+            else
+                write_stage_status "${PASS1_DIR}" FAILED 1 \
+                    "single-thread pass-1 retry returned incomplete artifacts"
+            fi
+        fi
+    fi
 fi
 
 if ! candidate_artifacts_complete "${PASS1_DIR}" 1; then
-    write_stage_status "${PASS1_DIR}" FAILED 1 \
-        "mandatory pass 1 returned success but required artifacts are incomplete"
-    printf 'Completed: %s\nStatus: FAILED\nFailure: incomplete pass-1 artifacts\n' \
-        "$(date --iso-8601=seconds)" >> "${MANIFEST}"
-    echo "ERROR: mandatory pass-1 artifacts are incomplete." >&2
+    {
+        printf 'Completed: %s\n' "$(date --iso-8601=seconds)"
+        printf 'Status: FAILED\n'
+        printf 'Failure: mandatory pass 1\n'
+        printf 'Pass 1 initial: %s\n' "${PASS1_INITIAL_STATUS}"
+        printf 'Pass 1 retry: %s\n' "${PASS1_RETRY_STATUS}"
+    } >> "${MANIFEST}"
+    echo "ERROR: mandatory pass 1 failed; the routed checkpoint remains resumable." >&2
     exit 1
 fi
 
@@ -323,51 +697,67 @@ ROUTING_STATUS="FAILED"
 AGGRESSIVE_STATUS="FAILED"
 AGGRESSIVE_INITIAL_STATUS="FAILED"
 AGGRESSIVE_RETRY_STATUS="NOT_NEEDED"
+AGGRESSIVE_INITIAL_FAILURE_DIR=""
 
-if run_vivado_stage "Pass 2 routing-only candidate" "${PASS2_TCL}" \
-    "${PASS2_ROUTING_DIR}" --jobs "${JOBS}" \
-    --freq-mhz "${FREQUENCY_MHZ}" \
-    --input-dcp "${PASS1_DCP}" --output-dir "${PASS2_ROUTING_DIR}" \
-    --strategy routing_opt --bitstream-file "${PASS2_ROUTING_DIR}/design.bit"; then
-    if candidate_artifacts_complete "${PASS2_ROUTING_DIR}" 2; then
-        ROUTING_STATUS="SUCCESS"
-    else
-        write_stage_status "${PASS2_ROUTING_DIR}" FAILED 1 \
-            "Vivado returned success but required candidate artifacts are incomplete"
-    fi
+if candidate_artifacts_complete "${PASS2_ROUTING_DIR}" 2; then
+    ROUTING_STATUS="SUCCESS"
+    echo ">>> Reusing completed Pass 2 routing-only candidate"
 else
-    echo "WARNING: routing_opt candidate failed; continuing." >&2
+    archive_failed_stage "${PASS2_ROUTING_DIR}"
+    if run_vivado_stage "Pass 2 routing-only candidate" "${PHYSOPT_TCL}" \
+        "${PASS2_ROUTING_DIR}" --jobs "${JOBS}" \
+        --freq-mhz "${FREQUENCY_MHZ}" \
+        --input-dcp "${PASS1_DCP}" --output-dir "${PASS2_ROUTING_DIR}" \
+        --strategy routing_opt --pass-number 2 \
+        --bitstream-file "${PASS2_ROUTING_DIR}/design.bit"; then
+        if candidate_artifacts_complete "${PASS2_ROUTING_DIR}" 2; then
+            ROUTING_STATUS="SUCCESS"
+        else
+            write_stage_status "${PASS2_ROUTING_DIR}" FAILED 1 \
+                "Vivado returned success but required candidate artifacts are incomplete"
+        fi
+    else
+        echo "WARNING: routing_opt candidate failed; continuing." >&2
+    fi
 fi
 
-if run_vivado_stage "Pass 2 AggressiveExplore candidate" "${PASS2_TCL}" \
-    "${PASS2_AGGRESSIVE_DIR}" --jobs "${JOBS}" \
-    --freq-mhz "${FREQUENCY_MHZ}" \
-    --input-dcp "${PASS1_DCP}" --output-dir "${PASS2_AGGRESSIVE_DIR}" \
-    --strategy aggressive_explore \
-    --bitstream-file "${PASS2_AGGRESSIVE_DIR}/design.bit"; then
-    if candidate_artifacts_complete "${PASS2_AGGRESSIVE_DIR}" 2; then
-        AGGRESSIVE_INITIAL_STATUS="SUCCESS"
-        AGGRESSIVE_STATUS="SUCCESS"
-    else
-        write_stage_status "${PASS2_AGGRESSIVE_DIR}" FAILED 1 \
-            "Vivado returned success but required candidate artifacts are incomplete"
-    fi
+if candidate_artifacts_complete "${PASS2_AGGRESSIVE_DIR}" 2; then
+    AGGRESSIVE_INITIAL_STATUS="REUSED"
+    AGGRESSIVE_STATUS="SUCCESS"
+    echo ">>> Reusing completed Pass 2 AggressiveExplore candidate"
 else
-    echo "WARNING: initial AggressiveExplore candidate failed." >&2
+    archive_failed_stage "${PASS2_AGGRESSIVE_DIR}"
+    if run_vivado_stage "Pass 2 AggressiveExplore candidate" "${PHYSOPT_TCL}" \
+        "${PASS2_AGGRESSIVE_DIR}" --jobs "${JOBS}" \
+        --freq-mhz "${FREQUENCY_MHZ}" \
+        --input-dcp "${PASS1_DCP}" --output-dir "${PASS2_AGGRESSIVE_DIR}" \
+        --strategy aggressive_explore --pass-number 2 \
+        --bitstream-file "${PASS2_AGGRESSIVE_DIR}/design.bit"; then
+        if candidate_artifacts_complete "${PASS2_AGGRESSIVE_DIR}" 2; then
+            AGGRESSIVE_INITIAL_STATUS="SUCCESS"
+            AGGRESSIVE_STATUS="SUCCESS"
+        else
+            write_stage_status "${PASS2_AGGRESSIVE_DIR}" FAILED 1 \
+                "Vivado returned success but required candidate artifacts are incomplete"
+        fi
+    else
+        echo "WARNING: initial AggressiveExplore candidate failed." >&2
+    fi
 fi
 
-if [[ "${AGGRESSIVE_INITIAL_STATUS}" != "SUCCESS" ]]; then
+if [[ "${AGGRESSIVE_STATUS}" != "SUCCESS" ]]; then
     echo "WARNING: retrying AggressiveExplore once with one Vivado thread." >&2
-    mv -- "${PASS2_AGGRESSIVE_DIR}" "${PASS2_AGGRESSIVE_ATTEMPT1_DIR}"
+    archive_failed_stage "${PASS2_AGGRESSIVE_DIR}"
+    AGGRESSIVE_INITIAL_FAILURE_DIR="${ARCHIVED_STAGE_DIR}"
     AGGRESSIVE_RETRY_STATUS="FAILED"
 
     if run_vivado_stage \
         "Pass 2 AggressiveExplore single-thread retry" \
-        "${PASS2_TCL}" "${PASS2_AGGRESSIVE_DIR}" --jobs 1 \
+        "${PHYSOPT_TCL}" "${PASS2_AGGRESSIVE_DIR}" --jobs 1 \
         --freq-mhz "${FREQUENCY_MHZ}" \
         --input-dcp "${PASS1_DCP}" \
         --output-dir "${PASS2_AGGRESSIVE_DIR}" \
-        --strategy aggressive_explore \
+        --strategy aggressive_explore --pass-number 2 \
         --bitstream-file "${PASS2_AGGRESSIVE_DIR}/design.bit"; then
         if candidate_artifacts_complete "${PASS2_AGGRESSIVE_DIR}" 2; then
             AGGRESSIVE_RETRY_STATUS="SUCCESS"
@@ -435,6 +825,19 @@ append_candidate_report() {
         "${PASS2_ROUTING_DIR}"
     append_candidate_report "pass2_aggressive_explore" "${AGGRESSIVE_STATUS}" \
         "${PASS2_AGGRESSIVE_DIR}"
+    printf '%s\n' '[pass1_explore_attempts]'
+    printf 'Initial jobs: %s\n' "${JOBS}"
+    printf 'Initial status: %s\n' "${PASS1_INITIAL_STATUS}"
+    if [[ "${PASS1_RETRY_STATUS}" == "NOT_NEEDED" ]]; then
+        printf 'Retry attempted: NO\n'
+    else
+        printf 'Retry attempted: YES\n'
+        printf 'Retry jobs: 1\n'
+        printf 'Retry status: %s\n' "${PASS1_RETRY_STATUS}"
+        printf 'Initial failure directory: %s\n' \
+            "${PASS1_INITIAL_FAILURE_DIR}"
+    fi
+    printf '\n'
     printf '%s\n' '[pass2_aggressive_explore_attempts]'
     printf 'Initial jobs: %s\n' "${JOBS}"
     printf 'Initial status: %s\n' "${AGGRESSIVE_INITIAL_STATUS}"
@@ -445,11 +848,11 @@ append_candidate_report() {
         printf 'Retry jobs: 1\n'
         printf 'Retry status: %s\n' "${AGGRESSIVE_RETRY_STATUS}"
         printf 'Initial failure directory: %s\n' \
-            "${PASS2_AGGRESSIVE_ATTEMPT1_DIR}"
+            "${AGGRESSIVE_INITIAL_FAILURE_DIR}"
         printf 'Initial failure report: %s/status.txt\n' \
-            "${PASS2_AGGRESSIVE_ATTEMPT1_DIR}"
+            "${AGGRESSIVE_INITIAL_FAILURE_DIR}"
         printf 'Initial failure log: %s/vivado.log\n' \
-            "${PASS2_AGGRESSIVE_ATTEMPT1_DIR}"
+            "${AGGRESSIVE_INITIAL_FAILURE_DIR}"
     fi
     printf '\n'
     printf '[Recommendation]\n'
@@ -478,6 +881,8 @@ fi
 {
     printf 'Completed: %s\n' "$(date --iso-8601=seconds)"
     printf 'Status: %s\n' "${OVERALL_STATUS}"
+    printf 'Pass 1 initial: %s\n' "${PASS1_INITIAL_STATUS}"
+    printf 'Pass 1 retry: %s\n' "${PASS1_RETRY_STATUS}"
     printf 'Pass 2 routing_opt: %s\n' "${ROUTING_STATUS}"
     printf 'Pass 2 aggressive initial: %s\n' \
         "${AGGRESSIVE_INITIAL_STATUS}"

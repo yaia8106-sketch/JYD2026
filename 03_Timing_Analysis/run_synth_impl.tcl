@@ -32,6 +32,13 @@
 #   --coe-dir DIR        Regenerate IROM64/DRAM4MyOwn from DIR/irom64.coe
 #                        and DIR/dram.coe before a clean build
 #   --no-reset           Reuse completed synthesis/routing results when possible
+#   --stop-after-route    Persist the routed DCP and return before post-route
+#                        physopt (used by build.sh for crash-safe stage splits)
+#   --routed-checkpoint-file F
+#                        Override the persisted pre-physopt routed DCP path
+#   --resume-state-file F
+#                        Mark project runs READY after configuration/reset so a
+#                        later invocation can safely retry only the failed step
 #   --dry-run            Open the project and print the intended flow only
 #   --help               Print usage
 #
@@ -56,7 +63,9 @@ proc flow_usage {} {
     puts "                  ?--bitstream?"
     puts "                  ?--bitstream-file FILE? ?--output-dir DIR?"
     puts "                  ?--coe-dir DIR?"
-    puts "                  ?--no-reset? ?--dry-run?"
+    puts "                  ?--no-reset? ?--stop-after-route?"
+    puts "                  ?--routed-checkpoint-file FILE?"
+    puts "                  ?--resume-state-file FILE? ?--dry-run?"
 }
 
 proc flow_fail {message} {
@@ -208,6 +217,9 @@ set bitstream_file_arg ""
 set output_dir_arg ""
 set coe_dir_arg ""
 set reset_runs_enabled 1
+set stop_after_route 0
+set routed_checkpoint_file_arg ""
+set resume_state_file_arg ""
 set dry_run 0
 
 if {![info exists argv]} {
@@ -257,6 +269,19 @@ while {$arg_index < [llength $argv]} {
         }
         --no-reset {
             set reset_runs_enabled 0
+        }
+        --stop-after-route {
+            set stop_after_route 1
+        }
+        --routed-checkpoint-file {
+            incr arg_index
+            if {$arg_index >= [llength $argv]} { flow_fail "missing value after --routed-checkpoint-file" }
+            set routed_checkpoint_file_arg [lindex $argv $arg_index]
+        }
+        --resume-state-file {
+            incr arg_index
+            if {$arg_index >= [llength $argv]} { flow_fail "missing value after --resume-state-file" }
+            set resume_state_file_arg [lindex $argv $arg_index]
         }
         --dry-run {
             set dry_run 1
@@ -323,6 +348,37 @@ if {$bitstream_file_arg ne ""} {
     set requested_bitstream_file ""
 }
 
+if {$routed_checkpoint_file_arg ne ""} {
+    if {[file pathtype $routed_checkpoint_file_arg] eq "absolute"} {
+        set requested_routed_checkpoint_file \
+            [file normalize $routed_checkpoint_file_arg]
+    } else {
+        set requested_routed_checkpoint_file \
+            [file normalize [file join $workspace $routed_checkpoint_file_arg]]
+    }
+} else {
+    set requested_routed_checkpoint_file \
+        [file join $output_dir "pre_physopt_routed.dcp"]
+}
+
+if {$resume_state_file_arg ne ""} {
+    if {[file pathtype $resume_state_file_arg] eq "absolute"} {
+        set resume_state_file [file normalize $resume_state_file_arg]
+    } else {
+        set resume_state_file \
+            [file normalize [file join $workspace $resume_state_file_arg]]
+    }
+} else {
+    set resume_state_file ""
+}
+
+if {$stop_after_route && $extra_physopt_passes != 0} {
+    flow_fail "--stop-after-route cannot be combined with --extra-physopt"
+}
+if {$stop_after_route && $write_bitstream_enabled} {
+    flow_fail "--stop-after-route cannot be combined with bitstream generation"
+}
+
 if {![file exists $project_path]} {
     flow_fail "project not found: $project_path"
 }
@@ -337,6 +393,11 @@ puts "Project              : $project_path"
 puts "Jobs                 : $jobs"
 puts "CPU clock            : $frequency_mhz MHz ($clock_period_ns ns)"
 puts "Reset synth/impl     : $reset_runs_enabled"
+puts "Stop after route     : $stop_after_route"
+puts "Routed checkpoint    : $requested_routed_checkpoint_file"
+if {$resume_state_file ne ""} {
+    puts "Resume state file    : $resume_state_file"
+}
 puts "Post-route physopt   : Explore (pass 1)"
 puts "Extra physopt passes : $extra_physopt_passes"
 puts "Write bitstream      : $write_bitstream_enabled"
@@ -504,12 +565,25 @@ if {$reset_runs_enabled} {
 
 update_compile_order -fileset sources_1
 
+if {$resume_state_file ne ""} {
+    file mkdir [file dirname $resume_state_file]
+    set resume_state_handle [open $resume_state_file a]
+    puts $resume_state_handle "Status: READY"
+    puts $resume_state_handle "Ready epoch: [clock seconds]"
+    close $resume_state_handle
+    puts "Project run state is ready for checkpointed retry: $resume_state_file"
+}
+
 puts ""
 puts "Launching synthesis"
 set synth_status [run_status synth_1]
 if {!$reset_runs_enabled && [regexp -nocase {synth_design Complete} $synth_status]} {
     puts "  Reusing completed synth_1"
 } else {
+    if {!$reset_runs_enabled && [regexp -nocase {error|fail} $synth_status]} {
+        puts "  Resetting failed synthesis step before retry"
+        catch {reset_run synth_1 -prev_step}
+    }
     launch_runs synth_1 -jobs $jobs
     wait_on_run synth_1
 }
@@ -521,6 +595,11 @@ set existing_routed_checkpoint [routed_checkpoint impl_1]
 if {!$reset_runs_enabled && $existing_routed_checkpoint ne ""} {
     puts "  Reusing completed route_design"
 } else {
+    if {!$reset_runs_enabled && \
+        [regexp -nocase {error|fail} [run_status impl_1]]} {
+        puts "  Resetting only the failed implementation step before retry"
+        catch {reset_run impl_1 -prev_step}
+    }
     launch_runs impl_1 -to_step route_design -jobs $jobs
     wait_on_run impl_1
 }
@@ -528,8 +607,22 @@ require_routed_run impl_1
 
 file mkdir $output_dir
 set final_routed_checkpoint [routed_checkpoint impl_1]
-puts "Opening routed checkpoint directly: $final_routed_checkpoint"
-open_checkpoint $final_routed_checkpoint
+file mkdir [file dirname $requested_routed_checkpoint_file]
+file copy -force $final_routed_checkpoint $requested_routed_checkpoint_file
+if {![file exists $requested_routed_checkpoint_file] || \
+    [file size $requested_routed_checkpoint_file] == 0} {
+    flow_fail "failed to persist routed checkpoint: $requested_routed_checkpoint_file"
+}
+puts "Persisted routed checkpoint: $requested_routed_checkpoint_file"
+
+if {$stop_after_route} {
+    puts "Stopping after route as requested."
+    close_project
+    return
+}
+
+puts "Opening persisted routed checkpoint: $requested_routed_checkpoint_file"
+open_checkpoint $requested_routed_checkpoint_file
 
 # Run pass 1 explicitly after routing. Additional passes operate iteratively on
 # the result of the previous pass. This avoids Vivado-version-dependent names

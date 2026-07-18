@@ -1,20 +1,23 @@
 # ================================================================
 # run_physopt_candidate.tcl
 #
-# Open a successful post-route physopt pass-1 checkpoint in a fresh
-# Vivado process, run one independent pass-2 strategy, and emit a complete
-# comparison artifact set.  The Bash orchestrator is responsible for
-# isolating crashes and recording FAILED status when Vivado exits non-zero.
-# Any routing invalidated by physopt is completed with route_design -preserve
-# before the candidate checkpoint, reports, and bitstream are generated.
+# Open a routed checkpoint in a fresh Vivado process, run one physical
+# optimization strategy, and emit a complete comparison artifact set.  The
+# same script is used for mandatory pass 1 and the independent pass-2
+# candidates so every expensive physopt stage is restartable at a DCP
+# boundary.  The Bash orchestrator is responsible for isolating crashes and
+# recording FAILED status when Vivado exits non-zero.  Any routing invalidated
+# by physopt is completed with route_design -preserve before the candidate
+# checkpoint, reports, and bitstream are generated.
 # ================================================================
 
 proc candidate_usage {} {
     puts "Usage:"
     puts "  vivado -mode batch -source 03_Timing_Analysis/run_physopt_candidate.tcl \\"
     puts "         -tclargs --input-dcp FILE --output-dir DIR --strategy NAME"
-    puts "                  ?--jobs N? ?--freq-mhz F? ?--bitstream-file FILE?"
-    puts "Strategies: routing_opt | aggressive_explore"
+    puts "                  ?--pass-number N? ?--jobs N? ?--freq-mhz F?"
+    puts "                  ?--bitstream-file FILE?"
+    puts "Strategies: explore | routing_opt | aggressive_explore"
 }
 
 proc candidate_fail {message} {
@@ -89,6 +92,7 @@ proc complete_post_physopt_routing {context} {
 set input_dcp_arg ""
 set output_dir_arg ""
 set strategy ""
+set pass_number 2
 set jobs 8
 set frequency_mhz 200.0
 set bitstream_file_arg ""
@@ -115,6 +119,12 @@ while {$arg_index < [llength $argv]} {
             incr arg_index
             if {$arg_index >= [llength $argv]} { candidate_fail "missing value after --strategy" }
             set strategy [lindex $argv $arg_index]
+        }
+        --pass-number {
+            incr arg_index
+            if {$arg_index >= [llength $argv]} { candidate_fail "missing value after --pass-number" }
+            set pass_number [lindex $argv $arg_index]
+            require_positive_integer --pass-number $pass_number
         }
         --jobs {
             incr arg_index
@@ -147,7 +157,7 @@ while {$arg_index < [llength $argv]} {
 
 if {$input_dcp_arg eq ""} { candidate_fail "--input-dcp is required" }
 if {$output_dir_arg eq ""} { candidate_fail "--output-dir is required" }
-if {$strategy ni {routing_opt aggressive_explore}} {
+if {$strategy ni {explore routing_opt aggressive_explore}} {
     candidate_fail "unsupported strategy '$strategy'"
 }
 set clock_period_ns [expr {1000.0 / double($frequency_mhz)}]
@@ -172,7 +182,7 @@ file mkdir [file dirname $bitstream_file]
 set_param general.maxThreads $jobs
 
 puts "================================================================"
-puts " Independent post-route physopt pass 2"
+puts " Post-route physical optimization pass $pass_number"
 puts "================================================================"
 puts "Input DCP       : $input_dcp"
 puts "Strategy        : $strategy"
@@ -184,6 +194,11 @@ puts "Bitstream       : $bitstream_file"
 open_checkpoint $input_dcp
 
 switch -- $strategy {
+    explore {
+        puts "Running: phys_opt_design -directive Explore"
+        phys_opt_design -directive Explore
+        set strategy_command "phys_opt_design -directive Explore"
+    }
     routing_opt {
         puts "Running: phys_opt_design -routing_opt"
         phys_opt_design -routing_opt
@@ -197,10 +212,10 @@ switch -- $strategy {
 }
 
 set repaired_unrouted_count \
-    [complete_post_physopt_routing "Pass-2 $strategy physopt"]
+    [complete_post_physopt_routing "Pass-$pass_number $strategy physopt"]
 
-set checkpoint_file [file join $output_dir "postroute_physopt_pass2.dcp"]
-set timing_file [file join $output_dir "timing_postroute_physopt_pass2.rpt"]
+set checkpoint_file [file join $output_dir "postroute_physopt_pass${pass_number}.dcp"]
+set timing_file [file join $output_dir "timing_postroute_physopt_pass${pass_number}.rpt"]
 set summary_file [file join $output_dir "final_timing_summary.txt"]
 
 write_checkpoint -force $checkpoint_file
@@ -223,8 +238,8 @@ set timing_status [expr {$timing_met ? "MET" : "VIOLATED"}]
 set programming_status [expr {$timing_met ? "SAFE_TO_PROGRAM" : "DO_NOT_PROGRAM"}]
 
 set summary_handle [open $summary_file w]
-puts $summary_handle "Pass: 2"
-puts $summary_handle "Final post-route pass: 2"
+puts $summary_handle "Pass: $pass_number"
+puts $summary_handle "Final post-route pass: $pass_number"
 puts $summary_handle "Strategy: $strategy"
 puts $summary_handle "Strategy command: $strategy_command"
 puts $summary_handle "Requested frequency (MHz): $frequency_mhz"
@@ -249,7 +264,7 @@ if {!$timing_met} {
 write_bitstream -force $bitstream_file
 
 puts "================================================================"
-puts " Pass-2 candidate complete"
+puts " Pass-$pass_number candidate complete"
 puts " Strategy  : $strategy"
 puts " Setup WNS : $setup_wns ns"
 puts " Setup TNS : $setup_tns ns"
