@@ -74,12 +74,18 @@ AI 执行约定：
 
 | 脚本 | 角色 | 何时运行 |
 |------|------|----------|
-| `performance/short/run_perf.sh` | 短 profiling 入口，对 riscv-tests 程序输出 CPI、stall、双发率、BP 等性能指标 | 人工需要快速 profiling 或比较优化效果时 |
+| `performance/short/run_perf.sh` | 短 profiling 入口，输出严格 no-commit 损失栈、提交槽位、动态指令构成、DCache/RAW/MULDIV/Bitmanip/BP 和精确 pair blocker | 人工需要快速 profiling 或比较优化效果时 |
 | `performance/long/run_coe_perf.sh` | 长 COE 入口，直接基于 `tb_riscv_tests` 跑完整 contest COE 程序，同时输出通用性能摘要和分支预测诊断报告 | 分析完整比赛程序性能、长程序行为或分支预测表现时 |
 
 规则：
 
 - `run_perf.sh` 即使默认只跑很少程序，也属于 profiling 入口；不要把它当 correctness smoke。
+- 两个入口都由共享 parser 生成 `summary.csv/json`、`hotspots.csv`、
+  `performance_findings.md` 和 `manifest.json`。优化方向先看数据一致性，再看严格
+  no-commit 损失栈、资源释放后的 causal recovery 尾拍、lost-slot 比例和精确 pair
+  blocker；旧 priority CPI stack 只为历史兼容保留，不能直接当作纯损失周期。
+- 已有 implementation 时可给 `short-perf --clock-period-ns <n>`，让报告比较
+  `cycles * clock_period`；不得用 cycles 改善掩盖 Fmax 退化。
 - `run_coe_perf.sh` 是完整 contest COE 性能入口；它每次都跑完整 contest COE 集合，并行任务数等于 contest 程序数。
 - `run_coe_perf.sh` 的同一次仿真同时生成 `summary.csv/json`、`branch_summary.csv/json` 和 `branch_findings.md`，不得为了分支报告重复运行同一组 COE。
 - 分支预测 RV32UI/微基准使用 `performance/short/run_perf.sh --set branch_diag`，完整 COE 的分支表现直接读取 `coe-perf` 产物。
@@ -94,7 +100,7 @@ AI 执行约定：
 |------|------|
 | `utility/build_tests.sh` | 编译/生成 `work/hex/*.hex`，不是验证入口 |
 | `tools/derive_coe_stop_pc.py` | 从 dual-bank COE/hex 的入口 fall-through 自环静态推导 stop_pc，供 `coe-perf` 使用 |
-| `tools/parse_perf.py` | 解析 perf log，生成 `summary.csv/json` |
+| `tools/parse_perf.py` | 解析 perf log，校验计数一致性，并生成 summary、hotspots 和性能优先级报告 |
 | `tools/branch_diag_report.py` | 从通用 perf summary 聚合 branch-only 指标并生成诊断报告，由 `coe-perf` 自动调用 |
 | `bin/install-command-links.sh` | 安装 `short-perf`、`run-perf` / `coe-perf` 短命令链接 |
 

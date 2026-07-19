@@ -58,6 +58,7 @@ short-perf
 short-perf --set branch
 short-perf --set cache
 short-perf --set dual
+short-perf --clock-period-ns 4.0 --baseline <old-run-dir>
 run-perf
 ```
 
@@ -67,7 +68,12 @@ run-perf
 bash bin/install-command-links.sh
 ```
 
-其中 `run-perf` / `coe-perf` 会运行完整 contest COE 程序集合，并从同一次仿真同时生成通用性能摘要和分支预测诊断报告。这个入口很长，不作为 AI 默认验证命令。分支微基准使用 `short-perf --set branch_diag`。
+所有性能入口都会生成 `summary.csv/json`、按严格 no-commit 损失周期排序的
+`hotspots.csv` 和 `performance_findings.md`。提供实现后的时钟周期时，报告还会计算
+`cycles * clock_period` 运行时间估计；没有时钟数据时只比较 cycles。`run-perf` /
+`coe-perf` 会运行完整 contest COE 程序集合，并从同一次仿真额外生成分支预测诊断
+报告。短测原始数据还包含 MULDIV/Bitmanip 多周期资源的等待和延迟分布。这个入口很长，不作为 AI 默认验证命令。分支微基准使用
+`short-perf --set branch_diag`。
 
 实现后 timing 报告：
 

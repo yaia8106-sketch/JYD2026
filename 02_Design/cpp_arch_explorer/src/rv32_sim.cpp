@@ -297,6 +297,7 @@ CfiEvent Rv32Machine::step() {
     CfiEvent event;
     event.instruction_ordinal = stats_.retired_instructions + 1u;
     event.source_pc = instruction_pc;
+    event.instruction = instruction;
     auto next_pc = instruction_pc + 4u;
 
     const auto write_rd = [&](const std::uint32_t value) {

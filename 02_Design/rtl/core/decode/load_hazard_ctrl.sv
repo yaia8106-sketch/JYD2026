@@ -76,7 +76,9 @@ module load_hazard_ctrl (
     output logic       load_in_s1_ex,
     output logic       load_in_mem,
     output logic       load_in_s1_mem,
-    output logic       load_use_hazard
+    output logic       load_use_hazard,
+    output logic       load_use_hazard_if_mem_ready,
+    output logic       load_use_hazard_if_mem_wait
 );
 
     // A ready MEM load is registered in MEM/WB while its consumer advances.
@@ -88,18 +90,14 @@ module load_hazard_ctrl (
     wire mem_s0_load_pending = mem_valid & mem_is_load & (mem_rd != 5'd0);
     wire mem_s1_load_pending = mem_s1_valid & mem_s1_is_load
                              & (mem_s1_rd != 5'd0);
-    wire mem_s0_load_repair_source = mem_s0_load_pending & mem_reg_write
-                                   & mem_load_ready;
-    wire mem_s1_load_repair_source = mem_s1_load_pending & mem_s1_reg_write
-                                   & mem_load_ready;
+    wire mem_s0_load_repair_candidate = mem_s0_load_pending
+                                      & mem_reg_write;
+    wire mem_s1_load_repair_candidate = mem_s1_load_pending
+                                      & mem_s1_reg_write;
     wire id_s0_has_mem_load_repair_path =
         ENABLE_MEM_LOAD_WB_REPAIR & id_s0_repair_ok;
     wire id_s1_has_mem_load_repair_path =
         ENABLE_MEM_LOAD_WB_REPAIR & id_s1_valid & id_s1_repair_ok;
-    wire id_s0_can_repair_mem_load = id_s0_has_mem_load_repair_path
-                                   & mem_load_ready;
-    wire id_s1_can_repair_mem_load = id_s1_has_mem_load_repair_path
-                                   & mem_load_ready;
 
     wire s0_rs1_uses_s0_mem_load = id_rs1_used & (mem_rd == id_rs1_addr);
     wire s0_rs2_uses_s0_mem_load = id_rs2_used & (mem_rd == id_rs2_addr);
@@ -117,50 +115,63 @@ module load_hazard_ctrl (
 
     // Per-source repair tags distinguish Slot 0 MEM and Slot 1 MEM so EX can
     // preserve normal forwarding priority when both slots name the same rd.
-    wire id_rs1_wb_repair_s0 = mem_s0_load_repair_source
-                              & id_s0_has_mem_load_repair_path
-                              & s0_rs1_uses_s0_mem_load
-                              & ~s0_rs1_blocks_s0_mem_repair;
-    wire id_rs2_wb_repair_s0 = mem_s0_load_repair_source
-                              & id_s0_has_mem_load_repair_path
-                              & s0_rs2_uses_s0_mem_load
-                              & ~s0_rs2_blocks_s0_mem_repair;
-    wire id_s1_rs1_wb_repair_s0 = mem_s0_load_repair_source
-                                 & id_s1_has_mem_load_repair_path
-                                 & s1_rs1_uses_s0_mem_load
-                                 & ~s1_rs1_blocks_s0_mem_repair;
-    wire id_s1_rs2_wb_repair_s0 = mem_s0_load_repair_source
-                                 & id_s1_has_mem_load_repair_path
-                                 & s1_rs2_uses_s0_mem_load
-                                 & ~s1_rs2_blocks_s0_mem_repair;
+    wire id_rs1_wb_repair_s0_candidate = mem_s0_load_repair_candidate
+                                       & id_s0_has_mem_load_repair_path
+                                       & s0_rs1_uses_s0_mem_load
+                                       & ~s0_rs1_blocks_s0_mem_repair;
+    wire id_rs2_wb_repair_s0_candidate = mem_s0_load_repair_candidate
+                                       & id_s0_has_mem_load_repair_path
+                                       & s0_rs2_uses_s0_mem_load
+                                       & ~s0_rs2_blocks_s0_mem_repair;
+    wire id_s1_rs1_wb_repair_s0_candidate = mem_s0_load_repair_candidate
+                                          & id_s1_has_mem_load_repair_path
+                                          & s1_rs1_uses_s0_mem_load
+                                          & ~s1_rs1_blocks_s0_mem_repair;
+    wire id_s1_rs2_wb_repair_s0_candidate = mem_s0_load_repair_candidate
+                                          & id_s1_has_mem_load_repair_path
+                                          & s1_rs2_uses_s0_mem_load
+                                          & ~s1_rs2_blocks_s0_mem_repair;
 
-    wire id_rs1_wb_repair_s1_w = mem_s1_load_repair_source
-                                & id_s0_has_mem_load_repair_path
-                                & s0_rs1_uses_s1_mem_load
-                                & ~s0_rs1_blocks_s1_mem_repair;
-    wire id_rs2_wb_repair_s1_w = mem_s1_load_repair_source
-                                & id_s0_has_mem_load_repair_path
-                                & s0_rs2_uses_s1_mem_load
-                                & ~s0_rs2_blocks_s1_mem_repair;
-    wire id_s1_rs1_wb_repair_s1_w = mem_s1_load_repair_source
-                                   & id_s1_has_mem_load_repair_path
-                                   & s1_rs1_uses_s1_mem_load
-                                   & ~s1_rs1_blocks_s1_mem_repair;
-    wire id_s1_rs2_wb_repair_s1_w = mem_s1_load_repair_source
-                                   & id_s1_has_mem_load_repair_path
-                                   & s1_rs2_uses_s1_mem_load
-                                   & ~s1_rs2_blocks_s1_mem_repair;
+    wire id_rs1_wb_repair_s1_candidate = mem_s1_load_repair_candidate
+                                       & id_s0_has_mem_load_repair_path
+                                       & s0_rs1_uses_s1_mem_load
+                                       & ~s0_rs1_blocks_s1_mem_repair;
+    wire id_rs2_wb_repair_s1_candidate = mem_s1_load_repair_candidate
+                                       & id_s0_has_mem_load_repair_path
+                                       & s0_rs2_uses_s1_mem_load
+                                       & ~s0_rs2_blocks_s1_mem_repair;
+    wire id_s1_rs1_wb_repair_s1_candidate = mem_s1_load_repair_candidate
+                                          & id_s1_has_mem_load_repair_path
+                                          & s1_rs1_uses_s1_mem_load
+                                          & ~s1_rs1_blocks_s1_mem_repair;
+    wire id_s1_rs2_wb_repair_s1_candidate = mem_s1_load_repair_candidate
+                                          & id_s1_has_mem_load_repair_path
+                                          & s1_rs2_uses_s1_mem_load
+                                          & ~s1_rs2_blocks_s1_mem_repair;
 
-    assign id_rs1_wb_repair = id_rs1_wb_repair_s0 | id_rs1_wb_repair_s1_w;
-    assign id_rs2_wb_repair = id_rs2_wb_repair_s0 | id_rs2_wb_repair_s1_w;
-    assign id_rs1_wb_repair_s1 = id_rs1_wb_repair_s1_w;
-    assign id_rs2_wb_repair_s1 = id_rs2_wb_repair_s1_w;
-    assign id_s1_rs1_wb_repair = id_s1_rs1_wb_repair_s0
-                                | id_s1_rs1_wb_repair_s1_w;
-    assign id_s1_rs2_wb_repair = id_s1_rs2_wb_repair_s0
-                                | id_s1_rs2_wb_repair_s1_w;
-    assign id_s1_rs1_wb_repair_s1 = id_s1_rs1_wb_repair_s1_w;
-    assign id_s1_rs2_wb_repair_s1 = id_s1_rs2_wb_repair_s1_w;
+    // Readiness is deliberately the final gate on every repair tag. The
+    // dependency/match cones above are useful candidates even while DCache is
+    // still deciding whether the MEM load completes this cycle.
+    assign id_rs1_wb_repair = mem_load_ready
+                            & (id_rs1_wb_repair_s0_candidate
+                               | id_rs1_wb_repair_s1_candidate);
+    assign id_rs2_wb_repair = mem_load_ready
+                            & (id_rs2_wb_repair_s0_candidate
+                               | id_rs2_wb_repair_s1_candidate);
+    assign id_rs1_wb_repair_s1 = mem_load_ready
+                               & id_rs1_wb_repair_s1_candidate;
+    assign id_rs2_wb_repair_s1 = mem_load_ready
+                               & id_rs2_wb_repair_s1_candidate;
+    assign id_s1_rs1_wb_repair = mem_load_ready
+                               & (id_s1_rs1_wb_repair_s0_candidate
+                                  | id_s1_rs1_wb_repair_s1_candidate);
+    assign id_s1_rs2_wb_repair = mem_load_ready
+                               & (id_s1_rs2_wb_repair_s0_candidate
+                                  | id_s1_rs2_wb_repair_s1_candidate);
+    assign id_s1_rs1_wb_repair_s1 = mem_load_ready
+                                  & id_s1_rs1_wb_repair_s1_candidate;
+    assign id_s1_rs2_wb_repair_s1 = mem_load_ready
+                                  & id_s1_rs2_wb_repair_s1_candidate;
 
     // ================================================================
     //  Load-use stall detection
@@ -195,23 +206,39 @@ module load_hazard_ctrl (
     assign id_s1_uses_s1_mem_load = s1_rs1_uses_s1_mem_load
                                    | s1_rs2_uses_s1_mem_load;
 
-    // MEM loads only stall when the repair path is unavailable.
-    wire id_s0_waits_s0_mem_load = mem_s0_load_pending
-                                  & id_s0_uses_s0_mem_load
-                                  & ~id_s0_can_repair_mem_load;
-    wire id_s1_waits_s0_mem_load = mem_s0_load_pending
-                                  & id_s1_uses_s0_mem_load
-                                  & ~id_s1_can_repair_mem_load;
-    wire id_s0_waits_s1_mem_load = mem_s1_load_pending
-                                  & id_s0_uses_s1_mem_load
-                                  & ~id_s0_can_repair_mem_load;
-    wire id_s1_waits_s1_mem_load = mem_s1_load_pending
-                                  & id_s1_uses_s1_mem_load
-                                  & ~id_s1_can_repair_mem_load;
+    // Compute both cofactors of MEM readiness in parallel. When the load is
+    // ready, only consumers without a repair path wait. When it is not ready,
+    // every matching consumer waits. The late ready signal selects once.
+    wire load_in_mem_if_ready = mem_s0_load_pending
+                              & ((id_s0_uses_s0_mem_load
+                                  & ~id_s0_has_mem_load_repair_path)
+                                 | (id_s1_uses_s0_mem_load
+                                    & ~id_s1_has_mem_load_repair_path));
+    wire load_in_s1_mem_if_ready = mem_s1_load_pending
+                                 & ((id_s0_uses_s1_mem_load
+                                     & ~id_s0_has_mem_load_repair_path)
+                                    | (id_s1_uses_s1_mem_load
+                                       & ~id_s1_has_mem_load_repair_path));
+    wire load_in_mem_if_wait = mem_s0_load_pending
+                             & (id_s0_uses_s0_mem_load
+                                | id_s1_uses_s0_mem_load);
+    wire load_in_s1_mem_if_wait = mem_s1_load_pending
+                                & (id_s0_uses_s1_mem_load
+                                   | id_s1_uses_s1_mem_load);
 
-    assign load_in_mem = id_s0_waits_s0_mem_load | id_s1_waits_s0_mem_load;
-    assign load_in_s1_mem = id_s0_waits_s1_mem_load | id_s1_waits_s1_mem_load;
-    assign load_use_hazard = load_in_ex | load_in_s1_ex
-                           | load_in_mem | load_in_s1_mem;
+    assign load_use_hazard_if_mem_ready = load_in_ex | load_in_s1_ex
+                                        | load_in_mem_if_ready
+                                        | load_in_s1_mem_if_ready;
+    assign load_use_hazard_if_mem_wait = load_in_ex | load_in_s1_ex
+                                       | load_in_mem_if_wait
+                                       | load_in_s1_mem_if_wait;
+
+    assign load_in_mem = mem_load_ready ? load_in_mem_if_ready
+                                        : load_in_mem_if_wait;
+    assign load_in_s1_mem = mem_load_ready ? load_in_s1_mem_if_ready
+                                           : load_in_s1_mem_if_wait;
+    assign load_use_hazard = mem_load_ready
+                           ? load_use_hazard_if_mem_ready
+                           : load_use_hazard_if_mem_wait;
 
 endmodule

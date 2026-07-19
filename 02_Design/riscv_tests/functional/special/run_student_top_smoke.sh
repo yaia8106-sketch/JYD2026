@@ -43,10 +43,12 @@ RTL_FILES="
     -F $RTL_DIR/filelists/cpu_blocks.f
     -F $RTL_DIR/filelists/dcache_bram.f
     $RTL_DIR/core/cpu_top.sv
-    $RTL_DIR/mmio/mmio_bridge.sv
+    $RTL_DIR/top/myCPU.sv
     $RTL_DIR/top/student_top.sv
     $CONTEST_RTL_DIR/counter.sv
     $CONTEST_RTL_DIR/display_seg.sv
+    $CONTEST_RTL_DIR/dram_driver.sv
+    $CONTEST_RTL_DIR/perip_bridge.sv
     $CONTEST_RTL_DIR/seg7.sv
     $RISCV_TESTS_DIR/work/dcache_data_ram.v
     $RISCV_TESTS_DIR/tb/student_top_ip_models.sv

@@ -22,6 +22,9 @@
 #       logs/<test>.log
 #       summary.csv
 #       summary.json
+#       hotspots.csv
+#       performance_findings.md
+#       manifest.json
 #       run_meta.env
 #       git_commit.txt
 #       git_status.txt
@@ -51,6 +54,7 @@ MAX_COMMITS=0
 OUT_DIR=""
 NO_COMPILE=0
 BASELINE=""
+CLOCK_PERIOD_NS="${CLOCK_PERIOD_NS:-}"
 CUSTOM_TESTS=()
 SIM_GUARD_ARGS="${SIM_GUARD_ARGS:-+pc_guard +watchdog=5000}"
 ORIGINAL_ARGS=("$@")
@@ -71,6 +75,8 @@ Options:
   --out <dir>          Output directory. Default: work/perf/latest/short.
                        Existing contents are replaced before the run.
   --baseline <path>    Baseline run directory or summary.csv for comparison.
+  --clock-period-ns <n> Optional post-implementation clock period. Adds runtime
+                       and MIPS estimates; cycles remain the raw source metric.
   --no-compile         Reuse work/riscv_perf_simv.
   --verbose            Print full [PERF] lines to the terminal.
   -h, --help           Show this help.
@@ -106,6 +112,11 @@ while [ $# -gt 0 ]; do
             BASELINE="$2"
             shift 2
             ;;
+        --clock-period-ns)
+            [ $# -ge 2 ] || { echo "ERROR: --clock-period-ns needs a value"; exit 1; }
+            CLOCK_PERIOD_NS="$2"
+            shift 2
+            ;;
         --no-compile)
             NO_COMPILE=1
             shift
@@ -129,6 +140,20 @@ while [ $# -gt 0 ]; do
             ;;
     esac
 done
+
+[[ "$MAX_CYCLES" =~ ^[1-9][0-9]*$ ]] || {
+    echo "ERROR: --max-cycles must be a positive integer"
+    exit 1
+}
+[[ "$MAX_COMMITS" =~ ^[0-9]+$ ]] || {
+    echo "ERROR: --max-commits must be a non-negative integer"
+    exit 1
+}
+if [ -n "$CLOCK_PERIOD_NS" ] &&
+   ! awk -v value="$CLOCK_PERIOD_NS" 'BEGIN { exit !(value + 0 > 0) }'; then
+    echo "ERROR: --clock-period-ns must be greater than zero"
+    exit 1
+fi
 
 set_tests_from_set() {
     case "$1" in
@@ -210,6 +235,19 @@ if [ ! -d "$HEX_DIR" ] || [ -z "$(ls "$HEX_DIR"/*.irom.hex 2>/dev/null)" ]; then
     exit 1
 fi
 
+INPUT_ERROR=0
+for test_name in "${TESTS[@]}"; do
+    irom_hex="$HEX_DIR/rv32ui-p-${test_name}.irom.hex"
+    dram_hex="$HEX_DIR/rv32ui-p-${test_name}.dram.hex"
+    if [ ! -f "$irom_hex" ] || [ ! -f "$dram_hex" ]; then
+        echo "ERROR: missing profiling input for '$test_name': $irom_hex / $dram_hex"
+        INPUT_ERROR=1
+    fi
+done
+if [ "$INPUT_ERROR" -ne 0 ]; then
+    exit 1
+fi
+
 mkdir -p "$WORK_DIR"
 
 if [ -z "$OUT_DIR" ]; then
@@ -218,6 +256,24 @@ fi
 prepare_perf_output_dir "$OUT_DIR" "$BASELINE"
 LOG_DIR="$OUT_DIR/logs"
 mkdir -p "$LOG_DIR"
+printf "%s\n" "${TESTS[@]}" > "$OUT_DIR/expected_tests.txt"
+
+hash_file() {
+    local file="$1"
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$file"
+    else
+        shasum -a 256 "$file"
+    fi
+}
+
+: > "$OUT_DIR/hex_inputs.sha256"
+for test_name in "${TESTS[@]}"; do
+    irom_hex="$HEX_DIR/rv32ui-p-${test_name}.irom.hex"
+    dram_hex="$HEX_DIR/rv32ui-p-${test_name}.dram.hex"
+    hash_file "$irom_hex" >> "$OUT_DIR/hex_inputs.sha256"
+    hash_file "$dram_hex" >> "$OUT_DIR/hex_inputs.sha256"
+done
 
 RTL_FILES="
     -F $RTL_DIR/filelists/cpu_blocks.f
@@ -246,13 +302,27 @@ RTL_FILES="
     printf "vcs_extra_opts=%s\n" "$VCS_EXTRA_OPTS"
     printf "vcs_env=%s\n" "$VCS_ENV"
     printf "baseline=%s\n" "$BASELINE"
+    printf "clock_period_ns=%s\n" "$CLOCK_PERIOD_NS"
     printf "verbose=%s\n" "$VERBOSE"
 } > "$OUT_DIR/run_meta.env"
 
 git rev-parse HEAD > "$OUT_DIR/git_commit.txt" 2>/dev/null || true
 git status --short > "$OUT_DIR/git_status.txt" 2>/dev/null || true
+git diff --stat > "$OUT_DIR/git_diff_stat.txt" 2>/dev/null || true
+git diff > "$OUT_DIR/git_diff.patch" 2>/dev/null || true
 printf "%q " "$0" "${ORIGINAL_ARGS[@]}" > "$OUT_DIR/command.txt"
 printf "\n" >> "$OUT_DIR/command.txt"
+
+: > "$OUT_DIR/rtl_inputs.sha256"
+while IFS= read -r -d '' rtl_input; do
+    hash_file "$rtl_input" >> "$OUT_DIR/rtl_inputs.sha256"
+done < <(find "$RTL_DIR" "$RISCV_TESTS_DIR/tb" -type f \
+    \( -name '*.sv' -o -name '*.v' -o -name '*.f' \) -print0 | sort -z)
+for compile_input in "$RISCV_TESTS_DIR/work/dcache_data_ram.v" "$VCS_SHIM"; do
+    if [ -f "$compile_input" ]; then
+        hash_file "$compile_input" >> "$OUT_DIR/rtl_inputs.sha256"
+    fi
+done
 
 echo "========================================================"
 echo " riscv-tests performance profiling"
@@ -261,6 +331,7 @@ echo "[INFO] Test set:     $TEST_SET"
 echo "[INFO] Tests:        ${TESTS[*]}"
 echo "[INFO] Max cycles:   $MAX_CYCLES"
 echo "[INFO] Max commits:  $MAX_COMMITS"
+echo "[INFO] Clock period: $CLOCK_PERIOD_NS"
 echo "[INFO] Output dir:   $OUT_DIR"
 echo ""
 
@@ -293,9 +364,16 @@ else
         echo "ERROR: --no-compile requested but $SIM_BIN does not exist"
         exit 1
     fi
-    echo "[INFO] Reusing $SIM_BIN"
+    echo "[WARN] Reusing existing simulator binary with --no-compile: $SIM_BIN"
     echo ""
 fi
+
+{
+    printf "sim_bin=%s\n" "$SIM_BIN"
+    stat --printf 'sim_bin_size=%s\nsim_bin_mtime=%Y\n' "$SIM_BIN" 2>/dev/null || true
+    printf "sim_bin_sha256=%s\n" "$(hash_file "$SIM_BIN" | awk '{print $1}')"
+    printf "no_compile=%s\n" "$NO_COMPILE"
+} > "$OUT_DIR/sim_binary.env"
 
 read -r -a GUARD_ARGS <<< "$SIM_GUARD_ARGS"
 
@@ -307,12 +385,6 @@ for test_name in "${TESTS[@]}"; do
     echo "========================================================"
     echo " Profiling: $test_name"
     echo "========================================================"
-
-    if [ ! -f "$irom_hex" ] || [ ! -f "$dram_hex" ]; then
-        echo "[SKIP] $test_name hex not found" | tee "$log_file"
-        echo ""
-        continue
-    fi
 
     RUN_ARGS=(
         "+irom=$irom_hex"
@@ -340,9 +412,15 @@ for test_name in "${TESTS[@]}"; do
     echo ""
 done
 
-PARSER_ARGS=(--run-dir "$OUT_DIR")
+PARSER_ARGS=(--run-dir "$OUT_DIR" --expected-tests-file "$OUT_DIR/expected_tests.txt")
 if [ -n "$BASELINE" ]; then
     PARSER_ARGS+=(--baseline "$BASELINE")
+fi
+if [ -n "$CLOCK_PERIOD_NS" ]; then
+    PARSER_ARGS+=(--clock-period-ns "$CLOCK_PERIOD_NS")
+fi
+if [ "$MAX_COMMITS" -eq 0 ]; then
+    PARSER_ARGS+=(--require-complete)
 fi
 
 python3 "$RISCV_TESTS_DIR/tools/parse_perf.py" "${PARSER_ARGS[@]}"
@@ -350,11 +428,14 @@ python3 "$RISCV_TESTS_DIR/tools/parse_perf.py" "${PARSER_ARGS[@]}"
 echo ""
 echo "[INFO] Summary CSV:  $OUT_DIR/summary.csv"
 echo "[INFO] Summary JSON: $OUT_DIR/summary.json"
+echo "[INFO] Hotspots CSV:  $OUT_DIR/hotspots.csv"
+echo "[INFO] Findings:      $OUT_DIR/performance_findings.md"
+echo "[INFO] Manifest:      $OUT_DIR/manifest.json"
 if [ -f "$OUT_DIR/compare.csv" ]; then
     echo "[INFO] Compare CSV:  $OUT_DIR/compare.csv"
 fi
 
-if grep -R -E "^\[(FAIL|TIMEOUT)\]" "$LOG_DIR" >/dev/null 2>&1; then
+if grep -R -E "^\[(FAIL|TIMEOUT|SKIP)\]" "$LOG_DIR" >/dev/null 2>&1; then
     exit 1
 fi
 

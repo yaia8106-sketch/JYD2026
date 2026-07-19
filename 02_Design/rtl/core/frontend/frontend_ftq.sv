@@ -8,11 +8,11 @@
 // ============================================================
 
 `ifdef SYNTHESIS
-    `ifdef ABTB_MEASUREMENT
-        `define FRONTEND_FTQ_ABTB_WIDE_META
-    `endif
-    `else
-        `define FRONTEND_FTQ_ABTB_WIDE_META
+`ifdef ABTB_MEASUREMENT
+`define FRONTEND_FTQ_ABTB_WIDE_META
+`endif
+`else
+`define FRONTEND_FTQ_ABTB_WIDE_META
 `endif
 
 module frontend_ftq

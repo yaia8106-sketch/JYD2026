@@ -117,6 +117,15 @@ module tb_frontend_ftq_pair;
         r_add = {7'b0000000, rs2, rs1, 3'b000, rd, OP_R_TYPE};
     endfunction
 
+    function automatic logic [31:0] m_inst(
+        input logic [4:0] rd,
+        input logic [4:0] rs1,
+        input logic [4:0] rs2,
+        input logic [2:0] funct3
+    );
+        m_inst = {MULDIV_FUNCT7, rs2, rs1, funct3, rd, OP_R_TYPE};
+    endfunction
+
     function automatic logic [31:0] i_addi(
         input logic [4:0] rd,
         input logic [4:0] rs1
@@ -382,6 +391,34 @@ module tb_frontend_ftq_pair;
                       r_add(5'd1, 5'd0, 5'd0),
                       r_add(5'd2, 5'd0, 5'd0),
                       1'b1);
+        run_pair_case("MUL+ALU",
+                      m_inst(5'd5, 5'd1, 5'd2, 3'b000),
+                      r_add(5'd6, 5'd3, 5'd4),
+                      1'b1);
+        run_pair_case("MUL+load",
+                      m_inst(5'd5, 5'd1, 5'd2, 3'b001),
+                      lw_inst(5'd6, 5'd3),
+                      1'b1);
+        run_pair_case("MUL+branch",
+                      m_inst(5'd5, 5'd1, 5'd2, 3'b010),
+                      beq_inst(5'd3, 5'd4),
+                      1'b1);
+        run_pair_case("MUL result RAW remains blocked",
+                      m_inst(5'd5, 5'd1, 5'd2, 3'b000),
+                      r_add(5'd6, 5'd5, 5'd4),
+                      1'b0);
+        run_pair_case("MUL to store-data RAW remains blocked",
+                      m_inst(5'd5, 5'd1, 5'd2, 3'b000),
+                      sw_inst(5'd5, 5'd4),
+                      1'b0);
+        run_pair_case("DIV remains force-single",
+                      m_inst(5'd5, 5'd1, 5'd2, 3'b100),
+                      r_add(5'd6, 5'd3, 5'd4),
+                      1'b0);
+        run_pair_case("Slot1 MUL remains unsupported",
+                      r_add(5'd5, 5'd1, 5'd2),
+                      m_inst(5'd6, 5'd3, 5'd4, 3'b000),
+                      1'b0);
         run_pair_case("RAW rs1 dependency",
                       r_add(5'd5, 5'd0, 5'd0),
                       r_add(5'd6, 5'd5, 5'd0),
@@ -389,6 +426,22 @@ module tb_frontend_ftq_pair;
         run_pair_case("RAW rs2 dependency",
                       r_add(5'd5, 5'd0, 5'd0),
                       r_add(5'd6, 5'd0, 5'd5),
+                      1'b0);
+        run_pair_case("ALU to store-data RAW bypass",
+                      r_add(5'd5, 5'd1, 5'd2),
+                      sw_inst(5'd5, 5'd3),
+                      1'b1);
+        run_pair_case("ALU to store-address RAW remains blocked",
+                      r_add(5'd5, 5'd1, 5'd2),
+                      sw_inst(5'd3, 5'd5),
+                      1'b0);
+        run_pair_case("ALU to store address and data RAW remains blocked",
+                      r_add(5'd5, 5'd1, 5'd2),
+                      sw_inst(5'd5, 5'd5),
+                      1'b0);
+        run_pair_case("JAL link to store-data RAW remains blocked",
+                      jal_inst(5'd5),
+                      sw_inst(5'd5, 5'd3),
                       1'b0);
         run_pair_case("rd x0 does not form RAW",
                       r_add(5'd0, 5'd1, 5'd2),

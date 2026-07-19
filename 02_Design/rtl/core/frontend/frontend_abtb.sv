@@ -18,7 +18,7 @@ module frontend_abtb (
 
     // Stage-1 lookup. lookup_valid also qualifies LRU updates.
     input  logic        lookup_valid,
-    input  logic [31:0] predict_pc, // pred PC + sequential PC
+    input  logic [31:0] predict_pc, // 当前预测 PC；模块内部同时派生顺序 PC。
 
     // Future PHT/RAS result inputs. J type instruction's directions are generated locally from the stored CFI type.
     input  logic        bank0_branch_taken,
@@ -89,8 +89,10 @@ module frontend_abtb (
     logic bank1_way0_valid [0:SETS-1];
     logic bank1_way1_valid [0:SETS-1];
 
-    // 16(set) * 41(entry) bit
-    // tag(7) + cfi_type(2) + target(32) = 41 bit
+    // Keep each bank/way payload as one compact logical memory. Predictor
+    // training is registered before this module, so its write enable no
+    // longer contains the backend resolve/allow chain that motivated the
+    // former payload chunking experiment.
     (* ram_style = "distributed" *)
     logic [PAYLOAD_W-1:0] bank0_way0_payload [0:SETS-1];
     (* ram_style = "distributed" *)
@@ -288,29 +290,35 @@ module frontend_abtb (
     wire [SET_IDX_W-1:0] update_set = update_block_pc[6:3];
     wire [TAG_W-1:0] update_tag = update_block_pc[13:7];
 
-    logic update_alloc_way;
+    logic bank0_update_alloc_way;
+    logic bank1_update_alloc_way;
 
     // Miss allocation first fills invalid ways, then falls back to pseudo-LRU.
+    // Compute both banks in parallel. The former bank-first priority tree put
+    // update_bank in front of allocation, hit selection, and the LUTRAM write
+    // enable; only the final bank-valid gate actually depends on update_bank.
     always_comb begin
-        update_alloc_way = 1'b0;
-        if (!update_bank) begin
-            if (!bank0_way0_valid[update_set])
-                update_alloc_way = 1'b0;
-            else if (!bank0_way1_valid[update_set])
-                update_alloc_way = 1'b1;
-            else
-                update_alloc_way = bank0_lru[update_set];
-        end else begin
-            if (!bank1_way0_valid[update_set])
-                update_alloc_way = 1'b0;
-            else if (!bank1_way1_valid[update_set])
-                update_alloc_way = 1'b1;
-            else
-                update_alloc_way = bank1_lru[update_set];
-        end
+        if (!bank0_way0_valid[update_set])
+            bank0_update_alloc_way = 1'b0;
+        else if (!bank0_way1_valid[update_set])
+            bank0_update_alloc_way = 1'b1;
+        else
+            bank0_update_alloc_way = bank0_lru[update_set];
+
+        if (!bank1_way0_valid[update_set])
+            bank1_update_alloc_way = 1'b0;
+        else if (!bank1_way1_valid[update_set])
+            bank1_update_alloc_way = 1'b1;
+        else
+            bank1_update_alloc_way = bank1_lru[update_set];
     end
 
-    wire update_selected_way = update_hit ? update_way : update_alloc_way;
+    wire bank0_update_selected_way = update_hit ? update_way
+                                                : bank0_update_alloc_way;
+    wire bank1_update_selected_way = update_hit ? update_way
+                                                : bank1_update_alloc_way;
+    wire bank0_update_fire = update_valid & ~update_bank;
+    wire bank1_update_fire = update_valid &  update_bank;
 
     integer set_i;
     // Valid bits and LRU state are explicit registers; payload RAM is written
@@ -329,38 +337,40 @@ module frontend_abtb (
             if (lookup_valid && !predict_pc[2] && bank0_hit)
                 bank0_lru[pred_lookup_set] <= !bank0_way;
 
-            if (update_valid && !update_bank) begin
-                if (!update_selected_way)
+            if (bank0_update_fire) begin
+                if (!bank0_update_selected_way)
                     bank0_way0_valid[update_set] <= 1'b1;
                 else
                     bank0_way1_valid[update_set] <= 1'b1;
-                bank0_lru[update_set] <= !update_selected_way;
+                bank0_lru[update_set] <= !bank0_update_selected_way;
             end
 
             if (lookup_valid && bank1_hit && !bank0_pred_taken)
                 bank1_lru[pred_lookup_set] <= !bank1_way;
 
-            if (update_valid && update_bank) begin
-                if (!update_selected_way)
+            if (bank1_update_fire) begin
+                if (!bank1_update_selected_way)
                     bank1_way0_valid[update_set] <= 1'b1;
                 else
                     bank1_way1_valid[update_set] <= 1'b1;
-                bank1_lru[update_set] <= !update_selected_way;
+                bank1_lru[update_set] <= !bank1_update_selected_way;
             end
         end
     end
 
+    // Payload contents are irrelevant until the corresponding valid bit is
+    // set, so these LUTRAM arrays intentionally have no reset.
     always_ff @(posedge clk) begin
-        if (update_valid && !update_bank && !update_selected_way)
+        if (bank0_update_fire && !bank0_update_selected_way)
             bank0_way0_payload[update_set] <=
                 {update_tag, update_cfi_type, update_target};
-        if (update_valid && !update_bank && update_selected_way)
+        if (bank0_update_fire && bank0_update_selected_way)
             bank0_way1_payload[update_set] <=
                 {update_tag, update_cfi_type, update_target};
-        if (update_valid && update_bank && !update_selected_way)
+        if (bank1_update_fire && !bank1_update_selected_way)
             bank1_way0_payload[update_set] <=
                 {update_tag, update_cfi_type, update_target};
-        if (update_valid && update_bank && update_selected_way)
+        if (bank1_update_fire && bank1_update_selected_way)
             bank1_way1_payload[update_set] <=
                 {update_tag, update_cfi_type, update_target};
     end

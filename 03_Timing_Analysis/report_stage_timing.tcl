@@ -24,7 +24,13 @@
 # ────────────────────────────────────────────────────────────────
 
 # 输出目录（默认写到本脚本所在目录，每次覆盖旧文件）
-set OUTPUT_DIR [file normalize [file dirname [info script]]]
+if {[info exists STAGE_TIMING_OUTPUT_DIR]
+    && $STAGE_TIMING_OUTPUT_DIR ne ""} {
+    set OUTPUT_DIR [file normalize $STAGE_TIMING_OUTPUT_DIR]
+} else {
+    set OUTPUT_DIR [file normalize [file dirname [info script]]]
+}
+file mkdir $OUTPUT_DIR
 
 # 每组最多报告的路径条数
 set MAX_PATHS 3
@@ -41,7 +47,12 @@ set GLOBAL_CANDIDATE_MULTIPLIER 20
 # 时钟端口名与周期（当设计中没有时钟约束时自动创建）
 # cpu_clk 频率：200MHz → 5.0ns；100MHz → 10.0ns；50MHz → 20ns
 set CLK_PORT   "w_cpu_clk"
-set CLK_PERIOD 5.0
+if {[info exists STAGE_TIMING_CLK_PERIOD]
+    && $STAGE_TIMING_CLK_PERIOD ne ""} {
+    set CLK_PERIOD $STAGE_TIMING_CLK_PERIOD
+} else {
+    set CLK_PERIOD 5.0
+}
 
 # ---- 前置检查：必须已经 open_run synth_1/impl_1 或打开综合/实现设计 ----
 if {[catch {current_design} _current_design_name] || $_current_design_name eq ""} {
@@ -61,13 +72,14 @@ if {[catch {current_design} _current_design_name] || $_current_design_name eq ""
 puts "  当前设计: $_current_design_name"
 
 # 设计层级前缀（自动检测）
-# 支持两种顶层配置：
-#   1. student_top 作为顶层 → TOP_HIER = ""
-#   2. top.sv 作为顶层，例化名 student_top_inst → TOP_HIER = "student_top_inst"
+# 支持 Core_cpu 包装前后的顶层配置。当前比赛集成层级为：
+#   top/student_top_inst/Core_cpu/{u_cpu,u_dcache,u_irom,u_dram,...}
 #
 # 检测方法：查找当前前端 u_cpu/u_frontend_ftq 在哪个层次下
 set TOP_HIER ""
 set _probe_patterns [list \
+    "student_top_inst/Core_cpu" \
+    "Core_cpu"             \
     ""                    \
     "student_top_inst"    \
     "u_student_top"       \
@@ -113,7 +125,7 @@ set PIPELINE_GROUPS [list \
     [list "DCacheBackend"  "u_dcache_bram_backend"       ] \
     [list "DCacheAxi"      "u_dcache_axi_backend"        ] \
     [list "AXIAdapter"     "u_dcache_axi_backend/u_axi_master_adapter"] \
-    [list "MMIO"           "u_mmio"                      ] \
+    [list "MMIO"           "u_mmio_adapter"              ] \
 ]
 
 # ---- 顶层零散寄存器组 ----

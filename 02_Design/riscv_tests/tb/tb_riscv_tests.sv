@@ -333,8 +333,14 @@ module tb_riscv_tests;
     integer stop_pc_enable = 0;
     integer stop_pc_hit = 0;
     integer miss_buffer_hit_count = 0;
+    integer direct_drain_push_pop_count = 0;
+    integer direct_drain_read_parallel_count = 0;
+    integer direct_drain_collision_block_count = 0;
+    integer same_pair_store_data_bypass_count = 0;
     integer refill_early_discarded_spec_reads = 0;
     reg [3:0] miss_buffer_pending_seen = 4'b0000;
+    reg [1:0] direct_drain_collision_sel_seen = 2'b00;
+    reg [1:0] direct_drain_fire_sel_seen = 2'b00;
     reg [31:0] pc_guard_min = 32'h8000_0000;
     reg [31:0] pc_guard_max = 32'h8000_4000;
     reg [31:0] pc_guard_bad_pc = 32'd0;
@@ -352,8 +358,20 @@ module tb_riscv_tests;
     reg [256*8-1:0] trace_file_r;
     wire miss_buffer_directed_test = (test_name_r == "dcache_miss_buffer");
     wire miss_buffer_coverage_failed = miss_buffer_directed_test
-                                     & ((miss_buffer_pending_seen != 4'b1111)
-                                        | (miss_buffer_hit_count < 4));
+                                     & (((miss_buffer_pending_seen & 4'b0111)
+                                         != 4'b0111)
+                                        | (miss_buffer_hit_count < 4)
+                                        | (u_perf.cnt_dc_drain_read_collision < 1)
+                                        | (direct_drain_collision_sel_seen != 2'b11)
+                                        | (direct_drain_fire_sel_seen != 2'b11)
+                                        | (direct_drain_push_pop_count < 1)
+                                        | (direct_drain_read_parallel_count < 1)
+                                        | (direct_drain_collision_block_count < 1)
+                                        | u_dcache.sb_any_valid
+                                        | (u_perf.cnt_dc_sb_enqueue
+                                           != u_perf.cnt_dc_sb_drain)
+                                        | (u_perf.cnt_dc_drain_req_cycles != 0)
+                                        | (u_perf.cnt_dc_drain_resp_cycles != 0));
     wire refill_early_directed_test = (test_name_r == "dcache_refill_early");
     wire refill_early_coverage_failed = refill_early_directed_test
                                       & ((u_perf.cnt_dc_primary_refill_starts != 4)
@@ -364,6 +382,9 @@ module tb_riscv_tests;
                                          | (u_perf.cnt_dc_primary_refill_lat3 != 0)
                                          | (u_perf.cnt_dc_primary_refill_lat4plus != 0)
                                          | (refill_early_discarded_spec_reads < 2));
+    wire slot1_store_directed_test = (test_name_r == "slot1_store");
+    wire slot1_store_coverage_failed = slot1_store_directed_test
+                                     & (same_pair_store_data_bypass_count < 4);
 
     initial begin
         // ---- Parse plusargs ----
@@ -477,9 +498,20 @@ module tb_riscv_tests;
         end else if (!stop_pc_enable && tohost_detected) begin
             if (tohost_value == 32'd1) begin
                 if (miss_buffer_coverage_failed) begin
-                    $display("[FAIL] %0s  miss-buffer coverage incomplete hits=%0d pending_seen=%04b",
+                    $display("[FAIL] %0s  miss-buffer/direct-drain coverage incomplete hits=%0d pending_seen=%04b collisions=%0d collision_sel=%02b drain_sel=%02b push_pop=%0d read_parallel=%0d collision_block=%0d pending_final=%02b enq=%0d drain=%0d req_cycles=%0d resp_cycles=%0d",
                              test_name_r, miss_buffer_hit_count,
-                             miss_buffer_pending_seen);
+                             miss_buffer_pending_seen,
+                             u_perf.cnt_dc_drain_read_collision,
+                             direct_drain_collision_sel_seen,
+                             direct_drain_fire_sel_seen,
+                             direct_drain_push_pop_count,
+                             direct_drain_read_parallel_count,
+                             direct_drain_collision_block_count,
+                             u_dcache.sb_pending_q,
+                             u_perf.cnt_dc_sb_enqueue,
+                             u_perf.cnt_dc_sb_drain,
+                             u_perf.cnt_dc_drain_req_cycles,
+                             u_perf.cnt_dc_drain_resp_cycles);
                 end else if (refill_early_coverage_failed) begin
                     $display("[FAIL] %0s  early-refill coverage mismatch starts=%0d completes=%0d aborts=%0d lat1=%0d lat2=%0d lat3=%0d lat4plus=%0d discarded_spec=%0d",
                              test_name_r,
@@ -491,6 +523,10 @@ module tb_riscv_tests;
                              u_perf.cnt_dc_primary_refill_lat3,
                              u_perf.cnt_dc_primary_refill_lat4plus,
                              refill_early_discarded_spec_reads);
+                end else if (slot1_store_coverage_failed) begin
+                    $display("[FAIL] %0s  same-pair ALU-to-store-data bypass coverage incomplete hits=%0d expected_at_least=4",
+                             test_name_r,
+                             same_pair_store_data_bypass_count);
                 end else begin
                     $display("[PASS] %0s  commits=%0d first_led=0x%08x last_led=0x%08x led_writes=%0d pc=0x%08x last_wb0_pc=0x%08x last_wb1_pc=0x%08x  (%0d cycles)",
                              test_name_r, commit_cnt, tohost_value,
@@ -545,19 +581,56 @@ module tb_riscv_tests;
     end
 
     always @(posedge clk) begin
+        if (!rst_n)
+            same_pair_store_data_bypass_count <= 0;
+        else if (u_cpu.ex_valid && u_cpu.ex_s1_valid
+                 && u_cpu.ex_s0_alu_store_data_bypass_r
+                 && u_cpu.ex_ready_go_w && u_cpu.mem_allowin
+                 && !u_cpu.mem_branch_flush)
+            same_pair_store_data_bypass_count
+                <= same_pair_store_data_bypass_count + 1;
+    end
+
+    always @(posedge clk) begin
         if (!rst_n) begin
             miss_buffer_hit_count <= 0;
             miss_buffer_pending_seen <= 4'b0000;
+            direct_drain_push_pop_count <= 0;
+            direct_drain_read_parallel_count <= 0;
+            direct_drain_collision_block_count <= 0;
+            direct_drain_collision_sel_seen <= 2'b00;
+            direct_drain_fire_sel_seen <= 2'b00;
             refill_early_discarded_spec_reads <= 0;
-        end else if (u_dcache.miss_buffer_hit) begin
-            miss_buffer_hit_count <= miss_buffer_hit_count + 1;
-            case (u_dcache.sb_pending_q)
-                2'b00: miss_buffer_pending_seen[0] <= 1'b1;
-                2'b01: miss_buffer_pending_seen[1] <= 1'b1;
-                2'b10: miss_buffer_pending_seen[2] <= 1'b1;
-                2'b11: miss_buffer_pending_seen[3] <= 1'b1;
-                default: ;
-            endcase
+        end else begin
+            if (u_dcache.miss_buffer_hit) begin
+                miss_buffer_hit_count <= miss_buffer_hit_count + 1;
+                case (u_dcache.sb_pending_q)
+                    2'b00: miss_buffer_pending_seen[0] <= 1'b1;
+                    2'b01: miss_buffer_pending_seen[1] <= 1'b1;
+                    2'b10: miss_buffer_pending_seen[2] <= 1'b1;
+                    2'b11: miss_buffer_pending_seen[3] <= 1'b1;
+                    default: ;
+                endcase
+            end
+
+            if (u_dcache.direct_sb_drain_fire) begin
+                direct_drain_fire_sel_seen[u_dcache.sb_drain_sel] <= 1'b1;
+                if (u_dcache.sb_store_enqueue)
+                    direct_drain_push_pop_count
+                        <= direct_drain_push_pop_count + 1;
+                if (u_dcache.bram_rd_en)
+                    direct_drain_read_parallel_count
+                        <= direct_drain_read_parallel_count + 1;
+            end
+
+            if (u_dcache.direct_sb_read_collision) begin
+                direct_drain_collision_sel_seen[u_dcache.sb_drain_sel] <= 1'b1;
+                direct_drain_collision_block_count
+                    <= direct_drain_collision_block_count + 1;
+                if (u_dcache.direct_sb_drain_fire | u_dcache.sb_pop
+                    | (|u_dcache.bram_wea))
+                    $error("Direct drain collision did not suppress write/pop");
+            end
         end
 
         if (rst_n && u_dcache.direct_idle_spec_read

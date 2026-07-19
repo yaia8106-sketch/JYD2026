@@ -72,7 +72,8 @@ module frontend_stage1_steer_ctrl
         steer.target = sequential_next_pc;
         steer.next_pc = sequential_next_pc;
 
-        // first_valid -- taken/not taken
+        // A not-taken first branch retains ownership even if a younger bank1
+        // CFI supplies the taken target. first_valid 同时覆盖 taken/not-taken。
         if (first_valid) begin
             steer.source_abtb = first_taken;
             steer.branch_owned = first_cfi_type == ABTB_TYPE_BRANCH;
@@ -92,7 +93,8 @@ module frontend_stage1_steer_ctrl
                 steer.target = bank1.target;
                 steer.next_pc = bank1.target;
             end
-        // second_valid && second_taken
+        // No older owner: accept a valid taken CFI from bank1.
+        // 无更老控制流所有者时，采用 bank1 的有效 taken 结果。
         end else if (second_taken) begin
             steer.source_abtb = 1'b1;
             steer.taken = 1'b1;

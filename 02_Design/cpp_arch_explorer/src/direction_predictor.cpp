@@ -72,6 +72,17 @@ std::uint32_t DirectionPredictor::base_index(
     if (config_.family == DirectionFamily::Gshare) {
         return pc_index ^ fold_history(history, config_.history_length, bits);
     }
+    if (config_.family == DirectionFamily::Gselect) {
+        const auto history_bits = std::min(config_.history_length, bits);
+        const auto pc_bits = bits - history_bits;
+        const auto pc_part = pc_bits == 0u
+                                 ? 0u
+                                 : pc_index & static_cast<std::uint32_t>(
+                                                   bit_mask(pc_bits));
+        const auto history_part = static_cast<std::uint32_t>(
+            history & bit_mask(history_bits));
+        return (pc_part << history_bits) | history_part;
+    }
     if (config_.base_index_mode == BaseIndexMode::LowPc) {
         return pc_index;
     }
@@ -142,10 +153,13 @@ std::int8_t DirectionPredictor::update_tagged_counter(
     return static_cast<std::int8_t>(std::max<int>(-4, counter - 1));
 }
 
-void DirectionPredictor::observe(const CfiEvent& event) {
+DirectionPrediction DirectionPredictor::observe(
+    const CfiEvent& event, const bool tagged_access,
+    const bool automatic_barrier,
+    const std::optional<bool> external_base) {
     apply_due(event.instruction_ordinal);
     if (event.kind != CfiKind::Branch) {
-        return;
+        return {};
     }
 
     PendingUpdate update;
@@ -156,12 +170,19 @@ void DirectionPredictor::observe(const CfiEvent& event) {
     update.history_snapshot = ghr_;
     update.base_index = base_index(event.source_pc, ghr_);
     update.base_counter = base_table_.at(update.base_index);
-    update.alternate_prediction = (update.base_counter & 0x2u) != 0u;
+    if (config_.external_base_prediction && !external_base.has_value()) {
+        throw std::runtime_error(
+            "tagged-only predictor requires an external base prediction");
+    }
+    update.base_prediction = config_.external_base_prediction
+                                 ? *external_base
+                                 : (update.base_counter & 0x2u) != 0u;
+    update.alternate_prediction = update.base_prediction;
     update.provider_prediction = update.alternate_prediction;
     update.final_prediction = update.provider_prediction;
     update.final_source = -1;
 
-    if (config_.family == DirectionFamily::Tage) {
+    if (config_.family == DirectionFamily::Tage && tagged_access) {
         update.tables.reserve(config_.tagged_tables.size());
         for (std::size_t table = 0; table < config_.tagged_tables.size(); ++table) {
             TableLookup lookup;
@@ -247,18 +268,47 @@ void DirectionPredictor::observe(const CfiEvent& event) {
         stats_.misses_by_pc[word] += static_cast<std::uint64_t>(mispredicted);
     }
 
+    const auto final_counter = update.final_source < 0
+                                   ? std::int8_t{0}
+                                   : update.tables[update.final_source].counter;
+    const auto final_useful = update.final_source < 0
+                                  ? std::uint8_t{0}
+                                  : update.tables[update.final_source].useful;
+    const DirectionPrediction prediction{
+        true,
+        update.base_prediction,
+        update.final_prediction,
+        config_.family == DirectionFamily::Tage && tagged_access,
+        update.used_alternate,
+        update.base_index,
+        update.provider,
+        update.final_source,
+        final_counter,
+        final_useful,
+    };
     pending_.push_back(std::move(update));
     if (config_.update_delay_instructions == 0u) {
         apply_due(event.instruction_ordinal);
-    } else if (mispredicted && config_.mispredict_resolution_barrier) {
+    } else if (automatic_barrier && mispredicted &&
+               config_.mispredict_resolution_barrier) {
+        force_resolve_through(next_order_ - 1u);
+    }
+
+    return prediction;
+}
+
+void DirectionPredictor::resolution_barrier() {
+    if (next_order_ != 0u) {
         force_resolve_through(next_order_ - 1u);
     }
 }
 
 void DirectionPredictor::update_tage(const PendingUpdate& update) {
     if (update.provider < 0) {
-        base_table_[update.base_index] =
-            update_base_counter(update.base_counter, update.event.taken);
+        if (!config_.external_base_prediction) {
+            base_table_[update.base_index] =
+                update_base_counter(update.base_counter, update.event.taken);
+        }
     } else {
         auto& entry = tagged_tables_[update.provider]
                                     [update.tables[update.provider].index];
@@ -279,8 +329,10 @@ void DirectionPredictor::update_tage(const PendingUpdate& update) {
 
         if (update.used_alternate) {
             if (update.alternate < 0) {
-                base_table_[update.base_index] = update_base_counter(
-                    update.base_counter, update.event.taken);
+                if (!config_.external_base_prediction) {
+                    base_table_[update.base_index] = update_base_counter(
+                        update.base_counter, update.event.taken);
+                }
             } else {
                 auto& alternate = tagged_tables_[update.alternate]
                                                 [update.tables[update.alternate].index];
@@ -365,7 +417,9 @@ std::uint32_t DirectionPredictor::maximum_history_length() const {
 }
 
 std::uint64_t DirectionPredictor::logical_storage_bits() const {
-    std::uint64_t result = 2ull * config_.base_entries;
+    std::uint64_t result = config_.external_base_prediction
+                               ? 0u
+                               : 2ull * config_.base_entries;
     for (const auto& table : config_.tagged_tables) {
         result += static_cast<std::uint64_t>(table.entries) *
                   (table.tag_bits + 3u + 1u + 1u);
@@ -374,8 +428,10 @@ std::uint64_t DirectionPredictor::logical_storage_bits() const {
 }
 
 std::uint64_t DirectionPredictor::two_read_storage_bits() const {
-    std::uint64_t result = 2ull * config_.base_entries *
-                           (base_is_pc2_banked() ? 1u : 2u);
+    std::uint64_t result = config_.external_base_prediction
+                               ? 0u
+                               : 2ull * config_.base_entries *
+                                     (base_is_pc2_banked() ? 1u : 2u);
     for (const auto& table : config_.tagged_tables) {
         const auto table_bits = static_cast<std::uint64_t>(table.entries) *
                                 (table.tag_bits + 3u + 1u + 1u);
@@ -431,6 +487,11 @@ std::vector<DirectionConfig> make_direction_study_configs(
             add("GSHARE_256_H" + std::to_string(history),
                 DirectionFamily::Gshare, 256, history, {}, delay);
         }
+        for (const auto history : {2u, 4u, 6u}) {
+            add("GSELECT_256_PC" + std::to_string(8u - history) + "_H" +
+                    std::to_string(history),
+                DirectionFamily::Gselect, 256, history, {}, delay);
+        }
         for (const auto history : {8u, 12u}) {
             add("GSHARE_512_H" + std::to_string(history),
                 DirectionFamily::Gshare, 512, history, {}, delay);
@@ -447,6 +508,12 @@ std::vector<DirectionConfig> make_direction_study_configs(
             {{64, 4, 6}, {64, 12, 7}}, delay);
         add("TAGE2_B256_T64_H2_8", DirectionFamily::Tage, 256, 0,
             {{64, 2, 6}, {64, 8, 7}}, delay);
+        add("TAGE2_B256_T64_H1_2", DirectionFamily::Tage, 256, 0,
+            {{64, 1, 6}, {64, 2, 7}}, delay);
+        add("TAGE2_B256_T64_H2_4", DirectionFamily::Tage, 256, 0,
+            {{64, 2, 6}, {64, 4, 7}}, delay);
+        add("TAGE2_B256_T64_H3_6", DirectionFamily::Tage, 256, 0,
+            {{64, 3, 6}, {64, 6, 7}}, delay);
         add("TAGE2_B256_T64_H4_8", DirectionFamily::Tage, 256, 0,
             {{64, 4, 6}, {64, 8, 7}}, delay);
         add("TAGE2_B128_T64_H4_8_BASE_LOW", DirectionFamily::Tage, 128, 0,

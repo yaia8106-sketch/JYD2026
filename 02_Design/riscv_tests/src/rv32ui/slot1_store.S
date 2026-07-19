@@ -62,22 +62,55 @@ RVTEST_CODE_BEGIN
     addi  a1, a0, 0
     li    t3, 0x2468ace0
     .align 3
+    fence
     addi  a1, a0, 16
     sw    t3, 0(a1)
     lw    t4, 16(a0)
     bne   t4, t3, fail
 
-    // Same-pair RAW on store data must serialize.
+    // Same-pair Slot0 ALU -> Slot1 store-data must dual issue. Snapshot the
+    // hardware counter around this pair so value correctness alone cannot pass
+    // if the frontend silently serializes it.
     li    TESTNUM, 5
+    lw    s0, 0(t6)
+    addi  s0, s0, 0
+    addi  s0, s0, 0
     addi  t3, x0, 0
     .align 3
+    fence
     addi  t3, x0, 0x77
     sw    t3, 20(a0)
+    addi  x0, x0, 0
+    addi  x0, x0, 0
+    lw    s7, 0(t6)
+    addi  s7, s7, 0
+    addi  s7, s7, 0
+    sub   s8, s7, s0
+    li    s9, 1
+    blt   s8, s9, fail_count_data
     lw    t4, 20(a0)
     bne   t4, t3, fail
 
-    // Store data loaded by the immediately previous load must stall until ready.
+    // Byte and half stores use the same raw bypass before the existing lane
+    // shifter, so both the value and byte-enable placement must remain exact.
     li    TESTNUM, 6
+    .align 3
+    fence
+    addi  t3, x0, 0x5a
+    sb    t3, 33(a0)
+    lbu   t4, 33(a0)
+    bne   t4, t3, fail
+
+    li    TESTNUM, 7
+    .align 3
+    fence
+    addi  t3, x0, 0x6b
+    sh    t3, 34(a0)
+    lhu   t4, 34(a0)
+    bne   t4, t3, fail
+
+    // Store data loaded by the immediately previous load must stall until ready.
+    li    TESTNUM, 8
     lw    t5, 4(a0)
     .align 3
     addi  s10, x0, 10
@@ -86,19 +119,30 @@ RVTEST_CODE_BEGIN
     bne   t4, t2, fail
 
     // Slot0 LSU + Slot1 store remains serialized; the store still executes later.
-    li    TESTNUM, 7
+    li    TESTNUM, 9
     .align 3
     lw    t5, 4(a0)
     sw    t2, 28(a0)
     lw    t4, 28(a0)
     bne   t4, t2, fail
 
-    // Uncacheable Slot1 store uses the shared MMIO write path.
-    li    TESTNUM, 8
-    li    a2, SEG_MMIO_ADDR
-    li    t3, 0x00000abc
+    // Address+data RAW is not bypassable because the Slot1 address has a true
+    // dependency. Serialization must preserve both the address and payload.
+    li    TESTNUM, 10
     .align 3
-    addi  s11, x0, 11
+    fence
+    addi  a1, a0, 40
+    sw    a1, 0(a1)
+    lw    t4, 40(a0)
+    bne   t4, a1, fail
+
+    // Uncacheable Slot1 store uses the same ALU-data bypass before the shared
+    // MMIO path.
+    li    TESTNUM, 11
+    li    a2, SEG_MMIO_ADDR
+    .align 3
+    fence
+    addi  t3, x0, 0x5c
     sw    t3, 0(a2)
     lw    t4, 0(a2)
     bne   t4, t3, fail
@@ -108,6 +152,10 @@ pass:
 
 fail_count:
     li    TESTNUM, 1
+    j     fail
+
+fail_count_data:
+    li    TESTNUM, 5
     j     fail
 
 fail:

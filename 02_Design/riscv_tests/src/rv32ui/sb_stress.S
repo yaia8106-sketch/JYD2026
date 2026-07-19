@@ -1,8 +1,7 @@
 #include "riscv_test.h"
 
-// Test: Store buffer conflict stall (1-entry SB)
-// Back-to-back stores to same cache line → sb_conflict → S_SB_DRAIN stall.
-// Verifies pipeline handles the extra stall cycle correctly.
+// Test: Store buffer back-to-back traffic and recent-store visibility.
+// Direct BRAM drains in parallel with new pushes; generic backends may stall.
 
 RVTEST_RV32U
 RVTEST_CODE_BEGIN

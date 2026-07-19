@@ -17,7 +17,12 @@ module id_ex_reg_s1
 
     input  id_ex_slot1_t  id_payload,
     output logic          ex_s1_valid,
-    output id_ex_slot1_t  ex_payload
+    output id_ex_slot1_t  ex_payload,
+
+    // Physically independent repair tags for the ordinary ALU result cone.
+    // They follow the same Slot-1 validity masking as accepted_payload().
+    (* keep = "true" *) output logic ex_fast_alu_src1_wb_repair,
+    (* keep = "true" *) output logic ex_fast_alu_src2_wb_repair
 );
 
     function automatic id_ex_slot1_t reset_payload();
@@ -53,6 +58,8 @@ module id_ex_reg_s1
         if (!rst_n) begin
             ex_s1_valid <= 1'b0;
             ex_payload <= reset_payload();
+            ex_fast_alu_src1_wb_repair <= 1'b0;
+            ex_fast_alu_src2_wb_repair <= 1'b0;
         end else if (ex_flush) begin
             // Prediction and repair tags are cleared with validity on redirects.
             ex_s1_valid <= 1'b0;
@@ -60,6 +67,8 @@ module id_ex_reg_s1
             ex_payload.common.rs2_wb_repair <= 1'b0;
             ex_payload.common.alu_src1_wb_repair <= 1'b0;
             ex_payload.common.alu_src2_wb_repair <= 1'b0;
+            ex_fast_alu_src1_wb_repair <= 1'b0;
+            ex_fast_alu_src2_wb_repair <= 1'b0;
             ex_payload.common.prediction.prediction.taken <= 1'b0;
             ex_payload.common.prediction.prediction.source_abtb <= 1'b0;
             ex_payload.common.prediction.prediction.stage1_branch_owned <=
@@ -67,6 +76,10 @@ module id_ex_reg_s1
         end else if (ex_allowin) begin
             ex_s1_valid <= id_s1_valid & id_ready_go;
             ex_payload <= accepted_payload(id_payload, id_s1_valid);
+            ex_fast_alu_src1_wb_repair <=
+                id_payload.common.alu_src1_wb_repair & id_s1_valid;
+            ex_fast_alu_src2_wb_repair <=
+                id_payload.common.alu_src2_wb_repair & id_s1_valid;
         end
     end
 

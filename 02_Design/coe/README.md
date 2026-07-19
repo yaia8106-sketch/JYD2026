@@ -36,6 +36,8 @@ coe/
 │   └── src2/
 │
 ├── convert_irom64_coe.py ← 32-bit 顺序 IROM → 64-bit IROM 转换工具
+├── prepare_new_coe.py    ← 比赛 new/IROM、new/DRAM → irom64/new
+├── new/                  ← 比赛现场放置 32-bit IROM/DRAM 的目录
 ├── split_coe.py          ← 单发射 → 双发射转换工具
 ├── analyze_coe.py        ← 指令分布统计
 └── disasm_coe.py         ← COE 反汇编
@@ -63,6 +65,7 @@ entry[n] = { inst[2*n + 1], inst[2*n] }
 | 脚本 | 功能 | 用法 |
 |------|------|------|
 | `convert_irom64_coe.py` | 单发射 coe → 64-bit IROM coe | `python3 convert_irom64_coe.py` |
+| `prepare_new_coe.py` | 比赛 32-bit COE → `irom64/new` | 终端直接执行 `new` |
 | `split_coe.py` | 单发射 coe → 双发射 slot0/slot1 | `python3 split_coe.py single_issue/current/irom.coe dual_issue/current/` |
 | `analyze_coe.py` | 静态指令分布统计 | `python3 analyze_coe.py` |
 | `disasm_coe.py` | COE 反汇编为 RISC-V 汇编 | `python3 disasm_coe.py [dir...]` |

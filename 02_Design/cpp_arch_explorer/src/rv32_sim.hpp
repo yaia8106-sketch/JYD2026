@@ -24,6 +24,7 @@ struct CfiEvent {
     CfiKind kind = CfiKind::None;
     std::uint64_t instruction_ordinal = 0;
     std::uint32_t source_pc = 0;
+    std::uint32_t instruction = 0;
     std::uint32_t target = 0;
     std::uint32_t next_pc = 0;
     bool taken = false;
@@ -116,4 +117,3 @@ private:
 };
 
 }  // namespace archsim
-

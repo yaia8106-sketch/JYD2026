@@ -817,6 +817,8 @@ module tb_frontend_abtb_steering;
         logic found;
         logic [7:0] ghr_before;
         logic [7:0] ghr_after;
+        logic [7:0] expected_pht_index;
+        logic [1:0] expected_pht_counter;
         logic [31:0] slot0_pc;
         logic [31:0] slot1_pc;
         logic [31:0] older_pc;
@@ -848,12 +850,28 @@ module tb_frontend_abtb_steering;
                               "slot1 taken branch did not redirect and train");
                         ghr_before =
                             dut.u_frontend_stage1_direction.committed_ghr;
+                        expected_pht_index =
+                            dut.stage1_direction_update_index;
+                        expected_pht_counter =
+                            dut.stage1_direction_update_counter;
                         found = 1'b1;
                         disable slot1_update_loop;
                     end
                 end
             end
             check(found, "slot1 conditional branch did not update PHT/GHR");
+            // The EX-aligned event remains visible through the legacy
+            // observation probes.  Predictor state is intentionally written
+            // from the registered event in the following cycle.
+            @(negedge clk);
+            check(dut.stage1_direction_write_valid,
+                  "slot1 PHT event did not cross the registered write boundary");
+            check(dut.stage1_direction_write_index
+                  == expected_pht_index
+                  && dut.stage1_direction_write_counter
+                     == expected_pht_counter
+                  && dut.stage1_direction_write_actual_taken,
+                  "registered slot1 PHT write payload changed");
             @(posedge clk);
             #1;
             ghr_after = {ghr_before[6:0], 1'b1};

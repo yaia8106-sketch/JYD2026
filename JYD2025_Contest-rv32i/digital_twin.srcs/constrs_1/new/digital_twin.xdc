@@ -159,12 +159,12 @@ set_property IOSTANDARD LVCMOS18 [get_ports {virtual_seg[30]}]
 # ============================================================
 set_property -quiet MAX_FANOUT 16 [
     get_cells -quiet {
-        student_top_inst/u_cpu/u_ex_mem_reg/mem_redirect_reg[valid]
+        student_top_inst/Core_cpu/u_cpu/u_ex_mem_reg/mem_redirect_reg[valid]
     }
 ]
 set_property -quiet MAX_FANOUT 16 [
     get_cells -quiet {
-        student_top_inst/u_cpu/u_ex_mem_reg/mem_valid_reg
+        student_top_inst/Core_cpu/u_cpu/u_ex_mem_reg/mem_valid_reg
     }
 ]
 set_property -quiet FORCE_MAX_FANOUT 32 [
@@ -179,18 +179,71 @@ set_property -quiet MAX_FANOUT 32 [
 ]
 set_property -quiet FORCE_MAX_FANOUT 64 [
     get_nets -quiet {
-        student_top_inst/u_dcache/u_store_buffer/mem_valid_reg
+        student_top_inst/Core_cpu/u_dcache/u_store_buffer/mem_valid_reg
     }
 ]
 
 # ============================================================
-# CPU timing: Pblock — 2 vertical clock regions (same column).
-#   X1Y3 + X1Y4 keep CPU + DCache data RAM + IROM close without
-#   overfilling a single region. The Pblock remains soft.
-#   DRAM4MyOwn is intentionally left to the placer.
+# Proven MMIO write-valid / load-payload false path.
+#
+# The contest shell has one shared peripheral port and gates its combinational
+# read data with perip_wen.  A platform store can therefore appear to feed the
+# MEM/WB load-data D pins even though the shared LSU cannot issue a load and a
+# store together, and those registers only enable on mem_load_valid.  Keep the
+# exception limited to setup paths that pass through the external write-valid
+# net and terminate specifically at the three physical load-data copies.  All
+# peripheral write-state paths, MMIO address paths, real read-data paths, and
+# hold checks remain timed.
 # ============================================================
-create_pblock pblock_cpu_irom
-add_cells_to_pblock [get_pblocks pblock_cpu_irom] [get_cells student_top_inst/u_cpu]
-add_cells_to_pblock [get_pblocks pblock_cpu_irom] [get_cells student_top_inst/u_irom]
-add_cells_to_pblock [get_pblocks pblock_cpu_irom] [get_cells student_top_inst/u_dcache]
-resize_pblock pblock_cpu_irom -add {CLOCKREGION_X1Y3:CLOCKREGION_X1Y4}
+set_false_path -setup \
+    -through [get_nets {
+        student_top_inst/Core_cpu/perip_wen
+    }] \
+    -to [get_pins -hierarchical -filter {
+        NAME =~ *u_mem_wb_reg/wb_load_data*/D ||
+        NAME =~ *u_mem_wb_reg/wb_payload_reg*load_data*/D
+    }]
+
+# ============================================================
+# CPU timing locality.
+#
+# Do not place the complete CPU, IROM, and DCache in one large Pblock.  That
+# couples unrelated placement decisions: a predictor netlist change can move
+# the MEM/WB and MulDiv clusters, while a DCache change can move the frontend.
+# Existing routed checkpoints show the stable placement with the frontend,
+# IROM, and DCache biased toward X1Y3.  Keep those two communicating clusters
+# as independent soft hints and leave the ID/EX/MulDiv cluster timing-driven;
+# its DSPs naturally straddle the X1Y3/X1Y4 boundary.
+#
+# DRAM4MyOwn remains unconstrained because its 64 BRAM banks span several
+# clock regions.  Both Pblocks are deliberately soft, so the placer may spill
+# cells when local congestion makes that beneficial.
+# ============================================================
+create_pblock pblock_frontend_irom
+set frontend_irom_cells [get_cells -quiet {
+    student_top_inst/Core_cpu/u_cpu/u_frontend_ftq
+    student_top_inst/Core_cpu/u_cpu/u_frontend_stage1_direction
+    student_top_inst/Core_cpu/u_cpu/u_frontend_abtb
+    student_top_inst/Core_cpu/u_cpu/u_if_id_reg
+    student_top_inst/Core_cpu/u_irom
+}]
+add_cells_to_pblock [get_pblocks pblock_frontend_irom] $frontend_irom_cells
+resize_pblock pblock_frontend_irom -add {CLOCKREGION_X1Y3}
+set_property IS_SOFT TRUE [get_pblocks pblock_frontend_irom]
+
+create_pblock pblock_data_path
+set data_path_cells [get_cells -quiet {
+    student_top_inst/Core_cpu/u_cpu/u_memory_access_unit
+    student_top_inst/Core_cpu/u_cpu/u_mem_interface
+    student_top_inst/Core_cpu/u_cpu/u_mem_interface_s1_load
+    student_top_inst/Core_cpu/u_cpu/u_ex_mem_payload_builder
+    student_top_inst/Core_cpu/u_cpu/u_ex_mem_reg
+    student_top_inst/Core_cpu/u_cpu/u_ex_mem_reg_s1
+    student_top_inst/Core_cpu/u_cpu/u_mem_wb_payload_builder
+    student_top_inst/Core_cpu/u_cpu/u_mem_wb_reg
+    student_top_inst/Core_cpu/u_dcache
+    student_top_inst/Core_cpu/u_mmio_adapter
+}]
+add_cells_to_pblock [get_pblocks pblock_data_path] $data_path_cells
+resize_pblock pblock_data_path -add {CLOCKREGION_X1Y3}
+set_property IS_SOFT TRUE [get_pblocks pblock_data_path]

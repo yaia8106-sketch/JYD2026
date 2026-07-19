@@ -1,16 +1,15 @@
 #include "riscv_test.h"
 
-// Test: two-entry recent-store miss buffer.
+// Test: two-entry recent-store miss buffer with independent direct-BRAM drain.
 // Focus:
-//   1. Both pending entries can satisfy load misses without refill.
+//   1. Consecutive stores remain visible while older stores drain in parallel.
 //   2. Drained entries remain searchable until one of the next two stores
 //      overwrites their physical slot.
 //   3. Physical pending states 01 and 10 both preserve forwarding.
 //   4. Byte/half loads forward when every consumed byte is covered.
 //   5. Partial coverage falls back to refill and merges recent store bytes.
 //   6. The younger of two overlapping stores wins.
-//   7. A third store waits for space, reuses the drained slot, and does not
-//      destroy the still-pending newer entry.
+//   7. Push/pop overlap reuses the drained slot without losing recent data.
 
 RVTEST_RV32U
 RVTEST_CODE_BEGIN
@@ -25,7 +24,8 @@ RVTEST_CODE_BEGIN
     la    a7, mb_line7
 
     // ================================================================
-    // Part 1: pending=11. Consecutive stores occupy both physical entries.
+    // Part 1: consecutive stores rotate through both physical entries while
+    // the dedicated BRAM write port drains the older store in parallel.
     // ================================================================
     li    TESTNUM, 1
     li    t0, 0x10203040
@@ -134,8 +134,7 @@ RVTEST_CODE_BEGIN
     bne   t2, t4, fail
 
     // ================================================================
-    // Part 6: three consecutive stores. The third sees pending=11, waits for
-    // the oldest write, and then overwrites exactly that drained slot.
+    // Part 6: three consecutive stores exercise steady-state push/pop overlap.
     // ================================================================
     .rept 12
         nop
@@ -149,8 +148,8 @@ RVTEST_CODE_BEGIN
     sw    t1, 4(a1)
     sw    t4, 4(a2)
 
-    // The first store is no longer recent, but it was drained before the third
-    // store was accepted and therefore must be visible through refill.
+    // The first store is no longer recent, but it was written before its slot
+    // was reused and therefore must be visible through refill.
     lw    t2, 4(a0)
     bne   t2, t0, fail
 

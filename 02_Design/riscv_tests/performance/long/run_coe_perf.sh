@@ -532,10 +532,12 @@ fi
 echo ""
 echo "[INFO] Summary CSV:       $OUT_DIR/summary.csv"
 echo "[INFO] Summary JSON:      $OUT_DIR/summary.json"
-echo "[INFO] Branch summary:    $OUT_DIR/branch_summary.csv"
-echo "[INFO] Branch findings:   $OUT_DIR/branch_findings.md"
-echo "[INFO] Manifest:          $OUT_DIR/manifest.json"
-echo "[INFO] stop_pc map:       $OUT_DIR/stop_pc.txt"
+echo "[INFO] Hotspots CSV:       $OUT_DIR/hotspots.csv"
+echo "[INFO] Perf findings:      $OUT_DIR/performance_findings.md"
+echo "[INFO] Branch summary:     $OUT_DIR/branch_summary.csv"
+echo "[INFO] Branch findings:    $OUT_DIR/branch_findings.md"
+echo "[INFO] Manifest:           $OUT_DIR/manifest.json"
+echo "[INFO] stop_pc map:        $OUT_DIR/stop_pc.txt"
 
 if grep -R -E "^\[(FAIL|TIMEOUT|SKIP)\]" "$LOG_DIR" >/dev/null 2>&1; then
     RUN_FAILED=1

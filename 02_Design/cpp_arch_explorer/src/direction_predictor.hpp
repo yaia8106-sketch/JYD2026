@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -14,6 +15,7 @@ namespace archsim {
 enum class DirectionFamily : std::uint8_t {
     Bimodal,
     Gshare,
+    Gselect,
     Tage,
 };
 
@@ -41,6 +43,9 @@ struct DirectionConfig {
     std::uint32_t update_delay_instructions = 0;
     bool mispredict_resolution_barrier = true;
     bool use_alternate_on_weak_new = true;
+    // A late tagged-only predictor has no private bimodal table.  Its base
+    // prediction is supplied by the already-computed BP/F0 next-PC decision.
+    bool external_base_prediction = false;
 };
 
 struct DirectionStats {
@@ -74,11 +79,33 @@ struct DirectionStats {
     std::array<std::uint64_t, kIromBytes / 4> misses_by_pc{};
 };
 
+// Prediction-time result exposed to the integrated frontend model.  The
+// predictor still owns the full metadata token internally; callers only need
+// the architectural direction and enough diagnostics to compare BP and F1.
+struct DirectionPrediction {
+    bool valid = false;
+    bool base_taken = false;
+    bool final_taken = false;
+    bool tagged_accessed = false;
+    bool used_alternate = false;
+    std::uint32_t base_index = 0;
+    int provider = -1;
+    int final_source = -1;
+    std::int8_t final_counter = 0;
+    std::uint8_t final_useful = 0;
+};
+
 class DirectionPredictor {
 public:
     explicit DirectionPredictor(DirectionConfig config);
 
-    void observe(const CfiEvent& event);
+    DirectionPrediction observe(const CfiEvent& event,
+                                bool tagged_access = true,
+                                bool automatic_barrier = true,
+                                std::optional<bool> external_base = std::nullopt);
+    // The integrated BP/F0/F1 model calls this only when the final F1
+    // prediction, rather than an intermediate BP prediction, is wrong.
+    void resolution_barrier();
     [[nodiscard]] const DirectionConfig& config() const { return config_; }
     [[nodiscard]] const DirectionStats& stats() const { return stats_; }
     [[nodiscard]] std::uint64_t logical_storage_bits() const;
@@ -108,6 +135,7 @@ private:
         std::uint64_t history_snapshot = 0;
         std::uint32_t base_index = 0;
         std::uint8_t base_counter = 0;
+        bool base_prediction = false;
         std::vector<TableLookup> tables;
         int provider = -1;
         int alternate = -1;

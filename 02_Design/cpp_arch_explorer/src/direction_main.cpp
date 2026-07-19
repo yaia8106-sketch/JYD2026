@@ -148,7 +148,10 @@ std::string family_name(const DirectionFamily family) {
     if (family == DirectionFamily::Bimodal) {
         return "BIMODAL";
     }
-    return family == DirectionFamily::Gshare ? "GSHARE" : "MINI_TAGE";
+    if (family == DirectionFamily::Gshare) {
+        return "GSHARE";
+    }
+    return family == DirectionFamily::Gselect ? "GSELECT" : "MINI_TAGE";
 }
 
 std::string base_index_name(const BaseIndexMode mode) {

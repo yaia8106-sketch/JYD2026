@@ -26,6 +26,8 @@ module ex_stage_ctrl (
     input  logic [31:0] ex_csr_rdata,
     input  logic        ex_is_muldiv,
     input  logic [31:0] ex_muldiv_result,
+    input  logic        ex_is_bitmanip,
+    input  logic [31:0] ex_bitmanip_result,
     input  logic [31:0] alu_result,
 
     input  logic        ex_s1_valid,
@@ -98,15 +100,20 @@ module ex_stage_ctrl (
     assign ex_s1_rs2_data_repair = ex_s1_rs2_wb_repair ? wb_load_data :
                                                            ex_s1_rs2_data;
     // Forward the architectural writeback value, not always the ALU output.
-    // The special classes are mutually exclusive, so compute candidates in
-    // parallel and use a shallow AND-OR selection instead of a priority chain.
-    wire ex_uses_special_result = ex_is_csr | ex_is_muldiv;
-    wire [31:0] ex_selected_result =
-        ({32{ex_is_csr}}            & ex_csr_rdata)
-      | ({32{ex_is_muldiv}}         & ex_muldiv_result)
-      | ({32{~ex_uses_special_result}} & alu_result);
-    assign ex_forward_result = ex_selected_result;
-    assign ex_pipe_alu_result = ex_selected_result;
+    // Compute independent candidates in parallel and keep the late result
+    // selection as a shallow AND-OR mux. These instruction classes are
+    // mutually exclusive by decode.
+    wire ex_uses_forward_special_result = ex_is_csr | ex_is_muldiv;
+    wire [31:0] ex_forward_selected_result =
+        ({32{ex_is_csr}}        & ex_csr_rdata)
+      | ({32{ex_is_muldiv}}     & ex_muldiv_result)
+      | ({32{~ex_uses_forward_special_result}} & alu_result);
+    // Bit-manipulation results are deliberately excluded from EX forwarding.
+    // A dependent ID instruction stalls for the B completion cycle and then
+    // consumes the registered result through the existing MEM path.
+    assign ex_forward_result = ex_forward_selected_result;
+    assign ex_pipe_alu_result = ex_is_bitmanip ? ex_bitmanip_result
+                                               : ex_forward_selected_result;
 
     // Keep S0 and S1 targets physically separate. The issue rules make their
     // CFI paths mutually exclusive, but STA still times any shared mux output

@@ -11,6 +11,7 @@ namespace {
 archsim::CfiEvent branch(const std::uint64_t ordinal, const bool taken,
                          const std::uint32_t pc = archsim::kIromBase) {
     return archsim::CfiEvent{archsim::CfiKind::Branch, ordinal, pc,
+                            0x0000'0063u,
                             taken ? pc + 16u : pc + 4u, pc + 4u, taken};
 }
 
@@ -58,6 +59,7 @@ void test_tage_allocation_and_provider() {
     config.name = "TEST_TAGE";
     config.family = archsim::DirectionFamily::Tage;
     config.base_entries = 16;
+    config.history_length = 0;
     config.tagged_tables = {{4, 1, 4}, {4, 3, 4}};
     archsim::DirectionPredictor predictor(config);
     for (std::uint64_t ordinal = 0; ordinal < 200; ++ordinal) {
@@ -171,6 +173,72 @@ void test_fully_banked_tage_avoids_table_replication_cost() {
     assert(predictor.two_read_storage_bits() == 1992);
 }
 
+void test_gselect_concatenates_pc_and_history() {
+    archsim::DirectionConfig config;
+    config.name = "TEST_GSELECT";
+    config.family = archsim::DirectionFamily::Gselect;
+    config.base_entries = 256;
+    config.history_length = 4;
+    archsim::DirectionPredictor predictor(config);
+    const auto pc = archsim::kIromBase + 0x3cu;
+    const auto first = predictor.observe(branch(1, true, pc));
+    const auto second = predictor.observe(branch(2, false, pc));
+    assert(first.base_index == 0xf0u);
+    assert(second.base_index == 0xf1u);
+}
+
+void test_base_only_tage_access_does_not_allocate_tagged_entries() {
+    archsim::DirectionConfig config;
+    config.name = "TEST_TAGE_BASE_ONLY";
+    config.family = archsim::DirectionFamily::Tage;
+    config.base_entries = 16;
+    config.tagged_tables = {{4, 1, 4}, {4, 3, 4}};
+    archsim::DirectionPredictor predictor(config);
+    for (std::uint64_t ordinal = 0; ordinal < 200; ++ordinal) {
+        const auto prediction = predictor.observe(
+            branch(ordinal, (ordinal & 1u) == 0u), false);
+        assert(!prediction.tagged_accessed);
+        assert(prediction.final_source == -1);
+    }
+    assert(predictor.stats().branches == 200u);
+    assert(predictor.stats().allocations == 0u);
+    assert(predictor.stats().tagged_provider[0] == 0u);
+    assert(predictor.stats().tagged_provider[1] == 0u);
+}
+
+void test_tagged_only_preserves_external_base_on_miss() {
+    archsim::DirectionConfig config;
+    config.name = "TEST_TAGGED_ONLY";
+    config.family = archsim::DirectionFamily::Tage;
+    config.base_entries = 16;
+    config.history_length = 0;
+    config.tagged_tables = {{4, 0, 4}, {4, 0, 5}};
+    config.external_base_prediction = true;
+    config.use_alternate_on_weak_new = false;
+    archsim::DirectionPredictor predictor(config);
+
+    const auto miss = predictor.observe(branch(1, true), true, true, false);
+    assert(miss.provider == -1);
+    assert(miss.final_source == -1);
+    assert(!miss.final_taken);
+    assert(predictor.stats().allocations == 1u);
+
+    const auto provider = predictor.observe(branch(2, true), true, true, false);
+    assert(provider.provider >= 0);
+    assert(provider.final_source >= 0);
+    assert(provider.final_taken);
+
+    const auto other_pc = predictor.observe(
+        branch(3, true, archsim::kIromBase + 4u), true, true, true);
+    assert(other_pc.provider == -1);
+    assert(other_pc.final_source == -1);
+    assert(other_pc.final_taken);
+
+    // 4/5-bit tags + signed counter/useful/valid.  There is
+    // deliberately no 16-entry bimodal table in the physical accounting.
+    assert(predictor.logical_storage_bits() == 76u);
+}
+
 }  // namespace
 
 int main() {
@@ -182,5 +250,8 @@ int main() {
     test_pc2_banked_low_base_is_prediction_equivalent();
     test_folded_pc_separates_low_pc_alias();
     test_fully_banked_tage_avoids_table_replication_cost();
+    test_gselect_concatenates_pc_and_history();
+    test_base_only_tage_access_does_not_allocate_tagged_entries();
+    test_tagged_only_preserves_external_base_on_miss();
     std::cout << "direction predictor tests passed\n";
 }

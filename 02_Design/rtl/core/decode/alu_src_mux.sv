@@ -1,6 +1,6 @@
 // ============================================================
 // Module: alu_src_mux
-// Description: ALU 两个operand的选择逻辑
+// Description: ALU operand selection; ID 阶段选择两个操作数，随后由 ID/EX 寄存。
 // Domain: decode and issue.
 // ============================================================
 

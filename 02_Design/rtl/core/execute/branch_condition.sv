@@ -13,7 +13,9 @@ module branch_condition (
 
     // Equality is independent of ordering.  Keep BEQ/BNE off the subtract
     // carry chain and make the reduction tree explicit: each first-level
-    // group fits one LUT6, followed by one six-input OR.
+    // group fits one LUT6, followed by one six-input OR.  The keep attributes
+    // prevent the groups from being absorbed serially into the predictor
+    // update enable logic.
     wire [31:0] mismatch_bits = rs1_data ^ rs2_data;
     (* keep = "true" *) wire neq_group0 = |mismatch_bits[ 5: 0];
     (* keep = "true" *) wire neq_group1 = |mismatch_bits[11: 6];

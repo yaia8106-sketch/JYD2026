@@ -51,11 +51,15 @@ module mem_interface (
     //  Load side: parallel byte extraction + sign/zero extension
     // ================================================================
 
-    wire load_byte_signed   = load_en & (load_mem_size == 2'b00) & ~load_unsigned;
-    wire load_byte_unsigned = load_en & (load_mem_size == 2'b00) &  load_unsigned;
-    wire load_half_signed   = load_en & (load_mem_size == 2'b01) & ~load_unsigned;
-    wire load_half_unsigned = load_en & (load_mem_size == 2'b01) &  load_unsigned;
-    wire load_word          = load_en & (load_mem_size == 2'b10);
+    // Load validity is deliberately kept out of this wide payload path.  The
+    // MEM/WB registers observe load_data_out only when mem_load_valid accepts
+    // a completed load, so an inactive cycle may carry an arbitrary formatted
+    // candidate.  This removes late LSU-valid control from all 32 data bits.
+    wire load_byte_signed   = (load_mem_size == 2'b00) & ~load_unsigned;
+    wire load_byte_unsigned = (load_mem_size == 2'b00) &  load_unsigned;
+    wire load_half_signed   = (load_mem_size == 2'b01) & ~load_unsigned;
+    wire load_half_unsigned = (load_mem_size == 2'b01) &  load_unsigned;
+    wire load_word          = (load_mem_size == 2'b10);
 
     function automatic logic [31:0] format_load_candidate(
         input logic [31:0] shifted,

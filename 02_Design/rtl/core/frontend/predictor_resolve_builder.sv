@@ -1,7 +1,9 @@
 // ============================================================
 // Module: predictor_resolve_builder
-// Description: 将EX计算出的update信息封装进结构体
+// Description: Pure combinational builder that packages EX resolve/update
+//              information into predictor structures; 将 EX 更新信息封装成结构体。
 // Domain: frontend.
+// Update arbitration and architectural state remain in predictor_update_ctrl.
 // ============================================================
 
 module predictor_resolve_builder

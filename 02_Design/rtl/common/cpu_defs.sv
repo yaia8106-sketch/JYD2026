@@ -54,13 +54,54 @@ package cpu_defs;
     localparam logic [2:0] M_OP_REM    = 3'b110;
     localparam logic [2:0] M_OP_REMU   = 3'b111;
 
+    // ---- RV32 bit-manipulation execution operations ----
+    // Register/immediate forms with identical semantics share one operation.
+    // BM_NONE keeps ordinary RV32I/M instructions on the existing datapath.
+    typedef enum logic [5:0] {
+        BM_NONE,
+        BM_SH1ADD,
+        BM_SH2ADD,
+        BM_SH3ADD,
+        BM_ANDN,
+        BM_ORN,
+        BM_XNOR,
+        BM_CLZ,
+        BM_CTZ,
+        BM_CPOP,
+        BM_MAX,
+        BM_MAXU,
+        BM_MIN,
+        BM_MINU,
+        BM_SEXT_B,
+        BM_SEXT_H,
+        BM_ZEXT_H,
+        BM_ROL,
+        BM_ROR,
+        BM_ORC_B,
+        BM_REV8,
+        BM_CLMUL,
+        BM_CLMULR,
+        BM_CLMULH,
+        BM_BCLR,
+        BM_BEXT,
+        BM_BINV,
+        BM_BSET,
+        BM_PACK,
+        BM_PACKH,
+        BM_BREV8,
+        BM_ZIP,
+        BM_UNZIP,
+        BM_XPERM4,
+        BM_XPERM8
+    } bitmanip_op_t;
+
     // ---- Frontend / IF-ID payloads ----
     // Keep pipeline data grouped by function. Handshake and lane-valid signals
     // remain separate so pipeline control is explicit at every stage boundary.
     typedef struct packed {
-        logic        taken;
-        logic [31:0] target;
-        logic        source_abtb;
+        logic        taken; // 方向
+        logic [31:0] target; // 目标地址
+        logic        source_abtb; //是否来自于btb
         logic        stage1_branch_owned;
         logic        abtb_hit;
         logic        abtb_way;
@@ -107,15 +148,15 @@ package cpu_defs;
         // pair logic
         // some ins couldn't be issued with other instructions, so we need to force them to be issued alone.
         // for example, force_signle_slot0 means that the instruction in slot0 should be issued alone, and the instruction in slot1 should be issued as NOP ins.
-        logic force_single_slot0; // force_single_slot0=(jalr|system|fence|illegal|muldiv)
-        logic force_single_slot1; // force_single_slot1=(system|fence|illegal|muldiv)
+        logic force_single_slot0; // jalr/system/fence/illegal/non-base/DIV/REM
+        logic force_single_slot1; // system/fence/illegal/non-base/all RV32M
     } frontend_predecode_t;
 
     typedef struct packed {
         logic        valid;
         logic [31:0] pc;
         logic [31:0] inst;
-        // pred info
+        // Prediction metadata / 预测元数据
         logic        pred_taken;
         logic [31:0] pred_target;
         logic        pred_source_abtb;
@@ -123,10 +164,7 @@ package cpu_defs;
         logic [ 1:0] pred_cfi_type;
         logic [ 7:0] stage1_pht_index;
         logic [ 1:0] stage1_pht_counter;
-        // ins type
-        logic        is_jump;
-        logic        is_control;
-        logic        is_lsu;
+        // Decoded instruction class / 指令类型
         logic        is_branch;
         logic        is_jal;
         logic        is_jalr;
@@ -137,12 +175,15 @@ package cpu_defs;
         logic        is_load;
         logic        is_store;
         logic        is_alu_type;
-        // 寄存器调度情况
+        // Register scheduling metadata / 寄存器调度信息
         logic        writes_rd;
         logic        uses_rs1;
         logic        uses_rs2;
-        // 是否强制单发射
-        // force_single = is_system | is_fence | is_illegal | is_muldiv
+        logic        is_jump;
+        logic        is_control;
+        logic        is_lsu;
+        // Force single issue for classes unsupported by pairing.
+        // 对不支持配对的指令强制单发射。
         logic        force_single;
     } frontend_fq_entry_t;
 
@@ -186,6 +227,7 @@ package cpu_defs;
     typedef struct packed {
         logic       pred_taken;
         logic       force_single;
+        logic       is_muldiv;
         logic       is_alu_type;
         logic       is_lsu;
         logic       is_cfi;
@@ -358,6 +400,8 @@ package cpu_defs;
         logic          is_mret;
         logic          is_muldiv;
         logic [ 2:0]   muldiv_op;
+        logic          is_bitmanip;
+        bitmanip_op_t  bitmanip_op;
     } id_ex_slot0_t;
 
     typedef struct packed {
@@ -378,6 +422,7 @@ package cpu_defs;
         logic [ 4:0] rd;
         logic        reg_write_en;
         logic [ 1:0] wb_sel;
+        logic        is_mul;
         logic        mem_read_en;
         logic [ 1:0] mem_size;
         logic        mem_unsigned;

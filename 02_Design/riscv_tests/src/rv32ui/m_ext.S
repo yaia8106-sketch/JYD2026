@@ -241,6 +241,60 @@ RVTEST_CODE_BEGIN
     rem  t5, t3, t1
     CHECK_REG(66, t5, 0)
 
+    // Dependent MUL chains exercise result forwarding into the local DSP input
+    // registers on the ID/EX acceptance edge. Each younger instruction must
+    // receive the previous registered result through MEM forwarding before
+    // launching its own multiplier operation.
+    li   t0, 3
+    li   t1, 5
+    mul  t2, t0, t1
+    mul  t3, t2, t1
+    mul  t4, t3, t0
+    CHECK_REG(67, t4, 225)
+
+    // A MUL immediately following DIV must receive the completed DIV result
+    // and launch cleanly after the unit returns to idle.
+    li   t0, 100
+    li   t1, 7
+    div  t2, t0, t1
+    mul  t3, t2, t1
+    CHECK_REG(68, t3, 98)
+
+    // A variable shift in Slot 0 is the longest ordinary EX producer. The
+    // immediately dependent MUL waits for the registered MEM result instead of
+    // placing the complete shifter/forwarding cone in front of the DSP inputs.
+    li   t0, 3
+    li   t1, 4
+    .align 3
+    sll  t2, t0, t1
+    addi t6, x0, 0
+    mul  t3, t2, t1
+    CHECK_REG(69, t3, 192)
+
+    // Force a load-repaired ALU into Slot 1, followed immediately by a MUL.
+    // This verifies the Slot-1 EX RAW interlock and subsequent MEM forwarding.
+    la   t0, m_data
+    .align 3
+    lw   t1, 0(t0)
+    addi t6, x0, 0
+    addi t5, x0, 1
+    addi t2, t1, 4
+    mul  t3, t2, t1
+    CHECK_REG(72, t3, 117)
+
+    // Exercise the former full timing-critical chain with a variable shift. The
+    // younger MUL must interlock while the repaired Slot-1 result is in EX, then
+    // launch from that result's registered MEM forwarding candidate.
+    li   t5, 2
+    la   t0, m_data
+    .align 3
+    lw   t1, 0(t0)
+    addi t6, x0, 0
+    addi t4, x0, 0
+    sll  t2, t1, t5
+    mul  t3, t2, t1
+    CHECK_REG(73, t3, 324)
+
     // M instruction in the slot1 fetch position must be buffered and then
     // executed as slot0, not as a Slot1 ALU instruction.
     li   t0, 11

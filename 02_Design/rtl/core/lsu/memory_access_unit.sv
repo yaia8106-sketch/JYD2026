@@ -74,6 +74,9 @@ module memory_access_unit (
     wire        ex_lsu_write = ex_use_s1_lsu ? ex_s1_mem_write_en : ex_mem_write_en;
     wire [ 1:0] ex_lsu_size = ex_use_s1_lsu ? ex_s1_mem_size : ex_mem_size;
     wire [ 3:0] ex_lsu_wea = ex_use_s1_lsu ? ex_s1_store_wea : ex_store_wea;
+    // Store data stays unaligned through the EX request and EX/MEM boundary.
+    // DCache captures it in its internal EX->MEM register and aligns it there;
+    // MMIO aligns the registered payload below.
     wire [31:0] ex_lsu_wdata = ex_use_s1_lsu ? ex_s1_store_data : ex_store_data;
     wire        ex_lsu_cacheable = ex_use_s1_lsu ? is_cacheable_s1 : is_cacheable;
     // Precompute load-byte candidates in EX; DCache registers the selected
@@ -93,6 +96,8 @@ module memory_access_unit (
     wire [31:0] mem_store_addr = mem_use_s1_store ? mem_s1_alu_result : mem_alu_result;
     wire [ 3:0] mem_selected_store_wea = mem_use_s1_store ? mem_s1_store_wea : mem_store_wea;
     wire [31:0] mem_selected_store_data = mem_use_s1_store ? mem_s1_store_data : mem_store_data;
+    wire [31:0] mem_selected_store_data_aligned =
+        mem_selected_store_data << {mem_store_addr[1:0], 3'b0};
     wire        mem_selected_store_cacheable = mem_use_s1_store ? mem_s1_is_cacheable : mem_is_cacheable;
     wire        mem_store_active = mem_s1_store_active | mem_s0_store_active;
     wire        mem_store_uncacheable = (mem_s0_store_active & ~mem_is_cacheable)
@@ -128,7 +133,7 @@ module memory_access_unit (
     assign mmio_addr = ex_lsu_addr;
     assign mmio_wr_addr = mem_store_addr;
     assign mmio_wea = (mem_store_active & ~mem_selected_store_cacheable) ? mem_selected_store_wea : 4'b0000;
-    assign mmio_wdata = mem_selected_store_data;
+    assign mmio_wdata = mem_selected_store_data_aligned;
 
     assign mem_load_data = mem_lsu_cacheable ? cache_rdata : mmio_load_data;
     assign mem_load_ready = mem_ready_go & (mem_mem_read_en | mem_s1_mem_read_en);
