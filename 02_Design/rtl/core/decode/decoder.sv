@@ -40,6 +40,46 @@ module decoder
     wire       funct7_5 = inst[30];
     wire       is_system = (opcode == OP_SYSTEM);
 
+    // Accept only encodings defined by RV32I/M plus the implemented Zicsr
+    // subset.  Unsupported encodings intentionally decode to DEC_INVALID so
+    // they can flow through the pipeline as side-effect-free instructions.
+    wire r_base_legal = (funct7 == 7'b0000000)
+                      | ((funct7 == 7'b0100000)
+                         & ((funct3 == 3'b000) | (funct3 == 3'b101)));
+    wire r_muldiv_legal = funct7 == MULDIV_FUNCT7;
+    wire r_type_legal = (opcode == OP_R_TYPE)
+                      & (r_base_legal | r_muldiv_legal);
+
+    wire i_nonshift_legal = (funct3 == 3'b000)
+                          | (funct3 == 3'b010)
+                          | (funct3 == 3'b011)
+                          | (funct3 == 3'b100)
+                          | (funct3 == 3'b110)
+                          | (funct3 == 3'b111);
+    wire i_slli_legal = (funct3 == 3'b001) & (funct7 == 7'b0000000);
+    wire i_right_shift_legal = (funct3 == 3'b101)
+                             & ((funct7 == 7'b0000000)
+                                | (funct7 == 7'b0100000));
+    wire i_alu_legal = (opcode == OP_I_ALU)
+                     & (i_nonshift_legal | i_slli_legal
+                        | i_right_shift_legal);
+
+    wire load_legal = (opcode == OP_LOAD)
+                    & ((funct3 == 3'b000) | (funct3 == 3'b001)
+                       | (funct3 == 3'b010) | (funct3 == 3'b100)
+                       | (funct3 == 3'b101));
+    wire store_legal = (opcode == OP_STORE)
+                     & ((funct3 == 3'b000) | (funct3 == 3'b001)
+                        | (funct3 == 3'b010));
+    wire branch_legal = (opcode == OP_BRANCH)
+                      & ((funct3 == 3'b000) | (funct3 == 3'b001)
+                         | (funct3 == 3'b100) | (funct3 == 3'b101)
+                         | (funct3 == 3'b110) | (funct3 == 3'b111));
+    wire jalr_legal = (opcode == OP_JALR) & (funct3 == 3'b000);
+    wire csr_funct3_legal = (funct3 == 3'b001) | (funct3 == 3'b010)
+                          | (funct3 == 3'b011) | (funct3 == 3'b101)
+                          | (funct3 == 3'b110) | (funct3 == 3'b111);
+
     // ================================================================
     // Packed control word (opcode-dependent, constant per instruction type)
     // ================================================================
@@ -73,15 +113,15 @@ module decoder
 
     always_comb begin
         case (opcode)
-            OP_R_TYPE: ctrl_word = DEC_R_TYPE;
-            OP_I_ALU:  ctrl_word = DEC_I_ALU;
-            OP_LOAD:   ctrl_word = DEC_LOAD;
-            OP_STORE:  ctrl_word = DEC_STORE;
-            OP_BRANCH: ctrl_word = DEC_BRANCH;
+            OP_R_TYPE: ctrl_word = r_type_legal ? DEC_R_TYPE : DEC_INVALID;
+            OP_I_ALU:  ctrl_word = i_alu_legal ? DEC_I_ALU : DEC_INVALID;
+            OP_LOAD:   ctrl_word = load_legal ? DEC_LOAD : DEC_INVALID;
+            OP_STORE:  ctrl_word = store_legal ? DEC_STORE : DEC_INVALID;
+            OP_BRANCH: ctrl_word = branch_legal ? DEC_BRANCH : DEC_INVALID;
             OP_LUI:    ctrl_word = DEC_LUI;
             OP_AUIPC:  ctrl_word = DEC_AUIPC;
             OP_JAL:    ctrl_word = DEC_JAL;
-            OP_JALR:   ctrl_word = DEC_JALR;
+            OP_JALR:   ctrl_word = jalr_legal ? DEC_JALR : DEC_INVALID;
             default:   ctrl_word = DEC_INVALID;
         endcase
     end
@@ -95,12 +135,12 @@ module decoder
 
     // SYSTEM with funct3!=0 is a CSR instruction. ECALL/MRET are decoded as
     // system redirects, not CSR writes, so they keep the normal control word.
-    assign is_csr       = is_system & (funct3 != 3'b000);
+    assign is_csr       = is_system & csr_funct3_legal;
     assign csr_uses_imm = is_csr & funct3[2];
     assign csr_uses_rs1 = is_csr & ~funct3[2];
     assign is_ecall     = (inst == 32'h0000_0073);
     assign is_mret      = (inst == 32'h3020_0073);
-    assign is_muldiv    = (opcode == OP_R_TYPE) & (funct7 == MULDIV_FUNCT7);
+    assign is_muldiv    = r_type_legal & r_muldiv_legal;
     // CSR read-modify-write instructions write the old CSR value to rd.
     assign reg_write_en = ctrl_reg_write_en | is_csr;
 
@@ -112,8 +152,9 @@ module decoder
     // R-type: always use funct7[5]
     // I-type ALU: funct7[5] only for shifts (funct3 == 3'b101, distinguishes SRLI/SRAI)
     // Others: ALU_ADD (for address calc, LUI passthrough, etc.)
-    wire is_alu_inst = (opcode == OP_R_TYPE) | (opcode == OP_I_ALU);
-    wire use_funct7  = (opcode == OP_R_TYPE) | ((opcode == OP_I_ALU) & (funct3 == 3'b101));
+    wire is_alu_inst = r_type_legal | i_alu_legal;
+    wire use_funct7  = r_type_legal
+                     | (i_alu_legal & (funct3 == 3'b101));
 
     assign alu_op = is_alu_inst ? {use_funct7 & funct7_5, funct3} : ALU_ADD;
 

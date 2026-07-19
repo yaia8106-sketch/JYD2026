@@ -33,7 +33,6 @@ module tb_forwarding;
 
     logic        ex_valid;
     logic        ex_reg_write;
-    logic        ex_is_bitmanip;
     logic        ex_is_muldiv;
     logic        ex_mem_read;
     logic [ 4:0] ex_rd;
@@ -133,7 +132,6 @@ module tb_forwarding;
         .rf_s1_rs2_data   (rf_s1_rs2_data),
         .ex_valid         (ex_valid),
         .ex_reg_write     (ex_reg_write),
-        .ex_is_bitmanip   (ex_is_bitmanip),
         .ex_is_muldiv     (ex_is_muldiv),
         .ex_mem_read      (ex_mem_read),
         .ex_rd            (ex_rd),
@@ -263,7 +261,6 @@ module tb_forwarding;
 
             ex_valid = 1'b0;
             ex_reg_write = 1'b0;
-            ex_is_bitmanip = 1'b0;
             ex_is_muldiv = 1'b0;
             ex_mem_read = 1'b0;
             ex_rd = 5'd0;
@@ -341,7 +338,7 @@ module tb_forwarding;
                     && (ex_s1_rd == src_addr))
                 reference_forward = (ex_s1_wb_sel == 2'b10)
                                   ? ex_s1_pc_plus_4 : ex_s1_alu_result;
-            else if (ex_valid && ex_reg_write && !ex_is_bitmanip
+            else if (ex_valid && ex_reg_write
                     && (ex_rd != 5'd0) && (ex_rd == src_addr))
                 reference_forward = (ex_wb_sel == 2'b10)
                                   ? ex_pc_plus_4 : ex_alu_result;
@@ -619,40 +616,6 @@ module tb_forwarding;
         check(!id_ready_go, "EX load should still stall branch consumer");
 
         clear_inputs();
-        id_rs1_addr = 5'd12;
-        id_rs1_used = 1'b1;
-        ex_valid = 1'b1;
-        ex_reg_write = 1'b1;
-        ex_is_bitmanip = 1'b1;
-        ex_rd = 5'd12;
-        ex_alu_result = 32'hb17b_17b1;
-        #1;
-        check(!id_ready_go, "completed EX B producer should stall S0 consumer");
-        check(id_rs1_data == rf_rs1_data,
-              "EX B result must not enter the forwarding payload mux");
-
-        clear_inputs();
-        id_s1_valid = 1'b1;
-        id_s1_rs2_addr = 5'd13;
-        id_s1_rs2_used = 1'b1;
-        ex_valid = 1'b1;
-        ex_reg_write = 1'b1;
-        ex_is_bitmanip = 1'b1;
-        ex_rd = 5'd13;
-        #1;
-        check(!id_ready_go, "completed EX B producer should stall S1 consumer");
-
-        clear_inputs();
-        id_rs1_addr = 5'd14;
-        id_rs1_used = 1'b1;
-        ex_valid = 1'b1;
-        ex_reg_write = 1'b1;
-        ex_is_bitmanip = 1'b1;
-        ex_rd = 5'd15;
-        #1;
-        check(id_ready_go, "unrelated EX B producer must not stall ID");
-
-        clear_inputs();
         id_s0_is_mul = 1'b1;
         id_rs1_addr = 5'd14;
         id_rs1_used = 1'b1;
@@ -855,7 +818,6 @@ module tb_forwarding;
 
             ex_valid = $urandom_range(0, 1);
             ex_reg_write = $urandom_range(0, 1);
-            ex_is_bitmanip = $urandom_range(0, 1);
             ex_mem_read = $urandom_range(0, 1);
             ex_rd = $urandom_range(0, 31);
             ex_wb_sel = $urandom_range(0, 2);

@@ -30,6 +30,13 @@ proc require_positive_integer {option value} {
     }
 }
 
+proc require_job_count {option value} {
+    require_positive_integer $option $value
+    if {$value > 5} {
+        candidate_fail "$option supports at most 5 parallel jobs, got '$value'"
+    }
+}
+
 proc require_positive_number {option value} {
     if {![string is double -strict $value] || $value <= 0.0} {
         candidate_fail "$option requires a positive number, got '$value'"
@@ -93,7 +100,7 @@ set input_dcp_arg ""
 set output_dir_arg ""
 set strategy ""
 set pass_number 2
-set jobs 8
+set jobs 5
 set frequency_mhz 200.0
 set bitstream_file_arg ""
 
@@ -130,7 +137,7 @@ while {$arg_index < [llength $argv]} {
             incr arg_index
             if {$arg_index >= [llength $argv]} { candidate_fail "missing value after --jobs" }
             set jobs [lindex $argv $arg_index]
-            require_positive_integer --jobs $jobs
+            require_job_count --jobs $jobs
         }
         --freq-mhz {
             incr arg_index

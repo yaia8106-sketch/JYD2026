@@ -30,8 +30,9 @@ module frontend_predecode
                                 & ~funct7_is_zero & ~r_is_base_alt
                                 & ~r_is_muldiv;
 
-    // SLLI/SRLI/SRAI are the only base shift-immediate encodings.  All B
-    // immediate operations share funct3[1:0]=01 and use another funct7 value.
+    // SLLI/SRLI/SRAI are the only supported shift-immediate encodings.  Any
+    // other encoding in these funct3 classes is kept single-issue so the real
+    // decoder can retire it as a side-effect-free unsupported instruction.
     wire is_shift_immediate = funct3[1:0] == 2'b01;
     wire i_is_base_shift = funct7_is_zero
                          | (funct7_is_alt_base & funct3_is_right_shift);

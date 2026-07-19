@@ -74,7 +74,7 @@ AI 执行约定：
 
 | 脚本 | 角色 | 何时运行 |
 |------|------|----------|
-| `performance/short/run_perf.sh` | 短 profiling 入口，输出严格 no-commit 损失栈、提交槽位、动态指令构成、DCache/RAW/MULDIV/Bitmanip/BP 和精确 pair blocker | 人工需要快速 profiling 或比较优化效果时 |
+| `performance/short/run_perf.sh` | 短 profiling 入口，输出严格 no-commit 损失栈、提交槽位、动态指令构成、DCache/RAW/MULDIV/BP 和精确 pair blocker | 人工需要快速 profiling 或比较优化效果时 |
 | `performance/long/run_coe_perf.sh` | 长 COE 入口，直接基于 `tb_riscv_tests` 跑完整 contest COE 程序，同时输出通用性能摘要和分支预测诊断报告 | 分析完整比赛程序性能、长程序行为或分支预测表现时 |
 
 规则：

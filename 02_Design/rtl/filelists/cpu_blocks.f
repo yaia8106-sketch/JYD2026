@@ -1,7 +1,6 @@
 ../common/cpu_defs.sv
 ../core/pipeline/if_id_reg.sv
 ../core/decode/decoder.sv
-../core/decode/bitmanip_decoder.sv
 ../core/decode/imm_gen.sv
 ../core/decode/regfile.sv
 ../core/decode/load_hazard_ctrl.sv
@@ -11,8 +10,6 @@
 ../core/pipeline/id_ex_reg.sv
 ../core/pipeline/id_ex_reg_s1.sv
 ../core/execute/alu.sv
-../core/execute/bitmanip_fast_unit.sv
-../core/execute/bitmanip_unit.sv
 ../core/execute/branch_condition.sv
 ../core/decode/id_stage_derive.sv
 ../core/execute/ex_stage_ctrl.sv

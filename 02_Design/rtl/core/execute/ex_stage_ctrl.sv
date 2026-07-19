@@ -26,8 +26,6 @@ module ex_stage_ctrl (
     input  logic [31:0] ex_csr_rdata,
     input  logic        ex_is_muldiv,
     input  logic [31:0] ex_muldiv_result,
-    input  logic        ex_is_bitmanip,
-    input  logic [31:0] ex_bitmanip_result,
     input  logic [31:0] alu_result,
 
     input  logic        ex_s1_valid,
@@ -108,12 +106,8 @@ module ex_stage_ctrl (
         ({32{ex_is_csr}}        & ex_csr_rdata)
       | ({32{ex_is_muldiv}}     & ex_muldiv_result)
       | ({32{~ex_uses_forward_special_result}} & alu_result);
-    // Bit-manipulation results are deliberately excluded from EX forwarding.
-    // A dependent ID instruction stalls for the B completion cycle and then
-    // consumes the registered result through the existing MEM path.
     assign ex_forward_result = ex_forward_selected_result;
-    assign ex_pipe_alu_result = ex_is_bitmanip ? ex_bitmanip_result
-                                               : ex_forward_selected_result;
+    assign ex_pipe_alu_result = ex_forward_selected_result;
 
     // Keep S0 and S1 targets physically separate. The issue rules make their
     // CFI paths mutually exclusive, but STA still times any shared mux output

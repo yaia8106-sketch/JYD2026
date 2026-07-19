@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 FULL_RUN_REASONS = {"stop_pc", "tohost_pass"}
 OK_FULL_STATUSES = {"PASS", "DONE"}
 
@@ -60,7 +60,6 @@ SUMMARY_COLUMNS = [
     "cpi_stack_redirect",
     "cpi_stack_dcache",
     "cpi_stack_muldiv",
-    "cpi_stack_bitmanip",
     "cpi_stack_raw_not_ready",
     "cpi_stack_raw_ready_no_fwd",
     "cpi_stack_frontend_empty",
@@ -70,7 +69,6 @@ SUMMARY_COLUMNS = [
     "loss_stack_redirect",
     "loss_stack_dcache",
     "loss_stack_muldiv",
-    "loss_stack_bitmanip",
     "loss_stack_raw_not_ready",
     "loss_stack_raw_ready_no_fwd",
     "loss_stack_frontend_empty",
@@ -83,7 +81,6 @@ SUMMARY_COLUMNS = [
     "loss_recovery_redirect",
     "loss_recovery_dcache",
     "loss_recovery_muldiv",
-    "loss_recovery_bitmanip",
     "primary_bottleneck",
     "primary_bottleneck_cycles",
     "primary_bottleneck_pct",
@@ -123,7 +120,6 @@ SUMMARY_COLUMNS = [
     "dcache_miss_stall",
     "mmio_hazard",
     "muldiv_wait",
-    "bitmanip_wait",
     "muldiv_issued_mul",
     "muldiv_issued_mulh",
     "muldiv_issued_mulhsu",
@@ -152,21 +148,6 @@ SUMMARY_COLUMNS = [
     "muldiv_latency_lat5_8",
     "muldiv_latency_lat9_16",
     "muldiv_latency_lat17plus",
-    "bitmanip_issued",
-    "bitmanip_fast",
-    "bitmanip_clmul",
-    "bitmanip_issue_classified",
-    "bitmanip_issue_mismatch",
-    "bitmanip_complete",
-    "bitmanip_abort",
-    "bitmanip_lat1",
-    "bitmanip_lat2",
-    "bitmanip_lat3_4",
-    "bitmanip_lat5_8",
-    "bitmanip_lat9_16",
-    "bitmanip_lat17plus",
-    "bitmanip_latency_total",
-    "bitmanip_latency_mismatch",
     "lsu_cache_load",
     "lsu_cache_store",
     "lsu_mmio_load",
@@ -374,7 +355,6 @@ SUMMARY_COLUMNS = [
     "mix_jalr",
     "mix_muldiv",
     "mix_system",
-    "mix_bitmanip",
     "mix_other",
     "mix_classified",
     "mix_mismatch",
@@ -400,7 +380,6 @@ SUMMARY_COLUMNS = [
     "raw_not_ready_cpki",
     "raw_ready_no_fwd_cpki",
     "muldiv_wait_cpki",
-    "bitmanip_wait_cpki",
     "load_use_src_ex",
     "load_use_src_mem_only",
     "load_use_src_mem_ready",
@@ -498,7 +477,6 @@ COMPARE_METRICS = [
     "cpi_stack_redirect",
     "cpi_stack_dcache",
     "cpi_stack_muldiv",
-    "cpi_stack_bitmanip",
     "cpi_stack_raw_not_ready",
     "cpi_stack_raw_ready_no_fwd",
     "cpi_stack_frontend_empty",
@@ -506,7 +484,6 @@ COMPARE_METRICS = [
     "loss_stack_redirect",
     "loss_stack_dcache",
     "loss_stack_muldiv",
-    "loss_stack_bitmanip",
     "loss_stack_raw_not_ready",
     "loss_stack_raw_ready_no_fwd",
     "loss_stack_frontend_empty",
@@ -514,7 +491,6 @@ COMPARE_METRICS = [
     "loss_recovery_redirect",
     "loss_recovery_dcache",
     "loss_recovery_muldiv",
-    "loss_recovery_bitmanip",
     "primary_bottleneck_cycles",
     "other_id_not_ready",
     "other_id_downstream",
@@ -558,15 +534,6 @@ COMPARE_METRICS = [
     "muldiv_latency_lat1",
     "muldiv_latency_lat2",
     "muldiv_latency_lat17plus",
-    "bitmanip_wait",
-    "bitmanip_wait_cpki",
-    "bitmanip_issued",
-    "bitmanip_fast",
-    "bitmanip_clmul",
-    "bitmanip_complete",
-    "bitmanip_abort",
-    "bitmanip_lat2",
-    "bitmanip_lat17plus",
     "pair_block_no_candidate",
     "pair_block_raw",
     "pair_block_both_lsu",
@@ -621,7 +588,6 @@ LOSS_CATEGORIES = [
     ("redirect", "loss_stack_redirect"),
     ("dcache", "loss_stack_dcache"),
     ("muldiv", "loss_stack_muldiv"),
-    ("bitmanip", "loss_stack_bitmanip"),
     ("raw_not_ready", "loss_stack_raw_not_ready"),
     ("raw_ready_no_fwd", "loss_stack_raw_ready_no_fwd"),
     ("frontend_empty", "loss_stack_frontend_empty"),
@@ -632,7 +598,6 @@ LEGACY_LOSS_CATEGORIES = [
     ("redirect_legacy_priority", "cpi_stack_redirect"),
     ("dcache_legacy_priority", "cpi_stack_dcache"),
     ("muldiv_legacy_priority", "cpi_stack_muldiv"),
-    ("bitmanip_legacy_priority", "cpi_stack_bitmanip"),
     ("raw_not_ready_legacy_priority", "cpi_stack_raw_not_ready"),
     ("raw_ready_no_fwd_legacy_priority", "cpi_stack_raw_ready_no_fwd"),
     ("frontend_empty_legacy_priority", "cpi_stack_frontend_empty"),
@@ -651,7 +616,6 @@ INT_PATTERNS = [
     ("dcache_miss_stall", r"^DCache miss:\s+(\d+)"),
     ("mmio_hazard", r"^MMIO hazard:\s+(\d+)"),
     ("muldiv_wait", r"^MUL/DIV wait:\s+(\d+)"),
-    ("bitmanip_wait", r"^Bitmanip wait:\s+(\d+)"),
     ("id_raw_stall", r"^ID RAW stall cycles:\s+(\d+)"),
     ("raw_not_ready", r"^Not-ready RAW cycles:\s+(\d+)"),
     ("raw_ready_no_fwd", r"^Ready-no-forward RAW cycles:\s+(\d+)"),
@@ -802,7 +766,6 @@ def parse_perf_payload(payload: str, metrics: dict[str, Any]) -> None:
         metrics["cpi_stack_redirect"] = values.get("redirect", 0)
         metrics["cpi_stack_dcache"] = values.get("dcache", 0)
         metrics["cpi_stack_muldiv"] = values.get("muldiv", 0)
-        metrics["cpi_stack_bitmanip"] = values.get("bitmanip", 0)
         metrics["cpi_stack_raw_not_ready"] = values.get("raw_not_ready", 0)
         metrics["cpi_stack_raw_ready_no_fwd"] = values.get("raw_ready_no_fwd", 0)
         metrics["cpi_stack_frontend_empty"] = values.get("frontend_empty", 0)
@@ -817,7 +780,6 @@ def parse_perf_payload(payload: str, metrics: dict[str, Any]) -> None:
             "redirect",
             "dcache",
             "muldiv",
-            "bitmanip",
             "raw_not_ready",
             "raw_ready_no_fwd",
             "frontend_empty",
@@ -832,8 +794,9 @@ def parse_perf_payload(payload: str, metrics: dict[str, Any]) -> None:
         return
 
     if payload.startswith("Loss recovery:"):
-        for key, value in parse_value_pairs(payload).items():
-            metrics[f"loss_recovery_{key}"] = value
+        values = parse_value_pairs(payload)
+        for key in ["redirect", "dcache", "muldiv"]:
+            metrics[f"loss_recovery_{key}"] = values.get(key, 0)
         return
 
     if payload.startswith("Accepted mix:"):
@@ -850,7 +813,6 @@ def parse_perf_payload(payload: str, metrics: dict[str, Any]) -> None:
             "jalr",
             "muldiv",
             "system",
-            "bitmanip",
             "other",
             "classified",
             "mismatch",
@@ -977,11 +939,6 @@ def parse_perf_payload(payload: str, metrics: dict[str, Any]) -> None:
     if payload.startswith("MULDIV latency:"):
         for key, value in parse_value_pairs(payload).items():
             metrics[f"muldiv_latency_{key}"] = value
-        return
-
-    if payload.startswith("Bitmanip profile:"):
-        for key, value in parse_value_pairs(payload).items():
-            metrics[f"bitmanip_{key}"] = value
         return
 
     if payload.startswith("DCache stall state:"):
@@ -1368,9 +1325,6 @@ def finalize_metrics(
         metrics["muldiv_wait_cpki"] = per_kilo(
             float(metrics.get("muldiv_wait", 0)), float(total_insts)
         )
-        metrics["bitmanip_wait_cpki"] = per_kilo(
-            float(metrics.get("bitmanip_wait", 0)), float(total_insts)
-        )
     if metrics.get("dc_misses"):
         metrics["dc_stall_cycles_per_miss"] = (
             float(metrics.get("dcache_miss_stall", 0))
@@ -1472,7 +1426,7 @@ def finalize_metrics(
     ]:
         if key in metrics and int(metrics[key]) != 0:
             consistency_errors.append(error)
-    for resource in ["redirect", "dcache", "muldiv", "bitmanip"]:
+    for resource in ["redirect", "dcache", "muldiv"]:
         recovery_key = f"loss_recovery_{resource}"
         category_key = f"loss_stack_{resource}"
         if recovery_key in metrics and category_key in metrics:
@@ -1574,45 +1528,6 @@ def finalize_metrics(
     if "muldiv_wait_mismatch" in metrics:
         if int(metrics["muldiv_wait_mismatch"]) != 0:
             consistency_errors.append("muldiv_wait_ops_mismatch_nonzero")
-    if all(
-        key in metrics
-        for key in ["bitmanip_issued", "bitmanip_fast", "bitmanip_clmul"]
-    ):
-        if int(metrics["bitmanip_issued"]) != int(
-            metrics["bitmanip_fast"]
-        ) + int(metrics["bitmanip_clmul"]):
-            consistency_errors.append("bitmanip_issue_class_total_mismatch")
-    if "bitmanip_issue_mismatch" in metrics:
-        if int(metrics["bitmanip_issue_mismatch"]) != 0:
-            consistency_errors.append("bitmanip_issue_mismatch_nonzero")
-    if all(
-        key in metrics
-        for key in [
-            "bitmanip_complete",
-            "bitmanip_lat1",
-            "bitmanip_lat2",
-            "bitmanip_lat3_4",
-            "bitmanip_lat5_8",
-            "bitmanip_lat9_16",
-            "bitmanip_lat17plus",
-        ]
-    ):
-        latency_total = sum(
-            int(metrics[key])
-            for key in [
-                "bitmanip_lat1",
-                "bitmanip_lat2",
-                "bitmanip_lat3_4",
-                "bitmanip_lat5_8",
-                "bitmanip_lat9_16",
-                "bitmanip_lat17plus",
-            ]
-        )
-        if int(metrics["bitmanip_complete"]) != latency_total:
-            consistency_errors.append("bitmanip_latency_total_mismatch")
-    if "bitmanip_latency_mismatch" in metrics:
-        if int(metrics["bitmanip_latency_mismatch"]) != 0:
-            consistency_errors.append("bitmanip_latency_mismatch_nonzero")
     if "pair_block_original" in metrics and "s1_blocked" in metrics:
         if int(metrics["pair_block_original"]) != int(metrics["s1_blocked"]):
             consistency_errors.append("pair_block_original_ne_s1_blocked")
@@ -1758,7 +1673,7 @@ def write_findings(
     lines = [
         "# Performance Findings",
         "",
-        "The ranking uses the strict no-commit loss stack when schema 7 data is available. "
+        "The ranking uses the strict no-commit loss stack when schema 8 data is available. "
         "Legacy logs are explicitly marked because their priority CPI stack may include productive cycles.",
         "",
         "## Priority overview",
@@ -1802,7 +1717,7 @@ def write_findings(
         )
         lines.append(f"- `{test}`: {rendered}.")
 
-    recovery_resources = ["redirect", "dcache", "muldiv", "bitmanip"]
+    recovery_resources = ["redirect", "dcache", "muldiv"]
     if any(
         int(row.get(f"loss_recovery_{resource}", 0) or 0) > 0
         for row in rows
@@ -1875,13 +1790,13 @@ def write_findings(
             "",
             "Counts are sampled once at EX-to-MEM acceptance; the commit delta exposes the small pipeline tail at simulation end.",
             "",
-            "| Test | Accepted | ALU | Load | Store | Branch | JAL/JALR | MULDIV | System | Bitmanip | Commit delta |",
+            "| Test | Accepted | ALU | Load | Store | Branch | JAL/JALR | MULDIV | System | Other | Commit delta |",
             "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
         ]
         for row in mix_rows:
             lines.append(
                 "| {test} | {total} | {alu} | {load} | {store} | {branch} | {jump} | "
-                "{muldiv} | {system} | {bitmanip} | {delta} |".format(
+                "{muldiv} | {system} | {other} | {delta} |".format(
                     test=row.get("test", ""),
                     total=row.get("mix_total", 0),
                     alu=row.get("mix_alu", 0),
@@ -1891,7 +1806,7 @@ def write_findings(
                     jump=int(row.get("mix_jal", 0)) + int(row.get("mix_jalr", 0)),
                     muldiv=row.get("mix_muldiv", 0),
                     system=row.get("mix_system", 0),
-                    bitmanip=row.get("mix_bitmanip", 0),
+                    other=row.get("mix_other", 0),
                     delta=row.get("mix_commit_delta", 0),
                 )
             )

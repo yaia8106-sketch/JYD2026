@@ -72,7 +72,7 @@ bash bin/install-command-links.sh
 `hotspots.csv` 和 `performance_findings.md`。提供实现后的时钟周期时，报告还会计算
 `cycles * clock_period` 运行时间估计；没有时钟数据时只比较 cycles。`run-perf` /
 `coe-perf` 会运行完整 contest COE 程序集合，并从同一次仿真额外生成分支预测诊断
-报告。短测原始数据还包含 MULDIV/Bitmanip 多周期资源的等待和延迟分布。这个入口很长，不作为 AI 默认验证命令。分支微基准使用
+报告。短测原始数据还包含 MULDIV 多周期资源的等待和延迟分布。这个入口很长，不作为 AI 默认验证命令。分支微基准使用
 `short-perf --set branch_diag`。
 
 实现后 timing 报告：

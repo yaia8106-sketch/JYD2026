@@ -54,47 +54,6 @@ package cpu_defs;
     localparam logic [2:0] M_OP_REM    = 3'b110;
     localparam logic [2:0] M_OP_REMU   = 3'b111;
 
-    // ---- RV32 bit-manipulation execution operations ----
-    // Register/immediate forms with identical semantics share one operation.
-    // BM_NONE keeps ordinary RV32I/M instructions on the existing datapath.
-    typedef enum logic [5:0] {
-        BM_NONE,
-        BM_SH1ADD,
-        BM_SH2ADD,
-        BM_SH3ADD,
-        BM_ANDN,
-        BM_ORN,
-        BM_XNOR,
-        BM_CLZ,
-        BM_CTZ,
-        BM_CPOP,
-        BM_MAX,
-        BM_MAXU,
-        BM_MIN,
-        BM_MINU,
-        BM_SEXT_B,
-        BM_SEXT_H,
-        BM_ZEXT_H,
-        BM_ROL,
-        BM_ROR,
-        BM_ORC_B,
-        BM_REV8,
-        BM_CLMUL,
-        BM_CLMULR,
-        BM_CLMULH,
-        BM_BCLR,
-        BM_BEXT,
-        BM_BINV,
-        BM_BSET,
-        BM_PACK,
-        BM_PACKH,
-        BM_BREV8,
-        BM_ZIP,
-        BM_UNZIP,
-        BM_XPERM4,
-        BM_XPERM8
-    } bitmanip_op_t;
-
     // ---- Frontend / IF-ID payloads ----
     // Keep pipeline data grouped by function. Handshake and lane-valid signals
     // remain separate so pipeline control is explicit at every stage boundary.
@@ -400,8 +359,6 @@ package cpu_defs;
         logic          is_mret;
         logic          is_muldiv;
         logic [ 2:0]   muldiv_op;
-        logic          is_bitmanip;
-        bitmanip_op_t  bitmanip_op;
     } id_ex_slot0_t;
 
     typedef struct packed {

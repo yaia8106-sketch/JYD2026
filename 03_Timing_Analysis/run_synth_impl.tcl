@@ -18,10 +18,10 @@
 # Batch usage:
 #   vivado -mode batch \
 #     -source 03_Timing_Analysis/run_synth_impl.tcl \
-#     -tclargs --jobs 16 --extra-physopt 1
+#     -tclargs --jobs 5 --extra-physopt 1
 #
 # Useful options:
-#   --jobs N             Parallel jobs for project runs (default: 16)
+#   --jobs N             Parallel jobs for project runs, 1..5 (default: 5)
 #   --freq-mhz F         CPU clock frequency in MHz (default: 200)
 #   --extra-physopt N    Extra same-process post-route Explore passes after
 #                        pass 1 (default: 0). build.sh deliberately keeps this
@@ -84,6 +84,13 @@ proc require_positive_integer {option value} {
     }
 }
 
+proc require_job_count {option value} {
+    require_positive_integer $option $value
+    if {$value > 5} {
+        flow_fail "$option supports at most 5 parallel jobs, got '$value'"
+    }
+}
+
 proc require_positive_number {option value} {
     if {![string is double -strict $value] || $value <= 0.0} {
         flow_fail "$option requires a positive number, got '$value'"
@@ -104,6 +111,48 @@ proc require_complete_run {run_name} {
     puts "  $run_name status: $status ($progress)"
     if {![regexp -nocase {complete} $status] && $progress ne "100%"} {
         flow_fail "run '$run_name' did not complete successfully"
+    }
+}
+
+# A killed Vivado process can leave a project run marked Running or Queued even
+# though no process still owns it.  A later launch then waits forever on that
+# stale dependency.  The Bash orchestrator serializes access to this project,
+# so an active state observed by a new invocation is safe to stop and reset.
+proc run_status_is_active {status} {
+    return [regexp -nocase {running|queued} $status]
+}
+
+proc reset_run_strict {run_name} {
+    set run_obj [get_runs -quiet $run_name]
+    if {[llength $run_obj] == 0} {
+        flow_fail "Vivado run '$run_name' does not exist"
+    }
+
+    set status [get_property STATUS $run_obj]
+    puts "  $run_name before reset: $status"
+    if {[run_status_is_active $status]} {
+        puts "  resetting stale active state for $run_name"
+    }
+
+    # reset_runs also terminates an active run.  In particular, it repairs the
+    # stale .vivado.begin.rst-without-end-marker state left by a killed process.
+    if {[catch {reset_runs $run_obj} reset_error]} {
+        flow_fail "failed to reset run '$run_name' from status '$status': $reset_error"
+    }
+    puts "  $run_name after reset : [get_property STATUS $run_obj]"
+}
+
+proc recover_stale_run {run_name} {
+    set run_obj [get_runs -quiet $run_name]
+    if {[llength $run_obj] == 0} {
+        flow_fail "Vivado run '$run_name' does not exist"
+    }
+    set status [get_property STATUS $run_obj]
+    if {[run_status_is_active $status]} {
+        puts "  recovering stale $run_name state: $status"
+        reset_run_strict $run_name
+    } else {
+        puts "  $run_name state is reusable: $status"
     }
 }
 
@@ -209,7 +258,7 @@ proc total_negative_slack {analysis_type} {
 
 # ---- Command-line options -------------------------------------------------
 
-set jobs 16
+set jobs 5
 set frequency_mhz 200.0
 set extra_physopt_passes 0
 set write_bitstream_enabled 0
@@ -234,7 +283,7 @@ while {$arg_index < [llength $argv]} {
             incr arg_index
             if {$arg_index >= [llength $argv]} { flow_fail "missing value after --jobs" }
             set jobs [lindex $argv $arg_index]
-            require_positive_integer --jobs $jobs
+            require_job_count --jobs $jobs
         }
         --freq-mhz {
             incr arg_index
@@ -386,6 +435,8 @@ if {![file exists $stage_timing_script]} {
     flow_fail "stage timing script not found: $stage_timing_script"
 }
 
+set_param general.maxThreads $jobs
+
 puts "================================================================"
 puts " CPU synthesis and timing-oriented implementation"
 puts "================================================================"
@@ -495,9 +546,6 @@ if {$frequency_change_required} {
     set_property CONFIG.CLKOUT2_REQUESTED_OUT_FREQ $frequency_mhz $pll_ip
     reset_target all $pll_ip
     generate_target all $pll_ip
-    if {[llength [get_runs -quiet pll_synth_1]] > 0} {
-        catch {reset_run pll_synth_1}
-    }
     puts "  regenerated pll output products"
 } else {
     puts "  pll clk_out2 already requests $frequency_mhz MHz"
@@ -522,11 +570,6 @@ if {$coe_dir ne ""} {
     set memory_ips [concat $irom64_ip $dram_ip]
     reset_target all $memory_ips
     generate_target all $memory_ips
-    foreach ip_run_name {IROM64_synth_1 DRAM4MyOwn_synth_1} {
-        if {[llength [get_runs -quiet $ip_run_name]] > 0} {
-            catch {reset_run $ip_run_name}
-        }
-    }
     puts "  IROM64 CONFIG.Coe_File     = [get_property CONFIG.Coe_File $irom64_ip]"
     puts "  DRAM4MyOwn CONFIG.Coe_File = [get_property CONFIG.Coe_File $dram_ip]"
 }
@@ -558,9 +601,23 @@ puts "  postroute physopt: [get_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.ARGS.D
 
 if {$reset_runs_enabled} {
     puts ""
-    puts "Resetting impl_1 and synth_1"
-    catch {reset_run impl_1}
-    reset_run synth_1
+    puts "Resetting project runs and OOC dependencies"
+    # Stop/reset parent runs first so a queued parent cannot keep an OOC
+    # dependency alive.  Resetting every OOC run also guarantees that newly
+    # generated PLL/BRAM products are picked up by top-level synthesis.
+    foreach run_name {
+        impl_1 synth_1 pll_synth_1 IROM64_synth_1 DRAM4MyOwn_synth_1
+    } {
+        reset_run_strict $run_name
+    }
+} else {
+    puts ""
+    puts "Checking resumed project runs for stale active states"
+    foreach run_name {
+        impl_1 synth_1 pll_synth_1 IROM64_synth_1 DRAM4MyOwn_synth_1
+    } {
+        recover_stale_run $run_name
+    }
 }
 
 update_compile_order -fileset sources_1
@@ -582,7 +639,9 @@ if {!$reset_runs_enabled && [regexp -nocase {synth_design Complete} $synth_statu
 } else {
     if {!$reset_runs_enabled && [regexp -nocase {error|fail} $synth_status]} {
         puts "  Resetting failed synthesis step before retry"
-        catch {reset_run synth_1 -prev_step}
+        if {[catch {reset_runs synth_1 -prev_step} reset_error]} {
+            flow_fail "failed to reset the previous synth_1 step: $reset_error"
+        }
     }
     launch_runs synth_1 -jobs $jobs
     wait_on_run synth_1
@@ -598,7 +657,9 @@ if {!$reset_runs_enabled && $existing_routed_checkpoint ne ""} {
     if {!$reset_runs_enabled && \
         [regexp -nocase {error|fail} [run_status impl_1]]} {
         puts "  Resetting only the failed implementation step before retry"
-        catch {reset_run impl_1 -prev_step}
+        if {[catch {reset_runs impl_1 -prev_step} reset_error]} {
+            flow_fail "failed to reset the previous impl_1 step: $reset_error"
+        }
     }
     launch_runs impl_1 -to_step route_design -jobs $jobs
     wait_on_run impl_1

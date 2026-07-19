@@ -42,8 +42,6 @@ module id_ex_payload_builder
     input  logic               s0_is_mret,
     input  logic               s0_is_muldiv,
     input  logic [ 2:0]        s0_muldiv_op,
-    input  logic               s0_is_bitmanip,
-    input  bitmanip_op_t       s0_bitmanip_op,
 
     input  logic [31:0]        s1_pc,
     input  logic [31:0]        s1_inst,
@@ -121,8 +119,6 @@ module id_ex_payload_builder
         slot0_payload.is_mret = s0_is_mret;
         slot0_payload.is_muldiv = s0_is_muldiv;
         slot0_payload.muldiv_op = s0_muldiv_op;
-        slot0_payload.is_bitmanip = s0_is_bitmanip;
-        slot0_payload.bitmanip_op = s0_bitmanip_op;
 
         slot1_payload = '0;
         slot1_payload.common.pc = s1_pc;

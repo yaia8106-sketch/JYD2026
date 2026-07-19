@@ -13,13 +13,13 @@
 # invalidating pass 1 or the other candidate, and is retried on the next call.
 #
 # Usage:
-#   ./build [--fresh] <parallel jobs> <COE configuration> [frequency MHz]
+#   03_Timing_Analysis/build.sh [--fresh] <parallel jobs> <COE configuration> [frequency MHz]
 # Example:
-#   ./build 16 withM
-#   ./build 16 withM 180
+#   03_Timing_Analysis/build.sh 5 withM
+#   03_Timing_Analysis/build.sh 5 withM 180
 #
 # COE configuration:
-#   current | src0 | src1 | src2 | withM | withoutM | new
+#   current | src0 | src1 | src2 | withM | withoutM
 # ================================================================
 set -euo pipefail
 
@@ -28,23 +28,24 @@ SCRIPT_DIR="${ROOT}/03_Timing_Analysis"
 ROUTE_TCL="${SCRIPT_DIR}/run_synth_impl.tcl"
 PHYSOPT_TCL="${SCRIPT_DIR}/run_physopt_candidate.tcl"
 FLOW_FINGERPRINT_SCHEMA="restartable-timing-flow-v1"
+MAX_PARALLEL_JOBS=5
 
 usage() {
     printf '%s\n' \
         'Usage:' \
-        '  ./build [--fresh] <parallel jobs> <COE configuration> [frequency MHz]' \
+        '  03_Timing_Analysis/build.sh [--fresh] <parallel jobs (1..5)> <COE configuration> [frequency MHz]' \
         '' \
         'Example:' \
-        '  ./build 16 withM' \
-        '  ./build 16 withM 180' \
-        '  ./build --fresh 16 withM 180' \
+        '  03_Timing_Analysis/build.sh 5 withM' \
+        '  03_Timing_Analysis/build.sh 5 withM 180' \
+        '  03_Timing_Analysis/build.sh --fresh 5 withM 180' \
         '' \
         'Frequency:' \
         '  Optional positive MHz value; default: 200' \
         '  Both 180 and 180MHz forms are accepted.' \
         '' \
         'COE configuration:' \
-        '  current | src0 | src1 | src2 | withM | withoutM | new' \
+        '  current | src0 | src1 | src2 | withM | withoutM' \
         '' \
         'Recovery:' \
         '  An incomplete run is resumed only when its complete input fingerprint' \
@@ -126,6 +127,12 @@ CLOCK_PERIOD_NS="$(awk -v frequency="${FREQUENCY_MHZ}" \
     'BEGIN { printf "%.9f", 1000.0 / frequency }')"
 
 require_positive_integer "parallel jobs" "${JOBS}"
+JOBS="$((10#${JOBS}))"
+if (( JOBS > MAX_PARALLEL_JOBS )); then
+    echo "ERROR: parallel jobs must not exceed ${MAX_PARALLEL_JOBS}, got '${JOBS}'." >&2
+    exit 2
+fi
+VIVADO_CPU_LIST="0-$((JOBS - 1))"
 
 case "${COE_NAME}" in
     current|src0|src1|src2)
@@ -137,18 +144,9 @@ case "${COE_NAME}" in
     withoutM)
         COE_SOURCE_NAME="new_without_Mext"
         ;;
-    new)
-        COE_SOURCE_NAME="new"
-        NEW_COE_PREPARER="${ROOT}/02_Design/coe/prepare_new_coe.py"
-        if [[ ! -f "${NEW_COE_PREPARER}" ]]; then
-            echo "ERROR: contest COE converter not found: ${NEW_COE_PREPARER}" >&2
-            exit 2
-        fi
-        python3 "${NEW_COE_PREPARER}"
-        ;;
     *)
         echo "ERROR: unknown COE configuration '${COE_NAME}'." >&2
-        echo "Valid configurations: current | src0 | src1 | src2 | withM | withoutM | new" >&2
+        echo "Valid configurations: current | src0 | src1 | src2 | withM | withoutM" >&2
         exit 2
         ;;
 esac
@@ -171,6 +169,10 @@ if ! command -v vivado >/dev/null 2>&1; then
 fi
 if ! command -v vivado >/dev/null 2>&1; then
     echo "ERROR: Vivado was not found. Source the Vivado settings script first." >&2
+    exit 127
+fi
+if ! command -v taskset >/dev/null 2>&1; then
+    echo "ERROR: taskset is required to enforce the ${JOBS}-CPU build limit." >&2
     exit 127
 fi
 
@@ -225,7 +227,8 @@ run_vivado_stage() {
     echo "    output: ${output_dir}"
     echo "    log   : ${output_dir}/vivado.log"
 
-    if (cd "${output_dir}" && vivado -mode batch -notrace \
+    if (cd "${output_dir}" && taskset --cpu-list "${VIVADO_CPU_LIST}" \
+            vivado -mode batch -notrace \
             -log "${output_dir}/vivado.log" \
             -journal "${output_dir}/vivado.jou" \
             -tempDir "${output_dir}/tmp" \
@@ -582,6 +585,7 @@ echo "Recovery      : ${RECOVERY_LABEL}"
 echo "Fingerprint   : ${BUILD_FINGERPRINT}"
 echo "COE           : ${COE_NAME} (${COE_DIR})"
 echo "Jobs          : ${JOBS}"
+echo "CPU affinity  : ${VIVADO_CPU_LIST} (${JOBS} logical CPUs maximum)"
 echo "Frequency     : ${FREQUENCY_MHZ} MHz (${CLOCK_PERIOD_NS} ns)"
 echo "Route DCP     : ${ROUTED_DCP}"
 echo "Pass 1        : Explore (mandatory)"

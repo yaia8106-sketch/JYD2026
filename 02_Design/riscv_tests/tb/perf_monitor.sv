@@ -33,7 +33,6 @@ module perf_monitor (
     longint unsigned cnt_cpi_redirect;
     longint unsigned cnt_cpi_dcache;
     longint unsigned cnt_cpi_muldiv;
-    longint unsigned cnt_cpi_bitmanip;
     longint unsigned cnt_cpi_raw_not_ready;
     longint unsigned cnt_cpi_raw_ready_no_fwd;
     longint unsigned cnt_cpi_frontend_empty;
@@ -48,7 +47,6 @@ module perf_monitor (
     longint unsigned cnt_loss_redirect;
     longint unsigned cnt_loss_dcache;
     longint unsigned cnt_loss_muldiv;
-    longint unsigned cnt_loss_bitmanip;
     longint unsigned cnt_loss_raw_not_ready;
     longint unsigned cnt_loss_raw_ready_no_fwd;
     longint unsigned cnt_loss_frontend_empty;
@@ -56,10 +54,8 @@ module perf_monitor (
     longint unsigned cnt_loss_redirect_recovery;
     longint unsigned cnt_loss_dcache_recovery;
     longint unsigned cnt_loss_muldiv_recovery;
-    longint unsigned cnt_loss_bitmanip_recovery;
     logic            dcache_loss_recovery_pending;
     logic            muldiv_loss_tail_pending;
-    logic            bitmanip_loss_tail_pending;
 
     // -- Other no-commit breakdown, sampled only inside cnt_cpi_other_no_commit --
     longint unsigned cnt_other_id_not_ready;
@@ -105,7 +101,6 @@ module perf_monitor (
     longint unsigned cnt_mmio_stall;      // ~ex_ready_go & ex_valid
     longint unsigned cnt_muldiv_stall;    // RV32M multi-cycle EX wait
     longint unsigned cnt_mul_launch_ex_wait; // true EX RAW before MUL prestart
-    longint unsigned cnt_bitmanip_stall;  // Bitmanip multi-cycle EX wait
 
     // -- DCache / LSU breakdown --
     longint unsigned cnt_lsu_cache_load;  // completed cacheable loads
@@ -191,22 +186,6 @@ module perf_monitor (
     logic [7:0]      muldiv_profile_latency;
     integer          muldiv_op_i;
 
-    // Bitmanip requests, wait cycles, and accepted-request latency.  Fast and
-    // CLMUL classes have materially different execution costs.
-    longint unsigned cnt_bitmanip_issue;
-    longint unsigned cnt_bitmanip_issue_fast;
-    longint unsigned cnt_bitmanip_issue_clmul;
-    longint unsigned cnt_bitmanip_complete;
-    longint unsigned cnt_bitmanip_abort;
-    longint unsigned cnt_bitmanip_lat1;
-    longint unsigned cnt_bitmanip_lat2;
-    longint unsigned cnt_bitmanip_lat3_4;
-    longint unsigned cnt_bitmanip_lat5_8;
-    longint unsigned cnt_bitmanip_lat9_16;
-    longint unsigned cnt_bitmanip_lat17plus;
-    logic            bitmanip_profile_active;
-    logic [7:0]      bitmanip_profile_latency;
-
     // -- RAW stall readiness breakdown --
     longint unsigned cnt_raw_id_stall;
     longint unsigned cnt_raw_not_ready_total;
@@ -289,7 +268,6 @@ module perf_monitor (
     longint unsigned cnt_mix_jalr;
     longint unsigned cnt_mix_muldiv;
     longint unsigned cnt_mix_system;
-    longint unsigned cnt_mix_bitmanip;
     longint unsigned cnt_mix_other;
 
     // -- Frontend / FTQ breakdown --
@@ -477,17 +455,6 @@ module perf_monitor (
                                    | muldiv_ex_start_event;
     wire [ 2:0] muldiv_start_op_w = id_mul_prestart_w
                                   ? id_mul_prestart_op_w : ex_muldiv_op_w;
-    wire        ex_bitmanip_req_w = tb_riscv_tests.u_cpu.ex_bitmanip_req;
-    wire        bitmanip_done_w = tb_riscv_tests.u_cpu.bitmanip_done;
-    wire        bitmanip_busy_w = tb_riscv_tests.u_cpu.bitmanip_busy;
-    wire cpu_defs::bitmanip_op_t ex_bitmanip_op_w =
-        tb_riscv_tests.u_cpu.ex_bitmanip_op;
-    wire bitmanip_is_clmul_w = (ex_bitmanip_op_w == cpu_defs::BM_CLMUL)
-                             | (ex_bitmanip_op_w == cpu_defs::BM_CLMULR)
-                             | (ex_bitmanip_op_w == cpu_defs::BM_CLMULH);
-    wire bitmanip_start_event = ex_bitmanip_req_w
-                              & ~bitmanip_busy_w & ~bitmanip_done_w;
-
     wire        branch_flush_w  = tb_riscv_tests.u_cpu.branch_flush;
     wire        mem_branch_flush_w = tb_riscv_tests.u_cpu.mem_branch_flush;
     wire        frontend_branch_flush_w = tb_riscv_tests.u_cpu.frontend_branch_flush;
@@ -497,16 +464,12 @@ module perf_monitor (
     wire        muldiv_profile_abort_event = muldiv_profile_active
                                            & (frontend_branch_flush_w
                                               | mem_branch_flush_w);
-    wire        bitmanip_profile_abort_event = bitmanip_profile_active
-                                             & (frontend_branch_flush_w
-                                                | mem_branch_flush_w);
     wire        ex_is_branch    = tb_riscv_tests.u_cpu.ex_is_branch;
     wire        ex_is_jal       = tb_riscv_tests.u_cpu.ex_is_jal;
     wire        ex_is_jalr      = tb_riscv_tests.u_cpu.ex_is_jalr;
     wire        ex_is_csr_w     = tb_riscv_tests.u_cpu.ex_is_csr;
     wire        ex_is_ecall_w   = tb_riscv_tests.u_cpu.ex_is_ecall;
     wire        ex_is_mret_w    = tb_riscv_tests.u_cpu.ex_is_mret;
-    wire        ex_is_bitmanip_w = tb_riscv_tests.u_cpu.ex_is_bitmanip;
     wire        ex_mem_write_w  = tb_riscv_tests.u_cpu.ex_mem_write_en;
     wire        ex_pred_taken_w   = tb_riscv_tests.u_cpu.ex_pred_taken;
     wire [31:0] ex_pred_target_w  = tb_riscv_tests.u_cpu.ex_pred_target;
@@ -557,6 +520,7 @@ module perf_monitor (
     wire [4:0] ex_s1_rd_w    = tb_riscv_tests.u_cpu.ex_s1_rd;
     wire [4:0] mem_rd_w      = tb_riscv_tests.u_cpu.mem_rd;
     wire       ex_reg_write_en_w = tb_riscv_tests.u_cpu.ex_reg_write_en;
+    wire       ex_s1_reg_write_en_w = tb_riscv_tests.u_cpu.ex_s1_reg_write_en;
     wire       ex_mem_read_w    = tb_riscv_tests.u_cpu.ex_mem_read_en;
     wire       ex_s1_mem_read_w = tb_riscv_tests.u_cpu.ex_s1_mem_read_en;
     wire       mem_mem_read_w   = tb_riscv_tests.u_cpu.mem_mem_read_en;
@@ -955,8 +919,6 @@ module perf_monitor (
     // registered product becomes the MEM forwarding candidate.
     wire cpi_muldiv_event = ex_valid & ex_is_muldiv_w
                            & ex_muldiv_op_w[2] & ~muldiv_done_w;
-    wire cpi_bitmanip_event = ex_valid & ex_is_bitmanip_w
-                            & ~bitmanip_done_w;
     wire cpi_raw_not_ready_event = raw_nr_ex_load_event | raw_nr_mem_load_wait_event
                                  | raw_nr_muldiv_event;
     wire cpi_raw_ready_no_fwd_event = raw_ready_mem_load_no_fwd_event
@@ -970,7 +932,6 @@ module perf_monitor (
     wire cpi_other_no_commit_event = ~cpi_redirect_event
                                    & ~cpi_dcache_event
                                    & ~cpi_muldiv_event
-                                   & ~cpi_bitmanip_event
                                    & ~cpi_raw_not_ready_event
                                    & ~cpi_raw_ready_no_fwd_event
                                    & ~cpi_frontend_empty_event
@@ -986,16 +947,10 @@ module perf_monitor (
                                       & muldiv_done_w;
     wire muldiv_loss_recovery_event = muldiv_complete_accept_event
                                     | muldiv_loss_tail_pending;
-    wire bitmanip_complete_accept_event = ex_s0_accept_event
-                                        & ex_is_bitmanip_w & bitmanip_done_w;
-    wire bitmanip_loss_recovery_event = bitmanip_complete_accept_event
-                                      | bitmanip_loss_tail_pending;
     wire loss_other_event = ~cpi_retire_event
                           & ~(cpi_redirect_event | redirect_recovery_window)
                           & ~(cpi_dcache_event | dcache_loss_recovery_event)
                           & ~(cpi_muldiv_event | muldiv_loss_recovery_event)
-                          & ~(cpi_bitmanip_event
-                              | bitmanip_loss_recovery_event)
                           & ~cpi_raw_not_ready_event
                           & ~cpi_raw_ready_no_fwd_event
                           & ~cpi_frontend_empty_event;
@@ -1007,23 +962,24 @@ module perf_monitor (
                                   pipe_mem_any_valid};
 
     wire mix_s0_system = ex_is_csr_w | ex_is_ecall_w | ex_is_mret_w;
-    wire mix_s0_alu = ~(ex_is_branch | ex_is_jal | ex_is_jalr
+    wire mix_s0_alu = ex_reg_write_en_w
+                    & ~(ex_is_branch | ex_is_jal | ex_is_jalr
+                        | ex_mem_read_w | ex_mem_write_w | ex_is_muldiv_w
+                        | mix_s0_system);
+    wire mix_s0_known = mix_s0_alu | ex_is_branch | ex_is_jal | ex_is_jalr
                       | ex_mem_read_w | ex_mem_write_w | ex_is_muldiv_w
-                      | mix_s0_system | ex_is_bitmanip_w);
+                      | mix_s0_system;
     wire [6:0] mix_s1_opcode = ex_s1_inst_w[6:0];
     wire mix_s1_muldiv = (mix_s1_opcode == OP_R_TYPE)
                        & (ex_s1_inst_w[31:25] == MULDIV_FUNCT7);
     wire mix_s1_system = (mix_s1_opcode == OP_SYSTEM);
+    wire mix_s1_alu = ex_s1_reg_write_en_w
+                    & ~(ex_s1_is_branch_w | ex_s1_is_jal_w
+                        | ex_s1_is_jalr_w | ex_s1_mem_read_w
+                        | ex_s1_mem_write_w | mix_s1_muldiv | mix_s1_system);
     wire mix_s1_known = ex_s1_is_branch_w | ex_s1_is_jal_w | ex_s1_is_jalr_w
                       | ex_s1_mem_read_w | ex_s1_mem_write_w
-                      | mix_s1_muldiv | mix_s1_system
-                      | (mix_s1_opcode == OP_R_TYPE)
-                      | (mix_s1_opcode == OP_I_ALU)
-                      | (mix_s1_opcode == OP_LUI)
-                      | (mix_s1_opcode == OP_AUIPC);
-    wire mix_s1_alu = mix_s1_known & ~(ex_s1_is_branch_w | ex_s1_is_jal_w
-                     | ex_s1_is_jalr_w | ex_s1_mem_read_w
-                     | ex_s1_mem_write_w | mix_s1_muldiv | mix_s1_system);
+                      | mix_s1_muldiv | mix_s1_system | mix_s1_alu;
 
     wire repair_rs1_dep = repair_use_hazard_w
                         & ((id_rs1_used_w & (id_rs1_addr_w == ex_rd_w))
@@ -1057,7 +1013,6 @@ module perf_monitor (
             cnt_cpi_redirect   <= 0;
             cnt_cpi_dcache     <= 0;
             cnt_cpi_muldiv     <= 0;
-            cnt_cpi_bitmanip   <= 0;
             cnt_cpi_raw_not_ready <= 0;
             cnt_cpi_raw_ready_no_fwd <= 0;
             cnt_cpi_frontend_empty <= 0;
@@ -1066,7 +1021,6 @@ module perf_monitor (
             cnt_loss_redirect <= 0;
             cnt_loss_dcache <= 0;
             cnt_loss_muldiv <= 0;
-            cnt_loss_bitmanip <= 0;
             cnt_loss_raw_not_ready <= 0;
             cnt_loss_raw_ready_no_fwd <= 0;
             cnt_loss_frontend_empty <= 0;
@@ -1074,10 +1028,8 @@ module perf_monitor (
             cnt_loss_redirect_recovery <= 0;
             cnt_loss_dcache_recovery <= 0;
             cnt_loss_muldiv_recovery <= 0;
-            cnt_loss_bitmanip_recovery <= 0;
             dcache_loss_recovery_pending <= 1'b0;
             muldiv_loss_tail_pending <= 1'b0;
-            bitmanip_loss_tail_pending <= 1'b0;
             cnt_other_id_not_ready <= 0;
             cnt_other_id_downstream <= 0;
             cnt_other_ex_not_ready <= 0;
@@ -1119,7 +1071,6 @@ module perf_monitor (
             cnt_mmio_stall     <= 0;
             cnt_muldiv_stall   <= 0;
             cnt_mul_launch_ex_wait <= 0;
-            cnt_bitmanip_stall <= 0;
             cnt_lsu_cache_load <= 0;
             cnt_lsu_cache_store <= 0;
             cnt_lsu_mmio_load <= 0;
@@ -1193,19 +1144,6 @@ module perf_monitor (
             cnt_muldiv_lat17plus <= 0;
             muldiv_profile_active <= 1'b0;
             muldiv_profile_latency <= 8'd0;
-            cnt_bitmanip_issue <= 0;
-            cnt_bitmanip_issue_fast <= 0;
-            cnt_bitmanip_issue_clmul <= 0;
-            cnt_bitmanip_complete <= 0;
-            cnt_bitmanip_abort <= 0;
-            cnt_bitmanip_lat1 <= 0;
-            cnt_bitmanip_lat2 <= 0;
-            cnt_bitmanip_lat3_4 <= 0;
-            cnt_bitmanip_lat5_8 <= 0;
-            cnt_bitmanip_lat9_16 <= 0;
-            cnt_bitmanip_lat17plus <= 0;
-            bitmanip_profile_active <= 1'b0;
-            bitmanip_profile_latency <= 8'd0;
             cnt_raw_id_stall   <= 0;
             cnt_raw_not_ready_total <= 0;
             cnt_raw_not_ready_ex_load <= 0;
@@ -1276,7 +1214,6 @@ module perf_monitor (
             cnt_mix_jalr <= 0;
             cnt_mix_muldiv <= 0;
             cnt_mix_system <= 0;
-            cnt_mix_bitmanip <= 0;
             cnt_mix_other <= 0;
             cnt_fe_bp0_fire <= 0;
             cnt_fe_bp0_block_ftq_full <= 0;
@@ -1405,8 +1342,6 @@ module perf_monitor (
                 cnt_cpi_dcache <= cnt_cpi_dcache + 1;
             else if (cpi_muldiv_event)
                 cnt_cpi_muldiv <= cnt_cpi_muldiv + 1;
-            else if (cpi_bitmanip_event)
-                cnt_cpi_bitmanip <= cnt_cpi_bitmanip + 1;
             else if (cpi_raw_not_ready_event)
                 cnt_cpi_raw_not_ready <= cnt_cpi_raw_not_ready + 1;
             else if (cpi_raw_ready_no_fwd_event)
@@ -1437,12 +1372,6 @@ module perf_monitor (
                 if (~cpi_muldiv_event & muldiv_loss_recovery_event)
                     cnt_loss_muldiv_recovery
                         <= cnt_loss_muldiv_recovery + 1;
-            end else if (cpi_bitmanip_event
-                       | bitmanip_loss_recovery_event) begin
-                cnt_loss_bitmanip <= cnt_loss_bitmanip + 1;
-                if (~cpi_bitmanip_event & bitmanip_loss_recovery_event)
-                    cnt_loss_bitmanip_recovery
-                        <= cnt_loss_bitmanip_recovery + 1;
             end else if (cpi_raw_not_ready_event)
                 cnt_loss_raw_not_ready <= cnt_loss_raw_not_ready + 1;
             else if (cpi_raw_ready_no_fwd_event)
@@ -1466,15 +1395,12 @@ module perf_monitor (
             else if (dcache_loss_recovery_event)
                 dcache_loss_recovery_pending <= 1'b0;
 
-            if (frontend_branch_flush_w | mem_branch_flush_w) begin
+            if (frontend_branch_flush_w | mem_branch_flush_w)
                 muldiv_loss_tail_pending <= 1'b0;
-                bitmanip_loss_tail_pending <= 1'b0;
-            end else begin
+            else begin
                 // The completion/accept cycle is the first recovery cycle;
                 // retain one more cycle for EX->MEM->WB refill.
                 muldiv_loss_tail_pending <= muldiv_complete_accept_event;
-                bitmanip_loss_tail_pending
-                    <= bitmanip_complete_accept_event;
             end
 
             if (loss_other_event) begin
@@ -1544,8 +1470,6 @@ module perf_monitor (
                 cnt_muldiv_stall <= cnt_muldiv_stall + 1;
             if (id_valid & mul_launch_ex_raw_hazard_w)
                 cnt_mul_launch_ex_wait <= cnt_mul_launch_ex_wait + 1;
-            if (cpi_bitmanip_event)
-                cnt_bitmanip_stall <= cnt_bitmanip_stall + 1;
 
             // Attribute every DCache-induced pipeline stall to the active FSM
             // state and, independently, to the blocked request and SB depth.
@@ -1631,43 +1555,6 @@ module perf_monitor (
             end else if (muldiv_start_event) begin
                 muldiv_profile_active <= 1'b1;
                 muldiv_profile_latency <= 8'd1;
-            end
-
-            if (bitmanip_start_event) begin
-                cnt_bitmanip_issue <= cnt_bitmanip_issue + 1;
-                if (bitmanip_is_clmul_w)
-                    cnt_bitmanip_issue_clmul <= cnt_bitmanip_issue_clmul + 1;
-                else
-                    cnt_bitmanip_issue_fast <= cnt_bitmanip_issue_fast + 1;
-                bitmanip_profile_active <= 1'b1;
-                bitmanip_profile_latency <= 8'd1;
-            end else if (bitmanip_profile_active) begin
-                if (bitmanip_profile_abort_event) begin
-                    cnt_bitmanip_abort <= cnt_bitmanip_abort + 1;
-                    bitmanip_profile_active <= 1'b0;
-                    bitmanip_profile_latency <= 8'd0;
-                end else if (bitmanip_done_w) begin
-                    cnt_bitmanip_complete <= cnt_bitmanip_complete + 1;
-                    if (bitmanip_profile_latency <= 8'd1)
-                        cnt_bitmanip_lat1 <= cnt_bitmanip_lat1 + 1;
-                    else if (bitmanip_profile_latency == 8'd2)
-                        cnt_bitmanip_lat2 <= cnt_bitmanip_lat2 + 1;
-                    else if (bitmanip_profile_latency <= 8'd4)
-                        cnt_bitmanip_lat3_4 <= cnt_bitmanip_lat3_4 + 1;
-                    else if (bitmanip_profile_latency <= 8'd8)
-                        cnt_bitmanip_lat5_8 <= cnt_bitmanip_lat5_8 + 1;
-                    else if (bitmanip_profile_latency <= 8'd16)
-                        cnt_bitmanip_lat9_16 <= cnt_bitmanip_lat9_16 + 1;
-                    else
-                        cnt_bitmanip_lat17plus <= cnt_bitmanip_lat17plus + 1;
-                    bitmanip_profile_active <= 1'b0;
-                    bitmanip_profile_latency <= 8'd0;
-                end else if (&bitmanip_profile_latency) begin
-                    bitmanip_profile_latency <= bitmanip_profile_latency;
-                end else begin
-                    bitmanip_profile_latency
-                        <= bitmanip_profile_latency + 1'b1;
-                end
             end
 
             cnt_lsu_cache_load <= cnt_lsu_cache_load
@@ -1874,10 +1761,9 @@ module perf_monitor (
             cnt_mix_system <= cnt_mix_system
                             + (ex_s0_accept_event & mix_s0_system)
                             + (ex_s1_accept_event & mix_s1_system);
-            if (ex_s0_accept_event & ex_is_bitmanip_w)
-                cnt_mix_bitmanip <= cnt_mix_bitmanip + 1;
-            if (ex_s1_accept_event & ~mix_s1_known)
-                cnt_mix_other <= cnt_mix_other + 1;
+            cnt_mix_other <= cnt_mix_other
+                           + (ex_s0_accept_event & ~mix_s0_known)
+                           + (ex_s1_accept_event & ~mix_s1_known);
 
             if (tb_riscv_tests.u_cpu.pred_train_valid) begin
                 cnt_pred_train_total <= cnt_pred_train_total + 1;
@@ -2124,10 +2010,6 @@ module perf_monitor (
         longint signed dc_drain_stall_kind_mismatch;
         longint unsigned muldiv_issue_total, muldiv_wait_op_total;
         longint signed muldiv_wait_op_mismatch;
-        longint unsigned bitmanip_issue_class_total;
-        longint unsigned bitmanip_latency_total;
-        longint signed bitmanip_issue_class_mismatch;
-        longint signed bitmanip_latency_mismatch;
         longint unsigned pair_raw_exact_total, pair_block_exact_total;
         longint signed pair_block_exact_mismatch;
         real cpi, dual_rate, mispredict_rate, control_mispredict_rate;
@@ -2147,7 +2029,7 @@ module perf_monitor (
             lost_no_commit_slots = cnt_commit0_cycles << 1;
             lost_single_issue_slots = cnt_commit1_cycles;
             loss_no_commit_total = cnt_loss_redirect + cnt_loss_dcache
-                                 + cnt_loss_muldiv + cnt_loss_bitmanip
+                                 + cnt_loss_muldiv
                                  + cnt_loss_raw_not_ready
                                  + cnt_loss_raw_ready_no_fwd
                                  + cnt_loss_frontend_empty + cnt_loss_other;
@@ -2160,7 +2042,7 @@ module perf_monitor (
             mix_classified_total = cnt_mix_alu + cnt_mix_load + cnt_mix_store
                                  + cnt_mix_branch + cnt_mix_jal + cnt_mix_jalr
                                  + cnt_mix_muldiv + cnt_mix_system
-                                 + cnt_mix_bitmanip + cnt_mix_other;
+                                 + cnt_mix_other;
             mix_classification_mismatch = $signed(mix_classified_total)
                                         - $signed(mix_accept_total);
             mix_commit_delta = $signed(mix_accept_total) - $signed(total_insts);
@@ -2189,19 +2071,6 @@ module perf_monitor (
                                  + cnt_muldiv_wait_op[6] + cnt_muldiv_wait_op[7];
             muldiv_wait_op_mismatch = $signed(muldiv_wait_op_total)
                                     - $signed(cnt_muldiv_stall);
-            bitmanip_issue_class_total = cnt_bitmanip_issue_fast
-                                       + cnt_bitmanip_issue_clmul;
-            bitmanip_issue_class_mismatch =
-                $signed(bitmanip_issue_class_total)
-              - $signed(cnt_bitmanip_issue);
-            bitmanip_latency_total = cnt_bitmanip_lat1
-                                   + cnt_bitmanip_lat2
-                                   + cnt_bitmanip_lat3_4
-                                   + cnt_bitmanip_lat5_8
-                                   + cnt_bitmanip_lat9_16
-                                   + cnt_bitmanip_lat17plus;
-            bitmanip_latency_mismatch = $signed(bitmanip_latency_total)
-                                      - $signed(cnt_bitmanip_complete);
             dc_stall_state_total = cnt_dc_stall_state_idle
                                  + cnt_dc_stall_state_refill_req
                                  + cnt_dc_stall_state_refill_data
@@ -2247,7 +2116,7 @@ module perf_monitor (
             pair_block_exact_mismatch = $signed(pair_block_exact_total)
                                       - $signed(cnt_if_s1_block);
             cpi_stack_total = cnt_cpi_retire + cnt_cpi_redirect + cnt_cpi_dcache
-                            + cnt_cpi_muldiv + cnt_cpi_bitmanip
+                            + cnt_cpi_muldiv
                             + cnt_cpi_raw_not_ready
                             + cnt_cpi_raw_ready_no_fwd + cnt_cpi_frontend_empty
                             + cnt_cpi_other_no_commit;
@@ -2322,36 +2191,33 @@ module perf_monitor (
             $display("[PERF]  Issue slots:   ideal=%0d retired=%0d lost=%0d no_commit_lost=%0d single_issue_lost=%0d",
                      ideal_slots, retired_slots, lost_slots,
                      lost_no_commit_slots, lost_single_issue_slots);
-            $display("[PERF]  Accepted mix:  s0=%0d s1=%0d total=%0d alu=%0d load=%0d store=%0d branch=%0d jal=%0d jalr=%0d muldiv=%0d system=%0d bitmanip=%0d other=%0d classified=%0d mismatch=%0d commit_delta=%0d",
+            $display("[PERF]  Accepted mix:  s0=%0d s1=%0d total=%0d alu=%0d load=%0d store=%0d branch=%0d jal=%0d jalr=%0d muldiv=%0d system=%0d other=%0d classified=%0d mismatch=%0d commit_delta=%0d",
                      cnt_mix_s0_accept, cnt_mix_s1_accept, mix_accept_total,
                      cnt_mix_alu, cnt_mix_load, cnt_mix_store,
                      cnt_mix_branch, cnt_mix_jal, cnt_mix_jalr,
-                     cnt_mix_muldiv, cnt_mix_system, cnt_mix_bitmanip,
-                     cnt_mix_other, mix_classified_total,
+                     cnt_mix_muldiv, cnt_mix_system, cnt_mix_other,
+                     mix_classified_total,
                      mix_classification_mismatch, mix_commit_delta);
             $display("[PERF]");
             $display("[PERF]  --- CPI Stack (priority cycles) ---");
-            $display("[PERF]  CPI stack:     retire=%0d redirect=%0d dcache=%0d muldiv=%0d bitmanip=%0d raw_not_ready=%0d raw_ready_no_fwd=%0d frontend_empty=%0d other_no_commit=%0d total=%0d",
+            $display("[PERF]  CPI stack:     retire=%0d redirect=%0d dcache=%0d muldiv=%0d raw_not_ready=%0d raw_ready_no_fwd=%0d frontend_empty=%0d other_no_commit=%0d total=%0d",
                      cnt_cpi_retire, cnt_cpi_redirect, cnt_cpi_dcache,
-                     cnt_cpi_muldiv, cnt_cpi_bitmanip,
-                     cnt_cpi_raw_not_ready,
+                     cnt_cpi_muldiv, cnt_cpi_raw_not_ready,
                      cnt_cpi_raw_ready_no_fwd, cnt_cpi_frontend_empty,
                      cnt_cpi_other_no_commit, cpi_stack_total);
             $display("[PERF]");
             $display("[PERF]  --- Strict No-Commit Loss Stack ---");
-            $display("[PERF]  Loss stack:    productive=%0d redirect=%0d dcache=%0d muldiv=%0d bitmanip=%0d raw_not_ready=%0d raw_ready_no_fwd=%0d frontend_empty=%0d other=%0d no_commit=%0d total=%0d cycles=%0d mismatch=%0d no_commit_mismatch=%0d",
+            $display("[PERF]  Loss stack:    productive=%0d redirect=%0d dcache=%0d muldiv=%0d raw_not_ready=%0d raw_ready_no_fwd=%0d frontend_empty=%0d other=%0d no_commit=%0d total=%0d cycles=%0d mismatch=%0d no_commit_mismatch=%0d",
                      cnt_loss_productive, cnt_loss_redirect, cnt_loss_dcache,
-                     cnt_loss_muldiv, cnt_loss_bitmanip,
-                     cnt_loss_raw_not_ready,
+                     cnt_loss_muldiv, cnt_loss_raw_not_ready,
                      cnt_loss_raw_ready_no_fwd, cnt_loss_frontend_empty,
                      cnt_loss_other, loss_no_commit_total, loss_stack_total,
                      cnt_cycles, loss_stack_mismatch,
                      loss_no_commit_mismatch);
-            $display("[PERF]  Loss recovery: redirect=%0d dcache=%0d muldiv=%0d bitmanip=%0d",
+            $display("[PERF]  Loss recovery: redirect=%0d dcache=%0d muldiv=%0d",
                      cnt_loss_redirect_recovery,
                      cnt_loss_dcache_recovery,
-                     cnt_loss_muldiv_recovery,
-                     cnt_loss_bitmanip_recovery);
+                     cnt_loss_muldiv_recovery);
             $display("[PERF]");
             $display("[PERF]  --- Other No-Commit Breakdown ---");
             $display("[PERF]  Other no-commit: id_not_ready=%0d id_downstream=%0d ex_not_ready=%0d ex_downstream=%0d mem_not_ready=%0d mem_downstream=%0d flush_recovery=%0d frontend_backpressure=%0d pipeline_fill_drain=%0d unknown=%0d total=%0d original=%0d mismatch=%0d",
@@ -2420,7 +2286,6 @@ module perf_monitor (
             $display("[PERF]  MMIO hazard:   %0d", cnt_mmio_stall);
             $display("[PERF]  MUL/DIV wait:  %0d", cnt_muldiv_stall);
             $display("[PERF]  MUL EX-RAW wait:%0d", cnt_mul_launch_ex_wait);
-            $display("[PERF]  Bitmanip wait: %0d", cnt_bitmanip_stall);
             $display("[PERF]  MULDIV issued: mul=%0d mulh=%0d mulhsu=%0d mulhu=%0d div=%0d divu=%0d rem=%0d remu=%0d total=%0d",
                      cnt_muldiv_issue[0], cnt_muldiv_issue[1],
                      cnt_muldiv_issue[2], cnt_muldiv_issue[3],
@@ -2439,17 +2304,6 @@ module perf_monitor (
                      cnt_muldiv_lat1, cnt_muldiv_lat2,
                      cnt_muldiv_lat3_4, cnt_muldiv_lat5_8,
                      cnt_muldiv_lat9_16, cnt_muldiv_lat17plus);
-            $display("[PERF]  Bitmanip profile: issued=%0d fast=%0d clmul=%0d issue_classified=%0d issue_mismatch=%0d wait=%0d complete=%0d abort=%0d lat1=%0d lat2=%0d lat3_4=%0d lat5_8=%0d lat9_16=%0d lat17plus=%0d latency_total=%0d latency_mismatch=%0d",
-                     cnt_bitmanip_issue, cnt_bitmanip_issue_fast,
-                     cnt_bitmanip_issue_clmul,
-                     bitmanip_issue_class_total,
-                     bitmanip_issue_class_mismatch,
-                     cnt_bitmanip_stall, cnt_bitmanip_complete,
-                     cnt_bitmanip_abort, cnt_bitmanip_lat1,
-                     cnt_bitmanip_lat2, cnt_bitmanip_lat3_4,
-                     cnt_bitmanip_lat5_8, cnt_bitmanip_lat9_16,
-                     cnt_bitmanip_lat17plus, bitmanip_latency_total,
-                     bitmanip_latency_mismatch);
             $display("[PERF]");
             $display("[PERF]  --- DCache Detailed ---");
             $display("[PERF]  Requests:      %0d loads=%0d stores=%0d",
