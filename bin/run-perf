@@ -4,4 +4,4 @@ set -e
 THIS="$(readlink -f "${BASH_SOURCE[0]}")"
 ROOT="$(cd "$(dirname "$THIS")/.." && pwd)"
 
-exec "$ROOT/02_Design/riscv_tests/performance/long/run_coe_perf.sh" "$@"
+exec "$ROOT/02_Design/verification/riscv/performance/long/run_coe_perf.sh" "$@"

@@ -124,18 +124,18 @@ R1 下六个程序逐一不退化；R2 下 `src2` 为 -0.486%，
 完整思考过程、逐配置结果、FDQ 场景和模型差异：
 
 ```text
-02_Design/cpp_arch_explorer/TAGGED_ONLY_F1_STUDY_20260714.md
+02_Design/model/cpp_arch_explorer/TAGGED_ONLY_F1_STUDY_20260714.md
 ```
 
 C++ 探索器：
 
 ```text
-02_Design/cpp_arch_explorer/src/direction_predictor.*
-02_Design/cpp_arch_explorer/src/frontend_model.*
-02_Design/cpp_arch_explorer/src/fdq_model.*
+02_Design/model/cpp_arch_explorer/src/direction_predictor.*
+02_Design/model/cpp_arch_explorer/src/frontend_model.*
+02_Design/model/cpp_arch_explorer/src/fdq_model.*
 ```
 
-原始 CSV 位于 `02_Design/cpp_arch_explorer/results/`，该目录被 gitignore，
+原始 CSV 位于 `02_Design/model/cpp_arch_explorer/results/`，该目录被 gitignore，
 只保留在当前工作区。旧的完整 TAGE/break-even 分析已被本次 tagged-only
 和 FDQ 研究取代，不应再引用“F1 私有 bimodal base”或把每次 correct 当作
 固定 penalty。

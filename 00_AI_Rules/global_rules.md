@@ -33,7 +33,7 @@
 
 - 指令集：**RV32IM** + 区域赛最小 Zicsr/Trap 子集（CSR / ECALL / MRET / M-mode timer interrupt）；`fence`/`ebreak` 仍可按 NOP 处理
 - 可修改：`Core_cpu`（`student_top.sv`）、PLL
-- **禁止修改**：`contest_readonly/` 下所有文件
+- **禁止修改**：`02_Design/platform/*/readonly/` 下所有官方文件
 - PC 复位值：`0x7FFF_FFFC`（text_base - 4）
 
 ---
@@ -136,9 +136,9 @@ runtime ~= cycles * clock_period
 
 ## 7. 验证流程
 
-脚本分类以 `02_Design/riscv_tests/SCRIPT_CLASSIFICATION.md` 为准。原则：
+脚本分类以 `02_Design/verification/riscv/SCRIPT_CLASSIFICATION.md` 为准。原则：
 
-- 功能正确性 / smoke：`functional/run_all.sh`，以及 `functional/special/` 下的特殊 smoke。
+- 功能正确性 / smoke：`riscv/functional/run_all.sh`、`common/` 单元测试，以及 `platform/` 下的平台 smoke。
 - 性能 / 长跑 / COE：`performance/short/run_perf.sh`、`performance/long/run_coe_perf.sh`。
 - 新增功能正确性测试进入 `run_all.sh` 体系；不要把 correctness case 只放进 profiling 或 COE 脚本。
 - `run_perf.sh` 即使默认测试集较短，也属于 profiling 入口，不作为默认 smoke gate。
@@ -146,43 +146,39 @@ runtime ~= cycles * clock_period
 ### 功能正确性回归（RTL 改动后的主 gate）
 
 ```bash
-cd 02_Design/riscv_tests
+cd 02_Design/verification/riscv
 bash functional/run_all.sh
 ```
 
-- 预期结果：**80/80 PASS**（`run_all.sh` 当前测试集：基础 RV32I、RV32M、综合/压力、自定义双发射/BP/DCache/RAS、AXI backend、Zicsr/Trap/Timer 测试）
+- 预期结果：**89/89 PASS**（`run_all.sh` 当前测试集：基础 RV32I、RV32M、综合/压力、自定义双发射/BP/DCache/RAS、存储后端、Zicsr/Trap/Timer 测试）
 - 默认启用 PC 越界 guard 和流水线无进展 watchdog；PC 跑出 IROM 窗口会直接报错，避免只表现为长时间 timeout。
 - 依赖：Synopsys VCS、`work/hex/*.hex`（已预编译，无需重新 build）
 - 编译产物自动生成在 `work/`，已 gitignore
 
-### AXI 功能 Smoke（处理器侧 AXI master 改动后运行）
+### 板级封装功能 Smoke
 
 ```bash
-cd 02_Design/riscv_tests
-bash functional/special/run_axi_adapter.sh
-bash functional/special/run_student_top_axi.sh
-bash functional/special/run_student_top_smoke.sh
+cd 02_Design/verification/riscv
+bash ../platform/jyd/functional/run_student_top_smoke.sh
 ```
 
-- `run_axi_adapter.sh`：AXI adapter 单模块协议 smoke。
-- `run_student_top_axi.sh`：默认 4/4 PASS，覆盖 DCache miss/refill 经 AXI read burst、store buffer 经 AXI write、本地 MMIO 不产生 AXI 请求。
 - `run_student_top_smoke.sh`：`student_top` 板级封装短 smoke，覆盖 `student_top + mmio_bridge + IROM/DRAM IP model` 的基本接线和 LED pass/fail 路径。
 
 ### 性能 Profiling（按需运行，不作为 smoke）
 
 ```bash
-cd 02_Design/riscv_tests
+cd 02_Design/verification/riscv
 bash performance/short/run_perf.sh [test_name...]
 ```
 
 - 不带参数时脚本会跑 profiling sanity 集：`simple dual_alu`
 - 输出 `[PERF]` 开头的性能报告（CPI、stall 分解、双发射率、BP 误预测率）
-- 这里的短默认集只是 profiling sanity，不是 correctness smoke；功能正确性仍以 `run_all.sh` 和 AXI smoke 为准。
+- 这里的短默认集只是 profiling sanity，不是 correctness smoke；功能正确性仍以 `run_all.sh` 和板级封装 smoke 为准。
 
 ### 重新编译测试（仅在修改/新增测试用例时）
 
 ```bash
-cd 02_Design/riscv_tests
+cd 02_Design/verification/riscv
 bash utility/build_tests.sh
 ```
 
@@ -192,12 +188,12 @@ bash utility/build_tests.sh
 ### COE 程序功能/性能检查（长跑，按需运行）
 
 ```bash
-cd 02_Design/riscv_tests
+cd 02_Design/verification/riscv
 bash performance/long/run_coe_perf.sh current src0 src1 src2
 ```
 
 - `run_coe_perf.sh`：使用 `cpu_top + dcache` 仿真模型跑完整 dual-bank COE 程序，自动从入口启动段的 `0000006f` fall-through 自环推导 `stop_pc`，输出 `summary.csv/json` 性能指标。
-- Performance / Long-Run / COE 只保留这一个长入口；`student_top` 板级封装短检查使用 `functional/special/run_student_top_smoke.sh`。
+- Performance / Long-Run / COE 只保留这一个长入口；`student_top` 板级封装短检查使用 `verification/platform/jyd/functional/run_student_top_smoke.sh`。
 - 当前仓库没有 `run_coe_suite.sh` / `run_coe_diff.sh`。需要软件参考模型或 commit trace diff 时，应先补齐对应脚本，再把入口写回本文档。
 
 ### Vivado 时序流
@@ -217,9 +213,12 @@ sta
 
 | 目录 | 允许内容 | 禁止 |
 |------|---------|------|
-| `02_Design/rtl/` | 可综合 RTL 源码 | TB、脚本、文档 |
-| `02_Design/riscv_tests/` | 回归 TB + 脚本 | 临时调试 TB |
-| `02_Design/coe/` | COE 文件 + 工具脚本 | 仿真产物 |
+| `02_Design/rtl/` | 平台无关的可综合 RTL 源码 | TB、平台官方文件、文档 |
+| `02_Design/platform/` | 比赛官方文件和平台适配 RTL | 共用 CPU 微架构、临时产物 |
+| `02_Design/verification/common/` | 共用模块 TB + 功能脚本 | ISA 程序和平台封装 TB |
+| `02_Design/verification/riscv/` | RISC-V 程序、集成 TB、性能和工具脚本 | 平台官方 RTL |
+| `02_Design/verification/platform/` | 各比赛平台 smoke 和 IP model | 共用 CPU RTL |
+| `02_Design/verification/riscv/coe/` | COE 文件 + 工具脚本 | 仿真产物 |
 | `03_Timing_Analysis/` | 实现后的 timing 分析脚本、覆盖式 latest timing 报告、Vivado timing 日志 | 性能 profiling、架构设计文档、一次性实验归档 |
 | `00_AI_Rules/` | 当前规则、架构文档 | 临时实验记录 |
 | `JYD2025_Contest-rv32i/` | 赛方 Vivado 工程 | 临时分析脚本、仿真产物 |
@@ -249,5 +248,5 @@ sta
 
 ## 9. 文档维护
 
-- 当前有效文档包括：`README.md`、`00_AI_Rules/global_rules.md`、`02_Design/coe/README.md`、`02_Design/riscv_tests/test_coverage.md`。
+- 当前有效文档包括：`README.md`、`00_AI_Rules/global_rules.md`、`02_Design/verification/riscv/coe/README.md`、`02_Design/verification/riscv/test_coverage.md`。
 - 信号名必须与 RTL 一致；工程文档只写当前状态，不保存长实验档案。

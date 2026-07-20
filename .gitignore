@@ -17,11 +17,11 @@ NutShell/
 03_Timing_Analysis/results/
 
 # --- Simulation Artifacts ---
-02_Design/riscv_tests/work/*
-!02_Design/riscv_tests/work/.gitkeep
-!02_Design/riscv_tests/work/.gitignore
-!02_Design/riscv_tests/work/dcache_data_ram.v
-!02_Design/riscv_tests/work/hex/
+02_Design/verification/riscv/work/*
+!02_Design/verification/riscv/work/.gitkeep
+!02_Design/verification/riscv/work/.gitignore
+!02_Design/verification/riscv/work/dcache_data_ram.v
+!02_Design/verification/riscv/work/hex/
 DVEfiles/
 verdiLog/
 csrc/

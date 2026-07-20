@@ -123,8 +123,6 @@ set PIPELINE_GROUPS [list \
     [list "DualCnt"        "u_cpu/u_dual_issue_counter"  ] \
     [list "DCache(FSM)"    "u_dcache"                    ] \
     [list "DCacheBackend"  "u_dcache_bram_backend"       ] \
-    [list "DCacheAxi"      "u_dcache_axi_backend"        ] \
-    [list "AXIAdapter"     "u_dcache_axi_backend/u_axi_master_adapter"] \
     [list "MMIO"           "u_mmio_adapter"              ] \
 ]
 

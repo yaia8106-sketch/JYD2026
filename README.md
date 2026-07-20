@@ -10,11 +10,11 @@ AI 或人工接手工程时，先看本文件，再按需进入对应目录。
 
 按需阅读：
 
-- **`02_Design/FRONTEND_STAGE1_PREDICTOR_AI_PROMPT.md`** — 一级 ABTB/PHT/uRAS、双 bank、FTQ 和 redirect 的已确认设计约束
+- **`02_Design/docs/frontend/FRONTEND_STAGE1_PREDICTOR_AI_PROMPT.md`** — 一级 ABTB/PHT/uRAS、双 bank、FTQ 和 redirect 的已确认设计约束
 - **`PERFORMANCE_OPTIMIZATION_PLAN.md`** — 性能优化总目标、profiling 计划和长短测试边界
-- **`02_Design/riscv_tests/SCRIPT_CLASSIFICATION.md`** — riscv_tests 脚本分类：功能正确性 smoke vs 性能/长跑/COE
-- **`02_Design/riscv_tests/test_coverage.md`** — 回归测试覆盖范围
-- **`02_Design/coe/README.md`** — COE 文件、转换脚本和静态分布
+- **`02_Design/verification/riscv/SCRIPT_CLASSIFICATION.md`** — 验证脚本分类：功能正确性 smoke vs 性能/长跑/COE
+- **`02_Design/verification/riscv/test_coverage.md`** — 回归测试覆盖范围
+- **`02_Design/verification/riscv/coe/README.md`** — COE 文件、转换脚本和静态分布
 - **`03_Timing_Analysis/sta.sh`** — 对已有 implementation 运行 timing 分组报告
 - **`03_Timing_Analysis/report_stage_timing.tcl`** — timing 分组报告 Tcl 脚本
 
@@ -33,9 +33,11 @@ CPU_Workspace/
 
 ## 关键目录
 
-- `02_Design/rtl/`：自研 CPU RTL 源码。
-- `02_Design/coe/`：COE 文件和 COE 转换工具。
-- `02_Design/riscv_tests/`：VCS 回归测试脚本和 testbench。
+- `02_Design/rtl/`：平台无关的处理器 RTL 源码。
+- `02_Design/platform/`：竞业达、龙芯杯官方文件和平台适配 RTL。
+- `02_Design/verification/`：共用单元验证、ISA 回归和平台 smoke。
+- `02_Design/verification/riscv/coe/`：COE 文件和 COE 转换工具。
+- `02_Design/model/`：C++ 架构探索模型。
 - `03_Timing_Analysis/`：只放 timing 分析相关内容，目前保留 `sta.sh`、`report_stage_timing.tcl`、`stage_timing_report.txt` 和 `vivado_work/`。
 - `JYD2025_Contest-rv32i/`：赛方 Vivado 工程。
 
@@ -44,11 +46,9 @@ CPU_Workspace/
 功能正确性 / Smoke：
 
 ```bash
-cd 02_Design/riscv_tests
+cd 02_Design/verification/riscv
 bash functional/run_all.sh
-bash functional/special/run_axi_adapter.sh
-bash functional/special/run_student_top_axi.sh
-bash functional/special/run_student_top_smoke.sh
+bash ../platform/jyd/functional/run_student_top_smoke.sh
 ```
 
 性能 / 长跑 / COE（不要当作默认 smoke）：

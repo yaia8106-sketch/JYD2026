@@ -151,7 +151,7 @@ case "${COE_NAME}" in
         ;;
 esac
 
-COE_DIR="${ROOT}/02_Design/coe/irom64/${COE_SOURCE_NAME}"
+COE_DIR="${ROOT}/02_Design/verification/riscv/coe/irom64/${COE_SOURCE_NAME}"
 if [[ ! -f "${COE_DIR}/irom64.coe" || ! -f "${COE_DIR}/dram.coe" ]]; then
     echo "ERROR: ${COE_DIR} must contain irom64.coe and dram.coe." >&2
     exit 2
@@ -327,7 +327,8 @@ fingerprint_payload() {
     done < <(
         {
             find "${ROOT}/02_Design/rtl" \
-                "${ROOT}/02_Design/contest_readonly/rtl" \
+                "${ROOT}/02_Design/platform/jyd/rtl" \
+                "${ROOT}/02_Design/platform/jyd/readonly/rtl" \
                 "${ROOT}/JYD2025_Contest-rv32i/digital_twin.srcs/sources_1/new" \
                 -type f \( -name '*.sv' -o -name '*.v' -o -name '*.svh' \
                     -o -name '*.vh' \) -print0
@@ -354,7 +355,8 @@ legacy_source_compatible() {
         || return 1
     git -C "${ROOT}" diff --quiet "${commit}" -- \
         02_Design/rtl \
-        02_Design/contest_readonly/rtl \
+        02_Design/platform/jyd/rtl \
+        02_Design/platform/jyd/readonly/rtl \
         JYD2025_Contest-rv32i/digital_twin.xpr \
         JYD2025_Contest-rv32i/digital_twin.srcs/constrs_1/new/digital_twin.xdc \
         JYD2025_Contest-rv32i/digital_twin.srcs/sources_1/ip/IROMEven32/IROMEven32.xci \
