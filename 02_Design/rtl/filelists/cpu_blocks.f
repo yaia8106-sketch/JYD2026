@@ -1,7 +1,5 @@
 ../common/cpu_defs.sv
 ../core/pipeline/if_id_reg.sv
-../core/decode/decoder.sv
-../core/decode/imm_gen.sv
 ../core/decode/regfile.sv
 ../core/decode/load_hazard_ctrl.sv
 ../core/decode/forwarding.sv
@@ -20,7 +18,6 @@
 ../core/frontend/frontend_abtb.sv
 ../core/frontend/observe/frontend_abtb_monitor_adapter.sv
 ../core/frontend/observe/frontend_abtb_monitor.sv
-../core/frontend/frontend_predecode.sv
 ../core/frontend/frontend_f0_packet_builder.sv
 ../core/frontend/frontend_pair_policy.sv
 ../core/frontend/frontend_stage1_steer_ctrl.sv
@@ -31,7 +28,6 @@
 ../core/lsu/mem_interface.sv
 ../core/control/redirect_ctrl.sv
 ../core/control/timer_irq_ctrl.sv
-../core/control/csr_trap_unit.sv
 ../core/lsu/memory_access_unit.sv
 ../core/execute/muldiv_unit.sv
 ../core/dual_issue_counter.sv

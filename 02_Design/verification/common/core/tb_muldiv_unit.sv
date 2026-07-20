@@ -54,20 +54,20 @@ module tb_muldiv_unit;
         logic signed [31:0] signed_b;
         begin
             mul_a = {
-                ((op == M_OP_MULH) | (op == M_OP_MULHSU)) ? a[31] : 1'b0,
+                ((op == MULDIV_MULH) | (op == MULDIV_MULHSU)) ? a[31] : 1'b0,
                 a
             };
-            mul_b = {(op == M_OP_MULH) ? b[31] : 1'b0, b};
+            mul_b = {(op == MULDIV_MULH) ? b[31] : 1'b0, b};
             product = mul_a * mul_b;
             signed_a = a;
             signed_b = b;
 
             case (op)
-                M_OP_MUL:    expected_result = product[31:0];
-                M_OP_MULH,
-                M_OP_MULHSU,
-                M_OP_MULHU:  expected_result = product[63:32];
-                M_OP_DIV: begin
+                MULDIV_MUL:    expected_result = product[31:0];
+                MULDIV_MULH,
+                MULDIV_MULHSU,
+                MULDIV_MULHU:  expected_result = product[63:32];
+                MULDIV_DIV: begin
                     if (b == 0)
                         expected_result = 32'hffff_ffff;
                     else if ((a == 32'h8000_0000)
@@ -76,9 +76,9 @@ module tb_muldiv_unit;
                     else
                         expected_result = signed_a / signed_b;
                 end
-                M_OP_DIVU:
+                MULDIV_DIVU:
                     expected_result = (b == 0) ? 32'hffff_ffff : a / b;
-                M_OP_REM: begin
+                MULDIV_REM: begin
                     if (b == 0)
                         expected_result = a;
                     else if ((a == 32'h8000_0000)
@@ -87,7 +87,7 @@ module tb_muldiv_unit;
                     else
                         expected_result = signed_a % signed_b;
                 end
-                M_OP_REMU:
+                MULDIV_REMU:
                     expected_result = (b == 0) ? a : a % b;
                 default:
                     expected_result = 32'd0;
@@ -250,10 +250,10 @@ module tb_muldiv_unit;
         logic [31:0] expected;
         integer wait_cycles;
         begin
-            expected = expected_result(M_OP_MULHU,
+            expected = expected_result(MULDIV_MULHU,
                                        32'hffff_ffff, 32'hffff_ffff);
-            start_mul(M_OP_MULHU, 32'hffff_ffff, 32'hffff_ffff);
-            wait_and_check(M_OP_MULHU,
+            start_mul(MULDIV_MULHU, 32'hffff_ffff, 32'hffff_ffff);
+            wait_and_check(MULDIV_MULHU,
                            32'hffff_ffff, 32'hffff_ffff, wait_cycles);
 
             // Deliberately overwrite the free-running local input payload with
@@ -261,7 +261,7 @@ module tb_muldiv_unit;
             // the completed architectural result while MEM is blocked.
             repeat (3) begin
                 mul_prestart_valid = 1'b0;
-                mul_prestart_op = M_OP_MUL;
+                mul_prestart_op = MULDIV_MUL;
                 mul_prestart_rs1 = $urandom(seed);
                 mul_prestart_rs2 = $urandom(seed);
                 @(negedge clk);
@@ -280,27 +280,27 @@ module tb_muldiv_unit;
         integer wait_cycles;
         begin
             @(negedge clk);
-            req_op = M_OP_DIVU;
+            req_op = MULDIV_DIVU;
             req_rs1 = 32'd100;
             req_rs2 = 32'd7;
             req_valid = 1'b1;
             consume = 1'b0;
-            wait_and_check(M_OP_DIVU, 32'd100, 32'd7, wait_cycles);
+            wait_and_check(MULDIV_DIVU, 32'd100, 32'd7, wait_cycles);
 
             mul_prestart_valid = 1'b1;
-            mul_prestart_op = M_OP_MUL;
+            mul_prestart_op = MULDIV_MUL;
             mul_prestart_rs1 = result;
             mul_prestart_rs2 = 32'd3;
             consume = 1'b1;
             @(negedge clk);
             mul_prestart_valid = 1'b0;
             consume = 1'b0;
-            req_op = M_OP_MUL;
+            req_op = MULDIV_MUL;
             req_rs1 = 32'd14;
             req_rs2 = 32'd3;
             req_valid = 1'b1;
 
-            wait_and_check(M_OP_MUL, 32'd14, 32'd3, wait_cycles);
+            wait_and_check(MULDIV_MUL, 32'd14, 32'd3, wait_cycles);
             if (wait_cycles != 1) begin
                 $error("DIV-to-MUL turnover latency=%0d", wait_cycles);
                 $fatal(1);
@@ -314,19 +314,19 @@ module tb_muldiv_unit;
     task automatic run_mul_to_div_turnover;
         integer wait_cycles;
         begin
-            start_mul(M_OP_MUL, 32'd9, 32'd11);
-            wait_and_check(M_OP_MUL, 32'd9, 32'd11, wait_cycles);
+            start_mul(MULDIV_MUL, 32'd9, 32'd11);
+            wait_and_check(MULDIV_MUL, 32'd9, 32'd11, wait_cycles);
 
             // The younger DIV has no prestart. The old done owner must clear
             // to idle on consume so its result cannot be mistaken for the DIV.
             consume = 1'b1;
             @(negedge clk);
             consume = 1'b0;
-            req_op = M_OP_DIVU;
+            req_op = MULDIV_DIVU;
             req_rs1 = 32'd1000;
             req_rs2 = 32'd9;
             req_valid = 1'b1;
-            wait_and_check(M_OP_DIVU, 32'd1000, 32'd9, wait_cycles);
+            wait_and_check(MULDIV_DIVU, 32'd1000, 32'd9, wait_cycles);
 
             consume_and_idle();
             cases = cases + 2;
@@ -337,21 +337,21 @@ module tb_muldiv_unit;
         integer wait_cycles;
         begin
             @(negedge clk);
-            req_op = M_OP_REMU;
+            req_op = MULDIV_REMU;
             req_rs1 = 32'd1000;
             req_rs2 = 32'd33;
             req_valid = 1'b1;
             consume = 1'b0;
-            wait_and_check(M_OP_REMU, 32'd1000, 32'd33, wait_cycles);
+            wait_and_check(MULDIV_REMU, 32'd1000, 32'd33, wait_cycles);
 
             consume = 1'b1;
             @(negedge clk);
             consume = 1'b0;
-            req_op = M_OP_DIV;
+            req_op = MULDIV_DIV;
             req_rs1 = 32'hffff_ff9c;
             req_rs2 = 32'd7;
             req_valid = 1'b1;
-            wait_and_check(M_OP_DIV, 32'hffff_ff9c, 32'd7, wait_cycles);
+            wait_and_check(MULDIV_DIV, 32'hffff_ff9c, 32'd7, wait_cycles);
 
             consume_and_idle();
             cases = cases + 2;
@@ -362,7 +362,7 @@ module tb_muldiv_unit;
         begin
             @(negedge clk);
             mul_prestart_valid = 1'b1;
-            mul_prestart_op = M_OP_MUL;
+            mul_prestart_op = MULDIV_MUL;
             mul_prestart_rs1 = 32'h1234_5678;
             mul_prestart_rs2 = 32'h0000_1000;
             req_valid = 1'b0;
@@ -383,7 +383,7 @@ module tb_muldiv_unit;
         begin
             @(negedge clk);
             mul_prestart_valid = 1'b1;
-            mul_prestart_op = M_OP_MUL;
+            mul_prestart_op = MULDIV_MUL;
             mul_prestart_rs1 = 32'd37;
             mul_prestart_rs2 = 32'd41;
             req_valid = 1'b0;
@@ -391,7 +391,7 @@ module tb_muldiv_unit;
 
             @(negedge clk);
             mul_prestart_valid = 1'b0;
-            req_op = M_OP_MUL;
+            req_op = MULDIV_MUL;
             req_valid = 1'b1;
             flush = 1'b1;
 
@@ -408,8 +408,8 @@ module tb_muldiv_unit;
     task automatic flush_completed_mul;
         integer wait_cycles;
         begin
-            start_mul(M_OP_MUL, 32'd37, 32'd41);
-            wait_and_check(M_OP_MUL, 32'd37, 32'd41, wait_cycles);
+            start_mul(MULDIV_MUL, 32'd37, 32'd41);
+            wait_and_check(MULDIV_MUL, 32'd37, 32'd41, wait_cycles);
 
             flush = 1'b1;
             @(negedge clk);
@@ -441,27 +441,27 @@ module tb_muldiv_unit;
         run_operand_set(32'hfffe_0000, 32'h0001_ffff);
         run_operand_set(32'h8001_ffff, 32'hfffe_0001);
 
-        run_mul_turnover(M_OP_MUL, 32'd6, 32'd7,
-                         M_OP_MUL, 32'd42, 32'd5);
-        run_mul_turnover(M_OP_MULH, 32'h8000_0000, 32'd2,
-                         M_OP_MULHU, 32'hffff_ffff, 32'hffff_ffff);
+        run_mul_turnover(MULDIV_MUL, 32'd6, 32'd7,
+                         MULDIV_MUL, 32'd42, 32'd5);
+        run_mul_turnover(MULDIV_MULH, 32'h8000_0000, 32'd2,
+                         MULDIV_MULHU, 32'hffff_ffff, 32'hffff_ffff);
         run_mul_done_hold();
         run_div_to_mul_turnover();
         run_mul_to_div_turnover();
         run_div_to_div_turnover();
         flush_mul_at_prestart();
-        run_case(M_OP_MUL, 32'h1234_5678, 32'h0000_1000);
+        run_case(MULDIV_MUL, 32'h1234_5678, 32'h0000_1000);
         flush_mul_at_exec();
-        run_case(M_OP_MUL, 32'd37, 32'd41);
+        run_case(MULDIV_MUL, 32'd37, 32'd41);
         flush_completed_mul();
-        run_case(M_OP_MUL, 32'd37, 32'd41);
+        run_case(MULDIV_MUL, 32'd37, 32'd41);
 
         for (int n = 0; n < 1000; n++)
             run_operand_set($urandom(seed), $urandom(seed));
 
         // Abort an in-flight divide and verify that the next request is clean.
         @(negedge clk);
-        req_op = M_OP_DIVU;
+        req_op = MULDIV_DIVU;
         req_rs1 = 32'hfedc_ba98;
         req_rs2 = 32'h0000_0123;
         req_valid = 1'b1;
@@ -474,7 +474,7 @@ module tb_muldiv_unit;
             $error("flush did not return MulDiv unit to idle");
             $fatal(1);
         end
-        run_case(M_OP_DIVU, 32'hfedc_ba98, 32'h0000_0123);
+        run_case(MULDIV_DIVU, 32'hfedc_ba98, 32'h0000_0123);
 
         $display("[PASS] muldiv unit randomized test (%0d cases)", cases);
         $finish;

@@ -695,7 +695,7 @@ module tb_frontend_abtb_steering;
                 for (cycle = 0; cycle < 320; cycle = cycle + 1) begin
                     @(negedge clk);
                     if (dut.pred_train_valid && dut.pred_train_pc == test_pc
-                        && dut.pred_train_is_branch
+                        && dut.pred_train_is_conditional_control
                         && !dut.pred_train_actual_taken) begin
                         check(!dut.abtb_update_valid,
                               "not-taken branch overwrote the stale ABTB entry");
@@ -969,7 +969,8 @@ module tb_frontend_abtb_steering;
                 for (cycle = 0; cycle < 80; cycle = cycle + 1) begin
                     @(negedge clk);
                     if (dut.ex_valid && dut.ex_pc == branch_pc
-                        && dut.ex_is_branch && !dut.mem_allowin) begin
+                        && dut.ex_is_conditional_control
+                        && !dut.mem_allowin) begin
                         held_ghr =
                             dut.u_frontend_stage1_direction.committed_ghr;
                         updates_before = dut.stage1_confirmed_branch_count;

@@ -615,7 +615,7 @@ module tb_frontend_abtb_integration;
                     @(negedge clk);
                     if (dut.pred_train_valid
                         && dut.pred_train_pc == expected_pc
-                        && dut.pred_train_is_branch
+                        && dut.pred_train_is_conditional_control
                         && !dut.pred_train_actual_taken) begin
                         check(!dut.abtb_update_valid,
                               "not-taken branch attempted an ABTB write");
@@ -639,7 +639,7 @@ module tb_frontend_abtb_integration;
                     @(negedge clk);
                     if (dut.pred_train_valid
                         && dut.pred_train_pc == expected_pc
-                        && dut.pred_train_is_jalr) begin
+                        && dut.pred_train_is_indirect_control) begin
                         check(!dut.abtb_update_valid,
                               "ordinary indirect JALR attempted an ABTB write");
                         found = 1'b1;
@@ -930,19 +930,19 @@ module tb_frontend_abtb_integration;
                 if (dut.u_frontend_ftq.fq_tail_p1 == '0)
                     slot1_sidecar_kill_wrap_checks =
                         slot1_sidecar_kill_wrap_checks + 1;
-                if (dut.u_frontend_ftq.f0_slot0_jal
-                    || dut.u_frontend_ftq.f0_slot0_jalr
+                if (dut.u_frontend_ftq.f0_slot0_direct_control
+                    || dut.u_frontend_ftq.f0_slot0_indirect_control
                     || dut.u_frontend_ftq.f0_slot0_system_redirect
                     || dut.u_frontend_ftq.f0_slot0_pred_taken)
                     slot1_sidecar_kill_redirect_checks =
                         slot1_sidecar_kill_redirect_checks + 1;
-                if (dut.u_frontend_ftq.f0_slot0_jal)
+                if (dut.u_frontend_ftq.f0_slot0_direct_control)
                     slot1_sidecar_kill_jal_checks =
                         slot1_sidecar_kill_jal_checks + 1;
-                if (dut.u_frontend_ftq.f0_slot0_jalr)
+                if (dut.u_frontend_ftq.f0_slot0_indirect_control)
                     slot1_sidecar_kill_jalr_checks =
                         slot1_sidecar_kill_jalr_checks + 1;
-                if (dut.u_frontend_ftq.f0_slot0_branch
+                if (dut.u_frontend_ftq.f0_slot0_conditional_control
                     && dut.u_frontend_ftq.f0_slot0_pred_taken)
                     slot1_sidecar_kill_branch_checks =
                         slot1_sidecar_kill_branch_checks + 1;

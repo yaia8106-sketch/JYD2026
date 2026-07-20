@@ -5,11 +5,8 @@
 // Spec: 02_Design/spec/forwarding_spec.md
 // Style: parallel match + per-stage preselect + encoded 4-way group MUX
 //
-// FIX: EX/MEM forwarding now handles JAL/JALR (wb_sel=10 -> PC+4)
-//   Previously forwarded alu_result even for JAL/JALR, which gives
-//   the jump TARGET instead of the LINK ADDRESS (PC+4).
-//   This was masked pre-predictor (JAL always flushed, so no
-//   dependent instruction could follow in the pipeline).
+// Link-producing control flow selects WB_NEXT_PC, so forwarding must return
+// the link address rather than the independently computed control target.
 // ============================================================
 
 module forwarding (
@@ -19,8 +16,8 @@ module forwarding (
     input  logic        id_rs1_used,
     input  logic        id_rs2_used,
     input  logic        id_s0_alu_only,
-    input  logic        id_s0_jalr,
-    input  logic        id_s0_branch,
+    input  logic        id_s0_indirect_control,
+    input  logic        id_s0_conditional_control,
     input  logic        id_s0_mem_read,
     input  logic        id_s0_mem_write,
     input  logic        id_s0_is_mul,
@@ -102,9 +99,6 @@ module forwarding (
     // Outputs
     output logic [31:0] id_rs1_data,
     output logic [31:0] id_rs2_data,
-    output logic [31:0] id_branch_rs1_data,
-    output logic [31:0] id_branch_rs2_data,
-    output logic [31:0] id_rs1_jalr_data,
     output logic [31:0] id_s1_rs1_data,
     output logic [31:0] id_s1_rs2_data,
     output logic [31:0] id_s0_alu_src1,
@@ -126,9 +120,9 @@ module forwarding (
 
     // ================================================================
     //  Forwarding value computation
-    //  For EX/MEM stages: if wb_sel==10 (JAL/JALR), forward PC+4
+    //  For EX/MEM stages: if wb_sel==WB_NEXT_PC, forward PC+4
     //  For wb_sel==01 (load), value not ready yet -> handled by stall.
-    //  Repaired EX results are valid forwarding sources now that branch/JALR
+    //  Repaired EX results are valid forwarding sources now that control-flow
     //  target work no longer sits in ID.
     // ================================================================
     wire [31:0] ex_fwd_val     = (ex_wb_sel == 2'b10)
@@ -334,20 +328,14 @@ module forwarding (
         s1_alu_src2_wb_candidate, s1_alu_src2_rf_candidate
     );
 
-    // Branch compare and JALR target are now resolved in EX, so the old
-    // branch/JALR-only ID forwarding paths collapse to the ordinary operands.
-    assign id_branch_rs1_data = id_rs1_data;
-    assign id_branch_rs2_data = id_rs2_data;
-    assign id_rs1_jalr_data   = id_rs1_data;
-
     // ================================================================
     //  Load hazard / WB repair policy
     // ================================================================
     // Repair is a one-cycle promise: the consumer moves to EX now and will
     // substitute WB load data there on the next cycle.
     wire id_s0_repair_ok = id_s0_alu_only
-                         | id_s0_branch
-                         | id_s0_jalr
+                         | id_s0_conditional_control
+                         | id_s0_indirect_control
                          | id_s0_mem_read
                          | id_s0_mem_write;
 
@@ -488,10 +476,10 @@ module forwarding (
          | (ex_s1_valid & ex_s1_reg_write & (ex_s1_rd != 5'd0)
             & id_mul_uses_s1_ex_writer));
 
-    // Kept as named monitor wires. EX-produced branch/JALR operands now use
+    // Kept as named monitor wires. EX-produced control operands now use
     // the ordinary ID operand path and resolve control flow in EX.
-    wire jalr_ex_wait_hazard = 1'b0;
-    wire branch_ex_wait_hazard = 1'b0;
+    wire indirect_control_ex_wait_hazard = 1'b0;
+    wire conditional_control_ex_wait_hazard = 1'b0;
 
     // S1_WB is forwarded above. Keep this named wire for the perf monitor;
     // it now reports actual wait cycles, which should be zero for S1_WB hits.

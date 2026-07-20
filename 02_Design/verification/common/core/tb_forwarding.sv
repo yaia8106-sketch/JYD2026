@@ -6,8 +6,8 @@ module tb_forwarding;
     logic        id_rs1_used;
     logic        id_rs2_used;
     logic        id_s0_alu_only;
-    logic        id_s0_jalr;
-    logic        id_s0_branch;
+    logic        id_s0_indirect_control;
+    logic        id_s0_conditional_control;
     logic        id_s0_mem_read;
     logic        id_s0_mem_write;
     logic        id_s0_is_mul;
@@ -80,9 +80,6 @@ module tb_forwarding;
 
     logic [31:0] id_rs1_data;
     logic [31:0] id_rs2_data;
-    logic [31:0] id_branch_rs1_data;
-    logic [31:0] id_branch_rs2_data;
-    logic [31:0] id_rs1_jalr_data;
     logic [31:0] id_s1_rs1_data;
     logic [31:0] id_s1_rs2_data;
     logic [31:0] id_s0_alu_src1;
@@ -107,8 +104,8 @@ module tb_forwarding;
         .id_rs1_used      (id_rs1_used),
         .id_rs2_used      (id_rs2_used),
         .id_s0_alu_only   (id_s0_alu_only),
-        .id_s0_jalr       (id_s0_jalr),
-        .id_s0_branch     (id_s0_branch),
+        .id_s0_indirect_control(id_s0_indirect_control),
+        .id_s0_conditional_control(id_s0_conditional_control),
         .id_s0_mem_read   (id_s0_mem_read),
         .id_s0_mem_write  (id_s0_mem_write),
         .id_s0_is_mul     (id_s0_is_mul),
@@ -174,9 +171,6 @@ module tb_forwarding;
         .wb_s1_write_data (wb_s1_write_data),
         .id_rs1_data      (id_rs1_data),
         .id_rs2_data      (id_rs2_data),
-        .id_branch_rs1_data(id_branch_rs1_data),
-        .id_branch_rs2_data(id_branch_rs2_data),
-        .id_rs1_jalr_data (id_rs1_jalr_data),
         .id_s1_rs1_data   (id_s1_rs1_data),
         .id_s1_rs2_data   (id_s1_rs2_data),
         .id_s0_alu_src1   (id_s0_alu_src1),
@@ -234,8 +228,8 @@ module tb_forwarding;
             id_rs1_used = 1'b0;
             id_rs2_used = 1'b0;
             id_s0_alu_only = 1'b0;
-            id_s0_jalr = 1'b0;
-            id_s0_branch = 1'b0;
+            id_s0_indirect_control = 1'b0;
+            id_s0_conditional_control = 1'b0;
             id_s0_mem_read = 1'b0;
             id_s0_mem_write = 1'b0;
             id_s0_is_mul = 1'b0;
@@ -445,7 +439,7 @@ module tb_forwarding;
         clear_inputs();
         id_rs1_addr = 5'd5;
         id_rs1_used = 1'b1;
-        id_s0_branch = 1'b1;
+        id_s0_conditional_control = 1'b1;
         ex_valid = 1'b1;
         ex_reg_write = 1'b1;
         ex_rd = 5'd5;
@@ -457,19 +451,20 @@ module tb_forwarding;
         clear_inputs();
         id_rs1_addr = 5'd5;
         id_rs1_used = 1'b1;
-        id_s0_jalr = 1'b1;
+        id_s0_indirect_control = 1'b1;
         ex_valid = 1'b1;
         ex_reg_write = 1'b1;
         ex_rd = 5'd5;
         ex_alu_result = 32'h8765_4321;
         #1;
         check(id_ready_go, "repaired S0 EX producer should not stall S0 JALR");
-        check(id_rs1_jalr_data == 32'h8765_4321, "JALR rs1 should use ordinary forwarded rs1");
+        check(id_rs1_data == 32'h8765_4321,
+              "indirect control should use ordinary forwarded source 0");
 
         clear_inputs();
         id_rs1_addr = 5'd6;
         id_rs1_used = 1'b1;
-        id_s0_branch = 1'b1;
+        id_s0_conditional_control = 1'b1;
         mem_valid = 1'b1;
         mem_reg_write = 1'b1;
         mem_is_load = 1'b1;
@@ -552,7 +547,7 @@ module tb_forwarding;
         clear_inputs();
         id_rs1_addr = 5'd10;
         id_rs1_used = 1'b1;
-        id_s0_branch = 1'b1;
+        id_s0_conditional_control = 1'b1;
         mem_s1_valid = 1'b1;
         mem_s1_reg_write = 1'b1;
         mem_s1_is_load = 1'b1;
@@ -580,7 +575,7 @@ module tb_forwarding;
         clear_inputs();
         id_rs1_addr = 5'd10;
         id_rs1_used = 1'b1;
-        id_s0_branch = 1'b1;
+        id_s0_conditional_control = 1'b1;
         mem_s1_valid = 1'b1;
         mem_s1_reg_write = 1'b1;
         mem_s1_is_load = 1'b1;
@@ -607,7 +602,7 @@ module tb_forwarding;
         clear_inputs();
         id_rs1_addr = 5'd11;
         id_rs1_used = 1'b1;
-        id_s0_branch = 1'b1;
+        id_s0_conditional_control = 1'b1;
         ex_valid = 1'b1;
         ex_reg_write = 1'b1;
         ex_mem_read = 1'b1;

@@ -11,9 +11,9 @@ module predictor_resolve_builder
 (
     input  logic                   s0_valid,
     input  logic [31:0]            s0_pc,
-    input  logic                   s0_is_branch,
-    input  logic                   s0_is_jal,
-    input  logic                   s0_is_jalr,
+    input  logic                   s0_is_conditional_control,
+    input  logic                   s0_is_direct_control,
+    input  logic                   s0_is_indirect_control,
     input  logic                   s0_actual_taken,
     input  logic [31:0]            s0_actual_target,
     input  logic                   s0_update_qualified,
@@ -25,9 +25,9 @@ module predictor_resolve_builder
 
     input  logic                   s1_valid,
     input  logic [31:0]            s1_pc,
-    input  logic                   s1_is_branch,
-    input  logic                   s1_is_jal,
-    input  logic                   s1_is_jalr,
+    input  logic                   s1_is_conditional_control,
+    input  logic                   s1_is_direct_control,
+    input  logic                   s1_is_indirect_control,
     input  logic                   s1_actual_taken,
     input  logic [31:0]            s1_actual_target,
     input  logic                   s1_update_qualified,
@@ -47,9 +47,10 @@ module predictor_resolve_builder
         slot0_resolve = '0;
         slot0_resolve.valid = s0_valid;
         slot0_resolve.pc = s0_pc;
-        slot0_resolve.is_branch = s0_is_branch;
-        slot0_resolve.is_jal = s0_is_jal;
-        slot0_resolve.is_jalr = s0_is_jalr;
+        slot0_resolve.is_conditional_branch =
+            s0_is_conditional_control;
+        slot0_resolve.is_direct_jump = s0_is_direct_control;
+        slot0_resolve.is_indirect_jump = s0_is_indirect_control;
         slot0_resolve.actual_taken = s0_actual_taken;
         slot0_resolve.actual_target = s0_actual_target;
         slot0_resolve.update_qualified = s0_update_qualified;
@@ -62,9 +63,10 @@ module predictor_resolve_builder
         slot1_resolve = '0;
         slot1_resolve.valid = s1_valid;
         slot1_resolve.pc = s1_pc;
-        slot1_resolve.is_branch = s1_is_branch;
-        slot1_resolve.is_jal = s1_is_jal;
-        slot1_resolve.is_jalr = s1_is_jalr;
+        slot1_resolve.is_conditional_branch =
+            s1_is_conditional_control;
+        slot1_resolve.is_direct_jump = s1_is_direct_control;
+        slot1_resolve.is_indirect_jump = s1_is_indirect_control;
         slot1_resolve.actual_taken = s1_actual_taken;
         slot1_resolve.actual_target = s1_actual_target;
         slot1_resolve.update_qualified = s1_update_qualified;

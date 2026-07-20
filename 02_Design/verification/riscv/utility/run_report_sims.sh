@@ -27,7 +27,7 @@ APP_COMPILE_LOG="$WORK_DIR/riscv_tests_simv_compile.log"
 # Keep this source set aligned with functional/run_all.sh.  The report
 # waveform uses the same cpu_top + BRAM DCache harness as the regression.
 APP_RTL_FILES="
-    -F $RTL_DIR/filelists/cpu_blocks.f
+    -F $RTL_DIR/filelists/riscv_cpu.f
     -F $RTL_DIR/filelists/dcache_bram.f
     $RTL_DIR/core/cpu_top.sv
     $RISCV_TESTS_DIR/work/dcache_data_ram.v

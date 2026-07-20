@@ -1,6 +1,6 @@
 // ============================================================
 // Module: muldiv_unit
-// Description: RV32M multi-cycle execution unit.
+// Description: ISA-neutral integer multiply/divide execution unit.
 // Domain: execute.
 //   - MUL/MULH/MULHSU/MULHU use a pipelined DSP-inferred multiplier.
 //   - DIV/DIVU/REM/REMU use a small radix-4 iterative divider.
@@ -16,12 +16,12 @@ module muldiv_unit
     // operands feed free-running local input registers; prestart_valid only
     // establishes ownership and never gates those payload registers.
     input  logic        mul_prestart_valid,
-    input  logic [ 2:0] mul_prestart_op,
+    input  muldiv_op_t  mul_prestart_op,
     input  logic [31:0] mul_prestart_rs1,
     input  logic [31:0] mul_prestart_rs2,
 
     input  logic        req_valid,
-    input  logic [ 2:0] req_op,
+    input  muldiv_op_t  req_op,
     input  logic [31:0] req_div_rs1,
     input  logic [31:0] req_div_rs2,
     input  logic        consume,
@@ -43,7 +43,7 @@ module muldiv_unit
 
     state_t state;
 
-    logic [ 2:0] op_r;
+    muldiv_op_t op_r;
     logic signed [32:0] mul_a_pipe;
     logic signed [32:0] mul_b_pipe;
     (* use_dsp = "yes" *) logic signed [65:0] mul_product_r;
@@ -60,11 +60,11 @@ module muldiv_unit
 
     // op[2] separates the multiplier family from DIV/REM operations.
     wire req_is_rem = req_op[1];
-    wire req_is_signed_div = (req_op == M_OP_DIV) | (req_op == M_OP_REM);
+    wire req_is_signed_div = (req_op == MULDIV_DIV) | (req_op == MULDIV_REM);
 
-    wire mul_prestart_signed_a = (mul_prestart_op == M_OP_MULH)
-                               | (mul_prestart_op == M_OP_MULHSU);
-    wire mul_prestart_signed_b = (mul_prestart_op == M_OP_MULH);
+    wire mul_prestart_signed_a = (mul_prestart_op == MULDIV_MULH)
+                               | (mul_prestart_op == MULDIV_MULHSU);
+    wire mul_prestart_signed_b = (mul_prestart_op == MULDIV_MULH);
     wire signed [32:0] mul_prestart_a = {
         mul_prestart_signed_a & mul_prestart_rs1[31], mul_prestart_rs1
     };
@@ -143,15 +143,15 @@ module muldiv_unit
                                : div_remainder[31:0];
 
     function automatic logic [31:0] mul_result_select(
-        input logic [2:0] op,
+        input muldiv_op_t op,
         input logic signed [65:0] product
     );
         begin
             case (op)
-                M_OP_MUL:    mul_result_select = product[31:0];
-                M_OP_MULH:   mul_result_select = product[63:32];
-                M_OP_MULHSU: mul_result_select = product[63:32];
-                M_OP_MULHU:  mul_result_select = product[63:32];
+                MULDIV_MUL:    mul_result_select = product[31:0];
+                MULDIV_MULH:   mul_result_select = product[63:32];
+                MULDIV_MULHSU: mul_result_select = product[63:32];
+                MULDIV_MULHU:  mul_result_select = product[63:32];
                 default:     mul_result_select = product[31:0];
             endcase
         end

@@ -1,6 +1,7 @@
 `timescale 1ns/1ps
 
 module tb_frontend_ftq_pair;
+    import riscv_defs::*;
     import cpu_defs::*;
 
     localparam logic [31:0] RESET_PC = 32'h8000_0000;

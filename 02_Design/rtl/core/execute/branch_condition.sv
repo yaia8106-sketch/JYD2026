@@ -1,13 +1,15 @@
 // ============================================================
 // Module: branch_condition
-// Description: RV32 branch condition comparator.
+// Description: ISA-neutral conditional-branch comparator.
 // Domain: execute.
 // ============================================================
 
-module branch_condition (
-    input  logic [31:0] rs1_data,
-    input  logic [31:0] rs2_data,
-    input  logic [ 2:0] branch_cond,
+module branch_condition
+    import cpu_defs::*;
+(
+    input  logic [31:0] src0_data,
+    input  logic [31:0] src1_data,
+    input  branch_op_t  branch_op,
     output logic        taken
 );
 
@@ -16,7 +18,7 @@ module branch_condition (
     // group fits one LUT6, followed by one six-input OR.  The keep attributes
     // prevent the groups from being absorbed serially into the predictor
     // update enable logic.
-    wire [31:0] mismatch_bits = rs1_data ^ rs2_data;
+    wire [31:0] mismatch_bits = src0_data ^ src1_data;
     (* keep = "true" *) wire neq_group0 = |mismatch_bits[ 5: 0];
     (* keep = "true" *) wire neq_group1 = |mismatch_bits[11: 6];
     (* keep = "true" *) wire neq_group2 = |mismatch_bits[17:12];
@@ -27,18 +29,20 @@ module branch_condition (
              | neq_group3 | neq_group4 | neq_group5;
 
     // The subtract path is needed only for signed/unsigned ordering tests.
-    wire [31:0] diff = rs1_data - rs2_data;
-    wire        is_unsigned = branch_cond[1];
-    wire        cmp = (rs1_data[31] == rs2_data[31]) ? diff[31] :
-                      is_unsigned ? rs2_data[31] : rs1_data[31];
+    wire [31:0] diff = src0_data - src1_data;
+    wire is_unsigned = (branch_op == BR_LTU) | (branch_op == BR_GEU);
+    wire cmp = (src0_data[31] == src1_data[31]) ? diff[31] :
+               is_unsigned ? src1_data[31] : src0_data[31];
 
     // Invalid branch funct3 values decode to not-taken because no select is set.
-    wire sel_eq = (branch_cond == 3'b000);
-    wire sel_ne = (branch_cond == 3'b001);
-    wire sel_lt = (branch_cond == 3'b100) | (branch_cond == 3'b110);
-    wire sel_ge = (branch_cond == 3'b101) | (branch_cond == 3'b111);
+    wire sel_eq = branch_op == BR_EQ;
+    wire sel_ne = branch_op == BR_NE;
+    wire sel_lt = (branch_op == BR_LT) | (branch_op == BR_LTU);
+    wire sel_ge = (branch_op == BR_GE) | (branch_op == BR_GEU);
+    wire sel_always = branch_op == BR_ALWAYS;
 
-    assign taken = (sel_eq & ~neq)
+    assign taken = sel_always
+                 | (sel_eq & ~neq)
                  | (sel_ne &  neq)
                  | (sel_lt &  cmp)
                  | (sel_ge & ~cmp);

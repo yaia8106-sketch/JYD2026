@@ -243,7 +243,7 @@ derive_stop_pc() {
 }
 
 RTL_FILES="
-    -F $RTL_DIR/filelists/cpu_blocks.f
+    -F $RTL_DIR/filelists/riscv_cpu.f
     -F $RTL_DIR/filelists/dcache_bram.f
     $RTL_DIR/core/cpu_top.sv
     $RISCV_TESTS_DIR/work/dcache_data_ram.v

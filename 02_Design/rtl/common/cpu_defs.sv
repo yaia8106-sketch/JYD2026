@@ -5,54 +5,161 @@
 
 package cpu_defs;
 
-    // ---- ALU 操作编码: {funct7[5], funct3} ----
-    localparam logic [3:0] ALU_ADD  = 4'b0_000;
-    localparam logic [3:0] ALU_SUB  = 4'b1_000;
-    localparam logic [3:0] ALU_SLL  = 4'b0_001;
-    localparam logic [3:0] ALU_SLT  = 4'b0_010;
-    localparam logic [3:0] ALU_SLTU = 4'b0_011;
-    localparam logic [3:0] ALU_XOR  = 4'b0_100;
-    localparam logic [3:0] ALU_SRL  = 4'b0_101;
-    localparam logic [3:0] ALU_SRA  = 4'b1_101;
-    localparam logic [3:0] ALU_OR   = 4'b0_110;
-    localparam logic [3:0] ALU_AND  = 4'b0_111;
+    // The common pipeline consumes semantic operations only. Instruction
+    // encodings live in rtl/isa/<isa>/ and must not leak into this package.
+    typedef enum logic [3:0] {
+        ALU_ADD  = 4'b0_000,
+        ALU_SUB  = 4'b1_000,
+        ALU_SLL  = 4'b0_001,
+        ALU_SLT  = 4'b0_010,
+        ALU_SLTU = 4'b0_011,
+        ALU_XOR  = 4'b0_100,
+        ALU_SRL  = 4'b0_101,
+        ALU_SRA  = 4'b1_101,
+        ALU_OR   = 4'b0_110,
+        ALU_AND  = 4'b0_111
+    } alu_op_t;
 
-    // ---- 立即数类型编码 ----
-    localparam logic [2:0] IMM_I = 3'b000;
-    localparam logic [2:0] IMM_S = 3'b001;
-    localparam logic [2:0] IMM_B = 3'b010;
-    localparam logic [2:0] IMM_U = 3'b011;
-    localparam logic [2:0] IMM_J = 3'b100;
+    typedef enum logic [2:0] {
+        EXEC_NONE   = 3'd0,
+        EXEC_ALU    = 3'd1,
+        EXEC_LSU    = 3'd2,
+        EXEC_BRANCH = 3'd3,
+        EXEC_MULDIV = 3'd4,
+        EXEC_PRIV   = 3'd5,
+        EXEC_FENCE  = 3'd6
+    } exec_unit_t;
 
-    // ---- RV32I opcode 编码 ----
-    localparam logic [6:0] OP_R_TYPE = 7'b0110011;
-    localparam logic [6:0] OP_I_ALU  = 7'b0010011;
-    localparam logic [6:0] OP_LOAD   = 7'b0000011;
-    localparam logic [6:0] OP_STORE  = 7'b0100011;
-    localparam logic [6:0] OP_BRANCH = 7'b1100011;
-    localparam logic [6:0] OP_LUI    = 7'b0110111;
-    localparam logic [6:0] OP_AUIPC  = 7'b0010111;
-    localparam logic [6:0] OP_JAL    = 7'b1101111;
-    localparam logic [6:0] OP_JALR   = 7'b1100111;
-    localparam logic [6:0] OP_SYSTEM = 7'b1110011;
-    localparam logic [6:0] OP_FENCE  = 7'b0001111;
+    typedef enum logic [1:0] {
+        OPERAND_A_SRC0 = 2'b00,
+        OPERAND_A_PC   = 2'b01,
+        OPERAND_A_ZERO = 2'b10
+    } operand_a_sel_t;
 
-    // ---- ABTB control-flow type encoding ----
-    localparam logic [1:0] ABTB_TYPE_JAL    = 2'b00;
-    localparam logic [1:0] ABTB_TYPE_CALL   = 2'b01;
-    localparam logic [1:0] ABTB_TYPE_BRANCH = 2'b10;
-    localparam logic [1:0] ABTB_TYPE_RET    = 2'b11;
+    typedef enum logic {
+        OPERAND_B_SRC1 = 1'b0,
+        OPERAND_B_IMM  = 1'b1
+    } operand_b_sel_t;
 
-    // ---- RV32M funct7/funct3 encoding ----
-    localparam logic [6:0] MULDIV_FUNCT7 = 7'b0000001;
-    localparam logic [2:0] M_OP_MUL    = 3'b000;
-    localparam logic [2:0] M_OP_MULH   = 3'b001;
-    localparam logic [2:0] M_OP_MULHSU = 3'b010;
-    localparam logic [2:0] M_OP_MULHU  = 3'b011;
-    localparam logic [2:0] M_OP_DIV    = 3'b100;
-    localparam logic [2:0] M_OP_DIVU   = 3'b101;
-    localparam logic [2:0] M_OP_REM    = 3'b110;
-    localparam logic [2:0] M_OP_REMU   = 3'b111;
+    typedef enum logic [1:0] {
+        WB_EXEC    = 2'b00,
+        WB_LOAD    = 2'b01,
+        WB_NEXT_PC = 2'b10,
+        WB_NONE    = 2'b11
+    } wb_src_t;
+
+    typedef enum logic [1:0] {
+        MEM_NONE  = 2'b00,
+        MEM_LOAD  = 2'b01,
+        MEM_STORE = 2'b10
+    } mem_cmd_t;
+
+    typedef enum logic [1:0] {
+        MEM_BYTE = 2'b00,
+        MEM_HALF = 2'b01,
+        MEM_WORD = 2'b10
+    } mem_size_t;
+
+    // Values are deliberately independent from any ISA encoding even where
+    // the bit patterns happen to match the current RISC-V implementation.
+    typedef enum logic [2:0] {
+        BR_EQ     = 3'b000,
+        BR_NE     = 3'b001,
+        BR_NONE   = 3'b010,
+        BR_ALWAYS = 3'b011,
+        BR_LT     = 3'b100,
+        BR_GE     = 3'b101,
+        BR_LTU    = 3'b110,
+        BR_GEU    = 3'b111
+    } branch_op_t;
+
+    typedef enum logic [1:0] {
+        CF_NONE        = 2'b00,
+        CF_CONDITIONAL = 2'b01,
+        CF_DIRECT      = 2'b10,
+        CF_INDIRECT    = 2'b11
+    } control_flow_t;
+
+    typedef enum logic {
+        TARGET_PC   = 1'b0,
+        TARGET_SRC0 = 1'b1
+    } target_base_t;
+
+    typedef enum logic [1:0] {
+        CFI_TYPE_JUMP   = 2'b00,
+        CFI_TYPE_CALL   = 2'b01,
+        CFI_TYPE_BRANCH = 2'b10,
+        CFI_TYPE_RETURN = 2'b11
+    } cfi_type_t;
+
+    typedef enum logic [1:0] {
+        PRIV_NONE    = 2'b00,
+        PRIV_REG     = 2'b01,
+        PRIV_SYSCALL = 2'b10,
+        PRIV_RETURN  = 2'b11
+    } priv_op_t;
+
+    typedef enum logic [1:0] {
+        PRIV_CMD_NONE  = 2'b00,
+        PRIV_CMD_WRITE = 2'b01,
+        PRIV_CMD_SET   = 2'b10,
+        PRIV_CMD_CLEAR = 2'b11
+    } priv_cmd_t;
+
+    typedef enum logic [2:0] {
+        MULDIV_MUL    = 3'b000,
+        MULDIV_MULH   = 3'b001,
+        MULDIV_MULHSU = 3'b010,
+        MULDIV_MULHU  = 3'b011,
+        MULDIV_DIV    = 3'b100,
+        MULDIV_DIVU   = 3'b101,
+        MULDIV_REM    = 3'b110,
+        MULDIV_REMU   = 3'b111
+    } muldiv_op_t;
+
+    typedef enum logic [1:0] {
+        EXCEPTION_NONE       = 2'b00,
+        EXCEPTION_ILLEGAL    = 2'b01,
+        EXCEPTION_BREAKPOINT = 2'b10
+    } decode_exception_t;
+
+    localparam int PRIV_ADDR_W = 16;
+
+    // One fully decoded architectural instruction. Valid/ready stays outside
+    // the payload so every pipeline boundary keeps handshake state explicit.
+    typedef struct packed {
+        exec_unit_t       exec_unit;
+        logic [4:0]       src0_addr;
+        logic [4:0]       src1_addr;
+        logic [4:0]       dst_addr;
+        logic             src0_used;
+        logic             src1_used;
+        logic             dst_write;
+        operand_a_sel_t   operand_a_sel;
+        operand_b_sel_t   operand_b_sel;
+        logic [31:0]      imm;
+        alu_op_t          alu_op;
+        wb_src_t          wb_src;
+        mem_cmd_t         mem_cmd;
+        mem_size_t        mem_size;
+        logic             mem_unsigned;
+        control_flow_t    control_flow;
+        branch_op_t       branch_op;
+        target_base_t     target_base;
+        logic [1:0]       target_clear_mask;
+        logic             cfi_update;
+        cfi_type_t        cfi_type;
+        priv_op_t         priv_op;
+        logic             priv_uses_imm;
+        priv_cmd_t        priv_cmd;
+        logic [PRIV_ADDR_W-1:0] priv_addr;
+        logic [4:0]       priv_imm;
+        muldiv_op_t       muldiv_op;
+        decode_exception_t exception;
+        logic [1:0]       lane_mask;
+        logic             block_younger;
+        logic             serializing;
+    } decoded_uop_t;
 
     // ---- Frontend / IF-ID payloads ----
     // Keep pipeline data grouped by function. Handshake and lane-valid signals
@@ -85,30 +192,30 @@ package cpu_defs;
 
     // ---- Frontend instruction predecode ----
     typedef struct packed {
-        // ins type
-        logic is_branch;
-        logic is_jal;
-        logic is_jalr;
-        logic is_system;
-        logic is_fence;
-        logic is_illegal;
-        logic is_muldiv;
-        logic is_load;
-        logic is_store;
-        logic is_alu_type;
-        logic is_jump;
-        logic is_control;
-        logic is_lsu;
-        logic is_cfi;
-        // 寄存器使用情况
-        logic writes_rd;
-        logic uses_rs1;
-        logic uses_rs2;
-        // pair logic
-        // some ins couldn't be issued with other instructions, so we need to force them to be issued alone.
-        // for example, force_signle_slot0 means that the instruction in slot0 should be issued alone, and the instruction in slot1 should be issued as NOP ins.
-        logic force_single_slot0; // jalr/system/fence/illegal/non-base/DIV/REM
-        logic force_single_slot1; // system/fence/illegal/non-base/all RV32M
+        logic       is_conditional_branch;
+        logic       is_direct_jump;
+        logic       is_indirect_jump;
+        logic       is_privileged;
+        logic       is_privileged_flow;
+        logic       is_fence;
+        logic       is_illegal;
+        logic       is_muldiv;
+        logic       is_load;
+        logic       is_store;
+        logic       is_alu_type;
+        logic       is_jump;
+        logic       is_control;
+        logic       is_lsu;
+        logic       is_cfi;
+        logic       writes_dst;
+        logic       uses_src0;
+        logic       uses_src1;
+        logic [4:0] src0_addr;
+        logic [4:0] src1_addr;
+        logic [4:0] dst_addr;
+        logic [1:0] lane_mask;
+        logic       block_younger;
+        logic       serializing;
     } frontend_predecode_t;
 
     typedef struct packed {
@@ -124,10 +231,11 @@ package cpu_defs;
         logic [ 7:0] stage1_pht_index;
         logic [ 1:0] stage1_pht_counter;
         // Decoded instruction class / 指令类型
-        logic        is_branch;
-        logic        is_jal;
-        logic        is_jalr;
-        logic        is_system;
+        logic        is_conditional_branch;
+        logic        is_direct_jump;
+        logic        is_indirect_jump;
+        logic        is_privileged;
+        logic        is_privileged_flow;
         logic        is_fence;
         logic        is_illegal;
         logic        is_muldiv;
@@ -135,9 +243,9 @@ package cpu_defs;
         logic        is_store;
         logic        is_alu_type;
         // Register scheduling metadata / 寄存器调度信息
-        logic        writes_rd;
-        logic        uses_rs1;
-        logic        uses_rs2;
+        logic        writes_dst;
+        logic        uses_src0;
+        logic        uses_src1;
         logic        is_jump;
         logic        is_control;
         logic        is_lsu;
@@ -190,12 +298,12 @@ package cpu_defs;
         logic       is_alu_type;
         logic       is_lsu;
         logic       is_cfi;
-        logic       writes_rd;
-        logic       uses_rs1;
-        logic       uses_rs2;
-        logic [4:0] rd;
-        logic [4:0] rs1;
-        logic [4:0] rs2;
+        logic       writes_dst;
+        logic       uses_src0;
+        logic       uses_src1;
+        logic [4:0] dst_addr;
+        logic [4:0] src0_addr;
+        logic [4:0] src1_addr;
     } frontend_pair_meta_t;
 
     typedef struct packed {
@@ -221,9 +329,9 @@ package cpu_defs;
     typedef struct packed {
         logic        valid;
         logic [31:0] pc;
-        logic        is_branch;
-        logic        is_jal;
-        logic        is_jalr;
+        logic        is_conditional_branch;
+        logic        is_direct_jump;
+        logic        is_indirect_jump;
         logic        actual_taken;
         logic [31:0] actual_target;
         logic        update_qualified;
@@ -238,9 +346,9 @@ package cpu_defs;
         logic        valid;
         logic        from_slot1;
         logic [31:0] pc;
-        logic        is_branch;
-        logic        is_jal;
-        logic        is_jalr;
+        logic        is_conditional_branch;
+        logic        is_direct_jump;
+        logic        is_indirect_jump;
         logic        actual_taken;
         logic [31:0] actual_target;
     } predictor_train_t;
@@ -335,30 +443,28 @@ package cpu_defs;
         logic [ 4:0]       rs2_addr;
         logic              alu_src1_wb_repair;
         logic              alu_src2_wb_repair;
-        logic [ 3:0]       alu_op;
+        alu_op_t           alu_op;
         logic              reg_write_en;
-        logic [ 1:0]       wb_sel;
+        wb_src_t           wb_sel;
         logic              mem_read_en;
         logic              mem_write_en;
-        logic [ 1:0]       mem_size;
+        mem_size_t         mem_size;
         logic              mem_unsigned;
-        logic              is_branch;
-        logic [ 2:0]       branch_cond;
-        logic              is_jal;
-        logic              is_jalr;
+        control_flow_t     control_flow;
+        branch_op_t        branch_op;
+        logic [ 1:0]       target_clear_mask;
         id_ex_prediction_t prediction;
     } id_ex_common_t;
 
     typedef struct packed {
         id_ex_common_t common;
-        logic          is_csr;
-        logic          csr_uses_imm;
-        logic [ 2:0]   csr_cmd;
-        logic [11:0]   csr_addr;
-        logic          is_ecall;
-        logic          is_mret;
+        priv_op_t       priv_op;
+        logic           priv_uses_imm;
+        priv_cmd_t      priv_cmd;
+        logic [PRIV_ADDR_W-1:0] priv_addr;
+        logic [4:0]     priv_imm;
         logic          is_muldiv;
-        logic [ 2:0]   muldiv_op;
+        muldiv_op_t     muldiv_op;
     } id_ex_slot0_t;
 
     typedef struct packed {
@@ -378,10 +484,10 @@ package cpu_defs;
         logic [31:0] pc_plus_4;
         logic [ 4:0] rd;
         logic        reg_write_en;
-        logic [ 1:0] wb_sel;
+        wb_src_t    wb_sel;
         logic        is_mul;
         logic        mem_read_en;
-        logic [ 1:0] mem_size;
+        mem_size_t  mem_size;
         logic        mem_unsigned;
         logic [ 3:0] store_wea;
         logic [31:0] store_data;
@@ -395,10 +501,10 @@ package cpu_defs;
         logic [31:0] pc_plus_4;
         logic [ 4:0] rd;
         logic        reg_write_en;
-        logic [ 1:0] wb_sel;
+        wb_src_t    wb_sel;
         logic        mem_read_en;
         logic        mem_write_en;
-        logic [ 1:0] mem_size;
+        mem_size_t  mem_size;
         logic        mem_unsigned;
         logic [ 3:0] store_wea;
         logic [31:0] store_data;
@@ -411,7 +517,7 @@ package cpu_defs;
         logic [31:0] pc_plus_4;
         logic [ 4:0] rd;
         logic        reg_write_en;
-        logic [ 1:0] wb_sel;
+        wb_src_t    wb_sel;
         logic        is_load;
         logic [31:0] load_data;
     } mem_wb_slot0_t;
@@ -423,7 +529,7 @@ package cpu_defs;
         logic [31:0] pc_plus_4;
         logic [ 4:0] rd;
         logic        reg_write_en;
-        logic [ 1:0] wb_sel;
+        wb_src_t    wb_sel;
         logic        is_load;
     } mem_wb_slot1_t;
 

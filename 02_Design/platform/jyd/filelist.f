@@ -1,6 +1,6 @@
 // JYD platform source manifest.
 // Paths are relative to this file because callers use VCS -F.
--F ../../rtl/filelists/cpu_blocks.f
+-F ../../rtl/filelists/riscv_cpu.f
 -F ../../rtl/filelists/dcache_bram.f
 ../../rtl/core/cpu_top.sv
 rtl/jyd_cpu_top.sv

@@ -40,16 +40,16 @@ module frontend_stage1_steer_ctrl
 
         bank0_direct =
             bank0.lookup_hit
-            && ((bank0.cfi_type == ABTB_TYPE_JAL)
-                || (bank0.cfi_type == ABTB_TYPE_CALL));
+            && ((bank0.cfi_type == CFI_TYPE_JUMP)
+                || (bank0.cfi_type == CFI_TYPE_CALL));
         bank1_direct =
             bank1.lookup_hit
-            && ((bank1.cfi_type == ABTB_TYPE_JAL)
-                || (bank1.cfi_type == ABTB_TYPE_CALL));
+            && ((bank1.cfi_type == CFI_TYPE_JUMP)
+                || (bank1.cfi_type == CFI_TYPE_CALL));
         bank0_branch_owned =
-            bank0.lookup_hit && (bank0.cfi_type == ABTB_TYPE_BRANCH);
+            bank0.lookup_hit && (bank0.cfi_type == CFI_TYPE_BRANCH);
         bank1_branch_owned =
-            bank1.lookup_hit && (bank1.cfi_type == ABTB_TYPE_BRANCH);
+            bank1.lookup_hit && (bank1.cfi_type == CFI_TYPE_BRANCH);
 
         bank0_valid = bank0_direct || bank0_branch_owned;
         bank1_valid = bank1_direct || bank1_branch_owned;
@@ -76,9 +76,9 @@ module frontend_stage1_steer_ctrl
         // CFI supplies the taken target. first_valid 同时覆盖 taken/not-taken。
         if (first_valid) begin
             steer.source_abtb = first_taken;
-            steer.branch_owned = first_cfi_type == ABTB_TYPE_BRANCH;
+            steer.branch_owned = first_cfi_type == CFI_TYPE_BRANCH;
             steer.branch_owned_nt =
-                (first_cfi_type == ABTB_TYPE_BRANCH) && !first_taken;
+                (first_cfi_type == CFI_TYPE_BRANCH) && !first_taken;
             steer.taken = first_taken;
             steer.bank = first_bank;
             steer.cfi_type = first_cfi_type;

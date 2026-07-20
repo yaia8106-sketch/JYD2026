@@ -29,7 +29,7 @@ SIMULATOR="${1:-vcs}"
 
 # RTL 源文件 (cpu_top + dcache + 子模块)
 RTL_FILES="
-    -F $RTL_DIR/filelists/cpu_blocks.f
+    -F $RTL_DIR/filelists/riscv_cpu.f
     -F $RTL_DIR/filelists/dcache_bram.f
     $RTL_DIR/core/cpu_top.sv
     $RISCV_TESTS_DIR/work/dcache_data_ram.v
@@ -66,6 +66,10 @@ VCS_ENV="${VCS_ENV:-/home/anokyai/synopsys/env.sh}"
 VCS_SHIM="$VERIFICATION_DIR/tools/vcs_pthread_yield.c"
 SIM_BIN="$WORK_DIR/riscv_tests_simv"
 COMPILE_LOG="$WORK_DIR/riscv_tests_vcs.log"
+DECODE_CONTRACT_WORK="$WORK_DIR/decode_contract"
+DECODE_CONTRACT_BIN="$DECODE_CONTRACT_WORK/simv"
+DECODE_CONTRACT_COMPILE_LOG="$DECODE_CONTRACT_WORK/compile.log"
+DECODE_CONTRACT_SIM_LOG="$DECODE_CONTRACT_WORK/sim.log"
 
 if [ "$SIMULATOR" != "vcs" ]; then
     echo "ERROR: only Synopsys VCS is supported. Do not use iverilog/vvp/xsim for RTL regression."
@@ -143,6 +147,34 @@ if ! command -v vcs >/dev/null 2>&1; then
     echo "ERROR: vcs not found in PATH. Source Synopsys env or set VCS_ENV=<setup.sh>."
     exit 1
 fi
+
+echo "[INFO] Running RISC-V decoded-uop contract directed test..."
+mkdir -p "$DECODE_CONTRACT_WORK"
+# shellcheck disable=SC2086
+if ! vcs $VCS_OPTS $VCS_EXTRA_OPTS -top tb_riscv_decode_contract \
+    -Mdir="$DECODE_CONTRACT_WORK/vcs.csrc" \
+    -o "$DECODE_CONTRACT_BIN" \
+    "$RTL_DIR/common/cpu_defs.sv" \
+    "$RTL_DIR/isa/riscv/riscv_defs.sv" \
+    "$RTL_DIR/isa/riscv/riscv_decoder.sv" \
+    "$RTL_DIR/isa/riscv/riscv_predecode.sv" \
+    "$RISCV_TESTS_DIR/tb/tb_riscv_decode_contract.sv" \
+    "$VCS_SHIM" >"$DECODE_CONTRACT_COMPILE_LOG" 2>&1; then
+    echo "ERROR: RISC-V decoded-uop contract compilation failed"
+    head -80 "$DECODE_CONTRACT_COMPILE_LOG"
+    exit 1
+fi
+if ! "$DECODE_CONTRACT_BIN" >"$DECODE_CONTRACT_SIM_LOG" 2>&1; then
+    cat "$DECODE_CONTRACT_SIM_LOG"
+    exit 1
+fi
+cat "$DECODE_CONTRACT_SIM_LOG"
+if ! grep -qF "[PASS] RISC-V decoded-uop contract directed test" \
+    "$DECODE_CONTRACT_SIM_LOG"; then
+    echo "ERROR: RISC-V decoded-uop contract test did not report PASS"
+    exit 1
+fi
+echo ""
 
 echo "[INFO] Compiling with VCS..."
 # shellcheck disable=SC2086

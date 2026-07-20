@@ -72,11 +72,11 @@ module frontend_abtb_monitor
     wire bank0_branch_lookup_event =
         lookup_accept
         && bank0_lookup.hit
-        && (bank0_lookup.cfi_type == ABTB_TYPE_BRANCH);
+        && (bank0_lookup.cfi_type == CFI_TYPE_BRANCH);
     wire bank1_branch_lookup_event =
         lookup_accept
         && bank1_lookup.hit
-        && (bank1_lookup.cfi_type == ABTB_TYPE_BRANCH);
+        && (bank1_lookup.cfi_type == CFI_TYPE_BRANCH);
 
     // Counters are observation-only and must not feed back into prediction.
     always_ff @(posedge clk) begin

@@ -48,9 +48,8 @@ module id_ex_reg_s1
             accepted_payload.common.reg_write_en  &= slot_valid;
             accepted_payload.common.mem_read_en   &= slot_valid;
             accepted_payload.common.mem_write_en  &= slot_valid;
-            accepted_payload.common.is_branch     &= slot_valid;
-            accepted_payload.common.is_jal        &= slot_valid;
-            accepted_payload.common.is_jalr       &= slot_valid;
+            if (!slot_valid)
+                accepted_payload.common.control_flow = CF_NONE;
         end
     endfunction
 

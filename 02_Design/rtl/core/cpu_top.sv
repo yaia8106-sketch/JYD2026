@@ -1,6 +1,6 @@
 // ============================================================
 // Module: cpu_top
-// Description: RV32I 5-stage pipeline skeleton and module interconnect
+// Description: ISA-neutral 5-stage pipeline skeleton and module interconnect
 // Rule: Keep behavior in stage/helper modules; cpu_top owns wiring and small glue.
 // IROM: instantiated outside this module and accessed through ports.
 // DRAM: accessed through the DCache instantiated by student_top.
@@ -81,54 +81,39 @@ module cpu_top
     // ---- Instruction hold register ----
     wire        irom_held_valid;
 
-    // ---- Decoder outputs ----
-    wire [ 3:0] dec_alu_op;
-    wire [ 1:0] dec_alu_src1_sel;
-    wire        dec_alu_src2_sel;
-    wire        dec_reg_write_en;
-    wire [ 1:0] dec_wb_sel;
-    wire        dec_mem_read_en;
-    wire        dec_mem_write_en;
-    wire [ 1:0] dec_mem_size;
-    wire        dec_mem_unsigned;
-    wire        dec_is_branch;
-    wire [ 2:0] dec_branch_cond;
-    wire        dec_is_jal;
-    wire        dec_is_jalr;
-    wire        dec_is_csr;
-    wire        dec_csr_uses_rs1;
-    wire        dec_csr_uses_imm;
-    wire        dec_is_ecall;
-    wire        dec_is_mret;
-    wire        dec_is_muldiv;
-    wire        id_is_mul = dec_is_muldiv & ~id_inst[14];
-    wire [ 2:0] dec_imm_type;
+    // ---- Selected ISA decoder outputs ----
+    wire decoded_uop_t dec_uop;
+    wire decoded_uop_t dec1_uop;
+    wire alu_op_t dec_alu_op = dec_uop.alu_op;
+    wire operand_a_sel_t dec_alu_src1_sel = dec_uop.operand_a_sel;
+    wire operand_b_sel_t dec_alu_src2_sel = dec_uop.operand_b_sel;
+    wire dec_reg_write_en = dec_uop.dst_write;
+    wire wb_src_t dec_wb_sel = dec_uop.wb_src;
+    wire dec_mem_read_en = dec_uop.mem_cmd == MEM_LOAD;
+    wire dec_mem_write_en = dec_uop.mem_cmd == MEM_STORE;
+    wire mem_size_t dec_mem_size = dec_uop.mem_size;
+    wire dec_mem_unsigned = dec_uop.mem_unsigned;
+    wire dec_is_conditional_control =
+        dec_uop.control_flow == CF_CONDITIONAL;
+    wire dec_is_indirect_control =
+        dec_uop.control_flow == CF_INDIRECT;
+    wire dec_is_muldiv = dec_uop.exec_unit == EXEC_MULDIV;
+    wire id_is_mul = dec_is_muldiv
+                   & (dec_uop.muldiv_op <= MULDIV_MULHU);
 
-    // ---- Slot 1 decoder outputs ----
-    wire [ 3:0] dec1_alu_op;
-    wire [ 1:0] dec1_alu_src1_sel;
-    wire        dec1_alu_src2_sel;
-    wire        dec1_reg_write_en;
-    wire [ 1:0] dec1_wb_sel;
-    wire        dec1_mem_read_en;
-    wire        dec1_mem_write_en;
-    wire [ 1:0] dec1_mem_size;
-    wire        dec1_mem_unsigned;
-    wire        dec1_is_branch;
-    wire [ 2:0] dec1_branch_cond;
-    wire        dec1_is_jal;
-    wire        dec1_is_jalr;
-    wire        dec1_is_csr;
-    wire        dec1_csr_uses_rs1;
-    wire        dec1_csr_uses_imm;
-    wire        dec1_is_ecall;
-    wire        dec1_is_mret;
-    wire        dec1_is_muldiv;
-    wire [ 2:0] dec1_imm_type;
+    // ---- Slot 1 selected ISA decoder outputs ----
+    wire alu_op_t dec1_alu_op = dec1_uop.alu_op;
+    wire operand_a_sel_t dec1_alu_src1_sel = dec1_uop.operand_a_sel;
+    wire operand_b_sel_t dec1_alu_src2_sel = dec1_uop.operand_b_sel;
+    wire dec1_reg_write_en = dec1_uop.dst_write;
+    wire wb_src_t dec1_wb_sel = dec1_uop.wb_src;
+    wire dec1_mem_read_en = dec1_uop.mem_cmd == MEM_LOAD;
+    wire dec1_mem_write_en = dec1_uop.mem_cmd == MEM_STORE;
+    wire mem_size_t dec1_mem_size = dec1_uop.mem_size;
+    wire dec1_mem_unsigned = dec1_uop.mem_unsigned;
 
-    // ---- Immediate ----
-    wire [31:0] id_imm;
-    wire [31:0] id_s1_imm;
+    wire [31:0] id_imm = dec_uop.imm;
+    wire [31:0] id_s1_imm = dec1_uop.imm;
 
     // ---- Regfile ----
     wire [31:0] rf_rs1_data;
@@ -175,25 +160,30 @@ module cpu_top
         ex_s0_payload.common.alu_src2_wb_repair;
     wire        ex_fast_alu_src1_wb_repair;
     wire        ex_fast_alu_src2_wb_repair;
-    wire [ 3:0] ex_alu_op = ex_s0_payload.common.alu_op;
+    wire alu_op_t ex_alu_op = ex_s0_payload.common.alu_op;
     wire        ex_reg_write_en = ex_s0_payload.common.reg_write_en;
-    wire [ 1:0] ex_wb_sel = ex_s0_payload.common.wb_sel;
+    wire wb_src_t ex_wb_sel = ex_s0_payload.common.wb_sel;
     wire        ex_mem_read_en = ex_s0_payload.common.mem_read_en;
     wire        ex_mem_write_en = ex_s0_payload.common.mem_write_en;
-    wire [ 1:0] ex_mem_size = ex_s0_payload.common.mem_size;
+    wire mem_size_t ex_mem_size = ex_s0_payload.common.mem_size;
     wire        ex_mem_unsigned = ex_s0_payload.common.mem_unsigned;
-    wire        ex_is_branch = ex_s0_payload.common.is_branch;
-    wire [ 2:0] ex_branch_cond = ex_s0_payload.common.branch_cond;
-    wire        ex_is_jal = ex_s0_payload.common.is_jal;
-    wire        ex_is_jalr = ex_s0_payload.common.is_jalr;
-    wire        ex_is_csr = ex_s0_payload.is_csr;
-    wire        ex_csr_uses_imm = ex_s0_payload.csr_uses_imm;
-    wire [ 2:0] ex_csr_cmd = ex_s0_payload.csr_cmd;
-    wire [11:0] ex_csr_addr = ex_s0_payload.csr_addr;
-    wire        ex_is_ecall = ex_s0_payload.is_ecall;
-    wire        ex_is_mret = ex_s0_payload.is_mret;
+    wire control_flow_t ex_control_flow =
+        ex_s0_payload.common.control_flow;
+    wire branch_op_t ex_branch_op = ex_s0_payload.common.branch_op;
+    wire [1:0] ex_target_clear_mask =
+        ex_s0_payload.common.target_clear_mask;
+    wire ex_is_conditional_control =
+        ex_control_flow == CF_CONDITIONAL;
+    wire ex_is_direct_control = ex_control_flow == CF_DIRECT;
+    wire ex_is_indirect_control = ex_control_flow == CF_INDIRECT;
+    wire priv_op_t ex_priv_op = ex_s0_payload.priv_op;
+    wire ex_is_priv_reg = ex_priv_op == PRIV_REG;
+    wire ex_priv_uses_imm = ex_s0_payload.priv_uses_imm;
+    wire priv_cmd_t ex_priv_cmd = ex_s0_payload.priv_cmd;
+    wire [PRIV_ADDR_W-1:0] ex_priv_addr = ex_s0_payload.priv_addr;
+    wire [4:0] ex_priv_imm = ex_s0_payload.priv_imm;
     wire        ex_is_muldiv = ex_s0_payload.is_muldiv;
-    wire [ 2:0] ex_muldiv_op = ex_s0_payload.muldiv_op;
+    wire muldiv_op_t ex_muldiv_op = ex_s0_payload.muldiv_op;
 
     // ---- Slot 1 ID/EX ----
     wire        ex_s1_valid;
@@ -204,17 +194,23 @@ module cpu_top
     wire [ 4:0] ex_s1_rd = ex_s1_payload.common.rd;
     wire [ 4:0] ex_s1_rs1_addr = ex_s1_payload.common.rs1_addr;
     wire [ 4:0] ex_s1_rs2_addr = ex_s1_payload.common.rs2_addr;
-    wire [ 3:0] ex_s1_alu_op = ex_s1_payload.common.alu_op;
+    wire alu_op_t ex_s1_alu_op = ex_s1_payload.common.alu_op;
     wire        ex_s1_reg_write_en = ex_s1_payload.common.reg_write_en;
-    wire [ 1:0] ex_s1_wb_sel = ex_s1_payload.common.wb_sel;
+    wire wb_src_t ex_s1_wb_sel = ex_s1_payload.common.wb_sel;
     wire        ex_s1_mem_read_en = ex_s1_payload.common.mem_read_en;
     wire        ex_s1_mem_write_en = ex_s1_payload.common.mem_write_en;
-    wire [ 1:0] ex_s1_mem_size = ex_s1_payload.common.mem_size;
+    wire mem_size_t ex_s1_mem_size = ex_s1_payload.common.mem_size;
     wire        ex_s1_mem_unsigned = ex_s1_payload.common.mem_unsigned;
-    wire        ex_s1_is_branch = ex_s1_payload.common.is_branch;
-    wire [ 2:0] ex_s1_branch_cond = ex_s1_payload.common.branch_cond;
-    wire        ex_s1_is_jal = ex_s1_payload.common.is_jal;
-    wire        ex_s1_is_jalr = ex_s1_payload.common.is_jalr;
+    wire control_flow_t ex_s1_control_flow =
+        ex_s1_payload.common.control_flow;
+    wire branch_op_t ex_s1_branch_op = ex_s1_payload.common.branch_op;
+    wire [1:0] ex_s1_target_clear_mask =
+        ex_s1_payload.common.target_clear_mask;
+    wire ex_s1_is_conditional_control =
+        ex_s1_control_flow == CF_CONDITIONAL;
+    wire ex_s1_is_direct_control = ex_s1_control_flow == CF_DIRECT;
+    wire ex_s1_is_indirect_control =
+        ex_s1_control_flow == CF_INDIRECT;
     wire [31:0] ex_s1_alu_src1 = ex_s1_payload.common.alu_src1;
     wire [31:0] ex_s1_alu_src2 = ex_s1_payload.common.alu_src2;
     wire [31:0] ex_s1_rs1_data = ex_s1_payload.common.rs1_data;
@@ -261,9 +257,9 @@ module cpu_top
     wire [31:0] ex_s1_branch_target;
     wire        ex_s1_actual_taken;
     wire        ex_redirect_fire;
-    wire        ex_system_inst;
-    wire        ex_system_redirect;
-    wire [31:0] ex_system_target;
+    wire        ex_priv_flow;
+    wire        ex_priv_redirect;
+    wire [31:0] ex_priv_target;
     wire        timer_irq_request;
     wire        timer_irq_redirect;
     wire [31:0] timer_irq_target;
@@ -277,7 +273,8 @@ module cpu_top
 
     // Ordinary Slot 0 branch misses are registered through EX/MEM. System and
     // timer redirects use the fast frontend redirect path instead.
-    assign ex_branch_registered_flush = branch_flush & ex_redirect_fire & ~ex_system_inst;
+    assign ex_branch_registered_flush = branch_flush & ex_redirect_fire
+                                      & ~ex_priv_flow;
 
     // ---- Registered branch flush (MEM stage, for 250MHz timing) ----
     wire cpu_defs::redirect_t ex_mem_redirect;
@@ -395,14 +392,14 @@ module cpu_top
     wire [31:0] wb_write_data;
     wire [31:0] wb_s1_write_data;
 
-    // ---- Minimal M-mode CSR / Trap ----
-    wire [31:0] ex_csr_rdata;
+    // ---- Selected ISA privileged state ----
+    wire [31:0] ex_priv_rdata;
     wire [31:0] ex_forward_result;
     wire [31:0] ex_pipe_alu_result;
-    wire        ex_fast_alu_forward = ~ex_is_csr & ~ex_is_muldiv
-                                    & (ex_wb_sel != 2'b10);
+    wire        ex_fast_alu_forward = ~ex_is_priv_reg & ~ex_is_muldiv
+                                    & (ex_wb_sel != WB_NEXT_PC);
 
-    // ---- RV32M multi-cycle unit ----
+    // ---- Integer multiply/divide unit ----
     wire        muldiv_busy;
     wire        muldiv_done;
     wire [31:0] muldiv_result;
@@ -521,7 +518,7 @@ module cpu_top
 `endif
     wire id_mul_prestart = id_to_ex_fire & id_is_mul;
 
-    // ---- Register addresses from instruction (ID stage, from IF/ID reg) ----
+    // ---- Register addresses from the selected ISA decoder ----
     wire [4:0] id_rs1_addr;
     wire [4:0] id_rs2_addr;
     wire [4:0] id_rd_addr;
@@ -530,8 +527,6 @@ module cpu_top
     wire [4:0] id_s1_rd_addr;
     wire [31:0] id_pc_plus_4;
     wire [31:0] id_s1_pc;
-    wire [ 2:0] id_csr_cmd;
-    wire [11:0] id_csr_addr;
     wire        id_alu_src1_is_rs1;
     wire        id_alu_src2_is_rs2;
     wire        id_s1_alu_src1_is_rs1;
@@ -615,8 +610,8 @@ module cpu_top
         .mem_allowin                 (mem_allowin),
         .mem_branch_flush            (mem_branch_flush),
         .mem_branch_target           (mem_branch_target),
-        .ex_system_redirect          (ex_system_redirect),
-        .ex_system_target            (ex_system_target),
+        .ex_priv_redirect            (ex_priv_redirect),
+        .ex_priv_target              (ex_priv_target),
         .timer_irq_redirect          (timer_irq_redirect),
         .timer_irq_target            (timer_irq_target),
         .ex_redirect_fire            (ex_redirect_fire),
@@ -851,9 +846,10 @@ module cpu_top
     wire        pred_train_from_s1 = predictor_train.from_slot1;
     wire        pred_train_valid = predictor_train.valid;
     wire [31:0] pred_train_pc = predictor_train.pc;
-    wire        pred_train_is_branch = predictor_train.is_branch;
-    wire        pred_train_is_jal = predictor_train.is_jal;
-    wire        pred_train_is_jalr = predictor_train.is_jalr;
+    wire pred_train_is_conditional_control =
+        predictor_train.is_conditional_branch;
+    wire pred_train_is_direct_control = predictor_train.is_direct_jump;
+    wire pred_train_is_indirect_control = predictor_train.is_indirect_jump;
     wire        pred_train_actual_taken = predictor_train.actual_taken;
     wire [31:0] pred_train_actual_target =
         predictor_train.actual_target;
@@ -866,28 +862,8 @@ module cpu_top
     // issue slots.
     id_stage_derive u_id_stage_derive (
         .id_pc             (id_pc),
-        .id_inst           (id_inst),
-        .id_inst1          (id_inst1),
-        .dec_alu_src1_sel  (dec_alu_src1_sel),
-        .dec_alu_src2_sel  (dec_alu_src2_sel),
-        .dec_reg_write_en  (dec_reg_write_en),
-        .dec_wb_sel        (dec_wb_sel),
-        .dec_mem_read_en   (dec_mem_read_en),
-        .dec_mem_write_en  (dec_mem_write_en),
-        .dec_is_branch     (dec_is_branch),
-        .dec_is_jal        (dec_is_jal),
-        .dec_is_jalr       (dec_is_jalr),
-        .dec_is_csr        (dec_is_csr),
-        .dec_csr_uses_rs1  (dec_csr_uses_rs1),
-        .dec_is_muldiv     (dec_is_muldiv),
-        .dec1_alu_src1_sel (dec1_alu_src1_sel),
-        .dec1_alu_src2_sel (dec1_alu_src2_sel),
-        .dec1_mem_read_en  (dec1_mem_read_en),
-        .dec1_mem_write_en (dec1_mem_write_en),
-        .dec1_is_branch    (dec1_is_branch),
-        .dec1_is_jal       (dec1_is_jal),
-        .dec1_is_jalr      (dec1_is_jalr),
-        .dec1_csr_uses_rs1 (dec1_csr_uses_rs1),
+        .slot0_uop         (dec_uop),
+        .slot1_uop         (dec1_uop),
         .id_rs1_addr       (id_rs1_addr),
         .id_rs2_addr       (id_rs2_addr),
         .id_rd_addr        (id_rd_addr),
@@ -896,8 +872,6 @@ module cpu_top
         .id_s1_rd_addr     (id_s1_rd_addr),
         .id_pc_plus_4      (id_pc_plus_4),
         .id_s1_pc          (id_s1_pc),
-        .id_csr_cmd        (id_csr_cmd),
-        .id_csr_addr       (id_csr_addr),
         .id_alu_src1_is_rs1(id_alu_src1_is_rs1),
         .id_alu_src2_is_rs2(id_alu_src2_is_rs2),
         .id_s1_alu_src1_is_rs1(id_s1_alu_src1_is_rs1),
@@ -921,9 +895,9 @@ module cpu_top
     predictor_resolve_builder u_predictor_resolve_builder (
         .s0_valid             (ex_valid),
         .s0_pc                (ex_pc),
-        .s0_is_branch         (ex_is_branch),
-        .s0_is_jal            (ex_is_jal),
-        .s0_is_jalr           (ex_is_jalr),
+        .s0_is_conditional_control(ex_is_conditional_control),
+        .s0_is_direct_control (ex_is_direct_control),
+        .s0_is_indirect_control(ex_is_indirect_control),
         .s0_actual_taken      (actual_taken),
         .s0_actual_target     (actual_target),
         .s0_update_qualified  (ex_abtb_update_qualified),
@@ -934,9 +908,9 @@ module cpu_top
         .s0_pht_counter       (ex_stage1_pht_counter),
         .s1_valid             (ex_s1_valid),
         .s1_pc                (ex_s1_pc),
-        .s1_is_branch         (ex_s1_is_branch),
-        .s1_is_jal            (ex_s1_is_jal),
-        .s1_is_jalr           (ex_s1_is_jalr),
+        .s1_is_conditional_control(ex_s1_is_conditional_control),
+        .s1_is_direct_control (ex_s1_is_direct_control),
+        .s1_is_indirect_control(ex_s1_is_indirect_control),
         .s1_actual_taken      (ex_s1_actual_taken),
         .s1_actual_target     (ex_s1_branch_target),
         .s1_update_qualified  (ex_s1_abtb_update_qualified),
@@ -1236,64 +1210,14 @@ module cpu_top
         .id_payload   (id_payload)
     );
 
-    decoder u_decoder (
-        .inst           (id_inst),            // from IF/ID register
-        .alu_op         (dec_alu_op),
-        .alu_src1_sel   (dec_alu_src1_sel),
-        .alu_src2_sel   (dec_alu_src2_sel),
-        .reg_write_en   (dec_reg_write_en),
-        .wb_sel         (dec_wb_sel),
-        .mem_read_en    (dec_mem_read_en),
-        .mem_write_en   (dec_mem_write_en),
-        .mem_size       (dec_mem_size),
-        .mem_unsigned   (dec_mem_unsigned),
-        .is_branch      (dec_is_branch),
-        .branch_cond    (dec_branch_cond),
-        .is_jal         (dec_is_jal),
-        .is_jalr        (dec_is_jalr),
-        .is_csr         (dec_is_csr),
-        .csr_uses_rs1   (dec_csr_uses_rs1),
-        .csr_uses_imm   (dec_csr_uses_imm),
-        .is_ecall       (dec_is_ecall),
-        .is_mret        (dec_is_mret),
-        .is_muldiv      (dec_is_muldiv),
-        .imm_type       (dec_imm_type)
+    isa_decoder u_decoder (
+        .inst (id_inst),
+        .uop  (dec_uop)
     );
 
-    decoder u_decoder_s1 (
-        .inst           (id_inst1),
-        .alu_op         (dec1_alu_op),
-        .alu_src1_sel   (dec1_alu_src1_sel),
-        .alu_src2_sel   (dec1_alu_src2_sel),
-        .reg_write_en   (dec1_reg_write_en),
-        .wb_sel         (dec1_wb_sel),
-        .mem_read_en    (dec1_mem_read_en),
-        .mem_write_en   (dec1_mem_write_en),
-        .mem_size       (dec1_mem_size),
-        .mem_unsigned   (dec1_mem_unsigned),
-        .is_branch      (dec1_is_branch),
-        .branch_cond    (dec1_branch_cond),
-        .is_jal         (dec1_is_jal),
-        .is_jalr        (dec1_is_jalr),
-        .is_csr         (dec1_is_csr),
-        .csr_uses_rs1   (dec1_csr_uses_rs1),
-        .csr_uses_imm   (dec1_csr_uses_imm),
-        .is_ecall       (dec1_is_ecall),
-        .is_mret        (dec1_is_mret),
-        .is_muldiv      (dec1_is_muldiv),
-        .imm_type       (dec1_imm_type)
-    );
-
-    imm_gen u_imm_gen (
-        .inst     (id_inst),                   // from IF/ID register
-        .imm_type (dec_imm_type),
-        .imm      (id_imm)
-    );
-
-    imm_gen u_imm_gen_s1 (
-        .inst     (id_inst1),
-        .imm_type (dec1_imm_type),
-        .imm      (id_s1_imm)
+    isa_decoder u_decoder_s1 (
+        .inst (id_inst1),
+        .uop  (dec1_uop)
     );
 
     regfile u_regfile (
@@ -1325,8 +1249,8 @@ module cpu_top
         .id_rs1_used    (id_rs1_used),
         .id_rs2_used    (id_rs2_used),
         .id_s0_alu_only (id_s0_alu_only),
-        .id_s0_jalr     (dec_is_jalr),
-        .id_s0_branch   (dec_is_branch),
+        .id_s0_indirect_control(dec_is_indirect_control),
+        .id_s0_conditional_control(dec_is_conditional_control),
         .id_s0_mem_read (dec_mem_read_en),
         .id_s0_mem_write(dec_mem_write_en),
         .id_s0_is_mul   (id_is_mul),
@@ -1479,63 +1403,25 @@ module cpu_top
     // Payload builders keep large struct assembly out of sequential registers.
     id_ex_payload_builder u_id_ex_payload_builder (
         .s0_pc                 (id_pc),
+        .s0_uop                (dec_uop),
         .s0_alu_src1           (id_alu_src1),
         .s0_alu_src2           (id_alu_src2),
         .s0_rs1_data           (fwd_rs1_data),
         .s0_rs2_data           (fwd_rs2_data),
         .s0_rs1_wb_repair      (fwd_rs1_wb_repair),
         .s0_rs2_wb_repair      (fwd_rs2_wb_repair),
-        .s0_rd                 (id_rd_addr),
-        .s0_rs1_addr           (id_rs1_addr),
-        .s0_rs2_addr           (id_rs2_addr),
-        .s0_alu_src1_is_rs1    (id_alu_src1_is_rs1),
-        .s0_alu_src2_is_rs2    (id_alu_src2_is_rs2),
-        .s0_alu_op             (dec_alu_op),
-        .s0_reg_write_en       (dec_reg_write_en),
-        .s0_wb_sel             (dec_wb_sel),
-        .s0_mem_read_en        (dec_mem_read_en),
-        .s0_mem_write_en       (dec_mem_write_en),
-        .s0_mem_size           (dec_mem_size),
-        .s0_mem_unsigned       (dec_mem_unsigned),
-        .s0_is_branch          (dec_is_branch),
-        .s0_branch_cond        (dec_branch_cond),
-        .s0_is_jal             (dec_is_jal),
-        .s0_is_jalr            (dec_is_jalr),
         .s0_prediction         (id_payload.slot0.prediction),
         .s0_update_qualified   (id_abtb_update_qualified_w),
         .s0_update_cfi_type    (id_abtb_update_cfi_type_w),
-        .s0_is_csr             (dec_is_csr),
-        .s0_csr_uses_imm       (dec_csr_uses_imm),
-        .s0_csr_cmd            (id_csr_cmd),
-        .s0_csr_addr           (id_csr_addr),
-        .s0_is_ecall           (dec_is_ecall),
-        .s0_is_mret            (dec_is_mret),
-        .s0_is_muldiv          (dec_is_muldiv),
-        .s0_muldiv_op          (id_inst[14:12]),
         .s1_pc                 (id_s1_pc),
         .s1_inst               (id_inst1),
+        .s1_uop                (dec1_uop),
         .s1_alu_src1           (id_s1_alu_src1),
         .s1_alu_src2           (id_s1_alu_src2),
         .s1_rs1_data           (fwd_s1_rs1_data),
         .s1_rs2_data           (fwd_s1_rs2_data),
         .s1_rs1_wb_repair      (fwd_s1_rs1_wb_repair),
         .s1_rs2_wb_repair      (fwd_s1_rs2_wb_repair),
-        .s1_rd                 (id_s1_rd_addr),
-        .s1_rs1_addr           (id_s1_rs1_addr),
-        .s1_rs2_addr           (id_s1_rs2_addr),
-        .s1_alu_src1_is_rs1    (id_s1_alu_src1_is_rs1),
-        .s1_alu_src2_is_rs2    (id_s1_alu_src2_is_rs2),
-        .s1_alu_op             (dec1_alu_op),
-        .s1_reg_write_en       (dec1_reg_write_en),
-        .s1_wb_sel             (dec1_wb_sel),
-        .s1_mem_read_en        (dec1_mem_read_en),
-        .s1_mem_write_en       (dec1_mem_write_en),
-        .s1_mem_size           (dec1_mem_size),
-        .s1_mem_unsigned       (dec1_mem_unsigned),
-        .s1_is_branch          (dec1_is_branch),
-        .s1_branch_cond        (dec1_branch_cond),
-        .s1_is_jal             (dec1_is_jal),
-        .s1_is_jalr            (dec1_is_jalr),
         .s1_prediction         (id_payload.slot1.prediction),
         .s1_update_qualified   (id_s1_abtb_update_qualified_w),
         .s1_update_cfi_type    (id_s1_abtb_update_cfi_type_w),
@@ -1600,19 +1486,17 @@ module cpu_top
         .ex_alu_src2_wb_repair      (ex_alu_src2_wb_repair),
         .ex_rs1_data                (ex_rs1_data),
         .ex_rs2_data                (ex_rs2_data),
-        .ex_is_branch               (ex_is_branch),
-        .ex_is_jal                  (ex_is_jal),
-        .ex_is_jalr                 (ex_is_jalr),
-        .ex_is_csr                  (ex_is_csr),
-        .ex_csr_rdata               (ex_csr_rdata),
+        .ex_control_flow            (ex_control_flow),
+        .ex_target_clear_mask       (ex_target_clear_mask),
+        .ex_is_priv_reg             (ex_is_priv_reg),
+        .ex_priv_rdata              (ex_priv_rdata),
         .ex_is_muldiv               (ex_is_muldiv),
         .ex_muldiv_result           (muldiv_result),
         .alu_result                 (alu_result),
         .ex_s1_valid                (ex_s1_valid),
-        .ex_s1_is_branch            (ex_s1_is_branch),
-        .ex_s1_is_jal               (ex_s1_is_jal),
-        .ex_s1_is_jalr              (ex_s1_is_jalr),
-        .ex_s1_branch_cond          (ex_s1_branch_cond),
+        .ex_s1_control_flow         (ex_s1_control_flow),
+        .ex_s1_branch_op            (ex_s1_branch_op),
+        .ex_s1_target_clear_mask    (ex_s1_target_clear_mask),
         .ex_s1_rs1_wb_repair        (ex_s1_rs1_wb_repair),
         .ex_s1_rs2_wb_repair        (ex_s1_rs2_wb_repair),
         .ex_s1_alu_src1             (ex_s1_alu_src1),
@@ -1628,8 +1512,8 @@ module cpu_top
         .mem_allowin                (mem_allowin),
         .ex_branch_redirect         (ex_branch_registered_flush),
         .branch_target              (branch_target),
-        .ex_system_redirect         (ex_system_redirect),
-        .ex_system_target           (ex_system_target),
+        .ex_priv_redirect           (ex_priv_redirect),
+        .ex_priv_target             (ex_priv_target),
         .ex_pc_plus_4               (ex_pc_plus_4),
         .ex_s1_pc_plus_4            (ex_s1_pc_plus_4),
         .ex_alu_src1_repair         (ex_alu_src1_repair),
@@ -1686,8 +1570,8 @@ module cpu_top
         .clk                (clk),
         .rst_n              (rst_n),
         .mul_prestart_valid (id_mul_prestart),
-        .mul_prestart_op    (id_inst[14:12]),
-        // RV32M is R-type. The physically independent forwarding copy contains
+        .mul_prestart_op    (dec_uop.muldiv_op),
+        // The physically independent forwarding copy contains
         // only registered MEM/WB/RF payloads; EX RAW dependencies interlock.
         .mul_prestart_rs1   (mul_fwd_rs1_data),
         .mul_prestart_rs2   (mul_fwd_rs2_data),
@@ -1761,34 +1645,32 @@ module cpu_top
     end
 `endif
 
-    // ==================== Minimal M-mode CSR / Trap ====================
-    csr_trap_unit u_csr_trap_unit (
-        .clk               (clk),
-        .rst_n             (rst_n),
-        .ex_valid          (ex_valid),
-        .ex_ready_go       (ex_ready_go_w),
-        .mem_allowin       (mem_allowin),
-        .mem_branch_flush  (mem_branch_flush),
-        .ex_redirect_fire  (ex_redirect_fire),
-        .ex_pc             (ex_pc),
-        .ex_rs1_data       (ex_rs1_data),
-        .ex_rs1_addr       (ex_rs1_addr),
-        .ex_is_csr         (ex_is_csr),
-        .ex_csr_uses_imm   (ex_csr_uses_imm),
-        .ex_csr_cmd        (ex_csr_cmd),
-        .ex_csr_addr       (ex_csr_addr),
-        .ex_is_ecall       (ex_is_ecall),
-        .ex_is_mret        (ex_is_mret),
-        .timer_irq_pending (timer_irq_pending),
-        .timer_irq_take    (timer_irq_take),
-        .timer_irq_mepc    (id_pc),
-        .ex_system_inst    (ex_system_inst),
-        .ex_system_redirect(ex_system_redirect),
-        .ex_system_target  (ex_system_target),
-        .timer_irq_request (timer_irq_request),
-        .timer_irq_redirect(timer_irq_redirect),
-        .timer_irq_target  (timer_irq_target),
-        .ex_csr_rdata      (ex_csr_rdata)
+    // The selected ISA owns its privileged registers and trap semantics.
+    isa_priv_unit u_isa_priv_unit (
+        .clk                (clk),
+        .rst_n              (rst_n),
+        .ex_valid           (ex_valid),
+        .ex_ready_go        (ex_ready_go_w),
+        .mem_allowin        (mem_allowin),
+        .mem_branch_flush   (mem_branch_flush),
+        .ex_redirect_fire   (ex_redirect_fire),
+        .ex_pc              (ex_pc),
+        .ex_src0_data       (ex_rs1_data),
+        .ex_priv_op         (ex_priv_op),
+        .ex_priv_uses_imm   (ex_priv_uses_imm),
+        .ex_priv_cmd        (ex_priv_cmd),
+        .ex_priv_addr       (ex_priv_addr),
+        .ex_priv_imm        (ex_priv_imm),
+        .timer_irq_pending  (timer_irq_pending),
+        .timer_irq_take     (timer_irq_take),
+        .timer_irq_mepc     (id_pc),
+        .ex_priv_flow       (ex_priv_flow),
+        .ex_priv_redirect   (ex_priv_redirect),
+        .ex_priv_target     (ex_priv_target),
+        .timer_irq_request  (timer_irq_request),
+        .timer_irq_redirect (timer_irq_redirect),
+        .timer_irq_target   (timer_irq_target),
+        .ex_priv_rdata      (ex_priv_rdata)
     );
 
     // Slot 0 branch_unit checks prediction correctness; Slot 1 redirect is
@@ -1796,12 +1678,10 @@ module cpu_top
     branch_unit u_branch_unit (
         .target_pc        (ex_control_target),
         .fallthrough_pc   (ex_pc_plus_4),
-        .rs1_data         (ex_rs1_data_repair),
-        .rs2_data         (ex_rs2_data_repair),
-        .is_branch        (ex_is_branch),
-        .branch_cond      (ex_branch_cond),
-        .is_jal           (ex_is_jal),
-        .is_jalr          (ex_is_jalr),
+        .src0_data        (ex_rs1_data_repair),
+        .src1_data        (ex_rs2_data_repair),
+        .control_flow     (ex_control_flow),
+        .branch_op        (ex_branch_op),
         .ex_valid         (ex_valid),
         .predicted_taken  (ex_pred_taken),
         .predicted_target (ex_pred_target),
@@ -1870,7 +1750,7 @@ module cpu_top
                   && ex_s1_mem_write_en && (ex_s1_rs2_addr == ex_rd)
                   && (ex_s1_rs1_addr != ex_rd)
                   && !ex_mem_read_en && !ex_mem_write_en
-                  && !ex_is_csr && !ex_is_muldiv))
+                  && !ex_is_priv_reg && !ex_is_muldiv))
                 $fatal(1, "Invalid Slot0-ALU to Slot1-store-data bypass tag");
             if (ex_s1_store_data_raw !== alu_result)
                 $fatal(1, "Slot1 store-data bypass did not select Slot0 ALU result");

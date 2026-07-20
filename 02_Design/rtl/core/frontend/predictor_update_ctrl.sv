@@ -33,13 +33,13 @@ module predictor_update_ctrl
 );
 
     wire slot0_cfi_candidate = slot0_resolve.valid
-                             & (slot0_resolve.is_branch
-                              | slot0_resolve.is_jal
-                              | slot0_resolve.is_jalr);
+                             & (slot0_resolve.is_conditional_branch
+                              | slot0_resolve.is_direct_jump
+                              | slot0_resolve.is_indirect_jump);
     wire slot1_cfi_candidate = slot1_resolve.valid
-                             & (slot1_resolve.is_branch
-                              | slot1_resolve.is_jal
-                              | slot1_resolve.is_jalr);
+                             & (slot1_resolve.is_conditional_branch
+                              | slot1_resolve.is_direct_jump
+                              | slot1_resolve.is_indirect_jump);
     // frontend_pair_policy rejects two-CFI pairs, and Slot-0 JALR is forced
     // single.  Keep the slots independent here so one slot's CFI decode does
     // not sit on the other slot's predictor write-enable path.  The assertion
@@ -52,9 +52,9 @@ module predictor_update_ctrl
     // In particular, Slot 1 actual_taken no longer passes through a selected
     // type/actual mux before it reaches the ABTB update-valid decision.
     wire slot0_is_abtb_branch =
-        slot0_resolve.update_cfi_type == ABTB_TYPE_BRANCH;
+        slot0_resolve.update_cfi_type == CFI_TYPE_BRANCH;
     wire slot1_is_abtb_branch =
-        slot1_resolve.update_cfi_type == ABTB_TYPE_BRANCH;
+        slot1_resolve.update_cfi_type == CFI_TYPE_BRANCH;
     wire slot0_abtb_qualified = slot0_resolve.update_qualified
                               & (~slot0_is_abtb_branch
                                  | slot0_resolve.actual_taken);
@@ -62,15 +62,15 @@ module predictor_update_ctrl
                               & (~slot1_is_abtb_branch
                                  | slot1_resolve.actual_taken);
     // update_qualified is generated only for predictor-trainable CFIs, so the
-    // additional is_branch/is_jal/is_jalr candidate gate would be redundant.
+    // An additional control-flow-class candidate gate would be redundant.
     wire slot0_abtb_fire = update_fire & slot0_resolve.valid
                          & slot0_abtb_qualified;
     wire slot1_abtb_fire = update_fire & slot1_resolve.valid
                          & slot1_abtb_qualified;
     wire slot0_pht_fire = update_fire & slot0_resolve.valid
-                        & slot0_resolve.is_branch;
+                        & slot0_resolve.is_conditional_branch;
     wire slot1_pht_fire = update_fire & slot1_resolve.valid
-                        & slot1_resolve.is_branch;
+                        & slot1_resolve.is_conditional_branch;
 
     assign slot0_cfi_valid = slot0_cfi_candidate;
     assign slot1_cfi_valid = slot1_cfi_candidate;
@@ -87,9 +87,9 @@ module predictor_update_ctrl
 
         if (slot1_selected) begin
             train.pc = slot1_resolve.pc;
-            train.is_branch = slot1_resolve.is_branch;
-            train.is_jal = slot1_resolve.is_jal;
-            train.is_jalr = slot1_resolve.is_jalr;
+            train.is_conditional_branch = slot1_resolve.is_conditional_branch;
+            train.is_direct_jump = slot1_resolve.is_direct_jump;
+            train.is_indirect_jump = slot1_resolve.is_indirect_jump;
             train.actual_taken = slot1_resolve.actual_taken;
             train.actual_target = slot1_resolve.actual_target;
             abtb_update.hit = slot1_resolve.abtb_hit;
@@ -99,9 +99,9 @@ module predictor_update_ctrl
             pht_update.counter = slot1_resolve.pht_counter;
         end else begin
             train.pc = slot0_resolve.pc;
-            train.is_branch = slot0_resolve.is_branch;
-            train.is_jal = slot0_resolve.is_jal;
-            train.is_jalr = slot0_resolve.is_jalr;
+            train.is_conditional_branch = slot0_resolve.is_conditional_branch;
+            train.is_direct_jump = slot0_resolve.is_direct_jump;
+            train.is_indirect_jump = slot0_resolve.is_indirect_jump;
             train.actual_taken = slot0_resolve.actual_taken;
             train.actual_target = slot0_resolve.actual_target;
             abtb_update.hit = slot0_resolve.abtb_hit;

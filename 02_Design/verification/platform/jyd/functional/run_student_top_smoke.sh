@@ -43,7 +43,7 @@ if [ ! -d "$HEX_DIR" ] || [ -z "$(ls "$HEX_DIR"/*.irom.hex 2>/dev/null)" ]; then
 fi
 
 RTL_FILES="
-    -F $RTL_DIR/filelists/cpu_blocks.f
+    -F $RTL_DIR/filelists/riscv_cpu.f
     -F $RTL_DIR/filelists/dcache_bram.f
     $RTL_DIR/core/cpu_top.sv
     $JYD_PLATFORM_DIR/rtl/myCPU.sv

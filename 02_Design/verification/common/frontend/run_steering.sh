@@ -31,7 +31,7 @@ if ! command -v vcs >/dev/null 2>&1; then
 fi
 
 RTL_FILES="
-    -F $RTL_DIR/filelists/cpu_blocks.f
+    -F $RTL_DIR/filelists/riscv_cpu.f
     $RTL_DIR/core/cpu_top.sv
     $SCRIPT_DIR/tb_frontend_abtb_steering.sv
 "

@@ -49,20 +49,20 @@ module frontend_pair_policy
     // ALU-to-store-data bypass below. A multiplier may be the Slot 0 producer,
     // but cannot use that same-cycle ALU-to-store-data bypass.
     always_comb begin
-        raw_rs1_dep = slot0_meta.writes_rd
-                    && (slot0_meta.rd != 5'd0)
-                    && slot1_meta.uses_rs1
-                    && (slot1_meta.rs1 == slot0_meta.rd);
-        raw_rs2_dep = slot0_meta.writes_rd
-                    && (slot0_meta.rd != 5'd0)
-                    && slot1_meta.uses_rs2
-                    && (slot1_meta.rs2 == slot0_meta.rd);
+        raw_rs1_dep = slot0_meta.writes_dst
+                    && (slot0_meta.dst_addr != 5'd0)
+                    && slot1_meta.uses_src0
+                    && (slot1_meta.src0_addr == slot0_meta.dst_addr);
+        raw_rs2_dep = slot0_meta.writes_dst
+                    && (slot0_meta.dst_addr != 5'd0)
+                    && slot1_meta.uses_src1
+                    && (slot1_meta.src1_addr == slot0_meta.dst_addr);
         raw_dep = raw_rs1_dep | raw_rs2_dep;
 
         // In the current ISA subset, a store is the only LSU class that uses
         // rs2. Its address (rs1) must remain independent, while its data can
         // consume the Slot 0 ALU result through the EX same-pair bypass.
-        slot1_is_store = slot1_meta.is_lsu & slot1_meta.uses_rs2;
+        slot1_is_store = slot1_meta.is_lsu & slot1_meta.uses_src1;
         // Exact reduction of raw_dep & ~store_data_bypassable: an rs1 RAW
         // always blocks; an rs2-only RAW is allowed only for ALU -> store data.
         blocking_raw_dep = raw_rs1_dep

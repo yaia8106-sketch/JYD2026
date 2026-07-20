@@ -8,15 +8,15 @@
 // Spec: 02_Design/spec/branch_unit_spec.md
 // ============================================================
 
-module branch_unit (
+module branch_unit
+    import cpu_defs::*;
+(
     input  logic [31:0] target_pc,
     input  logic [31:0] fallthrough_pc,
-    input  logic [31:0] rs1_data,
-    input  logic [31:0] rs2_data,
-    input  logic        is_branch,
-    input  logic [ 2:0] branch_cond,
-    input  logic        is_jal,
-    input  logic        is_jalr,
+    input  logic [31:0] src0_data,
+    input  logic [31:0] src1_data,
+    input  control_flow_t control_flow,
+    input  branch_op_t    branch_op,
     input  logic        ex_valid,
 
     // Prediction from pipeline (IF -> ID -> EX)
@@ -36,14 +36,17 @@ module branch_unit (
 
     // Conditional branches use the comparator; jumps are unconditionally taken.
     branch_condition u_branch_condition (
-        .rs1_data   (rs1_data),
-        .rs2_data   (rs2_data),
-        .branch_cond(branch_cond),
-        .taken      (branch_taken)
+        .src0_data (src0_data),
+        .src1_data (src1_data),
+        .branch_op (branch_op),
+        .taken     (branch_taken)
     );
 
     // ---- Actual outcome ----
-    assign actual_taken  = is_jal | is_jalr | (is_branch & branch_taken);
+    wire is_conditional = control_flow == CF_CONDITIONAL;
+    wire is_unconditional = (control_flow == CF_DIRECT)
+                          | (control_flow == CF_INDIRECT);
+    assign actual_taken = is_unconditional | (is_conditional & branch_taken);
     assign actual_target = target_pc;
 
     // ---- Misprediction detection ----

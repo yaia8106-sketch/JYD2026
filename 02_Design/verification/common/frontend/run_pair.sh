@@ -33,7 +33,8 @@ fi
 
 RTL_FILES="
     $RTL_DIR/common/cpu_defs.sv
-    $RTL_DIR/core/frontend/frontend_predecode.sv
+    $RTL_DIR/isa/riscv/riscv_defs.sv
+    $RTL_DIR/isa/riscv/riscv_predecode.sv
     $RTL_DIR/core/frontend/frontend_f0_packet_builder.sv
     $RTL_DIR/core/frontend/frontend_pair_policy.sv
     $RTL_DIR/core/frontend/frontend_stage1_steer_ctrl.sv

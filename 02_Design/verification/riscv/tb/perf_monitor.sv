@@ -429,8 +429,8 @@ module perf_monitor (
     wire        id_s1_uses_mem_load_w = tb_riscv_tests.u_cpu.u_forwarding.id_s1_uses_mem_load;
     wire        id_s1_uses_s1_mem_load_w = tb_riscv_tests.u_cpu.u_forwarding.id_s1_uses_s1_mem_load;
     wire        repair_use_hazard_w = tb_riscv_tests.u_cpu.u_forwarding.repair_use_hazard;
-    wire        jalr_ex_wait_hazard_w = tb_riscv_tests.u_cpu.u_forwarding.jalr_ex_wait_hazard;
-    wire        branch_ex_wait_hazard_w = tb_riscv_tests.u_cpu.u_forwarding.branch_ex_wait_hazard;
+    wire        indirect_control_ex_wait_hazard_w = tb_riscv_tests.u_cpu.u_forwarding.indirect_control_ex_wait_hazard;
+    wire        conditional_control_ex_wait_hazard_w = tb_riscv_tests.u_cpu.u_forwarding.conditional_control_ex_wait_hazard;
     wire        s1_wb_wait_hazard_w = tb_riscv_tests.u_cpu.u_forwarding.s1_wb_wait_hazard;
     wire        mul_launch_ex_raw_hazard_w =
         tb_riscv_tests.u_cpu.u_forwarding.mul_launch_ex_raw_hazard;
@@ -445,7 +445,7 @@ module perf_monitor (
     wire        muldiv_busy_w   = tb_riscv_tests.u_cpu.muldiv_busy;
     wire        id_mul_prestart_w = tb_riscv_tests.u_cpu.id_mul_prestart;
     wire [ 2:0] id_mul_prestart_op_w =
-        tb_riscv_tests.u_cpu.id_inst[14:12];
+        tb_riscv_tests.u_cpu.dec_uop.muldiv_op;
     // MUL is accepted one stage earlier than DIV. Count the architectural
     // launch exactly once at its real interface and retain EX-start timing for
     // DIV/REM, whose op[2] bit is set.
@@ -464,12 +464,16 @@ module perf_monitor (
     wire        muldiv_profile_abort_event = muldiv_profile_active
                                            & (frontend_branch_flush_w
                                               | mem_branch_flush_w);
-    wire        ex_is_branch    = tb_riscv_tests.u_cpu.ex_is_branch;
-    wire        ex_is_jal       = tb_riscv_tests.u_cpu.ex_is_jal;
-    wire        ex_is_jalr      = tb_riscv_tests.u_cpu.ex_is_jalr;
-    wire        ex_is_csr_w     = tb_riscv_tests.u_cpu.ex_is_csr;
-    wire        ex_is_ecall_w   = tb_riscv_tests.u_cpu.ex_is_ecall;
-    wire        ex_is_mret_w    = tb_riscv_tests.u_cpu.ex_is_mret;
+    wire        ex_is_branch =
+        tb_riscv_tests.u_cpu.ex_is_conditional_control;
+    wire        ex_is_jal = tb_riscv_tests.u_cpu.ex_is_direct_control;
+    wire        ex_is_jalr =
+        tb_riscv_tests.u_cpu.ex_is_indirect_control;
+    wire        ex_is_csr_w = tb_riscv_tests.u_cpu.ex_is_priv_reg;
+    wire        ex_is_ecall_w =
+        tb_riscv_tests.u_cpu.ex_priv_op == cpu_defs::PRIV_SYSCALL;
+    wire        ex_is_mret_w =
+        tb_riscv_tests.u_cpu.ex_priv_op == cpu_defs::PRIV_RETURN;
     wire        ex_mem_write_w  = tb_riscv_tests.u_cpu.ex_mem_write_en;
     wire        ex_pred_taken_w   = tb_riscv_tests.u_cpu.ex_pred_taken;
     wire [31:0] ex_pred_target_w  = tb_riscv_tests.u_cpu.ex_pred_target;
@@ -530,9 +534,12 @@ module perf_monitor (
     wire [3:0] mem_s1_store_wea_w = tb_riscv_tests.u_cpu.mem_s1_store_wea;
     wire       is_cacheable_mem_w = tb_riscv_tests.u_cpu.is_cacheable_mem;
     wire       mem_s1_is_cacheable_w = tb_riscv_tests.u_cpu.mem_s1_is_cacheable;
-    wire       ex_s1_is_branch_w = tb_riscv_tests.u_cpu.ex_s1_is_branch;
-    wire       ex_s1_is_jal_w    = tb_riscv_tests.u_cpu.ex_s1_is_jal;
-    wire       ex_s1_is_jalr_w   = tb_riscv_tests.u_cpu.ex_s1_is_jalr;
+    wire ex_s1_is_branch_w =
+        tb_riscv_tests.u_cpu.ex_s1_is_conditional_control;
+    wire ex_s1_is_jal_w =
+        tb_riscv_tests.u_cpu.ex_s1_is_direct_control;
+    wire ex_s1_is_jalr_w =
+        tb_riscv_tests.u_cpu.ex_s1_is_indirect_control;
     wire       ex_s1_mem_write_w = tb_riscv_tests.u_cpu.ex_s1_mem_write_en;
     wire [31:0] ex_s1_inst_w     = tb_riscv_tests.u_cpu.ex_s1_inst;
     wire       ex_s1_pred_taken_w  = tb_riscv_tests.u_cpu.ex_s1_pred_taken;
@@ -545,9 +552,13 @@ module perf_monitor (
     wire [1:0] dec_wb_sel_w    = tb_riscv_tests.u_cpu.dec_wb_sel;
     wire       dec_mem_read_w  = tb_riscv_tests.u_cpu.dec_mem_read_en;
     wire       dec_mem_write_w = tb_riscv_tests.u_cpu.dec_mem_write_en;
-    wire       dec_is_branch_w = tb_riscv_tests.u_cpu.dec_is_branch;
-    wire       dec_is_jal_w    = tb_riscv_tests.u_cpu.dec_is_jal;
-    wire       dec_is_jalr_w   = tb_riscv_tests.u_cpu.dec_is_jalr;
+    wire dec_is_branch_w =
+        tb_riscv_tests.u_cpu.dec_uop.control_flow
+        == cpu_defs::CF_CONDITIONAL;
+    wire dec_is_jal_w = tb_riscv_tests.u_cpu.dec_uop.control_flow
+                      == cpu_defs::CF_DIRECT;
+    wire dec_is_jalr_w = tb_riscv_tests.u_cpu.dec_uop.control_flow
+                       == cpu_defs::CF_INDIRECT;
 
     localparam [6:0] OP_R_TYPE = 7'b0110011;
     localparam [6:0] OP_I_ALU  = 7'b0010011;
@@ -775,7 +786,7 @@ module perf_monitor (
                                    & ~raw_ready_mem_load_no_fwd_event
                                    & ~raw_ready_repair_event
                                    & ~raw_ready_mul_launch_event
-                                   & branch_ex_wait_hazard_w;
+                                   & conditional_control_ex_wait_hazard_w;
     wire raw_ready_jalr_ex_event = raw_id_stall_event
                                  & ~raw_nr_ex_load_event
                                  & ~raw_nr_mem_load_wait_event
@@ -783,7 +794,7 @@ module perf_monitor (
                                  & ~raw_ready_repair_event
                                  & ~raw_ready_mul_launch_event
                                  & ~raw_ready_branch_ex_event
-                                 & jalr_ex_wait_hazard_w;
+                                 & indirect_control_ex_wait_hazard_w;
     wire raw_ready_other_event = raw_id_stall_event
                                & ~raw_nr_ex_load_event
                                & ~raw_nr_mem_load_wait_event
@@ -793,8 +804,8 @@ module perf_monitor (
                                & ~raw_ready_branch_ex_event
                                & ~raw_ready_jalr_ex_event
                                & (s1_wb_wait_hazard_w | load_use_hazard_w
-                                | repair_use_hazard_w | jalr_ex_wait_hazard_w
-                                | branch_ex_wait_hazard_w);
+                                | repair_use_hazard_w | indirect_control_ex_wait_hazard_w
+                                | conditional_control_ex_wait_hazard_w);
     wire raw_classified_id_stall = raw_nr_ex_load_event | raw_nr_mem_load_wait_event
                                  | raw_ready_mem_load_no_fwd_event | raw_ready_repair_event
                                  | raw_ready_mul_launch_event
@@ -875,9 +886,9 @@ module perf_monitor (
     wire pair_head1_is_store_w =
         tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head1.is_store;
     wire pair_head1_is_branch_w =
-        tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head1.is_branch;
+        tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head1.is_conditional_branch;
     wire pair_head1_is_jalr_w =
-        tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head1.is_jalr;
+        tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head1.is_indirect_jump;
     wire pair_head1_is_cfi_w =
         tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head1_pair_meta.is_cfi;
     wire pair_head1_is_lsu_w =
@@ -891,17 +902,19 @@ module perf_monitor (
       | pair_head1_is_lsu_w | pair_head1_is_cfi_w;
     wire pair_head_contiguous_w = pair_head1_pc_w == (pair_head0_pc_w + 32'd4);
     wire pair_head_raw_rs1_w =
-        tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head0_pair_meta.writes_rd
-      & (tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head0_pair_meta.rd != 5'd0)
-      & tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head1_pair_meta.uses_rs1
-      & (tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head1_pair_meta.rs1
-         == tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head0_pair_meta.rd);
+        tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head0_pair_meta.writes_dst
+      & (tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head0_pair_meta.dst_addr
+         != 5'd0)
+      & tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head1_pair_meta.uses_src0
+      & (tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head1_pair_meta.src0_addr
+         == tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head0_pair_meta.dst_addr);
     wire pair_head_raw_rs2_w =
-        tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head0_pair_meta.writes_rd
-      & (tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head0_pair_meta.rd != 5'd0)
-      & tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head1_pair_meta.uses_rs2
-      & (tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head1_pair_meta.rs2
-         == tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head0_pair_meta.rd);
+        tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head0_pair_meta.writes_dst
+      & (tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head0_pair_meta.dst_addr
+         != 5'd0)
+      & tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head1_pair_meta.uses_src1
+      & (tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head1_pair_meta.src1_addr
+         == tb_riscv_tests.u_cpu.u_frontend_ftq.fq_head0_pair_meta.dst_addr);
     wire pair_head_raw_w = pair_head_raw_rs1_w | pair_head_raw_rs2_w;
     wire pair_exact_block_event = if_accept_w & ~if_s1_valid_w;
 
@@ -987,14 +1000,14 @@ module perf_monitor (
     wire repair_rs2_dep = repair_use_hazard_w
                         & ((id_rs2_used_w & (id_rs2_addr_w == ex_rd_w))
                          |  (id_s1_valid_eff & id_s1_rs2_used_w & (id_s1_rs2_addr_w == ex_rd_w)));
-    wire branch_ex_rs1_dep = branch_ex_wait_hazard_w & id_rs1_used_w
+    wire branch_ex_rs1_dep = conditional_control_ex_wait_hazard_w & id_rs1_used_w
                            & (s0_rs1_s0_ex_hit_w | s0_rs1_s1_ex_hit_w);
-    wire branch_ex_rs2_dep = branch_ex_wait_hazard_w & id_rs2_used_w
+    wire branch_ex_rs2_dep = conditional_control_ex_wait_hazard_w & id_rs2_used_w
                            & (s0_rs2_s0_ex_hit_w | s0_rs2_s1_ex_hit_w);
-    wire branch_ex_s0_prod = branch_ex_wait_hazard_w
+    wire branch_ex_s0_prod = conditional_control_ex_wait_hazard_w
                            & ((id_rs1_used_w & s0_rs1_s0_ex_hit_w)
                             |  (id_rs2_used_w & s0_rs2_s0_ex_hit_w));
-    wire branch_ex_s1_prod = branch_ex_wait_hazard_w
+    wire branch_ex_s1_prod = conditional_control_ex_wait_hazard_w
                            & ((id_rs1_used_w & s0_rs1_s1_ex_hit_w)
                             |  (id_rs2_used_w & s0_rs2_s1_ex_hit_w));
 
@@ -1462,7 +1475,7 @@ module perf_monitor (
             if (s0_mem_ready_store_data) cnt_lu_mem_ready_s0_store_data <= cnt_lu_mem_ready_s0_store_data + 1;
             if (s0_mem_ready_other)      cnt_lu_mem_ready_s0_other      <= cnt_lu_mem_ready_s0_other + 1;
             if (id_valid & repair_use_hazard_w) cnt_repair_wait <= cnt_repair_wait + 1;
-            if (id_valid & jalr_ex_wait_hazard_w) cnt_jalr_ex_wait <= cnt_jalr_ex_wait + 1;
+            if (id_valid & indirect_control_ex_wait_hazard_w) cnt_jalr_ex_wait <= cnt_jalr_ex_wait + 1;
             if (id_valid & s1_wb_wait_hazard_w)     cnt_s1_wb_wait     <= cnt_s1_wb_wait + 1;
             if (mem_valid & !mem_ready_go_w) cnt_dcache_stall   <= cnt_dcache_stall + 1;
             if (ex_valid & mmio_st_ld_hazard_w) cnt_mmio_stall  <= cnt_mmio_stall + 1;
@@ -1771,11 +1784,11 @@ module perf_monitor (
                     cnt_pred_train_s1 <= cnt_pred_train_s1 + 1;
                 else
                     cnt_pred_train_s0 <= cnt_pred_train_s0 + 1;
-                if (tb_riscv_tests.u_cpu.pred_train_is_branch)
+                if (tb_riscv_tests.u_cpu.pred_train_is_conditional_control)
                     cnt_pred_train_branch <= cnt_pred_train_branch + 1;
-                if (tb_riscv_tests.u_cpu.pred_train_is_jal)
+                if (tb_riscv_tests.u_cpu.pred_train_is_direct_control)
                     cnt_pred_train_jal <= cnt_pred_train_jal + 1;
-                if (tb_riscv_tests.u_cpu.pred_train_is_jalr)
+                if (tb_riscv_tests.u_cpu.pred_train_is_indirect_control)
                     cnt_pred_train_jalr <= cnt_pred_train_jalr + 1;
             end
 

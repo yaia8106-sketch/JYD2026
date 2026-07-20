@@ -307,13 +307,13 @@ module frontend_ftq
     wire [31:0] f0_slot1_inst = f0_entry1.inst;
     wire [31:0] f0_slot0_pc = f0_entry0.pc;
     wire [31:0] f0_slot1_pc = f0_entry1.pc;
-    wire f0_slot0_branch = f0_entry0.is_branch;
-    wire f0_slot0_jal = f0_entry0.is_jal;
-    wire f0_slot0_jalr = f0_entry0.is_jalr;
+    wire f0_slot0_conditional_control = f0_entry0.is_conditional_branch;
+    wire f0_slot0_direct_control = f0_entry0.is_direct_jump;
+    wire f0_slot0_indirect_control = f0_entry0.is_indirect_jump;
     wire f0_slot0_force_single = f0_entry0.force_single;
     wire f0_slot1_force_single = f0_entry1.force_single;
     wire f0_slot0_system_redirect =
-        f0_entry0.is_system && (f0_entry0.inst[14:12] == 3'b000);
+        f0_entry0.is_privileged_flow;
     wire f0_slot0_stage1_branch_owned =
         f0_entry0.stage1_branch_owned;
     wire f0_slot1_stage1_branch_owned =
