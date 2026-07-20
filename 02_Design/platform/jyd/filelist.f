@@ -3,7 +3,6 @@
 -F ../../rtl/filelists/riscv_cpu.f
 -F ../../rtl/filelists/dcache_bram.f
 ../../rtl/core/cpu_top.sv
-rtl/jyd_cpu_top.sv
 rtl/mmio_bridge.sv
 rtl/myCPU.sv
 rtl/student_top.sv

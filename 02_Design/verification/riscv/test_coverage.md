@@ -12,11 +12,15 @@
 
 ## 默认回归规模
 
-`functional/run_all.sh` 默认配置为运行 10 个独立 RTL/前端定向测试和 89 个处理器程序。
+`functional/run_all.sh` 默认配置为运行 11 个独立 RTL/前端/ISA 接口定向测试和 89 个处理器程序。
 这里描述的是覆盖规模，不等同于当前工作区已经通过这些测试。
 
 - 4 个核心/存储定向测试：forwarding、MulDiv 随机、DRAM IP 延迟约束和
   store-buffer 状态/查询/refill。
+- 1 个 RISC-V decoded-uop 接口定向测试：使用 21 组代表性编码直接检查
+  decoder 和 frontend predecode 输出的一致性，覆盖 ALU、移位、访存、分支、
+  JAL/JALR、LUI/AUIPC、RV32M、Zicsr、ECALL/MRET/EBREAK、FENCE、未支持编码
+  和非 32-bit 编码，以及完整立即数、寄存器使用、发射限制、预测器和特权元数据。
 - 1 个双 bank ABTB 定向测试：命中、未命中、更新、2-way LRU
   替换、同 set 别名、slot 屏蔽、双 CFI 程序顺序选择、错误路径 LRU
   屏蔽、所有 bank/way 的 CFI 候选、重复 tag 的 way0 优先、由 update PC
@@ -80,6 +84,11 @@ CPU functional regression 为 89/89 PASS；其中 forwarding 测试包含
 10 个独立 RTL/前端定向测试均 PASS，CPU functional regression 为
 89/89 PASS；`unsupported_encoding` 覆盖 6 个原 B 扩展代表编码，均按
 无寄存器写回的未支持指令处理。
+
+2026-07-20 RISC-V ISA 边界改造记录：新增 decoded-uop 接口定向测试，
+21 个译码/predecode 合约 case 均 PASS；`functional/run_all.sh` 的 11 个独立
+RTL/前端/ISA 接口定向测试均 PASS，CPU functional regression 为 89/89 PASS；
+JYD `student_top` 平台 smoke 为 2/2 PASS。
 
 VCS integration 覆盖计数为
 64 次 slot1 kill、35 次 JAL、3 次 JALR、1 次 taken branch、195 次偶 head、
