@@ -476,8 +476,7 @@ module frontend_ftq
     assign if_payload.slot0.issue_hint.mem_read = fq_head0.is_load;
     assign if_payload.slot0.issue_hint.mem_write = fq_head0.is_store;
     assign if_payload.slot0.issue_hint.is_muldiv = fq_head0.is_muldiv;
-    assign if_payload.slot0.issue_hint.is_mul =
-        fq_head0.is_muldiv & ~fq_head0.inst[14];
+    assign if_payload.slot0.issue_hint.is_mul = fq_head0.is_mul;
     assign if_payload.slot1.issue_hint.src0_used =
         fq_head1_pair_meta.uses_src0;
     assign if_payload.slot1.issue_hint.src1_used =
@@ -498,8 +497,7 @@ module frontend_ftq
     assign if_payload.slot1.issue_hint.mem_read = fq_head1.is_load;
     assign if_payload.slot1.issue_hint.mem_write = fq_head1.is_store;
     assign if_payload.slot1.issue_hint.is_muldiv = fq_head1.is_muldiv;
-    assign if_payload.slot1.issue_hint.is_mul =
-        fq_head1.is_muldiv & ~fq_head1.inst[14];
+    assign if_payload.slot1.issue_hint.is_mul = fq_head1.is_mul;
     assign if_payload.slot0.prediction.taken = fq_head0.pred_taken;
     assign if_payload.slot0.prediction.target = fq_head0.pred_target;
     assign if_payload.slot0.prediction.source_abtb = fq_head0.pred_source_abtb;

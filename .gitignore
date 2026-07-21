@@ -22,6 +22,7 @@ NutShell/
 !02_Design/verification/riscv/work/.gitignore
 !02_Design/verification/riscv/work/dcache_data_ram.v
 !02_Design/verification/riscv/work/hex/
+02_Design/verification/loongarch/work/
 DVEfiles/
 verdiLog/
 csrc/

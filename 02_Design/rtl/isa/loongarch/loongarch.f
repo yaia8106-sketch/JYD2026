@@ -1,0 +1,4 @@
+loongarch_defs.sv
+loongarch_decoder.sv
+loongarch_predecode.sv
+loongarch_priv_unit.sv

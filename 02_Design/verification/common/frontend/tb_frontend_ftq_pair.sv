@@ -26,6 +26,8 @@ module tb_frontend_ftq_pair;
     wire [31:0] if_pred_target = if_payload.slot0.prediction.target;
     wire if_s1_pred_taken = if_payload.slot1.prediction.taken;
     wire [31:0] if_s1_pred_target = if_payload.slot1.prediction.target;
+    wire if_issue_is_muldiv = if_payload.slot0.issue_hint.is_muldiv;
+    wire if_issue_is_mul = if_payload.slot0.issue_hint.is_mul;
     wire if_abtb_hit = if_payload.slot0.prediction.abtb_hit;
     wire if_abtb_way = if_payload.slot0.prediction.abtb_way;
     wire [1:0] if_abtb_cfi_type = if_payload.slot0.prediction.abtb_cfi_type;
@@ -396,6 +398,8 @@ module tb_frontend_ftq_pair;
                       m_inst(5'd5, 5'd1, 5'd2, 3'b000),
                       r_add(5'd6, 5'd3, 5'd4),
                       1'b1);
+        check(if_issue_is_muldiv && if_issue_is_mul,
+              "MUL semantic issue hint was not carried through the FTQ");
         run_pair_case("MUL+load",
                       m_inst(5'd5, 5'd1, 5'd2, 3'b001),
                       lw_inst(5'd6, 5'd3),
@@ -416,6 +420,8 @@ module tb_frontend_ftq_pair;
                       m_inst(5'd5, 5'd1, 5'd2, 3'b100),
                       r_add(5'd6, 5'd3, 5'd4),
                       1'b0);
+        check(if_issue_is_muldiv && !if_issue_is_mul,
+              "DIV was incorrectly exposed as a multiply issue hint");
         run_pair_case("Slot1 MUL remains unsupported",
                       r_add(5'd5, 5'd1, 5'd2),
                       m_inst(5'd6, 5'd3, 5'd4, 3'b000),

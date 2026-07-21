@@ -753,11 +753,24 @@ module tb_riscv_tests;
                 $dumpfile(dump_file_r);
             else
                 $dumpfile("riscv_test.vcd");
-            if ($value$plusargs("dump_scope=%d", dump_scope)) begin
-                $dumpvars(dump_scope, tb_riscv_tests);
-            end else begin
-                $dumpvars(0, tb_riscv_tests);
-            end
+            if (!$value$plusargs("dump_scope=%d", dump_scope))
+                dump_scope = 0;
+            // VCS requires the hierarchy-depth argument to be a compile-time
+            // constant.  Keep the runtime option by selecting among explicit
+            // constant calls instead of passing the plusarg directly.
+            case (dump_scope)
+                0: $dumpvars(0, tb_riscv_tests);
+                1: $dumpvars(1, tb_riscv_tests);
+                2: $dumpvars(2, tb_riscv_tests);
+                3: $dumpvars(3, tb_riscv_tests);
+                4: $dumpvars(4, tb_riscv_tests);
+                default: begin
+                    $display("[VCD] Unsupported dump_scope=%0d; using full hierarchy",
+                             dump_scope);
+                    dump_scope = 0;
+                    $dumpvars(0, tb_riscv_tests);
+                end
+            endcase
             $display("[VCD] Dumping to %0s (scope=%0d)", dump_file_r, dump_scope);
         end
     end

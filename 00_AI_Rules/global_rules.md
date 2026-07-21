@@ -86,8 +86,9 @@ end
 - **禁止 `initial`**：不可用于可综合逻辑
 - **所有寄存器必须显式复位**（Synth 8-7137 是严重 warning）
 - 优先 **并行 AND-OR MUX** 替代 `case/if-else` 链
-- ALU 编码 `alu_op = {funct7[5], funct3}`，直接透传
-- 分支条件直接用 `funct3`，无需额外编码
+- 公共可综合流水线只传递 `cpu_defs.sv` 中的语义控制；原始 ISA 编码在 RTL
+  中只允许由 `rtl/isa/<isa>/` 解释。RISC-V 适配器负责把 `funct` 字段映射为
+  通用 `alu_op_t` / `branch_op_t`，LoongArch 适配器同理。
 
 ---
 

@@ -101,7 +101,7 @@ module tb_riscv_decode_contract;
                 && (predecode.is_load == (uop.mem_cmd == MEM_LOAD))
                 && (predecode.is_store == (uop.mem_cmd == MEM_STORE))
                 && (predecode.is_muldiv == decoder_is_muldiv)
-                && ((predecode.is_muldiv && !inst[14])
+                && (predecode.is_mul
                     == (decoder_is_muldiv
                         && (uop.muldiv_op <= MULDIV_MULHU)));
         end

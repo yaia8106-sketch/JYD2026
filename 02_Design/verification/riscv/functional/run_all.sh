@@ -130,6 +130,10 @@ echo "[INFO] Running frontend ABTB/PHT branch steering integration test..."
 bash "$VERIFICATION_DIR/common/frontend/run_steering.sh"
 echo ""
 
+echo "[INFO] Running LoongArch ordinary-integer decode gate..."
+bash "$VERIFICATION_DIR/loongarch/functional/run_decode_contract.sh"
+echo ""
+
 TOTAL=0
 PASSED=0
 FAILED=0
@@ -181,6 +185,11 @@ echo "[INFO] Compiling with VCS..."
 if ! vcs $VCS_OPTS $VCS_EXTRA_OPTS -top tb_riscv_tests -Mdir="$WORK_DIR/riscv_tests_vcs.csrc" -o "$SIM_BIN" $RTL_FILES "$VCS_SHIM" >"$COMPILE_LOG" 2>&1; then
     echo "ERROR: VCS compilation failed"
     head -80 "$COMPILE_LOG"
+    exit 1
+fi
+if grep -Eq 'Warning-\[(TFIPC|ENUMASSIGN|INCLFDV)\]' "$COMPILE_LOG"; then
+    echo "ERROR: VCS compilation reported a gated RTL/TB warning"
+    grep -E 'Warning-\[(TFIPC|ENUMASSIGN|INCLFDV)\]' "$COMPILE_LOG"
     exit 1
 fi
 head -20 "$COMPILE_LOG"

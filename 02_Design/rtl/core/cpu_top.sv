@@ -313,7 +313,7 @@ module cpu_top
     wire [31:0] mem_pc_plus_4 = mem_s0_payload.pc_plus_4;
     wire [ 4:0] mem_rd = mem_s0_payload.rd;
     wire        mem_reg_write_en = mem_s0_payload.reg_write_en;
-    wire [ 1:0] mem_wb_sel = mem_s0_payload.wb_sel;
+    wire wb_src_t mem_wb_sel = mem_s0_payload.wb_sel;
     wire        mem_is_mul = mem_s0_payload.is_mul;
     wire        mem_mem_read_en = mem_s0_payload.mem_read_en;
     wire [ 1:0] mem_mem_size = mem_s0_payload.mem_size;
@@ -332,7 +332,7 @@ module cpu_top
     wire [31:0] mem_s1_pc_plus_4 = mem_s1_payload.pc_plus_4;
     wire [ 4:0] mem_s1_rd = mem_s1_payload.rd;
     wire        mem_s1_reg_write_en = mem_s1_payload.reg_write_en;
-    wire [ 1:0] mem_s1_wb_sel = mem_s1_payload.wb_sel;
+    wire wb_src_t mem_s1_wb_sel = mem_s1_payload.wb_sel;
     wire        mem_s1_mem_read_en = mem_s1_payload.mem_read_en;
     wire        mem_s1_mem_write_en = mem_s1_payload.mem_write_en;
     wire [ 1:0] mem_s1_mem_size = mem_s1_payload.mem_size;
@@ -365,7 +365,7 @@ module cpu_top
     wire [31:0] wb_pc_plus_4 = wb_s0_payload.pc_plus_4;
     (* max_fanout = 8 *) wire [ 4:0] wb_rd = wb_s0_payload.rd;
     wire        wb_reg_write_en = wb_s0_payload.reg_write_en;
-    wire [ 1:0] wb_wb_sel = wb_s0_payload.wb_sel;
+    wire wb_src_t wb_wb_sel = wb_s0_payload.wb_sel;
     wire        wb_is_load = wb_s0_payload.is_load;
     wire [31:0] wb_load_data = wb_s0_payload.load_data;
     wire [31:0] wb_load_data_ex;
@@ -389,7 +389,7 @@ module cpu_top
     wire [31:0] wb_s1_pc_plus_4 = wb_s1_payload.pc_plus_4;
     (* max_fanout = 8 *) wire [ 4:0] wb_s1_rd = wb_s1_payload.rd;
     wire        wb_s1_reg_write_en = wb_s1_payload.reg_write_en;
-    wire [ 1:0] wb_s1_wb_sel = wb_s1_payload.wb_sel;
+    wire wb_src_t wb_s1_wb_sel = wb_s1_payload.wb_sel;
     wire        wb_s1_is_load = wb_s1_payload.is_load;
 
     // ---- WB ----
@@ -1330,8 +1330,12 @@ module cpu_top
         .id_s1_alu_src2 (id_s1_alu_src2),
         .id_rs1_wb_repair(fwd_rs1_wb_repair),
         .id_rs2_wb_repair(fwd_rs2_wb_repair),
+        .id_rs1_wb_repair_s1(),
+        .id_rs2_wb_repair_s1(),
         .id_s1_rs1_wb_repair(fwd_s1_rs1_wb_repair),
         .id_s1_rs2_wb_repair(fwd_s1_rs2_wb_repair),
+        .id_s1_rs1_wb_repair_s1(),
+        .id_s1_rs2_wb_repair_s1(),
         .id_ready_go    (id_ready_go_raw),
         .id_ready_go_if_mem_ready(id_ready_go_raw_if_mem_ready),
         .id_ready_go_if_mem_wait(id_ready_go_raw_if_mem_wait)

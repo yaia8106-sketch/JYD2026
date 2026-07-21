@@ -3,7 +3,7 @@
 // Description: 32-bit ALU with hardware-shared adder, comparator, and shifter
 // Domain: execute.
 // Spec: 02_Design/spec/alu_spec.md
-// Encoding: alu_op = {funct7[5], funct3}
+// Encoding: semantic values are defined by cpu_defs::alu_op_t.
 // ============================================================
 
 module alu
@@ -52,7 +52,8 @@ module alu
     wire sel_cmp = (alu_op[1]  & ~alu_op[2]); // SLT(010) / SLTU(011)
     wire sel_xor = (alu_op[2:0] == 3'b100);  // XOR
     wire sel_shr = (alu_op[2:0] == 3'b101);  // SRL / SRA
-    wire sel_or  = (alu_op[2:0] == 3'b110);  // OR
+    wire sel_or  = (alu_op == ALU_OR);       // OR
+    wire sel_nor = (alu_op == ALU_NOR);      // NOR
     wire sel_and = (alu_op[2:0] == 3'b111);  // AND
 
     assign alu_result = ({32{sel_add}} & sum)
@@ -61,6 +62,7 @@ module alu
                       | ({32{sel_xor}} & (alu_src1 ^ alu_src2))
                       | ({32{sel_shr}} & shiftr)
                       | ({32{sel_or}}  & (alu_src1 | alu_src2))
+                      | ({32{sel_nor}} & ~(alu_src1 | alu_src2))
                       | ({32{sel_and}} & (alu_src1 & alu_src2));
 
     // ---- Bit-reverse function ----

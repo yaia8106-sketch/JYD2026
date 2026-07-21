@@ -49,6 +49,9 @@ CPU_Workspace/
 cd 02_Design/verification/riscv
 bash functional/run_all.sh
 bash ../platform/jyd/functional/run_student_top_smoke.sh
+
+cd ../loongarch
+bash functional/run_decode_contract.sh
 ```
 
 性能 / 长跑 / COE（不要当作默认 smoke）：

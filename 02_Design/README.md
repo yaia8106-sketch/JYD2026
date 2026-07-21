@@ -12,12 +12,15 @@ The design tree is split by dependency boundary:
 - `model/`: architectural exploration models.
 - `docs/`: design notes.
 
-The active core currently selects the RISC-V implementation. Its instruction
-encoding, immediate extraction, frontend predecode, and privileged state live
-under `rtl/isa/riscv/`; the common pipeline consumes semantic structures from
-`rtl/common/cpu_defs.sv`. The LoongArch ISA files and the NSCSCC CPU top remain
-scaffolds until that ISA is implemented.
+The common pipeline consumes semantic structures from
+`rtl/common/cpu_defs.sv`. RISC-V instruction encoding, immediate extraction,
+frontend predecode, and privileged state live under `rtl/isa/riscv/`.
+`rtl/isa/loongarch/` implements the phase-2 LA32R ordinary-integer boundary:
+46 real instruction encodings plus the architectural NOP alias. LoongArch
+exceptions/privileged state and the NSCSCC platform/AXI top remain later-phase
+work.
 
 Build selection is made by platform filelists, not SystemVerilog ISA macros.
 RISC-V builds include `rtl/filelists/riscv_cpu.f`, which combines the common
-pipeline with the selected `rtl/isa/riscv/riscv.f` adapter modules.
+pipeline with `rtl/isa/riscv/riscv.f`. LA32R ordinary-integer builds use
+`rtl/filelists/loongarch_cpu.f` and `rtl/isa/loongarch/loongarch.f`.

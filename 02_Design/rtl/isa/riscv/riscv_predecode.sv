@@ -87,6 +87,7 @@ module riscv_predecode
         decoded.is_fence = opcode == OP_FENCE;
         decoded.is_illegal = instruction_illegal;
         decoded.is_muldiv = r_is_muldiv;
+        decoded.is_mul = r_is_muldiv & ~funct3[2];
         decoded.is_load = load_legal;
         decoded.is_store = store_legal;
         decoded.is_alu_type = r_base_legal

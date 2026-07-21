@@ -17,6 +17,7 @@ package cpu_defs;
         ALU_SRL  = 4'b0_101,
         ALU_SRA  = 4'b1_101,
         ALU_OR   = 4'b0_110,
+        ALU_NOR  = 4'b1_110,
         ALU_AND  = 4'b0_111
     } alu_op_t;
 
@@ -221,6 +222,7 @@ package cpu_defs;
         logic       is_fence;
         logic       is_illegal;
         logic       is_muldiv;
+        logic       is_mul;
         logic       is_load;
         logic       is_store;
         logic       is_alu_type;
@@ -260,6 +262,7 @@ package cpu_defs;
         logic        is_fence;
         logic        is_illegal;
         logic        is_muldiv;
+        logic        is_mul;
         logic        is_load;
         logic        is_store;
         logic        is_alu_type;

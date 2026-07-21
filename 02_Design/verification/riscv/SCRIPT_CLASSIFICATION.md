@@ -18,6 +18,7 @@
 | `../common/frontend/run_pair.sh` | `frontend_ftq` pair-policy VCS 定向测试，由 `run_all.sh` 自动调用，覆盖同包/跨包 pair、RAW、force-single、pred-taken、slot kill、stall、redirect 和 wrap-around | 修改 FTQ pair eligibility、FQ entry metadata 或双发策略后 |
 | `../common/frontend/run_canonical.sh` | 默认 branch steering 下 canonical snapshot VCS 测试，覆盖 ABTB miss 顺序取指、bank1 ABTB 选择、first ABTB 权威性、branch ownership、stall 和 EX redirect 优先级 | 修改 canonical steering 或 Stage-1 metadata 绑定规则后 |
 | `../common/frontend/run_steering.sh` | 默认 ABTB/PHT branch steering 集成 VCS 定向测试，覆盖程序顺序、slot metadata、sequential cold miss、EX correction、stall/redirect/wrap、slot1 branch、wrong-path 抑制和 confirmed update | 修改 branch steering、PHT metadata 或训练资格后 |
+| `../loongarch/functional/run_decode_contract.sh` | LA32R 普通整数完整/预译码契约、全编码前缀 legality、F0/FTQ 语义元数据及 `cpu_top` 执行 smoke，由 `run_all.sh` 自动调用 | 修改公共语义结构、ISA 边界、前端元数据或 LoongArch 普通整数译码后 |
 
 ### A2. Special / Temporary Correctness Smoke
 

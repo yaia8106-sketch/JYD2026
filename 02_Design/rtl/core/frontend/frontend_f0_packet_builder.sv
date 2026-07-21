@@ -121,6 +121,7 @@ module frontend_f0_packet_builder
             make_entry.is_fence = decoded.is_fence;
             make_entry.is_illegal = decoded.is_illegal;
             make_entry.is_muldiv = decoded.is_muldiv;
+            make_entry.is_mul = decoded.is_mul;
             make_entry.is_load = decoded.is_load;
             make_entry.is_store = decoded.is_store;
             make_entry.is_alu_type = decoded.is_alu_type;
