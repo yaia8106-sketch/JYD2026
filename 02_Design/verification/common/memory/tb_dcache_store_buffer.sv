@@ -14,8 +14,10 @@ module tb_dcache_store_buffer;
     wire  [31:0] drain_addr;
     wire  [ 3:0] drain_wea;
     wire  [31:0] drain_data;
-    logic [15:0] drain_compare_addr;
-    wire         drain_addr_match;
+    logic [15:0] drain_compare_addr0;
+    logic [15:0] drain_compare_addr1;
+    wire         drain_addr_match0;
+    wire         drain_addr_match1;
     logic [31:0] lookup_addr;
     logic [ 3:0] lookup_mask;
     wire         lookup_covers;
@@ -79,8 +81,12 @@ module tb_dcache_store_buffer;
         .drain_addr         (drain_addr),
         .drain_wea          (drain_wea),
         .drain_data         (drain_data),
-        .drain_compare_addr (drain_compare_addr),
-        .drain_addr_match   (drain_addr_match),
+        .drain_compare_line0(drain_compare_addr0[15:2]),
+        .drain_compare_word0(drain_compare_addr0[1:0]),
+        .drain_compare_line1(drain_compare_addr1[15:2]),
+        .drain_compare_word1(drain_compare_addr1[1:0]),
+        .drain_addr_match0  (drain_addr_match0),
+        .drain_addr_match1  (drain_addr_match1),
         .lookup_addr        (lookup_addr),
         .lookup_mask        (lookup_mask),
         .lookup_covers      (lookup_covers),
@@ -143,8 +149,10 @@ module tb_dcache_store_buffer;
 
     task automatic check_outputs;
         logic selected;
-        logic match0;
-        logic match1;
+        logic entry0_match0;
+        logic entry1_match0;
+        logic entry0_match1;
+        logic entry1_match1;
         logic [3:0] lookup_entry_mask0;
         logic [3:0] lookup_entry_mask1;
         logic [3:0] lookup_covered_mask;
@@ -157,8 +165,14 @@ module tb_dcache_store_buffer;
         logic [31:0] expected_refill;
         begin
             selected = model_drain_sel();
-            match0 = (model_addr[0][17:2] == drain_compare_addr);
-            match1 = (model_addr[1][17:2] == drain_compare_addr);
+            entry0_match0 =
+                model_addr[0][17:2] == drain_compare_addr0;
+            entry1_match0 =
+                model_addr[1][17:2] == drain_compare_addr0;
+            entry0_match1 =
+                model_addr[0][17:2] == drain_compare_addr1;
+            entry1_match1 =
+                model_addr[1][17:2] == drain_compare_addr1;
 
             if (pending_q !== model_pending) fail("pending_q mismatch");
             if (recent_valid_q !== model_recent) fail("recent_valid_q mismatch");
@@ -169,8 +183,12 @@ module tb_dcache_store_buffer;
             if (drain_addr !== model_addr[selected]) fail("drain_addr mismatch");
             if (drain_wea !== model_wea[selected]) fail("drain_wea mismatch");
             if (drain_data !== model_data[selected]) fail("drain_data mismatch");
-            if (drain_addr_match !== (selected ? match1 : match0))
-                fail("parallel drain compare mismatch");
+            if (drain_addr_match0 !==
+                    (selected ? entry1_match0 : entry0_match0))
+                fail("parallel drain compare candidate 0 mismatch");
+            if (drain_addr_match1 !==
+                    (selected ? entry1_match1 : entry0_match1))
+                fail("parallel drain compare candidate 1 mismatch");
 
             lookup_entry_mask0 = (model_recent[0]
                                   && (model_addr[0][17:2]
@@ -254,7 +272,8 @@ module tb_dcache_store_buffer;
             push_addr = cycle_addr;
             push_wea = cycle_wea;
             push_data = cycle_data;
-            drain_compare_addr = cycle_compare;
+            drain_compare_addr0 = cycle_compare;
+            drain_compare_addr1 = ~cycle_compare;
             lookup_addr = cycle_lookup_addr;
             lookup_mask = cycle_lookup_mask;
             refill_capture = cycle_capture;
@@ -324,7 +343,8 @@ module tb_dcache_store_buffer;
         push_addr = 32'd0;
         push_wea = 4'd0;
         push_data = 32'd0;
-        drain_compare_addr = 16'd0;
+        drain_compare_addr0 = 16'd0;
+        drain_compare_addr1 = 16'hffff;
         lookup_addr = 32'd0;
         lookup_mask = 4'd0;
         refill_capture = 1'b0;

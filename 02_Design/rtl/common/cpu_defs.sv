@@ -179,9 +179,30 @@ package cpu_defs;
         logic [ 1:0] stage1_pht_counter;
     } prediction_meta_t;
 
+    // ISA-neutral dependency metadata carried across IF/ID. The ISA-specific
+    // predecoder computes it beside the IROM response, then the queue and
+    // IF/ID registers make it available without putting the full decoder in
+    // the ID stall/backpressure feedback loop.
+    typedef struct packed {
+        logic       src0_used;
+        logic       src1_used;
+        logic [4:0] src0_addr;
+        logic [4:0] src1_addr;
+        logic       dst_write;
+        logic [4:0] dst_addr;
+        logic       alu_only;
+        logic       conditional_control;
+        logic       indirect_control;
+        logic       mem_read;
+        logic       mem_write;
+        logic       is_muldiv;
+        logic       is_mul;
+    } issue_hint_t;
+
     typedef struct packed {
         logic [31:0]      inst;
         prediction_meta_t prediction;
+        issue_hint_t      issue_hint;
     } fetch_slot_t;
 
     typedef struct packed {

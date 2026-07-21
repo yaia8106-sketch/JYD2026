@@ -12,7 +12,7 @@ module mem_wb_payload_builder
     input  logic [31:0]      s0_pc_plus_4,
     input  logic [ 4:0]      s0_rd,
     input  logic             s0_reg_write_en,
-    input  logic [ 1:0]      s0_wb_sel,
+    input  wb_src_t           s0_wb_sel,
     input  logic             s0_is_load,
     input  logic [31:0]      s0_load_data,
 
@@ -22,7 +22,7 @@ module mem_wb_payload_builder
     input  logic [31:0]      s1_pc_plus_4,
     input  logic [ 4:0]      s1_rd,
     input  logic             s1_reg_write_en,
-    input  logic [ 1:0]      s1_wb_sel,
+    input  wb_src_t           s1_wb_sel,
     input  logic             s1_is_load,
 
     output mem_wb_slot0_t    slot0_payload,

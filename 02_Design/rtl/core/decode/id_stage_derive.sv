@@ -10,6 +10,8 @@ module id_stage_derive
     input  logic [31:0]  id_pc,
     input  decoded_uop_t slot0_uop,
     input  decoded_uop_t slot1_uop,
+    input  issue_hint_t  slot0_hint,
+    input  issue_hint_t  slot1_hint,
 
     output logic [ 4:0] id_rs1_addr,
     output logic [ 4:0] id_rs2_addr,
@@ -35,14 +37,15 @@ module id_stage_derive
     output logic [ 1:0] id_s1_abtb_update_cfi_type
 );
 
-    // Legacy rs/rd signal names are retained inside the current pipeline, but
-    // their values now come entirely from the ISA-neutral src/dst contract.
-    assign id_rs1_addr = slot0_uop.src0_addr;
-    assign id_rs2_addr = slot0_uop.src1_addr;
-    assign id_rd_addr = slot0_uop.dst_addr;
-    assign id_s1_rs1_addr = slot1_uop.src0_addr;
-    assign id_s1_rs2_addr = slot1_uop.src1_addr;
-    assign id_s1_rd_addr = slot1_uop.dst_addr;
+    // Dependency/hazard fields come from registered ISA-neutral hints. The
+    // full uop remains authoritative for execution, but no longer sits in the
+    // ID-ready -> IF/ID-clock-enable feedback cone.
+    assign id_rs1_addr = slot0_hint.src0_addr;
+    assign id_rs2_addr = slot0_hint.src1_addr;
+    assign id_rd_addr = slot0_hint.dst_addr;
+    assign id_s1_rs1_addr = slot1_hint.src0_addr;
+    assign id_s1_rs2_addr = slot1_hint.src1_addr;
+    assign id_s1_rd_addr = slot1_hint.dst_addr;
     assign id_pc_plus_4 = id_pc + 32'd4;
     assign id_s1_pc = id_pc_plus_4;
 
@@ -55,17 +58,15 @@ module id_stage_derive
     assign id_s1_alu_src2_is_rs2 =
         slot1_uop.operand_b_sel == OPERAND_B_SRC1;
 
-    assign id_rs1_used = slot0_uop.src0_used;
-    assign id_rs2_used = slot0_uop.src1_used;
-    assign id_s1_rs1_used = slot1_uop.src0_used;
-    assign id_s1_rs2_used = slot1_uop.src1_used;
+    assign id_rs1_used = slot0_hint.src0_used;
+    assign id_rs2_used = slot0_hint.src1_used;
+    assign id_s1_rs1_used = slot1_hint.src0_used;
+    assign id_s1_rs2_used = slot1_hint.src1_used;
 
     // Only ordinary ALU results use the existing late MEM-load repair path.
     // MDU and privileged results capture or produce data through other paths.
-    assign id_s0_alu_only = slot0_uop.dst_write
-                          & (slot0_uop.exec_unit == EXEC_ALU)
-                          & (slot0_uop.wb_src == WB_EXEC);
-    assign id_s1_repair_ok = slot1_uop.src0_used | slot1_uop.src1_used;
+    assign id_s0_alu_only = slot0_hint.alu_only;
+    assign id_s1_repair_ok = slot1_hint.src0_used | slot1_hint.src1_used;
 
     // Call/return conventions are decoded at the ISA boundary. The common
     // predictor receives only an implementation-neutral CFI classification.

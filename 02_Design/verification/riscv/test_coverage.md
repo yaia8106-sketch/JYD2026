@@ -20,7 +20,8 @@
 - 1 个 RISC-V decoded-uop 接口定向测试：使用 21 组代表性编码直接检查
   decoder 和 frontend predecode 输出的一致性，覆盖 ALU、移位、访存、分支、
   JAL/JALR、LUI/AUIPC、RV32M、Zicsr、ECALL/MRET/EBREAK、FENCE、未支持编码
-  和非 32-bit 编码，以及完整立即数、寄存器使用、发射限制、预测器和特权元数据。
+  和非 32-bit 编码，以及完整立即数、寄存器使用、发射限制、预测器、特权元数据
+  及 IF/ID registered issue hint 与完整译码 uop 的逐字段一致性。
 - 1 个双 bank ABTB 定向测试：命中、未命中、更新、2-way LRU
   替换、同 set 别名、slot 屏蔽、双 CFI 程序顺序选择、错误路径 LRU
   屏蔽、所有 bank/way 的 CFI 候选、重复 tag 的 way0 优先、由 update PC
@@ -89,6 +90,13 @@ CPU functional regression 为 89/89 PASS；其中 forwarding 测试包含
 21 个译码/predecode 合约 case 均 PASS；`functional/run_all.sh` 的 11 个独立
 RTL/前端/ISA 接口定向测试均 PASS，CPU functional regression 为 89/89 PASS；
 JYD `student_top` 平台 smoke 为 2/2 PASS。
+
+2026-07-21 时序关键路径等价改造记录：`functional/run_all.sh` 的 11 个独立
+RTL/前端/ISA 接口定向测试及 89 个 CPU 程序均 PASS；其中 MulDiv 随机测试
+覆盖 8111 组输入，store-buffer 定向/随机测试覆盖 417 周期，forwarding 定向
+测试 PASS，JYD `student_top` 的 `simple` 与 `dcache_stress` smoke 为 2/2 PASS。
+仿真断言同时检查 registered issue hint 与完整 decoder uop 等价、并行除法幅值
+比较与绝对值参考实现等价，以及双候选 store-buffer 地址比较与参考模型等价。
 
 VCS integration 覆盖计数为
 64 次 slot1 kill、35 次 JAL、3 次 JALR、1 次 taken branch、195 次偶 head、

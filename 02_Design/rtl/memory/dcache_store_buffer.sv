@@ -25,8 +25,15 @@ module dcache_store_buffer (
     output logic [ 3:0] drain_wea,
     output logic [31:0] drain_data,
 
-    input  logic [15:0] drain_compare_addr,
-    output logic        drain_addr_match,
+    // Two independently precomputed read-address candidates. Splitting line
+    // and word fields prevents late word/beat arithmetic from serializing in
+    // front of the full line equality.
+    input  logic [13:0] drain_compare_line0,
+    input  logic [ 1:0] drain_compare_word0,
+    input  logic [13:0] drain_compare_line1,
+    input  logic [ 1:0] drain_compare_word1,
+    output logic        drain_addr_match0,
+    output logic        drain_addr_match1,
 
     input  logic [31:0] lookup_addr,
     input  logic [ 3:0] lookup_mask,
@@ -81,13 +88,29 @@ module dcache_store_buffer (
     assign drain_wea  = drain_sel ? wea_q[1]  : wea_q[0];
     assign drain_data = drain_sel ? data_q[1] : data_q[0];
 
-    // Compare both physical entries before the late drain selection. This is
-    // equivalent to comparing drain_addr after its wide mux, but keeps the
-    // alloc_sel/pending_q -> BRAM write-enable path to a one-bit mux.
-    wire drain_addr_match0 = addr_q[0][17:2] == drain_compare_addr;
-    wire drain_addr_match1 = addr_q[1][17:2] == drain_compare_addr;
-    assign drain_addr_match = drain_sel ? drain_addr_match1
-                                        : drain_addr_match0;
+    // Compare both physical entries and both read candidates in parallel.
+    // KEEP prevents synthesis from rebuilding a 16-bit equality after the
+    // late candidate select, which was the reported BRAM-enable timing cone.
+    (* keep = "true" *) wire entry0_line0_match =
+        addr_q[0][17:4] == drain_compare_line0;
+    (* keep = "true" *) wire entry1_line0_match =
+        addr_q[1][17:4] == drain_compare_line0;
+    (* keep = "true" *) wire entry0_line1_match =
+        addr_q[0][17:4] == drain_compare_line1;
+    (* keep = "true" *) wire entry1_line1_match =
+        addr_q[1][17:4] == drain_compare_line1;
+    wire entry0_word0_match = addr_q[0][3:2] == drain_compare_word0;
+    wire entry1_word0_match = addr_q[1][3:2] == drain_compare_word0;
+    wire entry0_word1_match = addr_q[0][3:2] == drain_compare_word1;
+    wire entry1_word1_match = addr_q[1][3:2] == drain_compare_word1;
+    wire entry0_addr0_match = entry0_line0_match & entry0_word0_match;
+    wire entry1_addr0_match = entry1_line0_match & entry1_word0_match;
+    wire entry0_addr1_match = entry0_line1_match & entry0_word1_match;
+    wire entry1_addr1_match = entry1_line1_match & entry1_word1_match;
+    assign drain_addr_match0 = drain_sel ? entry1_addr0_match
+                                         : entry0_addr0_match;
+    assign drain_addr_match1 = drain_sel ? entry1_addr1_match
+                                         : entry0_addr1_match;
 
     // ================================================================
     //  Recent-store load-miss lookup

@@ -78,6 +78,35 @@ module tb_riscv_decode_contract;
                  immediate[19:12], dst, OP_JAL};
     endfunction
 
+    function automatic logic issue_metadata_matches;
+        logic decoder_alu_only;
+        logic decoder_is_muldiv;
+        begin
+            decoder_alu_only = uop.dst_write
+                             && (uop.exec_unit == EXEC_ALU)
+                             && (uop.wb_src == WB_EXEC);
+            decoder_is_muldiv = uop.exec_unit == EXEC_MULDIV;
+            issue_metadata_matches =
+                (predecode.uses_src0 == uop.src0_used)
+                && (predecode.uses_src1 == uop.src1_used)
+                && (predecode.src0_addr == uop.src0_addr)
+                && (predecode.src1_addr == uop.src1_addr)
+                && (predecode.writes_dst == uop.dst_write)
+                && (predecode.dst_addr == uop.dst_addr)
+                && (predecode.is_alu_type == decoder_alu_only)
+                && (predecode.is_conditional_branch
+                    == (uop.control_flow == CF_CONDITIONAL))
+                && (predecode.is_indirect_jump
+                    == (uop.control_flow == CF_INDIRECT))
+                && (predecode.is_load == (uop.mem_cmd == MEM_LOAD))
+                && (predecode.is_store == (uop.mem_cmd == MEM_STORE))
+                && (predecode.is_muldiv == decoder_is_muldiv)
+                && ((predecode.is_muldiv && !inst[14])
+                    == (decoder_is_muldiv
+                        && (uop.muldiv_op <= MULDIV_MULHU)));
+        end
+    endfunction
+
     task automatic begin_case(
         input logic [31:0] instruction,
         input string       name
@@ -87,6 +116,10 @@ module tb_riscv_decode_contract;
             current_case = name;
             case_count = case_count + 1;
             #1;
+            if (!issue_metadata_matches())
+                $fatal(1,
+                       "[FAIL] %s: predecode issue metadata differs from full decoder (inst=%08x)",
+                       current_case, inst);
         end
     endtask
 

@@ -2,13 +2,13 @@
 # ================================================================
 # Restartable three-candidate timing flow:
 #   1. Synthesis + route, followed by a persisted routed checkpoint.
-#   2. Mandatory pass-1 Explore in an independent Vivado process.
+#   2. Mandatory pass-1 balanced post-route optimization without clock-opt.
 #   3. Independent pass-2 routing_opt candidate from pass 1.
 #   4. Independent pass-2 AggressiveExplore candidate from pass 1.
 #
 # An incomplete run with an identical input fingerprint is resumed
 # automatically. Each physopt stage runs in its own Vivado process. Failed
-# pass-1 Explore and AggressiveExplore stages are retried once in a fresh
+# pass-1 balanced and AggressiveExplore stages are retried once in a fresh
 # single-threaded process. A final pass-2 failure is recorded without
 # invalidating pass 1 or the other candidate, and is retried on the next call.
 #
@@ -52,8 +52,8 @@ usage() {
         '  matches. --fresh always starts a new clean synthesis/implementation.' \
         '' \
         'Flow:' \
-        '  route -> pass1_explore -> {pass2_routing_opt, pass2_aggressive_explore}' \
-        '  Failed pass-1 Explore and AggressiveExplore get one single-thread retry.'
+        '  route -> pass1_balanced -> {pass2_routing_opt, pass2_aggressive_explore}' \
+        '  Failed pass-1 balanced and AggressiveExplore get one single-thread retry.'
 }
 
 require_positive_integer() {
@@ -281,6 +281,27 @@ candidate_is_better() {
     local best_summary="$2"
     local candidate_wns candidate_tns candidate_whs
     local best_wns best_tns best_whs
+    local candidate_dir best_dir candidate_bufg_bad best_bufg_bad
+
+    candidate_dir="$(dirname "${candidate_summary}")"
+    best_dir="$(dirname "${best_summary}")"
+    candidate_bufg_bad=0
+    best_bufg_bad=0
+    if grep -Eq 'PLBUFGOPT-1#[0-9]+' "${candidate_dir}/drc_final.rpt"; then
+        candidate_bufg_bad=1
+    fi
+    if grep -Eq 'PLBUFGOPT-1#[0-9]+' "${best_dir}/drc_final.rpt"; then
+        best_bufg_bad=1
+    fi
+
+    # A candidate that recreates the non-optimal cascaded BUFG is not allowed
+    # to win solely by borrowing setup slack from an invalid clock topology.
+    if (( candidate_bufg_bad == 0 && best_bufg_bad != 0 )); then
+        return 0
+    fi
+    if (( candidate_bufg_bad != 0 && best_bufg_bad == 0 )); then
+        return 1
+    fi
 
     candidate_wns="$(metric_value "${candidate_summary}" 'Setup WNS (ns)')"
     candidate_tns="$(metric_value "${candidate_summary}" 'Setup TNS (ns)')"
@@ -439,7 +460,7 @@ find_legacy_resume_run() {
         legacy_commit="$(manifest_last_value "${manifest_file}" 'Git commit')"
         legacy_source_compatible "${legacy_commit}" || continue
         run_dir="$(dirname "${manifest_file}")"
-        if candidate_artifacts_complete "${run_dir}/pass1_explore" 1 \
+        if candidate_artifacts_complete "${run_dir}/pass1_balanced" 1 \
             || legacy_routed_checkpoint_matches_run "${manifest_file}"; then
             printf '%s\t%s\n' "${run_dir}" legacy
             return 0
@@ -509,7 +530,7 @@ fi
 
 ROUTE_DIR="${RUN_DIR}/route"
 ROUTED_DCP="${ROUTE_DIR}/pre_physopt_routed.dcp"
-PASS1_DIR="${RUN_DIR}/pass1_explore"
+PASS1_DIR="${RUN_DIR}/pass1_balanced"
 PASS2_ROUTING_DIR="${RUN_DIR}/pass2_routing_opt"
 PASS2_AGGRESSIVE_DIR="${RUN_DIR}/pass2_aggressive_explore"
 MANIFEST="${RUN_DIR}/manifest.txt"
@@ -559,7 +580,7 @@ else
         printf 'Requested frequency: %s MHz\n' "${FREQUENCY_MHZ}"
         printf 'Requested clock period: %s ns\n' "${CLOCK_PERIOD_NS}"
         printf 'Vivado version: %s\n' "${VIVADO_VERSION}"
-        printf 'Flow: route -> pass1_explore -> {pass2_routing_opt, pass2_aggressive_explore}\n'
+        printf 'Flow: route -> pass1_balanced -> {pass2_routing_opt, pass2_aggressive_explore}\n'
         printf 'Status: RUNNING\n'
     } > "${MANIFEST}"
 fi
@@ -590,7 +611,7 @@ echo "Jobs          : ${JOBS}"
 echo "CPU affinity  : ${VIVADO_CPU_LIST} (${JOBS} logical CPUs maximum)"
 echo "Frequency     : ${FREQUENCY_MHZ} MHz (${CLOCK_PERIOD_NS} ns)"
 echo "Route DCP     : ${ROUTED_DCP}"
-echo "Pass 1        : Explore (mandatory)"
+echo "Pass 1        : balanced logic/place/route, clock-opt excluded (mandatory)"
 echo "Pass 2A       : routing_opt (independent)"
 echo "Pass 2B       : AggressiveExplore (one single-thread retry on failure)"
 echo "================================================================"
@@ -648,14 +669,14 @@ PASS1_INITIAL_STATUS="REUSED"
 PASS1_RETRY_STATUS="NOT_NEEDED"
 PASS1_INITIAL_FAILURE_DIR=""
 if candidate_artifacts_complete "${PASS1_DIR}" 1; then
-    echo ">>> Reusing completed mandatory pass 1 Explore"
+    echo ">>> Reusing completed mandatory pass 1 balanced candidate"
 else
     archive_failed_stage "${PASS1_DIR}"
     PASS1_INITIAL_STATUS="FAILED"
-    if run_vivado_stage "Mandatory pass 1 Explore" "${PHYSOPT_TCL}" \
+    if run_vivado_stage "Mandatory pass 1 balanced candidate" "${PHYSOPT_TCL}" \
         "${PASS1_DIR}" --jobs "${JOBS}" --freq-mhz "${FREQUENCY_MHZ}" \
         --input-dcp "${ROUTED_DCP}" --output-dir "${PASS1_DIR}" \
-        --strategy explore --pass-number 1 \
+        --strategy balanced --pass-number 1 \
         --bitstream-file "${PASS1_DIR}/design.bit"; then
         if candidate_artifacts_complete "${PASS1_DIR}" 1; then
             PASS1_INITIAL_STATUS="SUCCESS"
@@ -674,7 +695,7 @@ else
             "${PHYSOPT_TCL}" "${PASS1_DIR}" --jobs 1 \
             --freq-mhz "${FREQUENCY_MHZ}" \
             --input-dcp "${ROUTED_DCP}" --output-dir "${PASS1_DIR}" \
-            --strategy explore --pass-number 1 \
+            --strategy balanced --pass-number 1 \
             --bitstream-file "${PASS1_DIR}/design.bit"; then
             if candidate_artifacts_complete "${PASS1_DIR}" 1; then
                 PASS1_RETRY_STATUS="SUCCESS"
@@ -777,7 +798,7 @@ if [[ "${AGGRESSIVE_STATUS}" != "SUCCESS" ]]; then
     fi
 fi
 
-BEST_NAME="pass1_explore"
+BEST_NAME="pass1_balanced"
 BEST_DIR="${PASS1_DIR}"
 BEST_SUMMARY="${PASS1_DIR}/final_timing_summary.txt"
 BEST_DCP="${PASS1_DIR}/postroute_physopt_pass1.dcp"
@@ -826,12 +847,12 @@ append_candidate_report() {
     printf 'Run ID: %s\n\n' "${RUN_ID}"
     printf 'Requested frequency: %s MHz\n' "${FREQUENCY_MHZ}"
     printf 'Requested clock period: %s ns\n\n' "${CLOCK_PERIOD_NS}"
-    append_candidate_report "pass1_explore" SUCCESS "${PASS1_DIR}"
+    append_candidate_report "pass1_balanced" SUCCESS "${PASS1_DIR}"
     append_candidate_report "pass2_routing_opt" "${ROUTING_STATUS}" \
         "${PASS2_ROUTING_DIR}"
     append_candidate_report "pass2_aggressive_explore" "${AGGRESSIVE_STATUS}" \
         "${PASS2_AGGRESSIVE_DIR}"
-    printf '%s\n' '[pass1_explore_attempts]'
+    printf '%s\n' '[pass1_balanced_attempts]'
     printf 'Initial jobs: %s\n' "${JOBS}"
     printf 'Initial status: %s\n' "${PASS1_INITIAL_STATUS}"
     if [[ "${PASS1_RETRY_STATUS}" == "NOT_NEEDED" ]]; then
@@ -864,7 +885,7 @@ append_candidate_report() {
     printf '[Recommendation]\n'
     printf 'Selected candidate: %s\n' "${BEST_NAME}"
     printf 'Selected directory: %s\n' "${BEST_DIR}"
-    printf 'Selection policy: routed/DRC success, non-negative hold, best WNS, then best TNS\n'
+    printf 'Selection policy: reject cascaded-BUFG DRC, require non-negative hold, best WNS, then best TNS\n'
 } > "${COMPARISON}"
 
 replace_link "${BEST_NAME}" "${RUN_DIR}/best"

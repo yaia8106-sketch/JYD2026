@@ -76,6 +76,8 @@ module cpu_top
     wire [31:0] id_pc = id_payload.pc;
     wire [31:0] id_inst = id_payload.slot0.inst;
     wire [31:0] id_inst1 = id_payload.slot1.inst;
+    wire issue_hint_t id_issue_hint = id_payload.slot0.issue_hint;
+    wire issue_hint_t id_s1_issue_hint = id_payload.slot1.issue_hint;
     wire        id_s1_valid;       // registered slot1 issue valid
 
     // ---- Instruction hold register ----
@@ -100,6 +102,8 @@ module cpu_top
     wire dec_is_muldiv = dec_uop.exec_unit == EXEC_MULDIV;
     wire id_is_mul = dec_is_muldiv
                    & (dec_uop.muldiv_op <= MULDIV_MULHU);
+    wire id_issue_is_muldiv = id_issue_hint.is_muldiv;
+    wire id_issue_is_mul = id_issue_hint.is_mul;
 
     // ---- Slot 1 selected ISA decoder outputs ----
     wire alu_op_t dec1_alu_op = dec1_uop.alu_op;
@@ -443,7 +447,7 @@ module cpu_top
     // independent ID traffic remains governed by normal pipeline capacity.
     wire mem_mul_owner_releases = ~mem_valid | ~mem_is_mul
                                 | mem_ready_go_w;
-    wire id_muldiv_unit_ready = ~dec_is_muldiv | ~muldiv_busy;
+    wire id_muldiv_unit_ready = ~id_issue_is_muldiv | ~muldiv_busy;
 
     // Evaluate the complete pipeline handshake for both values of the late
     // DCache-ready bit. cache_ready then selects each one-bit result only once;
@@ -452,7 +456,7 @@ module cpu_top
                                       & ~timer_irq_hold;
     wire id_base_ready_if_cache_wait = id_ready_go_raw_if_mem_wait
                                      & ~timer_irq_hold;
-    wire id_muldiv_owner_ready_if_cache_wait = ~dec_is_muldiv
+    wire id_muldiv_owner_ready_if_cache_wait = ~id_issue_is_muldiv
                                              | ~mem_valid | ~mem_is_mul;
 
     (* keep = "true" *) wire id_ready_go_if_cache_ready =
@@ -487,7 +491,7 @@ module cpu_top
     // Executable references retain the original serial equations.
     wire id_ready_go_reference = id_ready_go_raw & ~timer_irq_hold
                                & id_muldiv_unit_ready
-                               & (~dec_is_muldiv
+                               & (~id_issue_is_muldiv
                                   | mem_mul_owner_releases);
     wire ex_allowin_reference = ~ex_valid
                               | (ex_ready_go_w & mem_can_advance);
@@ -864,6 +868,8 @@ module cpu_top
         .id_pc             (id_pc),
         .slot0_uop         (dec_uop),
         .slot1_uop         (dec1_uop),
+        .slot0_hint        (id_issue_hint),
+        .slot1_hint        (id_s1_issue_hint),
         .id_rs1_addr       (id_rs1_addr),
         .id_rs2_addr       (id_rs2_addr),
         .id_rd_addr        (id_rd_addr),
@@ -1249,11 +1255,11 @@ module cpu_top
         .id_rs1_used    (id_rs1_used),
         .id_rs2_used    (id_rs2_used),
         .id_s0_alu_only (id_s0_alu_only),
-        .id_s0_indirect_control(dec_is_indirect_control),
-        .id_s0_conditional_control(dec_is_conditional_control),
-        .id_s0_mem_read (dec_mem_read_en),
-        .id_s0_mem_write(dec_mem_write_en),
-        .id_s0_is_mul   (id_is_mul),
+        .id_s0_indirect_control(id_issue_hint.indirect_control),
+        .id_s0_conditional_control(id_issue_hint.conditional_control),
+        .id_s0_mem_read (id_issue_hint.mem_read),
+        .id_s0_mem_write(id_issue_hint.mem_write),
+        .id_s0_is_mul   (id_issue_is_mul),
         .id_s0_pc       (id_pc),
         .id_s0_imm      (id_imm),
         .id_s0_alu_src1_sel(dec_alu_src1_sel),
@@ -1370,6 +1376,37 @@ module cpu_top
 `ifndef SYNTHESIS
     // Simulation-only cycle-equivalence references for the timing-parallelized
     // ALU source outputs returned by u_forwarding.
+    function automatic issue_hint_t issue_hint_from_uop(
+        input decoded_uop_t uop
+    );
+        begin
+            issue_hint_from_uop = '0;
+            issue_hint_from_uop.src0_used = uop.src0_used;
+            issue_hint_from_uop.src1_used = uop.src1_used;
+            issue_hint_from_uop.src0_addr = uop.src0_addr;
+            issue_hint_from_uop.src1_addr = uop.src1_addr;
+            issue_hint_from_uop.dst_write = uop.dst_write;
+            issue_hint_from_uop.dst_addr = uop.dst_addr;
+            issue_hint_from_uop.alu_only = uop.dst_write
+                & (uop.exec_unit == EXEC_ALU) & (uop.wb_src == WB_EXEC);
+            issue_hint_from_uop.conditional_control =
+                uop.control_flow == CF_CONDITIONAL;
+            issue_hint_from_uop.indirect_control =
+                uop.control_flow == CF_INDIRECT;
+            issue_hint_from_uop.mem_read = uop.mem_cmd == MEM_LOAD;
+            issue_hint_from_uop.mem_write = uop.mem_cmd == MEM_STORE;
+            issue_hint_from_uop.is_muldiv =
+                uop.exec_unit == EXEC_MULDIV;
+            issue_hint_from_uop.is_mul =
+                (uop.exec_unit == EXEC_MULDIV)
+                & (uop.muldiv_op <= MULDIV_MULHU);
+        end
+    endfunction
+
+    wire issue_hint_t id_issue_hint_reference =
+        issue_hint_from_uop(dec_uop);
+    wire issue_hint_t id_s1_issue_hint_reference =
+        issue_hint_from_uop(dec1_uop);
     wire [31:0] id_alu_src1_reference;
     wire [31:0] id_alu_src2_reference;
     wire [31:0] id_s1_alu_src1_reference;
@@ -1591,6 +1628,12 @@ module cpu_top
     // Keep both the RAW interlock and the timing-parallelized ALU source
     // selection cycle-equivalent to their architectural references.
     always_ff @(posedge clk) begin
+        if (rst_n && id_valid
+                  && (id_issue_hint !== id_issue_hint_reference))
+            $fatal(1, "Slot-0 predecode issue hint disagrees with full decoder");
+        if (rst_n && id_s1_valid
+                  && (id_s1_issue_hint !== id_s1_issue_hint_reference))
+            $fatal(1, "Slot-1 predecode issue hint disagrees with full decoder");
         if (rst_n && (id_ready_go !== id_ready_go_reference))
             $fatal(1, "Timing-factored id_ready_go changed pipeline handshake");
         if (rst_n && (ex_allowin !== ex_allowin_reference))

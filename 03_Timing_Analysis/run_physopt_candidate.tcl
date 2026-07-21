@@ -17,7 +17,7 @@ proc candidate_usage {} {
     puts "         -tclargs --input-dcp FILE --output-dir DIR --strategy NAME"
     puts "                  ?--pass-number N? ?--jobs N? ?--freq-mhz F?"
     puts "                  ?--bitstream-file FILE?"
-    puts "Strategies: explore | routing_opt | aggressive_explore"
+    puts "Strategies: balanced | explore | routing_opt | aggressive_explore"
 }
 
 proc candidate_fail {message} {
@@ -164,7 +164,7 @@ while {$arg_index < [llength $argv]} {
 
 if {$input_dcp_arg eq ""} { candidate_fail "--input-dcp is required" }
 if {$output_dir_arg eq ""} { candidate_fail "--output-dir is required" }
-if {$strategy ni {explore routing_opt aggressive_explore}} {
+if {$strategy ni {balanced explore routing_opt aggressive_explore}} {
     candidate_fail "unsupported strategy '$strategy'"
 }
 set clock_period_ns [expr {1000.0 / double($frequency_mhz)}]
@@ -201,6 +201,17 @@ puts "Bitstream       : $bitstream_file"
 open_checkpoint $input_dcp
 
 switch -- $strategy {
+    balanced {
+        # Select the useful post-route transforms explicitly. In Vivado 2024.1
+        # the Explore directive may also run clock skew optimization and insert
+        # a BUFG in front of the Clock Wizard's existing BUFG, triggering
+        # PLBUFGOPT-1. These options retain logic/placement/routing work while
+        # deliberately excluding -clock_opt.
+        puts "Running: phys_opt_design -placement_opt -routing_opt -restruct_opt -critical_cell_opt"
+        phys_opt_design -placement_opt -routing_opt -restruct_opt \
+            -critical_cell_opt
+        set strategy_command "phys_opt_design -placement_opt -routing_opt -restruct_opt -critical_cell_opt"
+    }
     explore {
         puts "Running: phys_opt_design -directive Explore"
         phys_opt_design -directive Explore

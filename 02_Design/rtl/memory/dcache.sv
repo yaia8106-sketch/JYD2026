@@ -360,6 +360,8 @@ module dcache #(
     wire [31:0] sb_head_addr;
     wire [ 3:0] sb_head_wea;
     wire [31:0] sb_head_data;
+    wire        sb_head_start_addr_match;
+    wire        sb_head_stream_addr_match;
     wire        sb_head_addr_match;
     wire        sb_resp_fire;
     wire        sb_store_enqueue;
@@ -416,6 +418,12 @@ module dcache #(
     // Port A is dedicated to writes, so a pending store does not need to own
     // the main DCache FSM. Defer only a same-word Port A write / Port B read;
     // cross-port read-during-write behavior is otherwise device-dependent.
+    // Address candidates are compared in parallel inside the store buffer.
+    // Registered FSM state performs the only late selection, rather than
+    // selecting a 16-bit address before the equality chain.
+    assign sb_head_addr_match = state_idle
+                              ? sb_head_start_addr_match
+                              : sb_head_stream_addr_match;
     wire direct_sb_read_collision = bram_rd_en & sb_head_addr_match;
     assign direct_sb_drain_fire = rst_n & DIRECT_BRAM & sb_any_valid
                                 & ~direct_sb_read_collision;
@@ -477,8 +485,12 @@ module dcache #(
         .drain_addr         (sb_head_addr),
         .drain_wea          (sb_head_wea),
         .drain_data         (sb_head_data),
-        .drain_compare_addr (bram_rd_addr),
-        .drain_addr_match   (sb_head_addr_match),
+        .drain_compare_line0(direct_start_addr_candidate[15:2]),
+        .drain_compare_word0(direct_start_addr_candidate[1:0]),
+        .drain_compare_line1(direct_stream_addr_candidate[15:2]),
+        .drain_compare_word1(direct_stream_addr_candidate[1:0]),
+        .drain_addr_match0  (sb_head_start_addr_match),
+        .drain_addr_match1  (sb_head_stream_addr_match),
         .lookup_addr        (mem_addr),
         .lookup_mask        (mem_load_mask),
         .lookup_covers      (miss_buffer_covers_load),

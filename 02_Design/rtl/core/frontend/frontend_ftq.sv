@@ -355,11 +355,9 @@ module frontend_ftq
 
     wire frontend_fq_entry_t fq_head0;
     wire frontend_fq_entry_t fq_head1;
-    wire frontend_fq_entry_t fq_tail_prev;
     wire frontend_pair_meta_t fq_head0_pair_meta;
     wire frontend_pair_meta_t fq_head1_pair_meta;
-    wire frontend_pair_meta_t fq_tail_prev_pair_meta;
-    wire fq_head_pair_ok;
+    wire fq_head_pair_contiguous;
     wire frontend_abtb_meta_t f0_abtb_meta0;
     wire frontend_abtb_meta_t f0_abtb_meta1;
     wire frontend_abtb_meta_t fq_abtb_even_read;
@@ -423,49 +421,26 @@ module frontend_ftq
         .odd_write_data     (fq_abtb_odd_write_data)
     );
 
-    // F1 exposes the queue head to IF/ID. Pairing has already been precomputed
-    // at enqueue time, so dequeue only checks availability and stored policy.
+    // F1 exposes the queue head to IF/ID. The complete policy is evaluated
+    // here from registered metadata; enqueue records only packet continuity.
     wire fq_has_slot0 = (fq_count != 0);
     wire fq_has_slot1 = (fq_count >= 2);
     wire fq_tail_has_prev = (fq_count != 0);
     wire fq_prev_tail_next_contiguous =
         fq_tail_has_prev && (fq_tail_next_pc == f0_slot0_pc);
 
-    wire fq_prev_tail_pair_ok;
-    wire f0_entry0_pair_ok;
     wire fq_head_raw_dep;
-
-    frontend_pair_policy u_pair_policy_cross_packet (
-        .contiguous    (fq_prev_tail_next_contiguous),
-        .slot0_valid   (fq_tail_has_prev),
-        .slot1_valid   (f0_enq0_valid),
-        .slot0_meta    (fq_tail_prev_pair_meta),
-        .slot1_meta    (f0_pair_meta0),
-        .raw_dep       (),
-        .pair_supported(),
-        .pair_ok       (fq_prev_tail_pair_ok)
-    );
-
-    frontend_pair_policy u_pair_policy_same_packet (
-        .contiguous    (1'b1),
-        .slot0_valid   (f0_enq0_valid),
-        .slot1_valid   (f0_enq1_valid),
-        .slot0_meta    (f0_pair_meta0),
-        .slot1_meta    (f0_pair_meta1),
-        .raw_dep       (),
-        .pair_supported(),
-        .pair_ok       (f0_entry0_pair_ok)
-    );
+    wire fq_head_pair_ok;
 
     frontend_pair_policy u_pair_policy_head_probe (
-        .contiguous    (1'b1),
+        .contiguous    (fq_head_pair_contiguous),
         .slot0_valid   (fq_has_slot0),
         .slot1_valid   (fq_has_slot1),
         .slot0_meta    (fq_head0_pair_meta),
         .slot1_meta    (fq_head1_pair_meta),
         .raw_dep       (fq_head_raw_dep),
         .pair_supported(),
-        .pair_ok       ()
+        .pair_ok       (fq_head_pair_ok)
     );
 
     assign raw_pair_raw = fq_head_raw_dep;
@@ -481,6 +456,50 @@ module frontend_ftq
     assign if_payload.pc = fq_head0.pc;
     assign if_payload.slot0.inst = fq_head0.inst;
     assign if_payload.slot1.inst = fq_head1.inst;
+    assign if_payload.slot0.issue_hint.src0_used =
+        fq_head0_pair_meta.uses_src0;
+    assign if_payload.slot0.issue_hint.src1_used =
+        fq_head0_pair_meta.uses_src1;
+    assign if_payload.slot0.issue_hint.src0_addr =
+        fq_head0_pair_meta.src0_addr;
+    assign if_payload.slot0.issue_hint.src1_addr =
+        fq_head0_pair_meta.src1_addr;
+    assign if_payload.slot0.issue_hint.dst_write =
+        fq_head0_pair_meta.writes_dst;
+    assign if_payload.slot0.issue_hint.dst_addr =
+        fq_head0_pair_meta.dst_addr;
+    assign if_payload.slot0.issue_hint.alu_only = fq_head0.is_alu_type;
+    assign if_payload.slot0.issue_hint.conditional_control =
+        fq_head0.is_conditional_branch;
+    assign if_payload.slot0.issue_hint.indirect_control =
+        fq_head0.is_indirect_jump;
+    assign if_payload.slot0.issue_hint.mem_read = fq_head0.is_load;
+    assign if_payload.slot0.issue_hint.mem_write = fq_head0.is_store;
+    assign if_payload.slot0.issue_hint.is_muldiv = fq_head0.is_muldiv;
+    assign if_payload.slot0.issue_hint.is_mul =
+        fq_head0.is_muldiv & ~fq_head0.inst[14];
+    assign if_payload.slot1.issue_hint.src0_used =
+        fq_head1_pair_meta.uses_src0;
+    assign if_payload.slot1.issue_hint.src1_used =
+        fq_head1_pair_meta.uses_src1;
+    assign if_payload.slot1.issue_hint.src0_addr =
+        fq_head1_pair_meta.src0_addr;
+    assign if_payload.slot1.issue_hint.src1_addr =
+        fq_head1_pair_meta.src1_addr;
+    assign if_payload.slot1.issue_hint.dst_write =
+        fq_head1_pair_meta.writes_dst;
+    assign if_payload.slot1.issue_hint.dst_addr =
+        fq_head1_pair_meta.dst_addr;
+    assign if_payload.slot1.issue_hint.alu_only = fq_head1.is_alu_type;
+    assign if_payload.slot1.issue_hint.conditional_control =
+        fq_head1.is_conditional_branch;
+    assign if_payload.slot1.issue_hint.indirect_control =
+        fq_head1.is_indirect_jump;
+    assign if_payload.slot1.issue_hint.mem_read = fq_head1.is_load;
+    assign if_payload.slot1.issue_hint.mem_write = fq_head1.is_store;
+    assign if_payload.slot1.issue_hint.is_muldiv = fq_head1.is_muldiv;
+    assign if_payload.slot1.issue_hint.is_mul =
+        fq_head1.is_muldiv & ~fq_head1.inst[14];
     assign if_payload.slot0.prediction.taken = fq_head0.pred_taken;
     assign if_payload.slot0.prediction.target = fq_head0.pred_target;
     assign if_payload.slot0.prediction.source_abtb = fq_head0.pred_source_abtb;
@@ -551,8 +570,7 @@ module frontend_ftq
         .enq_entry1           (f0_entry1),
         .enq_pair_meta0       (f0_pair_meta0),
         .enq_pair_meta1       (f0_pair_meta1),
-        .enq_entry0_pair_ok   (f0_entry0_pair_ok),
-        .prev_tail_pair_ok    (fq_prev_tail_pair_ok),
+        .prev_tail_contiguous (fq_prev_tail_next_contiguous),
         .deq_single           (if_accept_single),
         .deq_dual             (if_accept_dual),
         .head                 (fq_head),
@@ -563,11 +581,9 @@ module frontend_ftq
         .tail_next_pc         (fq_tail_next_pc),
         .head0_entry          (fq_head0),
         .head1_entry          (fq_head1),
-        .tail_prev_entry      (fq_tail_prev),
         .head0_pair_meta      (fq_head0_pair_meta),
         .head1_pair_meta      (fq_head1_pair_meta),
-        .tail_prev_pair_meta  (fq_tail_prev_pair_meta),
-        .head_pair_ok         (fq_head_pair_ok)
+        .head_pair_contiguous (fq_head_pair_contiguous)
     );
 
     // Leave enough fetch-queue credit for the in-flight F0 response and a new

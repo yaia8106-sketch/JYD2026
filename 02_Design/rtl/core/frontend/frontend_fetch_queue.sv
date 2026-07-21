@@ -3,7 +3,9 @@
 // Description:
 // Domain: frontend.
 // 指令是否能被配对的信息会在模块外进行计算，这个模块是用来实现“队列”的
-// Pair eligibility is computed outside this module and stored with the entry.
+// Pair metadata is stored with each entry. Only PC continuity is recorded at
+// enqueue time; the complete pairing policy is evaluated from registered
+// queue-head metadata.
 // ============================================================
 
 module frontend_fetch_queue
@@ -24,9 +26,9 @@ module frontend_fetch_queue
     input  frontend_fq_entry_t         enq_entry1,
     input  frontend_pair_meta_t        enq_pair_meta0, // 预译码信息。
     input  frontend_pair_meta_t        enq_pair_meta1,
-    // 这两个信号本质都是frontend_pair_policy这个模块算出来的配对信息
-    input  logic                       enq_entry0_pair_ok, // 用来判断当前周期的entry0是否有配对资格
-    input  logic                       prev_tail_pair_ok, // 用来判断
+    // Whether the old tail and this packet's first entry are consecutive.
+    // Same-packet entries are consecutive by construction.
+    input  logic                       prev_tail_contiguous,
 
     // These mutually-exclusive controls fully describe dequeue acceptance.
     // No separate deq_valid is needed; deq_none is their complement.
@@ -42,18 +44,17 @@ module frontend_fetch_queue
 
     output frontend_fq_entry_t         head0_entry,
     output frontend_fq_entry_t         head1_entry,
-    output frontend_fq_entry_t         tail_prev_entry,
     output frontend_pair_meta_t        head0_pair_meta,
     output frontend_pair_meta_t        head1_pair_meta,
-    output frontend_pair_meta_t        tail_prev_pair_meta,
-    output logic                       head_pair_ok
+    output logic                       head_pair_contiguous
 );
 
-    // Circular queue storage. pair_ok_mem[i] describes whether entry i can
-    // issue together with entry i+1 when i reaches the head.
+    // Circular queue storage. pair_contiguous_mem[i] describes only whether
+    // entry i and entry i+1 are consecutive in the instruction stream. It is
+    // deliberately independent of instruction bits and pairing policy.
     frontend_fq_entry_t entry_mem [0:FQ_DEPTH-1];
     frontend_pair_meta_t pair_meta_mem [0:FQ_DEPTH-1];
-    logic pair_ok_mem [0:FQ_DEPTH-1];
+    logic pair_contiguous_mem [0:FQ_DEPTH-1];
 
     wire [FQ_PTR_W-1:0] head_p2 =
         head + {{(FQ_PTR_W-2){1'b0}}, 2'd2};
@@ -67,11 +68,9 @@ module frontend_fetch_queue
 
     assign head0_entry = entry_mem[head];
     assign head1_entry = entry_mem[head_p1];
-    assign tail_prev_entry = entry_mem[tail_m1];
     assign head0_pair_meta = pair_meta_mem[head];
     assign head1_pair_meta = pair_meta_mem[head_p1];
-    assign tail_prev_pair_meta = pair_meta_mem[tail_m1];
-    assign head_pair_ok = pair_ok_mem[head];
+    assign head_pair_contiguous = pair_contiguous_mem[head];
 
     wire enq_two = enq1_valid;
     wire enq_one = enq0_valid && !enq1_valid;
@@ -149,12 +148,13 @@ module frontend_fetch_queue
         end
     end
 
-    // Decode pair-bit write addresses into per-entry enables. The old indexed
-    // nonblocking assignments made each pair_ok D input depend on a synthesized
-    // array-wide priority mux. Here pointer comparisons feed CE, while the D
-    // input sees only a shallow current/previous-tail candidate selector.
+    // Decode boundary-bit write addresses into per-entry enables. A packet's
+    // first entry is marked contiguous unconditionally: when no valid slot 1
+    // follows it, count prevents pairing and the next packet overwrites this
+    // bit with the real cross-packet continuity result. Consequently no IROM
+    // instruction bit reaches this storage D input.
     generate
-        for (genvar pair_idx = 0; pair_idx < FQ_DEPTH; pair_idx++) begin : g_pair_ok_write
+        for (genvar pair_idx = 0; pair_idx < FQ_DEPTH; pair_idx++) begin : g_pair_contiguous_write
             localparam logic [FQ_PTR_W-1:0] PAIR_INDEX = pair_idx;
             wire pair_write_current = enq0_payload & (tail == PAIR_INDEX);
             wire pair_write_previous = enq0_payload & (count != 0)
@@ -162,17 +162,17 @@ module frontend_fetch_queue
             wire pair_write_enable = pair_write_current
                                    | pair_write_previous;
             wire pair_write_data = pair_write_current
-                                 ? enq_entry0_pair_ok
-                                 : prev_tail_pair_ok;
+                                 ? 1'b1
+                                 : prev_tail_contiguous;
 
             always_ff @(posedge clk) begin
                 if (rst_n && !flush && pair_write_enable)
-                    pair_ok_mem[pair_idx] <= pair_write_data;
+                    pair_contiguous_mem[pair_idx] <= pair_write_data;
             end
         end
     endgenerate
 
-    // Keep payload arrays off the reset/flush fanout. The pair bit belonging
+    // Keep payload arrays off the reset/flush fanout. The boundary bit belonging
     // to packet slot 1 is not initialized: it is ignored while that entry has
     // no successor, then overwritten through the per-entry block above when
     // the next packet arrives.

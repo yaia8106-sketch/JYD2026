@@ -84,7 +84,32 @@ module muldiv_unit
     wire [31:0] req_special_result = req_div_by_zero ? (req_is_rem ? req_div_rs1 : 32'hffff_ffff) :
                                      req_div_overflow ? (req_is_rem ? 32'd0 : 32'h8000_0000) :
                                                         32'd0;
-    wire        req_div_fast_lt = (req_abs_rs1 < req_abs_rs2);
+    // Fast-less-than used to wait for both conditional-negate carry chains and
+    // then traverse a second 32-bit magnitude comparator. Compare the original
+    // operands instead. Same-sign signed magnitudes use the raw ordering (with
+    // negative ordering reversed); mixed signs need only one extended sum.
+    // All candidates are independent and the signedness/sign bits select late.
+    wire        req_raw_unsigned_lt = req_div_rs1 < req_div_rs2;
+    wire        req_raw_unsigned_gt = req_div_rs1 > req_div_rs2;
+    wire        req_div_signs_equal = req_div_rs1[31] == req_div_rs2[31];
+    wire signed [32:0] req_div_signed_sum =
+        $signed({req_div_rs1[31], req_div_rs1})
+      + $signed({req_div_rs2[31], req_div_rs2});
+    wire        req_div_mixed_pos_neg_lt = req_div_signed_sum[32];
+    wire        req_div_mixed_neg_pos_lt = ~req_div_signed_sum[32]
+                                               & (|req_div_signed_sum[31:0]);
+    wire        req_signed_abs_lt_same_sign = req_div_rs1[31]
+                                                ? req_raw_unsigned_gt
+                                                : req_raw_unsigned_lt;
+    wire        req_signed_abs_lt_mixed_sign = req_div_rs1[31]
+                                                ? req_div_mixed_neg_pos_lt
+                                                : req_div_mixed_pos_neg_lt;
+    wire        req_signed_abs_lt = req_div_signs_equal
+                                  ? req_signed_abs_lt_same_sign
+                                  : req_signed_abs_lt_mixed_sign;
+    wire        req_div_fast_lt = req_is_signed_div
+                                ? req_signed_abs_lt
+                                : req_raw_unsigned_lt;
     // abs(divisor)==1 can be decoded directly from the original operand.
     // Keeping the absolute-value carry chain out of the FSM next-state cone
     // removes the reported ID/EX -> state path without changing fast-DIV
@@ -240,10 +265,10 @@ module muldiv_unit
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             state    <= S_IDLE;
-            op_r     <= 3'd0;
+            op_r     <= MULDIV_MUL;
         end else if (flush) begin
             state    <= S_IDLE;
-            op_r     <= 3'd0;
+            op_r     <= MULDIV_MUL;
         end else begin
             case (state)
                 S_IDLE: begin
@@ -304,6 +329,7 @@ module muldiv_unit
 
 `ifndef SYNTHESIS
     wire req_div_fast_one_reference = req_abs_rs2 == 32'd1;
+    wire req_div_fast_lt_reference = req_abs_rs1 < req_abs_rs2;
 
     // The in-order single-EX pipeline guarantees every MUL was prestarted on
     // its ID/EX acceptance edge and that turnover can occur only while the old
@@ -313,6 +339,9 @@ module muldiv_unit
             if ((state == S_IDLE) && req_valid && req_op[2]
                     && (req_div_fast_one !== req_div_fast_one_reference))
                 $fatal(1, "Direct divide-by-one decode disagrees with abs reference");
+            if ((state == S_IDLE) && req_valid && req_op[2]
+                    && (req_div_fast_lt !== req_div_fast_lt_reference))
+                $fatal(1, "Parallel magnitude compare disagrees with abs reference");
             if (mul_prestart_valid
                     && (mul_prestart_op[2]
                         || !((state == S_IDLE)
