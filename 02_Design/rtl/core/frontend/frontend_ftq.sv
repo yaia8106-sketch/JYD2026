@@ -21,7 +21,9 @@ module frontend_ftq
     parameter int FTQ_DEPTH = 8,
     parameter int FTQ_PTR_W = 3,
     parameter int FQ_DEPTH  = 8,
-    parameter int FQ_PTR_W  = $clog2(FQ_DEPTH)
+    parameter int FQ_PTR_W  = $clog2(FQ_DEPTH),
+    parameter bit VARIABLE_IROM_LATENCY = 1'b0,
+    parameter logic [31:0] RESET_PC = 32'h8000_0000
 ) (
     input  logic        clk,
     input  logic        rst_n,
@@ -35,6 +37,10 @@ module frontend_ftq
 
     // Single 64-bit synchronous IROM.
     output logic [11:0] irom_addr,
+    output logic        irom_req_valid,
+    output logic [31:0] irom_req_addr,
+    input  logic        irom_req_ready,
+    input  logic        irom_resp_valid,
     input  logic [63:0] irom_data,
 
     // Shadow ABTB metadata for the physical fetch-block banks. These fields
@@ -87,7 +93,6 @@ module frontend_ftq
     output logic        if_skip_out
 );
 
-    localparam logic [31:0] RESET_PC = 32'h8000_0000;
     localparam logic [FTQ_PTR_W:0] FTQ_DEPTH_COUNT = (FTQ_PTR_W+1)'(FTQ_DEPTH); // FTQ_DEPTH_COUNT = FTQ_DEPTH = 8
     localparam logic [FQ_PTR_W:0]  FQ_DEPTH_MINUS_2 = (FQ_PTR_W+1)'(FQ_DEPTH - 2); // 8 - 2 = 6
     localparam logic [FQ_PTR_W:0]  FQ_DEPTH_MINUS_4 = (FQ_PTR_W+1)'(FQ_DEPTH - 4); // 8 - 4 = 4
@@ -105,6 +110,7 @@ module frontend_ftq
     wire [31:0] fetch_current_pc;
     wire [ 1:0] frontend_epoch;
     wire frontend_f0_state_t f0_state;
+    wire f0_response_fire;
     wire frontend_abtb_meta_t bp0_abtb_bank0_meta;
     wire frontend_abtb_meta_t bp0_abtb_bank1_meta;
     wire frontend_abtb_meta_t f0_abtb_bank0_meta;
@@ -218,6 +224,7 @@ module frontend_ftq
     frontend_fetch_state #(
         .FTQ_PTR_W      (FTQ_PTR_W),
         .WIDE_ABTB_META (FQ_ABTB_WIDE_META),
+        .VARIABLE_IROM_LATENCY(VARIABLE_IROM_LATENCY),
         .RESET_PC       (RESET_PC)
     ) u_frontend_fetch_state (
         .clk                    (clk),
@@ -225,6 +232,7 @@ module frontend_ftq
         .redirect_valid         (ex_redirect_valid),
         .redirect_target        (ex_redirect_target),
         .accept                 (bp0_fire),
+        .response               (f0_response_fire),
         .accept_base_mask       (bp0_base_mask),
         .accept_steer           (bp0_steer_result),
         .accept_bank0_meta      (bp0_f0_bank0_meta),
@@ -241,13 +249,16 @@ module frontend_ftq
 
     // IROM is addressed by aligned 64-bit fetch block.
     assign irom_addr = {1'b0, current_pc[13:3]};
+    assign irom_req_addr = {current_pc[31:3], 3'b000};
 
     // ================================================================
     //  F0 alignment and enqueue preparation
     // ================================================================
     // Epoch matching drops stale IROM responses produced before a redirect.
     wire f0_epoch_match = (f0_epoch_r == frontend_epoch);
-    wire f0_accept_base = f0_valid_r
+    assign f0_response_fire = f0_valid_r
+                            && (!VARIABLE_IROM_LATENCY || irom_resp_valid);
+    wire f0_accept_base = f0_response_fire
                         && f0_epoch_match
                         && !ex_redirect_valid;
 
@@ -589,7 +600,12 @@ module frontend_ftq
     wire ftq_alloc_ready = (ftq_count < FTQ_DEPTH_COUNT);
     wire fq_credit_for_bp0 = f0_valid_r ? (fq_count <= FQ_DEPTH_MINUS_4)
                                         : (fq_count <= FQ_DEPTH_MINUS_2);
-    assign bp0_fire = ftq_alloc_ready && fq_credit_for_bp0 && !redirect_valid;
+    assign irom_req_valid = ftq_alloc_ready
+                          && fq_credit_for_bp0
+                          && !redirect_valid
+                          && (!VARIABLE_IROM_LATENCY || !f0_valid_r);
+    assign bp0_fire = irom_req_valid
+                    && (!VARIABLE_IROM_LATENCY || irom_req_ready);
     assign abtb_lookup_accept = bp0_fire;
 
     // Existing perf monitor expects these names to exist; the new queue removes

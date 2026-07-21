@@ -90,6 +90,10 @@ module myCPU (
         .clk                  (cpu_clk),
         .rst_n                (cpu_rst_n),
         .irom_addr            (core_irom_addr),
+        .irom_req_valid       (),
+        .irom_req_addr        (),
+        .irom_req_ready       (1'b0),
+        .irom_resp_valid      (1'b0),
         .irom_data            (core_irom_data),
         .cache_req            (cache_req),
         .cache_wr             (cache_wr),
@@ -97,6 +101,7 @@ module myCPU (
         .cache_wea            (cache_wea),
         .cache_wdata          (cache_wdata),
         .cache_load_mask      (cache_load_mask),
+        .cache_uncached       (),
         .cache_rdata          (cache_rdata),
         .cache_ready          (cache_ready),
         .cache_flush          (dcache_flush),
@@ -106,7 +111,17 @@ module myCPU (
         .mmio_wea             (mmio_wea),
         .mmio_wdata           (mmio_wdata),
         .mmio_rdata           (mmio_rdata),
-        .timer_irq_pending    (timer_irq_pending)
+        .timer_irq_pending    (timer_irq_pending),
+        .debug0_wb_valid      (),
+        .debug0_wb_pc         (),
+        .debug0_wb_rf_wen     (),
+        .debug0_wb_rf_wnum    (),
+        .debug0_wb_rf_wdata   (),
+        .debug1_wb_valid      (),
+        .debug1_wb_pc         (),
+        .debug1_wb_rf_wen     (),
+        .debug1_wb_rf_wnum    (),
+        .debug1_wb_rf_wdata   ()
     );
 
     // ================================================================
@@ -132,6 +147,7 @@ module myCPU (
         .cpu_wea              (cache_wea),
         .cpu_wdata            (cache_wdata),
         .cpu_load_mask        (cache_load_mask),
+        .cpu_uncached         (1'b0),
         .cpu_rdata            (cache_rdata),
         .cpu_ready            (cache_ready),
         .pipeline_stall       (cache_pipeline_stall),

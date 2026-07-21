@@ -4,7 +4,11 @@
 // Domain: load/store unit.
 // ============================================================
 
-module memory_access_unit (
+module memory_access_unit #(
+    parameter logic [31:0] CACHE_ADDR_BASE = 32'h8010_0000,
+    parameter logic [31:0] CACHE_ADDR_MASK = 32'hFFFC_0000,
+    parameter bit AXI_UNCACHED_DATA = 1'b0
+) (
     input  logic        ex_valid,
     input  logic        ex_mem_read_en,
     input  logic        ex_mem_write_en,
@@ -51,6 +55,7 @@ module memory_access_unit (
     output logic [ 3:0] cache_wea,
     output logic [31:0] cache_wdata,
     output logic [ 3:0] cache_load_mask,
+    output logic        cache_uncached,
     output logic        cache_flush,
     output logic        cache_pipeline_stall,
 
@@ -106,20 +111,23 @@ module memory_access_unit (
     wire dual_issue_cnt_read = (mem_lsu_addr == DUAL_ISSUE_CNT_ADDR);
     wire [31:0] mmio_load_data = dual_issue_cnt_read ? dual_issue_count : mmio_rdata;
 
-    // Cacheability is a simple address-window decode used by the lab platform.
-    assign is_cacheable = ex_alu_addr[20] & ~ex_alu_addr[21]
-                        & ~ex_alu_addr[19] & ~ex_alu_addr[18];
-    assign is_cacheable_s1 = ex_s1_alu_addr[20] & ~ex_s1_alu_addr[21]
-                           & ~ex_s1_alu_addr[19] & ~ex_s1_alu_addr[18];
+    // The cacheable window is platform-owned.  JYD keeps its 0x8010_0000
+    // private DRAM window; NSCSCC selects the LA32R data SRAM window without
+    // introducing ISA macros into this shared LSU.
+    assign is_cacheable = (ex_alu_addr & CACHE_ADDR_MASK)
+                        == (CACHE_ADDR_BASE & CACHE_ADDR_MASK);
+    assign is_cacheable_s1 = (ex_s1_alu_addr & CACHE_ADDR_MASK)
+                           == (CACHE_ADDR_BASE & CACHE_ADDR_MASK);
 
     // An uncacheable store in MEM can conflict with a younger load request.
-    assign mmio_st_ld_hazard = ex_lsu_read
+    assign mmio_st_ld_hazard = !AXI_UNCACHED_DATA
+                             & ex_lsu_read
                              & mem_store_active
                              & mem_store_uncacheable;
 
     assign cache_req = ex_valid & ~mem_branch_flush
                      & (ex_lsu_read | ex_lsu_write)
-                     & ex_lsu_cacheable;
+                     & (ex_lsu_cacheable | AXI_UNCACHED_DATA);
     assign cache_wr = ex_lsu_write;
     assign cache_addr = ex_lsu_addr;
     assign cache_wea = ex_lsu_wea;
@@ -127,15 +135,19 @@ module memory_access_unit (
     assign cache_load_mask = ({4{ex_lsu_size == 2'b00}} & ex_load_byte_mask)
                            | ({4{ex_lsu_size == 2'b01}} & ex_load_half_mask)
                            | ({4{ex_lsu_size == 2'b10}} & 4'b1111);
+    assign cache_uncached = AXI_UNCACHED_DATA & ~ex_lsu_cacheable;
     assign cache_flush = mem_branch_flush;
     assign cache_pipeline_stall = ~mem_allowin;
 
     assign mmio_addr = ex_lsu_addr;
     assign mmio_wr_addr = mem_store_addr;
-    assign mmio_wea = (mem_store_active & ~mem_selected_store_cacheable) ? mem_selected_store_wea : 4'b0000;
+    assign mmio_wea = (mem_store_active & ~mem_selected_store_cacheable
+                       & ~AXI_UNCACHED_DATA)
+                    ? mem_selected_store_wea : 4'b0000;
     assign mmio_wdata = mem_selected_store_data_aligned;
 
-    assign mem_load_data = mem_lsu_cacheable ? cache_rdata : mmio_load_data;
+    assign mem_load_data = (mem_lsu_cacheable | AXI_UNCACHED_DATA)
+                         ? cache_rdata : mmio_load_data;
     assign mem_load_ready = mem_ready_go & (mem_mem_read_en | mem_s1_mem_read_en);
 
 endmodule

@@ -17,12 +17,23 @@
 
 module cpu_top
     import cpu_defs::*;
+#(
+    parameter bit IROM_VARIABLE_LATENCY = 1'b0,
+    parameter logic [31:0] RESET_PC = 32'h8000_0000,
+    parameter logic [31:0] CACHE_ADDR_BASE = 32'h8010_0000,
+    parameter logic [31:0] CACHE_ADDR_MASK = 32'hFFFC_0000,
+    parameter bit AXI_UNCACHED_DATA = 1'b0
+)
 (
     input  logic        clk,
     input  logic        rst_n,
 
     // IROM interface (IF stage): 64-bit aligned block ROM
     output logic [11:0] irom_addr,
+    output logic        irom_req_valid,
+    output logic [31:0] irom_req_addr,
+    input  logic        irom_req_ready,
+    input  logic        irom_resp_valid,
     input  logic [63:0] irom_data,
 
     // DCache interface (EX to MEM stage)
@@ -32,6 +43,7 @@ module cpu_top
     output logic [ 3:0] cache_wea,       // EX stage: byte write enable
     output logic [31:0] cache_wdata,     // EX stage: raw store data
     output logic [ 3:0] cache_load_mask, // EX stage: load byte lanes
+    output logic        cache_uncached,  // platform path: bypass DCache arrays
     input  logic [31:0] cache_rdata,     // MEM stage: read data from DCache
     input  logic        cache_ready,     // MEM stage: hit or completed miss
     output logic        cache_flush,     // MEM stage: pipeline flush (abort refill)
@@ -43,7 +55,19 @@ module cpu_top
     output logic [ 3:0] mmio_wea,        // MEM stage: write enable
     output logic [31:0] mmio_wdata,      // MEM stage: write data
     input  logic [31:0] mmio_rdata,      // MEM stage: read data
-    input  logic        timer_irq_pending
+    input  logic        timer_irq_pending,
+
+    // Architectural commit/debug outputs used by the chiplab core contract.
+    output logic        debug0_wb_valid,
+    output logic [31:0] debug0_wb_pc,
+    output logic [ 3:0] debug0_wb_rf_wen,
+    output logic [ 4:0] debug0_wb_rf_wnum,
+    output logic [31:0] debug0_wb_rf_wdata,
+    output logic        debug1_wb_valid,
+    output logic [31:0] debug1_wb_pc,
+    output logic [ 3:0] debug1_wb_rf_wen,
+    output logic [ 4:0] debug1_wb_rf_wnum,
+    output logic [31:0] debug1_wb_rf_wdata
 );
 
     // ================================================================
@@ -552,7 +576,11 @@ module cpu_top
                                      & (id_s1_rs1_addr != id_rd_addr);
     // The LSU bridge arbitrates Slot 0/Slot 1 memory requests, routes them to
     // cache or MMIO, and returns the raw load word to the MEM load formatter.
-    memory_access_unit u_memory_access_unit (
+    memory_access_unit #(
+        .CACHE_ADDR_BASE  (CACHE_ADDR_BASE),
+        .CACHE_ADDR_MASK  (CACHE_ADDR_MASK),
+        .AXI_UNCACHED_DATA(AXI_UNCACHED_DATA)
+    ) u_memory_access_unit (
         .ex_valid            (ex_valid),
         .ex_mem_read_en      (ex_mem_read_en),
         .ex_mem_write_en     (ex_mem_write_en),
@@ -595,6 +623,7 @@ module cpu_top
         .cache_wea           (cache_wea),
         .cache_wdata         (cache_wdata),
         .cache_load_mask     (cache_load_mask),
+        .cache_uncached      (cache_uncached),
         .cache_flush         (cache_flush),
         .cache_pipeline_stall(cache_pipeline_stall),
         .mmio_addr           (mmio_addr),
@@ -1145,13 +1174,20 @@ module cpu_top
 
     // Frontend FTQ owns BP0/F0/F1 fetch flow and returns at most two
     // predecoded instructions to the existing IF/ID register.
-    frontend_ftq u_frontend_ftq (
+    frontend_ftq #(
+        .VARIABLE_IROM_LATENCY(IROM_VARIABLE_LATENCY),
+        .RESET_PC             (RESET_PC)
+    ) u_frontend_ftq (
         .clk              (clk),
         .rst_n            (rst_n),
         .id_allowin       (id_allowin),
         .ex_redirect_valid(frontend_branch_flush),
         .ex_redirect_target(frontend_branch_target),
         .irom_addr        (irom_addr),
+        .irom_req_valid   (irom_req_valid),
+        .irom_req_addr    (irom_req_addr),
+        .irom_req_ready   (irom_req_ready),
+        .irom_resp_valid  (irom_resp_valid),
         .irom_data        (irom_data),
         .abtb_bank0_lookup_hit  (abtb_bank0_lookup_hit),
         .abtb_bank0_hit         (abtb_bank0_hit),
@@ -1933,6 +1969,23 @@ module cpu_top
         .wb_sel        (wb_s1_wb_sel),
         .wb_write_data (wb_s1_write_data)
     );
+
+    // Slot 0 does not carry PC through MEM/WB; pc_plus_4 reconstructs it
+    // without adding state to the timing-sensitive payload.  Register-file
+    // writes are whole-word architectural commits, hence the replicated WEN.
+    assign debug0_wb_valid    = wb_valid;
+    assign debug0_wb_pc       = wb_pc_plus_4 - 32'd4;
+    assign debug0_wb_rf_wen   = {4{wb_valid & wb_reg_write_en
+                                  & (wb_rd != 5'd0)}};
+    assign debug0_wb_rf_wnum  = wb_rd;
+    assign debug0_wb_rf_wdata = wb_write_data;
+
+    assign debug1_wb_valid    = wb_s1_valid;
+    assign debug1_wb_pc       = wb_s1_pc;
+    assign debug1_wb_rf_wen   = {4{wb_s1_valid & wb_s1_reg_write_en
+                                  & (wb_s1_rd != 5'd0)}};
+    assign debug1_wb_rf_wnum  = wb_s1_rd;
+    assign debug1_wb_rf_wdata = wb_s1_write_data;
 
 endmodule
 

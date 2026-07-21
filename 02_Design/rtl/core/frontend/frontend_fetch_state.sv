@@ -11,6 +11,7 @@ module frontend_fetch_state
 #(
     parameter int FTQ_PTR_W = 3,
     parameter bit WIDE_ABTB_META = 1'b0,
+    parameter bit VARIABLE_IROM_LATENCY = 1'b0,
     parameter logic [31:0] RESET_PC = 32'h8000_0000
 ) (
     input  logic                       clk,
@@ -20,6 +21,7 @@ module frontend_fetch_state
     input  logic [31:0]                redirect_target,
 
     input  logic                       accept,
+    input  logic                       response,
     input  logic [ 1:0]                accept_base_mask,
     input  frontend_steer_result_t     accept_steer,
     input  frontend_f0_bank_meta_t     accept_bank0_meta,
@@ -59,18 +61,30 @@ module frontend_fetch_state
         end
     end
 
-    // F0 valid is the only state that a redirect must kill immediately.
-    // Payload contents are unobservable while valid is low, so keep the late
-    // redirect path off the wide metadata registers.
-    always_ff @(posedge clk) begin
-        if (!rst_n) begin
-            f0_state.valid <= 1'b0;
-        end else if (redirect_valid) begin
-            f0_state.valid <= 1'b0;
-        end else begin
-            f0_state.valid <= accept;
+    // A local synchronous ROM returns exactly one cycle after accept, while
+    // an AXI-backed instruction port must retain the request context until a
+    // response arrives.  Keep the two timing contracts explicit so the JYD
+    // BRAM path is unchanged and the NSCSCC path can tolerate arbitrary AXI
+    // latency.
+    generate
+        if (VARIABLE_IROM_LATENCY) begin : g_variable_irom_valid
+            always_ff @(posedge clk) begin
+                if (!rst_n || redirect_valid)
+                    f0_state.valid <= 1'b0;
+                else if (response)
+                    f0_state.valid <= 1'b0;
+                else if (accept)
+                    f0_state.valid <= 1'b1;
+            end
+        end else begin : g_fixed_irom_valid
+            always_ff @(posedge clk) begin
+                if (!rst_n || redirect_valid)
+                    f0_state.valid <= 1'b0;
+                else
+                    f0_state.valid <= accept;
+            end
         end
-    end
+    endgenerate
 
     // F0 metadata is the one-cycle-delayed packet context paired with the IROM
     // response.  An accept never fires with a redirect in the integrated
@@ -118,7 +132,7 @@ module frontend_fetch_state
         end else if (redirect_valid) begin
             outstanding_count <= '0;
         end else begin
-            case ({accept, f0_state.valid})
+            case ({accept, response})
                 2'b10: outstanding_count <=
                     outstanding_count + {{FTQ_PTR_W{1'b0}}, 1'b1};
                 2'b01: outstanding_count <=

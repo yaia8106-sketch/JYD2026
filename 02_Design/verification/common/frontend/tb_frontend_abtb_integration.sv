@@ -104,12 +104,18 @@ module tb_frontend_abtb_integration;
         .clk                  (clk),
         .rst_n                (rst_n),
         .irom_addr            (irom_addr),
+        .irom_req_valid       (),
+        .irom_req_addr        (),
+        .irom_req_ready       (1'b0),
+        .irom_resp_valid      (1'b0),
         .irom_data            (irom_data),
         .cache_req            (cache_req),
         .cache_wr             (cache_wr),
         .cache_addr           (cache_addr),
         .cache_wea            (cache_wea),
         .cache_wdata          (cache_wdata),
+        .cache_load_mask      (),
+        .cache_uncached       (),
         .cache_rdata          (cache_rdata),
         .cache_ready          (cache_ready),
         .cache_flush          (cache_flush),
@@ -119,7 +125,17 @@ module tb_frontend_abtb_integration;
         .mmio_wea             (mmio_wea),
         .mmio_wdata           (mmio_wdata),
         .mmio_rdata           (mmio_rdata),
-        .timer_irq_pending    (timer_irq_pending)
+        .timer_irq_pending    (timer_irq_pending),
+        .debug0_wb_valid      (),
+        .debug0_wb_pc         (),
+        .debug0_wb_rf_wen     (),
+        .debug0_wb_rf_wnum    (),
+        .debug0_wb_rf_wdata   (),
+        .debug1_wb_valid      (),
+        .debug1_wb_pc         (),
+        .debug1_wb_rf_wen     (),
+        .debug1_wb_rf_wnum    (),
+        .debug1_wb_rf_wdata   ()
     );
 
     always #5 clk = ~clk;
