@@ -1,7 +1,6 @@
 // ============================================================
 // Module: loongarch_decoder
-// Description: LA32R ordinary integer decoder to decoded_uop_t.
-// Scope: 46 real encodings plus the ANDI r0,r0,0 NOP alias.
+// Description: LA32R integer plus basic privileged decoder.
 // ============================================================
 
 module loongarch_decoder
@@ -70,6 +69,24 @@ module loongarch_decoder
     wire inst_bltu = op6 == LA_OP_BLTU;
     wire inst_bgeu = op6 == LA_OP_BGEU;
 
+    // LoongArch keeps CSR addressing and operand roles entirely separate from
+    // RISC-V: CSR index is inst[23:10], rd supplies the write value, and rj is
+    // the CSRXCHG mask.  ERTN is an exact fixed encoding.
+    wire inst_csr     = inst[31:24] == 8'h04;
+    wire inst_csrrd   = inst_csr & (rj == 5'd0);
+    wire inst_csrwr   = inst_csr & (rj == 5'd1);
+    wire inst_csrxchg = inst_csr & (rj != 5'd0) & (rj != 5'd1);
+    wire inst_syscall = op17 == {6'h00, 4'h0, 2'h2, 5'h16};
+    wire inst_break   = op17 == {6'h00, 4'h0, 2'h2, 5'h14};
+    wire inst_ertn    = inst == 32'h0648_3800;
+    wire inst_rdcntvl = (op17 == 17'd0) && (rk == 5'd24)
+                       && (rj == 5'd0);
+    wire inst_rdcntid = (op17 == 17'd0) && (rk == 5'd24)
+                       && (rd == 5'd0);
+    wire inst_rdcntvh = (op17 == 17'd0) && (rk == 5'd25)
+                       && (rj == 5'd0);
+    wire inst_counter = inst_rdcntvl | inst_rdcntid | inst_rdcntvh;
+
     wire is_alu_rr = inst_add_w | inst_sub_w | inst_slt | inst_sltu
                    | inst_nor | inst_and | inst_or | inst_xor
                    | inst_sll_w | inst_srl_w | inst_sra_w;
@@ -116,7 +133,57 @@ module loongarch_decoder
         uop.block_younger = 1'b1;
         uop.serializing = 1'b1;
 
-        if (is_alu_rr) begin
+        if (inst_counter) begin
+            uop.exec_unit = EXEC_PRIV;
+            uop.dst_addr = inst_rdcntid ? rj : rd;
+            uop.dst_write = 1'b1;
+            uop.wb_src = WB_EXEC;
+            uop.priv_op = PRIV_COUNTER;
+            uop.priv_addr = inst_rdcntid ? 16'hffff
+                          : inst_rdcntvh ? 16'hfffe : 16'hfffd;
+            uop.exception = EXCEPTION_NONE;
+            uop.lane_mask = 2'b01;
+            uop.block_younger = 1'b1;
+            uop.serializing = 1'b1;
+        end else if (inst_csr) begin
+            uop.exec_unit = EXEC_PRIV;
+            uop.src0_addr = rd;
+            uop.src1_addr = rj;
+            uop.src0_used = inst_csrwr | inst_csrxchg;
+            uop.src1_used = inst_csrxchg;
+            uop.dst_addr = rd;
+            uop.dst_write = 1'b1;
+            uop.wb_src = WB_EXEC;
+            uop.priv_op = PRIV_REG;
+            uop.priv_cmd = inst_csrrd ? PRIV_CMD_NONE
+                         : inst_csrwr ? PRIV_CMD_WRITE
+                                      : PRIV_CMD_EXCHANGE;
+            uop.priv_addr = {2'd0, inst[23:10]};
+            uop.exception = EXCEPTION_NONE;
+            uop.lane_mask = 2'b01;
+            uop.block_younger = 1'b1;
+            uop.serializing = 1'b1;
+        end else if (inst_syscall) begin
+            uop.exec_unit = EXEC_PRIV;
+            uop.priv_op = PRIV_SYSCALL;
+            uop.exception = EXCEPTION_NONE;
+            uop.lane_mask = 2'b01;
+            uop.block_younger = 1'b1;
+            uop.serializing = 1'b1;
+        end else if (inst_ertn) begin
+            uop.exec_unit = EXEC_PRIV;
+            uop.priv_op = PRIV_RETURN;
+            uop.exception = EXCEPTION_NONE;
+            uop.lane_mask = 2'b01;
+            uop.block_younger = 1'b1;
+            uop.serializing = 1'b1;
+        end else if (inst_break) begin
+            uop.exec_unit = EXEC_PRIV;
+            uop.exception = EXCEPTION_BREAKPOINT;
+            uop.lane_mask = 2'b01;
+            uop.block_younger = 1'b1;
+            uop.serializing = 1'b1;
+        end else if (is_alu_rr) begin
             uop.exec_unit = EXEC_ALU;
             uop.src0_used = 1'b1;
             uop.src1_used = 1'b1;

@@ -8,6 +8,7 @@ module id_ex_payload_builder
     import cpu_defs::*;
 (
     input  logic [31:0]      s0_pc,
+    input  logic [31:0]      s0_inst,
     input  decoded_uop_t     s0_uop,
     input  logic [31:0]      s0_alu_src1,
     input  logic [31:0]      s0_alu_src2,
@@ -39,6 +40,7 @@ module id_ex_payload_builder
     always_comb begin
         slot0_payload = '0;
         slot0_payload.common.pc = s0_pc;
+        slot0_payload.inst = s0_inst;
         slot0_payload.common.alu_src1 = s0_alu_src1;
         slot0_payload.common.alu_src2 = s0_alu_src2;
         slot0_payload.common.rs1_data = s0_rs1_data;
@@ -74,6 +76,7 @@ module id_ex_payload_builder
         slot0_payload.priv_cmd = s0_uop.priv_cmd;
         slot0_payload.priv_addr = s0_uop.priv_addr;
         slot0_payload.priv_imm = s0_uop.priv_imm;
+        slot0_payload.exception = s0_uop.exception;
         slot0_payload.is_muldiv = s0_uop.exec_unit == EXEC_MULDIV;
         slot0_payload.muldiv_op = s0_uop.muldiv_op;
 

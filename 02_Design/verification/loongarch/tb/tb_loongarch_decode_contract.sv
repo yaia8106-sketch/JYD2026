@@ -106,7 +106,8 @@ module tb_loongarch_decode_contract;
             decoder_is_mul = decoder_is_muldiv
                            && (uop.muldiv_op <= MULDIV_MULHU);
             decoder_is_privileged_flow = (uop.priv_op == PRIV_SYSCALL)
-                                       | (uop.priv_op == PRIV_RETURN);
+                                       | (uop.priv_op == PRIV_RETURN)
+                                       | (uop.exception != EXCEPTION_NONE);
             predecode_matches_uop =
                 (predecode.uses_src0 == uop.src0_used)
                 && (predecode.uses_src1 == uop.src1_used)
@@ -201,7 +202,12 @@ module tb_loongarch_decode_contract;
             endcase
 
             reference_legal = legal_op17 | legal_op10
-                            | legal_op7 | legal_op6;
+                            | legal_op7 | legal_op6
+                            | (instruction[31:24] == 8'h04)
+                            | (instruction[31:15]
+                               == {6'h00, 4'h0, 2'h2, 5'h16})
+                            | (instruction[31:15]
+                               == {6'h00, 4'h0, 2'h2, 5'h14});
         end
     endfunction
 
@@ -262,7 +268,7 @@ module tb_loongarch_decode_contract;
                     $fatal(1,
                            "[FAIL] prefix %05x: predecode legality expected %0d",
                            prefix[16:0], expected_legal);
-                if ((uop.exception == EXCEPTION_NONE) !== expected_legal)
+                if ((uop.exception != EXCEPTION_ILLEGAL) !== expected_legal)
                     $fatal(1,
                            "[FAIL] prefix %05x: full-decode legality expected %0d",
                            prefix[16:0], expected_legal);
@@ -280,7 +286,7 @@ module tb_loongarch_decode_contract;
                            "[FAIL] prefix %05x: illegal encoding has side effects",
                            prefix[16:0]);
             end
-            check(legal_prefix_count == 22293,
+            check(legal_prefix_count == 22807,
                   "independent legal-prefix population");
             opcode_prefix_count = 131072;
         end
@@ -375,7 +381,8 @@ module tb_loongarch_decode_contract;
                   "load operation");
             check(uop.src0_used && !uop.src1_used && uop.dst_write
                   && (uop.wb_src == WB_LOAD), "load operands/writeback");
-            check(uop.imm == expected_imm, "load displacement");
+            check((uop.imm == expected_imm) && (uop.lane_mask == 2'b11),
+                  "load displacement and dual-lane policy");
         end
     endtask
 
@@ -391,8 +398,9 @@ module tb_loongarch_decode_contract;
                   && (uop.mem_size == expected_size), "store operation");
             check(uop.src0_used && uop.src1_used && !uop.dst_write,
                   "store operands");
-            check((uop.src1_addr == inst[4:0]) && (uop.imm == expected_imm),
-                  "store rd data source and displacement");
+            check((uop.src1_addr == inst[4:0]) && (uop.imm == expected_imm)
+                  && (uop.lane_mask == 2'b11),
+                  "store rd source, displacement, and dual-lane policy");
         end
     endtask
 
@@ -582,13 +590,60 @@ module tb_loongarch_decode_contract;
               && (uop.dst_addr == 5'd0) && uop.dst_write
               && (uop.imm == 32'd0), "NOP alias semantics");
 
-        // These are architecturally defined encodings, but deliberately belong
-        // to later implementation phases.  Until then they must be contained
-        // as side-effect-free illegal uops.
-        test_unsupported_containment(enc_rr(2'h2, 5'h16, 5'd0, 5'd0, 5'd0),
-                                     "out-of-scope SYSCALL containment");
-        test_unsupported_containment(32'h002a_0000,
-                                     "out-of-scope BREAK containment");
+        begin_case(enc_rr(2'h2, 5'h16, 5'd0, 5'd0, 5'd0), "SYSCALL");
+        check((uop.exec_unit == EXEC_PRIV)
+              && (uop.priv_op == PRIV_SYSCALL)
+              && (uop.exception == EXCEPTION_NONE)
+              && uop.serializing && uop.block_younger,
+              "SYSCALL privileged-flow semantics");
+        begin_case(32'h002a_0000, "BREAK");
+        check((uop.exec_unit == EXEC_PRIV)
+              && (uop.exception == EXCEPTION_BREAKPOINT)
+              && uop.serializing && uop.block_younger,
+              "BREAK exception semantics");
+        begin_case(32'h0400_0007, "CSRRD");
+        check((uop.exec_unit == EXEC_PRIV) && (uop.priv_op == PRIV_REG)
+              && (uop.priv_cmd == PRIV_CMD_NONE)
+              && !uop.src0_used && !uop.src1_used
+              && uop.dst_write && (uop.dst_addr == 5'd7),
+              "CSRRD operand semantics");
+        begin_case({8'h04, 14'h006, 5'd1, 5'd7}, "CSRWR");
+        check((uop.priv_cmd == PRIV_CMD_WRITE)
+              && uop.src0_used && (uop.src0_addr == 5'd7)
+              && !uop.src1_used && (uop.priv_addr == 16'h0006),
+              "CSRWR rd source semantics");
+        begin_case({8'h04, 14'h005, 5'd9, 5'd7}, "CSRXCHG");
+        check((uop.priv_cmd == PRIV_CMD_EXCHANGE)
+              && uop.src0_used && (uop.src0_addr == 5'd7)
+              && uop.src1_used && (uop.src1_addr == 5'd9),
+              "CSRXCHG value/mask semantics");
+        begin_case(32'h0648_3800, "ERTN");
+        check((uop.exec_unit == EXEC_PRIV)
+              && (uop.priv_op == PRIV_RETURN)
+              && uop.serializing && uop.block_younger,
+              "ERTN privileged-flow semantics");
+        begin_case(32'h0000_600d, "RDCNTVL.W");
+        check((uop.exec_unit == EXEC_PRIV)
+              && (uop.priv_op == PRIV_COUNTER)
+              && (uop.priv_addr == 16'hfffd)
+              && uop.dst_write && (uop.dst_addr == 5'd13)
+              && !uop.src0_used && !uop.src1_used,
+              "RDCNTVL.W counter-low semantics");
+        begin_case(32'h0000_640e, "RDCNTVH.W");
+        check((uop.exec_unit == EXEC_PRIV)
+              && (uop.priv_op == PRIV_COUNTER)
+              && (uop.priv_addr == 16'hfffe)
+              && uop.dst_write && (uop.dst_addr == 5'd14),
+              "RDCNTVH.W counter-high semantics");
+        begin_case(32'h0000_6180, "RDCNTID.W");
+        check((uop.exec_unit == EXEC_PRIV)
+              && (uop.priv_op == PRIV_COUNTER)
+              && (uop.priv_addr == 16'hffff)
+              && uop.dst_write && (uop.dst_addr == 5'd12),
+              "RDCNTID.W TID semantics");
+
+        // Remaining architecturally defined encodings belong to later phases
+        // and remain contained as side-effect-free illegal uops.
         test_unsupported_containment(32'h2ac0_0000,
                                      "out-of-scope PRELD containment");
         test_unsupported_containment(32'h2000_0000,
@@ -599,12 +654,8 @@ module tb_loongarch_decode_contract;
                                      "out-of-scope DBAR containment");
         test_unsupported_containment(32'h3872_8000,
                                      "out-of-scope IBAR containment");
-        test_unsupported_containment(32'h0400_0000,
-                                     "out-of-scope CSRRD containment");
         test_unsupported_containment(32'h0600_0000,
                                      "out-of-scope CACOP containment");
-        test_unsupported_containment(32'h0648_3800,
-                                     "out-of-scope ERTN containment");
         test_unsupported_containment(32'h0648_8000,
                                      "out-of-scope IDLE containment");
         test_unsupported_containment(32'hffff_ffff,

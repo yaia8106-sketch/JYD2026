@@ -93,18 +93,24 @@ package cpu_defs;
         CFI_TYPE_RETURN = 2'b11
     } cfi_type_t;
 
-    typedef enum logic [1:0] {
-        PRIV_NONE    = 2'b00,
-        PRIV_REG     = 2'b01,
-        PRIV_SYSCALL = 2'b10,
-        PRIV_RETURN  = 2'b11
+    typedef enum logic [2:0] {
+        PRIV_NONE    = 3'b000,
+        PRIV_REG     = 3'b001,
+        PRIV_SYSCALL = 3'b010,
+        PRIV_RETURN  = 3'b011,
+        // LoongArch stable-counter reads share the privileged result path but
+        // are not CSR accesses and remain legal outside PLV0.
+        PRIV_COUNTER = 3'b100
     } priv_op_t;
 
-    typedef enum logic [1:0] {
-        PRIV_CMD_NONE  = 2'b00,
-        PRIV_CMD_WRITE = 2'b01,
-        PRIV_CMD_SET   = 2'b10,
-        PRIV_CMD_CLEAR = 2'b11
+    typedef enum logic [2:0] {
+        PRIV_CMD_NONE     = 3'b000,
+        PRIV_CMD_WRITE    = 3'b001,
+        PRIV_CMD_SET      = 3'b010,
+        PRIV_CMD_CLEAR    = 3'b011,
+        // LoongArch CSRXCHG uses a register mask and therefore cannot be
+        // represented by the RISC-V set/clear commands.
+        PRIV_CMD_EXCHANGE = 3'b100
     } priv_cmd_t;
 
     typedef enum logic [2:0] {
@@ -125,6 +131,11 @@ package cpu_defs;
     } decode_exception_t;
 
     localparam int PRIV_ADDR_W = 16;
+    // ISA adapters expose an opaque bank of architectural state to their
+    // platform-specific verification wrappers.  The common core assigns no
+    // meaning to individual words, preserving the ISA boundary.
+    localparam int PRIV_DEBUG_STATE_WORDS = 27;
+    localparam int PRIV_DEBUG_STATE_W = PRIV_DEBUG_STATE_WORDS * 32;
 
     // One fully decoded architectural instruction. Valid/ready stays outside
     // the payload so every pipeline boundary keeps handshake state explicit.
@@ -482,11 +493,13 @@ package cpu_defs;
 
     typedef struct packed {
         id_ex_common_t common;
+        logic [31:0]    inst;
         priv_op_t       priv_op;
         logic           priv_uses_imm;
         priv_cmd_t      priv_cmd;
         logic [PRIV_ADDR_W-1:0] priv_addr;
         logic [4:0]     priv_imm;
+        decode_exception_t exception;
         logic          is_muldiv;
         muldiv_op_t     muldiv_op;
     } id_ex_slot0_t;
@@ -503,6 +516,7 @@ package cpu_defs;
     } redirect_t;
 
     typedef struct packed {
+        logic [31:0] inst;
         logic [31:0] alu_result;
         logic [31:0] pc;
         logic [31:0] pc_plus_4;
@@ -516,6 +530,10 @@ package cpu_defs;
         logic [ 3:0] store_wea;
         logic [31:0] store_data;
         logic        is_cacheable;
+        logic        mem_write_en;
+        logic        exception;
+        logic        csr_rstat;
+        logic [31:0] csr_data;
     } ex_mem_slot0_t;
 
     typedef struct packed {
@@ -537,6 +555,8 @@ package cpu_defs;
 
     // ---- MEM/WB payloads ----
     typedef struct packed {
+        logic [31:0] pc;
+        logic [31:0] inst;
         logic [31:0] alu_result;
         logic [31:0] pc_plus_4;
         logic [ 4:0] rd;
@@ -544,6 +564,14 @@ package cpu_defs;
         wb_src_t    wb_sel;
         logic        is_load;
         logic [31:0] load_data;
+        logic        is_store;
+        mem_size_t  mem_size;
+        logic        mem_unsigned;
+        logic [31:0] mem_addr;
+        logic [31:0] store_data;
+        logic        exception;
+        logic        csr_rstat;
+        logic [31:0] csr_data;
     } mem_wb_slot0_t;
 
     typedef struct packed {
@@ -555,6 +583,11 @@ package cpu_defs;
         logic        reg_write_en;
         wb_src_t    wb_sel;
         logic        is_load;
+        logic        is_store;
+        mem_size_t  mem_size;
+        logic        mem_unsigned;
+        logic [31:0] mem_addr;
+        logic [31:0] store_data;
     } mem_wb_slot1_t;
 
 endpackage

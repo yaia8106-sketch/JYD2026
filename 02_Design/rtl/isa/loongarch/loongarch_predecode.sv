@@ -66,6 +66,24 @@ module loongarch_predecode
     wire inst_bltu = op6 == LA_OP_BLTU;
     wire inst_bgeu = op6 == LA_OP_BGEU;
 
+    wire inst_csr     = inst[31:24] == 8'h04;
+    wire inst_csrwr   = inst_csr & (inst[9:5] == 5'd1);
+    wire inst_csrxchg = inst_csr & (inst[9:5] != 5'd0)
+                                & (inst[9:5] != 5'd1);
+    wire inst_syscall = op17 == {6'h00, 4'h0, 2'h2, 5'h16};
+    wire inst_break   = op17 == {6'h00, 4'h0, 2'h2, 5'h14};
+    wire inst_ertn    = inst == 32'h0648_3800;
+    wire inst_rdcntvl = (op17 == 17'd0) && (inst[14:10] == 5'd24)
+                       && (inst[9:5] == 5'd0);
+    wire inst_rdcntid = (op17 == 17'd0) && (inst[14:10] == 5'd24)
+                       && (inst[4:0] == 5'd0);
+    wire inst_rdcntvh = (op17 == 17'd0) && (inst[14:10] == 5'd25)
+                       && (inst[9:5] == 5'd0);
+    wire inst_counter = inst_rdcntvl | inst_rdcntid | inst_rdcntvh;
+    wire is_privileged = inst_csr | inst_syscall | inst_ertn | inst_break
+                       | inst_counter;
+    wire privileged_flow_encoding = inst_syscall | inst_ertn | inst_break;
+
     wire is_alu_rr = inst_add_w | inst_sub_w | inst_slt | inst_sltu
                    | inst_nor | inst_and | inst_or | inst_xor
                    | inst_sll_w | inst_srl_w | inst_sra_w;
@@ -84,8 +102,11 @@ module loongarch_predecode
     wire is_direct = inst_b | inst_bl;
     wire instruction_legal = is_alu_rr | is_alu_imm | is_upper_imm
                            | is_muldiv | is_load | is_store
-                           | is_conditional | is_direct | inst_jirl;
+                           | is_conditional | is_direct | inst_jirl
+                           | is_privileged | inst_break;
     wire instruction_illegal = ~instruction_legal;
+    wire is_privileged_flow = privileged_flow_encoding
+                            | instruction_illegal;
     wire uses_rd_as_src1 = is_store | is_conditional;
 
     // Keep the late pairing controls independent from the full legality
@@ -106,6 +127,8 @@ module loongarch_predecode
         decoded.is_conditional_branch = is_conditional;
         decoded.is_direct_jump = is_direct;
         decoded.is_indirect_jump = inst_jirl;
+        decoded.is_privileged = is_privileged;
+        decoded.is_privileged_flow = is_privileged_flow;
         decoded.is_illegal = instruction_illegal;
         decoded.is_muldiv = is_muldiv;
         decoded.is_mul = is_mul;
@@ -114,19 +137,26 @@ module loongarch_predecode
         decoded.is_alu_type = is_alu_rr | is_alu_imm | is_upper_imm;
 
         decoded.writes_dst = is_alu_rr | is_alu_imm | is_upper_imm
-                           | is_muldiv | is_load | inst_bl | inst_jirl;
+                           | is_muldiv | is_load | inst_bl | inst_jirl
+                           | inst_csr | inst_counter;
         decoded.uses_src0 = is_alu_rr | is_alu_imm | is_muldiv
-                          | is_load | is_store | is_conditional | inst_jirl;
+                          | is_load | is_store | is_conditional | inst_jirl
+                          | inst_csrwr | inst_csrxchg;
         decoded.uses_src1 = is_alu_rr | is_muldiv
-                          | is_store | is_conditional;
-        decoded.src0_addr = inst[9:5];
-        decoded.src1_addr = uses_rd_as_src1 ? inst[4:0] : inst[14:10];
-        decoded.dst_addr = inst_bl ? 5'd1 : inst[4:0];
+                          | is_store | is_conditional | inst_csrxchg;
+        decoded.src0_addr = inst_csr ? inst[4:0] : inst[9:5];
+        decoded.src1_addr = inst_csr ? inst[9:5]
+                          : uses_rd_as_src1 ? inst[4:0] : inst[14:10];
+        decoded.dst_addr = inst_bl ? 5'd1
+                         : inst_rdcntid ? inst[9:5] : inst[4:0];
 
-        decoded.is_jump = is_direct | inst_jirl;
-        decoded.is_control = is_conditional | is_direct | inst_jirl;
+        decoded.is_jump = is_direct | inst_jirl | is_privileged_flow;
+        decoded.is_control = is_conditional | is_direct | inst_jirl
+                           | is_privileged_flow;
         decoded.is_lsu = is_load | is_store;
-        decoded.is_cfi = decoded.is_control;
+        // Privileged redirects are serialized by their own metadata and must
+        // not train or occupy the ordinary branch-predictor CFI path.
+        decoded.is_cfi = is_conditional | is_direct | inst_jirl;
 
         decoded.lane_mask = slot1_allowed ? 2'b11 : 2'b01;
         decoded.block_younger = ~younger_allowed;

@@ -63,11 +63,36 @@ module cpu_top
     output logic [ 3:0] debug0_wb_rf_wen,
     output logic [ 4:0] debug0_wb_rf_wnum,
     output logic [31:0] debug0_wb_rf_wdata,
+    output logic [31:0] debug0_wb_inst,
+    output logic        debug0_wb_exception,
+    output logic        debug0_wb_mem_read,
+    output logic        debug0_wb_mem_write,
+    output logic [ 1:0] debug0_wb_mem_size,
+    output logic        debug0_wb_mem_unsigned,
+    output logic [31:0] debug0_wb_mem_addr,
+    output logic [31:0] debug0_wb_store_data,
+    output logic        debug0_wb_csr_rstat,
+    output logic [31:0] debug0_wb_csr_data,
     output logic        debug1_wb_valid,
     output logic [31:0] debug1_wb_pc,
     output logic [ 3:0] debug1_wb_rf_wen,
     output logic [ 4:0] debug1_wb_rf_wnum,
-    output logic [31:0] debug1_wb_rf_wdata
+    output logic [31:0] debug1_wb_rf_wdata,
+    output logic [31:0] debug1_wb_inst,
+    output logic        debug1_wb_mem_read,
+    output logic        debug1_wb_mem_write,
+    output logic [ 1:0] debug1_wb_mem_size,
+    output logic        debug1_wb_mem_unsigned,
+    output logic [31:0] debug1_wb_mem_addr,
+    output logic [31:0] debug1_wb_store_data,
+    output logic [1023:0] debug_gpr_state,
+    output logic [PRIV_DEBUG_STATE_W-1:0] debug_priv_state,
+    output logic        debug_excp_valid,
+    output logic        debug_ertn,
+    output logic [31:0] debug_intr_no,
+    output logic [ 5:0] debug_cause,
+    output logic [31:0] debug_exception_pc,
+    output logic [31:0] debug_exception_inst
 );
 
     // ================================================================
@@ -173,6 +198,7 @@ module cpu_top
     wire cpu_defs::id_ex_slot0_t id_ex_s0_payload;
     wire cpu_defs::id_ex_slot0_t ex_s0_payload;
     wire [31:0] ex_pc = ex_s0_payload.common.pc;
+    wire [31:0] ex_inst = ex_s0_payload.inst;
     wire [31:0] ex_alu_src1 = ex_s0_payload.common.alu_src1;
     wire [31:0] ex_alu_src2 = ex_s0_payload.common.alu_src2;
     wire [31:0] ex_rs1_data = ex_s0_payload.common.rs1_data;
@@ -206,10 +232,13 @@ module cpu_top
     wire ex_is_indirect_control = ex_control_flow == CF_INDIRECT;
     wire priv_op_t ex_priv_op = ex_s0_payload.priv_op;
     wire ex_is_priv_reg = ex_priv_op == PRIV_REG;
+    wire ex_is_counter = ex_priv_op == PRIV_COUNTER;
+    wire ex_uses_priv_result = ex_is_priv_reg | ex_is_counter;
     wire ex_priv_uses_imm = ex_s0_payload.priv_uses_imm;
     wire priv_cmd_t ex_priv_cmd = ex_s0_payload.priv_cmd;
     wire [PRIV_ADDR_W-1:0] ex_priv_addr = ex_s0_payload.priv_addr;
     wire [4:0] ex_priv_imm = ex_s0_payload.priv_imm;
+    wire decode_exception_t ex_exception = ex_s0_payload.exception;
     wire        ex_is_muldiv = ex_s0_payload.is_muldiv;
     wire muldiv_op_t ex_muldiv_op = ex_s0_payload.muldiv_op;
 
@@ -288,10 +317,14 @@ module cpu_top
     wire        ex_priv_flow;
     wire        ex_priv_redirect;
     wire [31:0] ex_priv_target;
+    wire        ex_priv_trap;
+    wire        ex_priv_wait_older;
+    wire        ex_s1_addr_replay;
     wire        timer_irq_request;
     wire        timer_irq_redirect;
     wire [31:0] timer_irq_target;
     wire        timer_irq_hold;
+    wire        timer_irq_block;
     wire        timer_irq_pipe_empty;
     wire        timer_irq_take;
     wire        ex_fast_redirect;
@@ -334,17 +367,22 @@ module cpu_top
     wire cpu_defs::ex_mem_slot0_t mem_s0_payload;
     wire [31:0] mem_alu_result = mem_s0_payload.alu_result;
     wire [31:0] mem_pc = mem_s0_payload.pc;
+    wire [31:0] mem_inst = mem_s0_payload.inst;
     wire [31:0] mem_pc_plus_4 = mem_s0_payload.pc_plus_4;
     wire [ 4:0] mem_rd = mem_s0_payload.rd;
     wire        mem_reg_write_en = mem_s0_payload.reg_write_en;
     wire wb_src_t mem_wb_sel = mem_s0_payload.wb_sel;
     wire        mem_is_mul = mem_s0_payload.is_mul;
     wire        mem_mem_read_en = mem_s0_payload.mem_read_en;
-    wire [ 1:0] mem_mem_size = mem_s0_payload.mem_size;
+    wire        mem_mem_write_en = mem_s0_payload.mem_write_en;
+    wire mem_size_t mem_mem_size = mem_s0_payload.mem_size;
     wire        mem_mem_unsigned = mem_s0_payload.mem_unsigned;
     wire [ 3:0] mem_store_wea = mem_s0_payload.store_wea;
     wire [31:0] mem_store_data = mem_s0_payload.store_data;
     wire        is_cacheable_mem = mem_s0_payload.is_cacheable;
+    wire        mem_exception = mem_s0_payload.exception;
+    wire        mem_csr_rstat = mem_s0_payload.csr_rstat;
+    wire [31:0] mem_csr_data = mem_s0_payload.csr_data;
 
     // ---- Slot 1 MEM ----
     wire        mem_s1_valid;
@@ -359,7 +397,7 @@ module cpu_top
     wire wb_src_t mem_s1_wb_sel = mem_s1_payload.wb_sel;
     wire        mem_s1_mem_read_en = mem_s1_payload.mem_read_en;
     wire        mem_s1_mem_write_en = mem_s1_payload.mem_write_en;
-    wire [ 1:0] mem_s1_mem_size = mem_s1_payload.mem_size;
+    wire mem_size_t mem_s1_mem_size = mem_s1_payload.mem_size;
     wire        mem_s1_mem_unsigned = mem_s1_payload.mem_unsigned;
     wire [ 3:0] mem_s1_store_wea = mem_s1_payload.store_wea;
     wire [31:0] mem_s1_store_data = mem_s1_payload.store_data;
@@ -386,12 +424,22 @@ module cpu_top
     wire cpu_defs::mem_wb_slot0_t mem_wb_s0_payload;
     wire cpu_defs::mem_wb_slot0_t wb_s0_payload;
     wire [31:0] wb_alu_result = wb_s0_payload.alu_result;
+    wire [31:0] wb_pc = wb_s0_payload.pc;
+    wire [31:0] wb_inst = wb_s0_payload.inst;
     wire [31:0] wb_pc_plus_4 = wb_s0_payload.pc_plus_4;
     (* max_fanout = 8 *) wire [ 4:0] wb_rd = wb_s0_payload.rd;
     wire        wb_reg_write_en = wb_s0_payload.reg_write_en;
     wire wb_src_t wb_wb_sel = wb_s0_payload.wb_sel;
     wire        wb_is_load = wb_s0_payload.is_load;
     wire [31:0] wb_load_data = wb_s0_payload.load_data;
+    wire        wb_is_store = wb_s0_payload.is_store;
+    wire mem_size_t wb_mem_size = wb_s0_payload.mem_size;
+    wire        wb_mem_unsigned = wb_s0_payload.mem_unsigned;
+    wire [31:0] wb_mem_addr = wb_s0_payload.mem_addr;
+    wire [31:0] wb_store_data = wb_s0_payload.store_data;
+    wire        wb_exception = wb_s0_payload.exception;
+    wire        wb_csr_rstat = wb_s0_payload.csr_rstat;
+    wire [31:0] wb_csr_data = wb_s0_payload.csr_data;
     wire [31:0] wb_load_data_ex;
 
     assign ex_fast_alu_src1 = ex_fast_alu_src1_wb_repair
@@ -415,6 +463,11 @@ module cpu_top
     wire        wb_s1_reg_write_en = wb_s1_payload.reg_write_en;
     wire wb_src_t wb_s1_wb_sel = wb_s1_payload.wb_sel;
     wire        wb_s1_is_load = wb_s1_payload.is_load;
+    wire        wb_s1_is_store = wb_s1_payload.is_store;
+    wire mem_size_t wb_s1_mem_size = wb_s1_payload.mem_size;
+    wire        wb_s1_mem_unsigned = wb_s1_payload.mem_unsigned;
+    wire [31:0] wb_s1_mem_addr = wb_s1_payload.mem_addr;
+    wire [31:0] wb_s1_store_data = wb_s1_payload.store_data;
 
     // ---- WB ----
     wire [31:0] wb_write_data;
@@ -424,7 +477,7 @@ module cpu_top
     wire [31:0] ex_priv_rdata;
     wire [31:0] ex_forward_result;
     wire [31:0] ex_pipe_alu_result;
-    wire        ex_fast_alu_forward = ~ex_is_priv_reg & ~ex_is_muldiv
+    wire        ex_fast_alu_forward = ~ex_uses_priv_result & ~ex_is_muldiv
                                     & (ex_wb_sel != WB_NEXT_PC);
 
     // ---- Integer multiply/divide unit ----
@@ -462,8 +515,11 @@ module cpu_top
     wire mmio_st_ld_hazard;
     wire ex_muldiv_ready = mem_branch_flush | ~ex_muldiv_req
                          | ~ex_muldiv_op[2] | muldiv_done;
+    wire ex_priv_older_pending = mem_valid | wb_valid
+                               | mem_s1_valid | wb_s1_valid;
+    wire ex_priv_ready = ~ex_priv_wait_older | ~ex_priv_older_pending;
     wire ex_ready_go_w  = ~mmio_st_ld_hazard
-                        & ex_muldiv_ready;
+                        & ex_muldiv_ready & ex_priv_ready;
     wire mem_ready_go_w = cache_ready; // DCache controls MEM stage flow
     wire mem_can_advance = ~mem_valid | mem_ready_go_w;
     // A completed multiplier may accept a new M owner on the same edge that
@@ -472,14 +528,33 @@ module cpu_top
     wire mem_mul_owner_releases = ~mem_valid | ~mem_is_mul
                                 | mem_ready_go_w;
     wire id_muldiv_unit_ready = ~id_issue_is_muldiv | ~muldiv_busy;
+    // Serializing instructions (CSR/trap/return and ISA-defined illegal
+    // operations) enter an empty backend and keep younger instructions out
+    // until their WB token retires.  Besides precise traps, this guarantees
+    // that architectural CSR state is observed at the same commit boundary as
+    // the instruction that changed it.
+    logic serializing_inflight;
+    wire backend_older_empty = ~ex_valid & ~mem_valid & ~wb_valid
+                             & ~ex_s1_valid & ~mem_s1_valid & ~wb_s1_valid;
+    wire id_serializing_ready = ~dec_uop.serializing | backend_older_empty;
+    wire id_barrier_ready = ~serializing_inflight;
 
     // Evaluate the complete pipeline handshake for both values of the late
     // DCache-ready bit. cache_ready then selects each one-bit result only once;
     // it no longer traverses load-hazard, M-owner and downstream-allow logic.
+    // Stop the boundary instruction as soon as an enabled interrupt becomes
+    // visible.  Waiting only for the registered hold bit gives that
+    // instruction one cycle to enter EX; a self-branch can then repeatedly
+    // flush the pending request and starve software interrupts forever.
+    assign timer_irq_block = timer_irq_request | timer_irq_hold;
     wire id_base_ready_if_cache_ready = id_ready_go_raw_if_mem_ready
-                                      & ~timer_irq_hold;
+                                      & ~timer_irq_block
+                                      & id_serializing_ready
+                                      & id_barrier_ready;
     wire id_base_ready_if_cache_wait = id_ready_go_raw_if_mem_wait
-                                     & ~timer_irq_hold;
+                                     & ~timer_irq_block
+                                     & id_serializing_ready
+                                     & id_barrier_ready;
     wire id_muldiv_owner_ready_if_cache_wait = ~id_issue_is_muldiv
                                              | ~mem_valid | ~mem_is_mul;
 
@@ -513,7 +588,9 @@ module cpu_top
 
 `ifndef SYNTHESIS
     // Executable references retain the original serial equations.
-    wire id_ready_go_reference = id_ready_go_raw & ~timer_irq_hold
+    wire id_ready_go_reference = id_ready_go_raw & ~timer_irq_block
+                               & id_serializing_ready
+                               & id_barrier_ready
                                & id_muldiv_unit_ready
                                & (~id_issue_is_muldiv
                                   | mem_mul_owner_releases);
@@ -546,6 +623,15 @@ module cpu_top
 `endif
     wire id_mul_prestart = id_to_ex_fire & id_is_mul;
 
+    always_ff @(posedge clk) begin
+        if (!rst_n)
+            serializing_inflight <= 1'b0;
+        else if (wb_valid)
+            serializing_inflight <= 1'b0;
+        else if (id_to_ex_fire & dec_uop.serializing)
+            serializing_inflight <= 1'b1;
+    end
+
     // ---- Register addresses from the selected ISA decoder ----
     wire [4:0] id_rs1_addr;
     wire [4:0] id_rs2_addr;
@@ -574,6 +660,11 @@ module cpu_top
                                      & (id_rd_addr != 5'd0)
                                      & (id_s1_rs2_addr == id_rd_addr)
                                      & (id_s1_rs1_addr != id_rd_addr);
+    // Slot 1 is younger than Slot 0.  Suppress its LSU side effects when an
+    // older Slot-0 redirect/trap wins, or while an ISA-specific address fault
+    // is being replayed from Slot 1 as a precise Slot-0 exception.
+    wire ex_s1_side_effect_kill = branch_flush | ex_priv_trap
+                                | ex_s1_addr_replay;
     // The LSU bridge arbitrates Slot 0/Slot 1 memory requests, routes them to
     // cache or MMIO, and returns the raw load word to the MEM load formatter.
     memory_access_unit #(
@@ -582,15 +673,17 @@ module cpu_top
         .AXI_UNCACHED_DATA(AXI_UNCACHED_DATA)
     ) u_memory_access_unit (
         .ex_valid            (ex_valid),
-        .ex_mem_read_en      (ex_mem_read_en),
-        .ex_mem_write_en     (ex_mem_write_en),
+        .ex_mem_read_en      (ex_mem_read_en & ~ex_priv_trap),
+        .ex_mem_write_en     (ex_mem_write_en & ~ex_priv_trap),
         .ex_alu_addr         (alu_addr),
         .ex_mem_size         (ex_mem_size),
         .ex_store_wea        (dram_wea),
         .ex_store_data       (ex_rs2_data_repair),
         .ex_s1_valid         (ex_s1_valid),
-        .ex_s1_mem_read_en   (ex_s1_mem_read_en),
-        .ex_s1_mem_write_en  (ex_s1_mem_write_en),
+        .ex_s1_mem_read_en   (ex_s1_mem_read_en
+                              & ~ex_s1_side_effect_kill),
+        .ex_s1_mem_write_en  (ex_s1_mem_write_en
+                              & ~ex_s1_side_effect_kill),
         .ex_s1_alu_addr      (alu_s1_addr),
         .ex_s1_mem_size      (ex_s1_mem_size),
         .ex_s1_store_wea     (dram_wea_s1),
@@ -1280,7 +1373,8 @@ module cpu_top
         .rd_addr_s1   (wb_s1_rd),
         .rd_data_s1   (wb_s1_write_data),
         .rd_wen_s1    (wb_s1_reg_write_en),
-        .rd_valid_s1  (wb_s1_valid)
+        .rd_valid_s1  (wb_s1_valid),
+        .debug_state  (debug_gpr_state)
     );
 
     // Forwarding also returns id_ready_go_raw. Timer IRQ hold is applied after
@@ -1480,6 +1574,7 @@ module cpu_top
     // Payload builders keep large struct assembly out of sequential registers.
     id_ex_payload_builder u_id_ex_payload_builder (
         .s0_pc                 (id_pc),
+        .s0_inst               (id_inst),
         .s0_uop                (dec_uop),
         .s0_alu_src1           (id_alu_src1),
         .s0_alu_src2           (id_alu_src2),
@@ -1565,7 +1660,7 @@ module cpu_top
         .ex_rs2_data                (ex_rs2_data),
         .ex_control_flow            (ex_control_flow),
         .ex_target_clear_mask       (ex_target_clear_mask),
-        .ex_is_priv_reg             (ex_is_priv_reg),
+        .ex_is_priv_reg             (ex_uses_priv_result),
         .ex_priv_rdata              (ex_priv_rdata),
         .ex_is_muldiv               (ex_is_muldiv),
         .ex_muldiv_result           (muldiv_result),
@@ -1584,6 +1679,7 @@ module cpu_top
         .ex_s1_rs2_data             (ex_s1_rs2_data),
         .ex_s1_predicted_taken      (ex_s1_pred_taken),
         .ex_s1_predicted_target     (ex_s1_pred_target),
+        .ex_s1_addr_replay          (ex_s1_addr_replay),
         .mem_branch_flush           (mem_branch_flush),
         .ex_ready_go                (ex_ready_go_w),
         .mem_allowin                (mem_allowin),
@@ -1738,22 +1834,44 @@ module cpu_top
         .mem_branch_flush   (mem_branch_flush),
         .ex_redirect_fire   (ex_redirect_fire),
         .ex_pc              (ex_pc),
-        .ex_src0_data       (ex_rs1_data),
+        .ex_inst            (ex_inst),
+        .ex_src0_data       (ex_rs1_data_repair),
+        .ex_src1_data       (ex_rs2_data_repair),
         .ex_priv_op         (ex_priv_op),
         .ex_priv_uses_imm   (ex_priv_uses_imm),
         .ex_priv_cmd        (ex_priv_cmd),
         .ex_priv_addr       (ex_priv_addr),
         .ex_priv_imm        (ex_priv_imm),
+        .ex_exception       (ex_exception),
+        .ex_mem_read_en     (ex_mem_read_en),
+        .ex_mem_write_en    (ex_mem_write_en),
+        .ex_mem_size        (ex_mem_size),
+        .ex_mem_addr        (alu_addr),
+        .ex_s1_valid        (ex_s1_valid),
+        .ex_s1_mem_read_en  (ex_s1_mem_read_en),
+        .ex_s1_mem_write_en (ex_s1_mem_write_en),
+        .ex_s1_mem_size     (ex_s1_mem_size),
+        .ex_s1_mem_addr     (alu_s1_addr),
         .timer_irq_pending  (timer_irq_pending),
         .timer_irq_take     (timer_irq_take),
         .timer_irq_mepc     (id_pc),
         .ex_priv_flow       (ex_priv_flow),
         .ex_priv_redirect   (ex_priv_redirect),
         .ex_priv_target     (ex_priv_target),
+        .ex_priv_trap       (ex_priv_trap),
+        .ex_priv_wait_older (ex_priv_wait_older),
+        .ex_s1_addr_replay  (ex_s1_addr_replay),
         .timer_irq_request  (timer_irq_request),
         .timer_irq_redirect (timer_irq_redirect),
         .timer_irq_target   (timer_irq_target),
-        .ex_priv_rdata      (ex_priv_rdata)
+        .ex_priv_rdata      (ex_priv_rdata),
+        .debug_excp_valid   (debug_excp_valid),
+        .debug_ertn         (debug_ertn),
+        .debug_intr_no      (debug_intr_no),
+        .debug_cause        (debug_cause),
+        .debug_exception_pc (debug_exception_pc),
+        .debug_exception_inst(debug_exception_inst),
+        .debug_priv_state   (debug_priv_state)
     );
 
     // Slot 0 branch_unit checks prediction correctness; Slot 1 redirect is
@@ -1777,7 +1895,7 @@ module cpu_top
     // Store interface (EX stage -> DCache)
     mem_interface u_mem_interface (
         // Store side (EX stage)
-        .store_valid     (ex_valid),
+        .store_valid     (ex_valid & ~ex_priv_trap),
         .store_en        (ex_mem_write_en),
         .store_addr_low  (ex_store_addr_low),
         .store_mem_size  (ex_mem_size),
@@ -1803,7 +1921,7 @@ module cpu_top
 
     mem_interface u_mem_interface_s1_load (
         // Store side (EX stage, shares the single LSU when Slot0 is non-LSU)
-        .store_valid     (ex_s1_valid),
+        .store_valid     (ex_s1_valid & ~ex_s1_side_effect_kill),
         .store_en        (ex_s1_mem_write_en),
         .store_addr_low  (ex_s1_store_addr_low),
         .store_mem_size  (ex_s1_mem_size),
@@ -1833,7 +1951,7 @@ module cpu_top
                   && ex_s1_mem_write_en && (ex_s1_rs2_addr == ex_rd)
                   && (ex_s1_rs1_addr != ex_rd)
                   && !ex_mem_read_en && !ex_mem_write_en
-                  && !ex_is_priv_reg && !ex_is_muldiv))
+                  && !ex_uses_priv_result && !ex_is_muldiv))
                 $fatal(1, "Invalid Slot0-ALU to Slot1-store-data bypass tag");
             if (ex_s1_store_data_raw !== alu_result)
                 $fatal(1, "Slot1 store-data bypass did not select Slot0 ALU result");
@@ -1848,29 +1966,36 @@ module cpu_top
         .redirect_target (ex_registered_branch_target),
         .s0_alu_result   (ex_pipe_alu_result),
         .s0_pc           (ex_pc),
+        .s0_inst         (ex_inst),
         .s0_pc_plus_4    (ex_pc_plus_4),
         .s0_rd           (ex_rd),
-        .s0_reg_write_en (ex_reg_write_en),
+        .s0_reg_write_en (ex_reg_write_en & ~ex_priv_trap),
         .s0_wb_sel       (ex_wb_sel),
         .s0_is_mul       (ex_is_muldiv & ~ex_muldiv_op[2]),
-        .s0_mem_read_en  (ex_mem_read_en),
+        .s0_mem_read_en  (ex_mem_read_en & ~ex_priv_trap),
+        .s0_mem_write_en (ex_mem_write_en & ~ex_priv_trap),
         .s0_mem_size     (ex_mem_size),
         .s0_mem_unsigned (ex_mem_unsigned),
-        .s0_store_wea    (dram_wea),
+        .s0_store_wea    (dram_wea & {4{~ex_priv_trap}}),
         .s0_store_data   (ex_rs2_data_repair),
         .s0_is_cacheable (is_cacheable),
+        .s0_exception    (ex_priv_trap),
+        .s0_csr_rstat    (ex_is_priv_reg
+                          & (ex_priv_addr[13:0] == 14'h005)
+                          & ~ex_priv_trap),
+        .s0_csr_data     (ex_priv_rdata),
         .s1_pc           (ex_s1_pc),
         .s1_inst         (ex_s1_inst),
         .s1_alu_result   (alu_s1_result),
         .s1_pc_plus_4    (ex_s1_pc_plus_4),
         .s1_rd           (ex_s1_rd),
-        .s1_reg_write_en (ex_s1_reg_write_en),
+        .s1_reg_write_en (ex_s1_reg_write_en & ~ex_s1_side_effect_kill),
         .s1_wb_sel       (ex_s1_wb_sel),
-        .s1_mem_read_en  (ex_s1_mem_read_en),
-        .s1_mem_write_en (ex_s1_mem_write_en),
+        .s1_mem_read_en  (ex_s1_mem_read_en & ~ex_s1_side_effect_kill),
+        .s1_mem_write_en (ex_s1_mem_write_en & ~ex_s1_side_effect_kill),
         .s1_mem_size     (ex_s1_mem_size),
         .s1_mem_unsigned (ex_s1_mem_unsigned),
-        .s1_store_wea    (dram_wea_s1),
+        .s1_store_wea    (dram_wea_s1 & {4{~ex_s1_side_effect_kill}}),
         .s1_store_data   (ex_s1_store_data_raw),
         .s1_is_cacheable (is_cacheable_s1),
         .redirect        (ex_mem_redirect),
@@ -1899,7 +2024,8 @@ module cpu_top
         .ex_s1_valid         (ex_s1_valid),
         .ex_ready_go         (ex_ready_go_w),
         .mem_allowin         (mem_allowin),
-        .ex_branch_flush     (branch_flush),
+        .ex_branch_flush     (branch_flush | ex_priv_trap
+                              | ex_s1_addr_replay),
         .mem_branch_flush    (mem_branch_flush),
         .mem_s1_valid        (mem_s1_valid),
         .ex_payload          (ex_mem_s1_payload),
@@ -1910,12 +2036,22 @@ module cpu_top
 
     mem_wb_payload_builder u_mem_wb_payload_builder (
         .s0_alu_result   (mem_wb_alu_result),
+        .s0_pc           (mem_pc),
+        .s0_inst         (mem_inst),
         .s0_pc_plus_4    (mem_pc_plus_4),
         .s0_rd           (mem_rd),
         .s0_reg_write_en (mem_reg_write_en),
         .s0_wb_sel       (mem_wb_sel),
         .s0_is_load      (mem_mem_read_en),
         .s0_load_data    (mem_load_data_ext),
+        .s0_is_store     (mem_mem_write_en),
+        .s0_mem_size     (mem_mem_size),
+        .s0_mem_unsigned (mem_mem_unsigned),
+        .s0_mem_addr     (mem_alu_result),
+        .s0_store_data   (mem_store_data),
+        .s0_exception    (mem_exception),
+        .s0_csr_rstat    (mem_csr_rstat),
+        .s0_csr_data     (mem_csr_data),
         .s1_pc           (mem_s1_pc),
         .s1_inst         (mem_s1_inst),
         .s1_alu_result   (mem_s1_alu_result),
@@ -1924,6 +2060,11 @@ module cpu_top
         .s1_reg_write_en (mem_s1_reg_write_en),
         .s1_wb_sel       (mem_s1_wb_sel),
         .s1_is_load      (mem_s1_mem_read_en),
+        .s1_is_store     (mem_s1_mem_write_en),
+        .s1_mem_size     (mem_s1_mem_size),
+        .s1_mem_unsigned (mem_s1_mem_unsigned),
+        .s1_mem_addr     (mem_s1_alu_result),
+        .s1_store_data   (mem_s1_store_data),
         .slot0_payload   (mem_wb_s0_payload),
         .slot1_payload   (mem_wb_s1_payload)
     );
@@ -1970,15 +2111,26 @@ module cpu_top
         .wb_write_data (wb_s1_write_data)
     );
 
-    // Slot 0 does not carry PC through MEM/WB; pc_plus_4 reconstructs it
-    // without adding state to the timing-sensitive payload.  Register-file
-    // writes are whole-word architectural commits, hence the replicated WEN.
-    assign debug0_wb_valid    = wb_valid;
-    assign debug0_wb_pc       = wb_pc_plus_4 - 32'd4;
+    // Synchronous exceptions are reported through the exception event rather
+    // than as ordinary commits. Register-file writes are whole-word
+    // architectural commits, hence the replicated WEN.
+    assign debug0_wb_valid    = wb_valid & ~wb_exception;
+    assign debug0_wb_pc       = wb_pc;
     assign debug0_wb_rf_wen   = {4{wb_valid & wb_reg_write_en
+                                  & ~wb_exception
                                   & (wb_rd != 5'd0)}};
     assign debug0_wb_rf_wnum  = wb_rd;
     assign debug0_wb_rf_wdata = wb_write_data;
+    assign debug0_wb_inst = wb_inst;
+    assign debug0_wb_exception = wb_valid & wb_exception;
+    assign debug0_wb_mem_read = wb_valid & wb_is_load & ~wb_exception;
+    assign debug0_wb_mem_write = wb_valid & wb_is_store & ~wb_exception;
+    assign debug0_wb_mem_size = wb_mem_size;
+    assign debug0_wb_mem_unsigned = wb_mem_unsigned;
+    assign debug0_wb_mem_addr = wb_mem_addr;
+    assign debug0_wb_store_data = wb_store_data;
+    assign debug0_wb_csr_rstat = wb_valid & wb_csr_rstat & ~wb_exception;
+    assign debug0_wb_csr_data = wb_csr_data;
 
     assign debug1_wb_valid    = wb_s1_valid;
     assign debug1_wb_pc       = wb_s1_pc;
@@ -1986,6 +2138,13 @@ module cpu_top
                                   & (wb_s1_rd != 5'd0)}};
     assign debug1_wb_rf_wnum  = wb_s1_rd;
     assign debug1_wb_rf_wdata = wb_s1_write_data;
+    assign debug1_wb_inst = wb_s1_inst;
+    assign debug1_wb_mem_read = wb_s1_valid & wb_s1_is_load;
+    assign debug1_wb_mem_write = wb_s1_valid & wb_s1_is_store;
+    assign debug1_wb_mem_size = wb_s1_mem_size;
+    assign debug1_wb_mem_unsigned = wb_s1_mem_unsigned;
+    assign debug1_wb_mem_addr = wb_s1_mem_addr;
+    assign debug1_wb_store_data = wb_s1_store_data;
 
 endmodule
 

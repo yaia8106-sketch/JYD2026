@@ -16,12 +16,24 @@ module riscv_priv_unit
     input  logic        ex_redirect_fire,
 
     input  logic [31:0] ex_pc,
+    input  logic [31:0] ex_inst,
     input  logic [31:0] ex_src0_data,
+    input  logic [31:0] ex_src1_data,
     input  priv_op_t    ex_priv_op,
     input  logic        ex_priv_uses_imm,
     input  priv_cmd_t   ex_priv_cmd,
     input  logic [PRIV_ADDR_W-1:0] ex_priv_addr,
     input  logic [ 4:0] ex_priv_imm,
+    input  decode_exception_t ex_exception,
+    input  logic        ex_mem_read_en,
+    input  logic        ex_mem_write_en,
+    input  mem_size_t   ex_mem_size,
+    input  logic [31:0] ex_mem_addr,
+    input  logic        ex_s1_valid,
+    input  logic        ex_s1_mem_read_en,
+    input  logic        ex_s1_mem_write_en,
+    input  mem_size_t   ex_s1_mem_size,
+    input  logic [31:0] ex_s1_mem_addr,
 
     input  logic        timer_irq_pending,
     input  logic        timer_irq_take,
@@ -30,10 +42,20 @@ module riscv_priv_unit
     output logic        ex_priv_flow,
     output logic        ex_priv_redirect,
     output logic [31:0] ex_priv_target,
+    output logic        ex_priv_trap,
+    output logic        ex_priv_wait_older,
+    output logic        ex_s1_addr_replay,
     output logic        timer_irq_request,
     output logic        timer_irq_redirect,
     output logic [31:0] timer_irq_target,
-    output logic [31:0] ex_priv_rdata
+    output logic [31:0] ex_priv_rdata,
+    output logic        debug_excp_valid,
+    output logic        debug_ertn,
+    output logic [31:0] debug_intr_no,
+    output logic [ 5:0] debug_cause,
+    output logic [31:0] debug_exception_pc,
+    output logic [31:0] debug_exception_inst,
+    output logic [PRIV_DEBUG_STATE_W-1:0] debug_priv_state
 );
 
     localparam logic [11:0] CSR_MSTATUS  = 12'h300;
@@ -94,10 +116,30 @@ module riscv_priv_unit
     assign ex_priv_redirect = ex_valid & ex_priv_flow & ex_redirect_fire;
     assign ex_priv_target = ex_is_syscall ? {csr_mtvec[31:2], 2'b00}
                                           : csr_mepc;
+    assign ex_priv_trap = ex_valid & ex_is_syscall;
+    assign ex_priv_wait_older = 1'b0;
+    assign ex_s1_addr_replay = 1'b0;
     assign timer_irq_request = csr_mstatus[3] & csr_mie[7]
                              & timer_irq_pending;
     assign timer_irq_redirect = timer_irq_take;
     assign timer_irq_target = {csr_mtvec[31:2], 2'b00};
+    assign debug_excp_valid = ex_syscall_fire | timer_irq_take;
+    assign debug_ertn = ex_return_fire;
+    assign debug_intr_no = timer_irq_pending ? 32'd7 : 32'd0;
+    assign debug_cause = ex_is_syscall ? 6'd11 : 6'd0;
+    assign debug_exception_pc = timer_irq_take ? timer_irq_mepc : ex_pc;
+    assign debug_exception_inst = timer_irq_take ? 32'd0 : ex_inst;
+    assign debug_priv_state = '0;
+
+    // These are carried by the ISA-neutral interface for LoongArch address
+    // exceptions.  Keep the existing RISC-V behavior unchanged here.
+    wire unused_mem_exception_inputs = ex_mem_read_en ^ ex_mem_write_en
+                                     ^ ex_mem_size[0] ^ ex_mem_addr[0]
+                                     ^ ex_exception[0] ^ ex_s1_valid
+                                     ^ ex_s1_mem_read_en
+                                     ^ ex_s1_mem_write_en
+                                     ^ ex_s1_mem_size[0]
+                                     ^ ex_s1_mem_addr[0];
 
     assign ex_priv_rdata = (csr_addr == CSR_MSTATUS)  ? csr_mstatus :
                            (csr_addr == CSR_MIE)      ? csr_mie :
@@ -159,22 +201,44 @@ module isa_priv_unit
     input  logic        mem_branch_flush,
     input  logic        ex_redirect_fire,
     input  logic [31:0] ex_pc,
+    input  logic [31:0] ex_inst,
     input  logic [31:0] ex_src0_data,
+    input  logic [31:0] ex_src1_data,
     input  priv_op_t    ex_priv_op,
     input  logic        ex_priv_uses_imm,
     input  priv_cmd_t   ex_priv_cmd,
     input  logic [PRIV_ADDR_W-1:0] ex_priv_addr,
     input  logic [ 4:0] ex_priv_imm,
+    input  decode_exception_t ex_exception,
+    input  logic        ex_mem_read_en,
+    input  logic        ex_mem_write_en,
+    input  mem_size_t   ex_mem_size,
+    input  logic [31:0] ex_mem_addr,
+    input  logic        ex_s1_valid,
+    input  logic        ex_s1_mem_read_en,
+    input  logic        ex_s1_mem_write_en,
+    input  mem_size_t   ex_s1_mem_size,
+    input  logic [31:0] ex_s1_mem_addr,
     input  logic        timer_irq_pending,
     input  logic        timer_irq_take,
     input  logic [31:0] timer_irq_mepc,
     output logic        ex_priv_flow,
     output logic        ex_priv_redirect,
     output logic [31:0] ex_priv_target,
+    output logic        ex_priv_trap,
+    output logic        ex_priv_wait_older,
+    output logic        ex_s1_addr_replay,
     output logic        timer_irq_request,
     output logic        timer_irq_redirect,
     output logic [31:0] timer_irq_target,
-    output logic [31:0] ex_priv_rdata
+    output logic [31:0] ex_priv_rdata,
+    output logic        debug_excp_valid,
+    output logic        debug_ertn,
+    output logic [31:0] debug_intr_no,
+    output logic [ 5:0] debug_cause,
+    output logic [31:0] debug_exception_pc,
+    output logic [31:0] debug_exception_inst,
+    output logic [PRIV_DEBUG_STATE_W-1:0] debug_priv_state
 );
     riscv_priv_unit u_impl (
         .clk                  (clk),
@@ -185,21 +249,43 @@ module isa_priv_unit
         .mem_branch_flush     (mem_branch_flush),
         .ex_redirect_fire     (ex_redirect_fire),
         .ex_pc                (ex_pc),
+        .ex_inst              (ex_inst),
         .ex_src0_data         (ex_src0_data),
+        .ex_src1_data         (ex_src1_data),
         .ex_priv_op           (ex_priv_op),
         .ex_priv_uses_imm     (ex_priv_uses_imm),
         .ex_priv_cmd          (ex_priv_cmd),
         .ex_priv_addr         (ex_priv_addr),
         .ex_priv_imm          (ex_priv_imm),
+        .ex_exception         (ex_exception),
+        .ex_mem_read_en       (ex_mem_read_en),
+        .ex_mem_write_en      (ex_mem_write_en),
+        .ex_mem_size          (ex_mem_size),
+        .ex_mem_addr          (ex_mem_addr),
+        .ex_s1_valid          (ex_s1_valid),
+        .ex_s1_mem_read_en    (ex_s1_mem_read_en),
+        .ex_s1_mem_write_en   (ex_s1_mem_write_en),
+        .ex_s1_mem_size       (ex_s1_mem_size),
+        .ex_s1_mem_addr       (ex_s1_mem_addr),
         .timer_irq_pending    (timer_irq_pending),
         .timer_irq_take       (timer_irq_take),
         .timer_irq_mepc       (timer_irq_mepc),
         .ex_priv_flow         (ex_priv_flow),
         .ex_priv_redirect     (ex_priv_redirect),
         .ex_priv_target       (ex_priv_target),
+        .ex_priv_trap         (ex_priv_trap),
+        .ex_priv_wait_older   (ex_priv_wait_older),
+        .ex_s1_addr_replay    (ex_s1_addr_replay),
         .timer_irq_request    (timer_irq_request),
         .timer_irq_redirect   (timer_irq_redirect),
         .timer_irq_target     (timer_irq_target),
-        .ex_priv_rdata        (ex_priv_rdata)
+        .ex_priv_rdata        (ex_priv_rdata),
+        .debug_excp_valid     (debug_excp_valid),
+        .debug_ertn           (debug_ertn),
+        .debug_intr_no        (debug_intr_no),
+        .debug_cause          (debug_cause),
+        .debug_exception_pc   (debug_exception_pc),
+        .debug_exception_inst (debug_exception_inst),
+        .debug_priv_state     (debug_priv_state)
     );
 endmodule

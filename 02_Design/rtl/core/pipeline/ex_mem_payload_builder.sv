@@ -13,17 +13,22 @@ module ex_mem_payload_builder
 
     input  logic [31:0]        s0_alu_result,
     input  logic [31:0]        s0_pc,
+    input  logic [31:0]        s0_inst,
     input  logic [31:0]        s0_pc_plus_4,
     input  logic [ 4:0]        s0_rd,
     input  logic               s0_reg_write_en,
     input  wb_src_t             s0_wb_sel,
     input  logic               s0_is_mul,
     input  logic               s0_mem_read_en,
+    input  logic               s0_mem_write_en,
     input  mem_size_t           s0_mem_size,
     input  logic               s0_mem_unsigned,
     input  logic [ 3:0]        s0_store_wea,
     input  logic [31:0]        s0_store_data,
     input  logic               s0_is_cacheable,
+    input  logic               s0_exception,
+    input  logic               s0_csr_rstat,
+    input  logic [31:0]        s0_csr_data,
 
     input  logic [31:0]        s1_pc,
     input  logic [31:0]        s1_inst,
@@ -52,6 +57,7 @@ module ex_mem_payload_builder
         redirect.target = redirect_target;
 
         slot0_payload = '0;
+        slot0_payload.inst = s0_inst;
         slot0_payload.alu_result = s0_alu_result;
         slot0_payload.pc = s0_pc;
         slot0_payload.pc_plus_4 = s0_pc_plus_4;
@@ -60,11 +66,15 @@ module ex_mem_payload_builder
         slot0_payload.wb_sel = s0_wb_sel;
         slot0_payload.is_mul = s0_is_mul;
         slot0_payload.mem_read_en = s0_mem_read_en;
+        slot0_payload.mem_write_en = s0_mem_write_en;
         slot0_payload.mem_size = s0_mem_size;
         slot0_payload.mem_unsigned = s0_mem_unsigned;
         slot0_payload.store_wea = s0_store_wea;
         slot0_payload.store_data = s0_store_data;
         slot0_payload.is_cacheable = s0_is_cacheable;
+        slot0_payload.exception = s0_exception;
+        slot0_payload.csr_rstat = s0_csr_rstat;
+        slot0_payload.csr_data = s0_csr_data;
 
         slot1_payload = '0;
         slot1_payload.pc = s1_pc;

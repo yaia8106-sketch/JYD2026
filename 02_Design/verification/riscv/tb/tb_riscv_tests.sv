@@ -117,7 +117,32 @@ module tb_riscv_tests;
         .debug1_wb_pc(),
         .debug1_wb_rf_wen(),
         .debug1_wb_rf_wnum(),
-        .debug1_wb_rf_wdata()
+        .debug1_wb_rf_wdata(),
+        .debug0_wb_inst          (),
+        .debug0_wb_exception     (),
+        .debug0_wb_mem_read      (),
+        .debug0_wb_mem_write     (),
+        .debug0_wb_mem_size      (),
+        .debug0_wb_mem_unsigned  (),
+        .debug0_wb_mem_addr      (),
+        .debug0_wb_store_data    (),
+        .debug0_wb_csr_rstat     (),
+        .debug0_wb_csr_data      (),
+        .debug1_wb_inst          (),
+        .debug1_wb_mem_read      (),
+        .debug1_wb_mem_write     (),
+        .debug1_wb_mem_size      (),
+        .debug1_wb_mem_unsigned  (),
+        .debug1_wb_mem_addr      (),
+        .debug1_wb_store_data    (),
+        .debug_gpr_state         (),
+        .debug_priv_state        (),
+        .debug_excp_valid        (),
+        .debug_ertn              (),
+        .debug_intr_no           (),
+        .debug_cause             (),
+        .debug_exception_pc      (),
+        .debug_exception_inst    ()
     );
 
     // ================================================================

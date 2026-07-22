@@ -31,7 +31,9 @@ module regfile (
     input  logic [ 4:0] rd_addr_s1,
     input  logic [31:0] rd_data_s1,
     input  logic        rd_wen_s1,
-    input  logic        rd_valid_s1
+    input  logic        rd_valid_s1,
+
+    output logic [1023:0] debug_state
 );
 
     // ---- Register array ----
@@ -43,6 +45,10 @@ module regfile (
     assign rs2_data = (rs2_addr == 5'd0) ? 32'd0 : regs[rs2_addr];
     assign rs1_data_s1 = (rs1_addr_s1 == 5'd0) ? 32'd0 : regs[rs1_addr_s1];
     assign rs2_data_s1 = (rs2_addr_s1 == 5'd0) ? 32'd0 : regs[rs2_addr_s1];
+    assign debug_state[0 +: 32] = 32'd0;
+    for (genvar debug_reg = 1; debug_reg < 32; debug_reg++) begin : g_debug
+        assign debug_state[debug_reg*32 +: 32] = regs[debug_reg];
+    end
 
     // ---- Write (posedge, x0 guard). Slot 1 wins WAW by assigning last. ----
     // Both write ports retire in program order in the same WB cycle.

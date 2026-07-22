@@ -43,6 +43,7 @@ module ex_stage_ctrl
     input  logic [31:0] ex_s1_rs2_data,
     input  logic        ex_s1_predicted_taken,
     input  logic [31:0] ex_s1_predicted_target,
+    input  logic        ex_s1_addr_replay,
 
     input  logic        mem_branch_flush,
     input  logic        ex_ready_go,
@@ -73,8 +74,6 @@ module ex_stage_ctrl
 );
 
     wire ex_s1_branch_taken;
-    wire ex_s0_control_valid;
-    wire ex_s1_control_valid;
 
     assign ex_pc_plus_4 = ex_pc + 32'd4;
     assign ex_s1_pc_plus_4 = ex_s1_pc + 32'd4;
@@ -134,10 +133,6 @@ module ex_stage_ctrl
                                   | (ex_s1_control_flow == CF_INDIRECT);
     wire ex_s1_actual_taken_w = ex_s1_is_unconditional
                               | (ex_s1_is_conditional & ex_s1_branch_taken);
-    assign ex_s0_control_valid = ex_valid
-                                & (ex_control_flow != CF_NONE);
-    assign ex_s1_control_valid = ex_s1_valid
-                                & (ex_s1_control_flow != CF_NONE);
     wire ex_s1_direction_wrong =
         ex_s1_actual_taken_w != ex_s1_predicted_taken;
     wire ex_s1_target_wrong = ex_s1_actual_taken_w
@@ -155,14 +150,25 @@ module ex_stage_ctrl
                                  & ex_s1_mispredict
                                  & ~mem_branch_flush
                                  & ex_ready_go & mem_allowin;
+    // A misaligned Slot-1 LSU is replayed from its own PC.  It then becomes
+    // Slot 0 and enters the ISA-owned precise exception path after the older
+    // instruction in this pair has retired.
+    wire ex_s1_addr_replay_redirect = ex_valid & ex_s1_valid
+                                    & ex_s1_addr_replay
+                                    & ~mem_branch_flush
+                                    & ex_ready_go & mem_allowin;
     assign ex_registered_branch_flush = ex_branch_redirect
                                       | ex_priv_redirect
-                                      | ex_s1_branch_redirect;
-    // The target payload is ignored unless ex_registered_branch_flush is high.
-    // Keep the late branch_flush/mispredict result out of this wide mux.
+                                      | ex_s1_branch_redirect
+                                      | ex_s1_addr_replay_redirect;
+    // Select by the redirect source, not by the decoded CFI class. A false
+    // positive BTB hit deliberately redirects even when the decoded operation
+    // is CF_NONE. In particular, an S1 false positive must resume at S1+4;
+    // using decoded control validity here would incorrectly select S0+4 and
+    // re-execute S1. S0 has age priority if both slots request repair.
     assign ex_registered_branch_target =
         ex_priv_redirect ? ex_priv_target :
-        (ex_s1_control_valid & ~ex_s0_control_valid) ? ex_s1_redirect_target :
-                                                       branch_target;
+        ex_branch_redirect ? branch_target :
+        ex_s1_addr_replay_redirect ? ex_s1_pc : ex_s1_redirect_target;
 
 endmodule

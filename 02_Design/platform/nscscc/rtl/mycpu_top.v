@@ -125,6 +125,31 @@ module core_top #(
     wire [ 3:0] debug1_wb_rf_wen_i;
     wire [ 4:0] debug1_wb_rf_wnum_i;
     wire [31:0] debug1_wb_rf_wdata_i;
+    wire [31:0] debug0_wb_inst_i;
+    wire        debug0_wb_exception_i;
+    wire        debug0_wb_mem_read_i;
+    wire        debug0_wb_mem_write_i;
+    wire [ 1:0] debug0_wb_mem_size_i;
+    wire        debug0_wb_mem_unsigned_i;
+    wire [31:0] debug0_wb_mem_addr_i;
+    wire [31:0] debug0_wb_store_data_i;
+    wire        debug0_wb_csr_rstat_i;
+    wire [31:0] debug0_wb_csr_data_i;
+    wire [31:0] debug1_wb_inst_i;
+    wire        debug1_wb_mem_read_i;
+    wire        debug1_wb_mem_write_i;
+    wire [ 1:0] debug1_wb_mem_size_i;
+    wire        debug1_wb_mem_unsigned_i;
+    wire [31:0] debug1_wb_mem_addr_i;
+    wire [31:0] debug1_wb_store_data_i;
+    wire [1023:0] debug_gpr_state_i;
+    wire [ 863:0] debug_priv_state_i;
+    wire        debug_excp_valid_i;
+    wire        debug_ertn_i;
+    wire [31:0] debug_intr_no_i;
+    wire [ 5:0] debug_cause_i;
+    wire [31:0] debug_exception_pc_i;
+    wire [31:0] debug_exception_inst_i;
 
     cpu_top #(
         .IROM_VARIABLE_LATENCY(1'b1),
@@ -163,11 +188,36 @@ module core_top #(
         .debug0_wb_rf_wen    (debug0_wb_rf_wen),
         .debug0_wb_rf_wnum   (debug0_wb_rf_wnum),
         .debug0_wb_rf_wdata  (debug0_wb_rf_wdata),
+        .debug0_wb_inst      (debug0_wb_inst_i),
+        .debug0_wb_exception (debug0_wb_exception_i),
+        .debug0_wb_mem_read  (debug0_wb_mem_read_i),
+        .debug0_wb_mem_write (debug0_wb_mem_write_i),
+        .debug0_wb_mem_size  (debug0_wb_mem_size_i),
+        .debug0_wb_mem_unsigned(debug0_wb_mem_unsigned_i),
+        .debug0_wb_mem_addr  (debug0_wb_mem_addr_i),
+        .debug0_wb_store_data(debug0_wb_store_data_i),
+        .debug0_wb_csr_rstat (debug0_wb_csr_rstat_i),
+        .debug0_wb_csr_data  (debug0_wb_csr_data_i),
         .debug1_wb_valid     (debug1_wb_valid_i),
         .debug1_wb_pc        (debug1_wb_pc_i),
         .debug1_wb_rf_wen    (debug1_wb_rf_wen_i),
         .debug1_wb_rf_wnum   (debug1_wb_rf_wnum_i),
-        .debug1_wb_rf_wdata  (debug1_wb_rf_wdata_i)
+        .debug1_wb_rf_wdata  (debug1_wb_rf_wdata_i),
+        .debug1_wb_inst      (debug1_wb_inst_i),
+        .debug1_wb_mem_read  (debug1_wb_mem_read_i),
+        .debug1_wb_mem_write (debug1_wb_mem_write_i),
+        .debug1_wb_mem_size  (debug1_wb_mem_size_i),
+        .debug1_wb_mem_unsigned(debug1_wb_mem_unsigned_i),
+        .debug1_wb_mem_addr  (debug1_wb_mem_addr_i),
+        .debug1_wb_store_data(debug1_wb_store_data_i),
+        .debug_gpr_state     (debug_gpr_state_i),
+        .debug_priv_state    (debug_priv_state_i),
+        .debug_excp_valid    (debug_excp_valid_i),
+        .debug_ertn          (debug_ertn_i),
+        .debug_intr_no       (debug_intr_no_i),
+        .debug_cause         (debug_cause_i),
+        .debug_exception_pc  (debug_exception_pc_i),
+        .debug_exception_inst(debug_exception_inst_i)
     );
 
     dcache #(
@@ -277,8 +327,8 @@ module core_top #(
     );
 
     assign ws_valid = debug0_wb_valid_i;
-    assign rf_rdata = 32'd0;
-    assign debug0_wb_inst = 32'd0;
+    assign rf_rdata = debug_gpr_state_i[{reg_num, 5'b0} +: 32];
+    assign debug0_wb_inst = debug0_wb_inst_i;
 
 `ifdef CPU_2CMT
     assign debug1_wb_pc = debug1_wb_pc_i;
@@ -287,10 +337,299 @@ module core_top #(
     assign debug1_wb_rf_wdata = debug1_wb_rf_wdata_i;
 `endif
 
+`ifdef DIFFTEST_EN
+    // Difftest is a simulation-only architectural observation boundary.  The
+    // core exports ISA-neutral retire metadata; this LoongArch-only wrapper
+    // performs the LA load/store mask and CSR-state mapping.
+    wire [7:0] diff_ld_mask0 = !debug0_wb_mem_read_i ? 8'd0
+        : (debug0_wb_mem_size_i == 2'd0)
+            ? (debug0_wb_mem_unsigned_i ? 8'h02 : 8'h01)
+        : (debug0_wb_mem_size_i == 2'd1)
+            ? (debug0_wb_mem_unsigned_i ? 8'h08 : 8'h04)
+        : 8'h10;
+    wire [7:0] diff_ld_mask1 = !debug1_wb_mem_read_i ? 8'd0
+        : (debug1_wb_mem_size_i == 2'd0)
+            ? (debug1_wb_mem_unsigned_i ? 8'h02 : 8'h01)
+        : (debug1_wb_mem_size_i == 2'd1)
+            ? (debug1_wb_mem_unsigned_i ? 8'h08 : 8'h04)
+        : 8'h10;
+    wire [7:0] diff_st_mask0 = !debug0_wb_mem_write_i ? 8'd0
+        : (debug0_wb_mem_size_i == 2'd0) ? 8'h01
+        : (debug0_wb_mem_size_i == 2'd1) ? 8'h02 : 8'h04;
+    wire [7:0] diff_st_mask1 = !debug1_wb_mem_write_i ? 8'd0
+        : (debug1_wb_mem_size_i == 2'd0) ? 8'h01
+        : (debug1_wb_mem_size_i == 2'd1) ? 8'h02 : 8'h04;
+    wire [31:0] diff_st_data0 =
+        (debug0_wb_mem_size_i == 2'd0)
+            ? ({24'd0, debug0_wb_store_data_i[7:0]}
+               << {debug0_wb_mem_addr_i[1:0], 3'b000})
+        : (debug0_wb_mem_size_i == 2'd1)
+            ? ({16'd0, debug0_wb_store_data_i[15:0]}
+               << {debug0_wb_mem_addr_i[1], 4'b0000})
+        : debug0_wb_store_data_i;
+    wire [31:0] diff_st_data1 =
+        (debug1_wb_mem_size_i == 2'd0)
+            ? ({24'd0, debug1_wb_store_data_i[7:0]}
+               << {debug1_wb_mem_addr_i[1:0], 3'b000})
+        : (debug1_wb_mem_size_i == 2'd1)
+            ? ({16'd0, debug1_wb_store_data_i[15:0]}
+               << {debug1_wb_mem_addr_i[1], 4'b0000})
+        : debug1_wb_store_data_i;
+
+    function [63:0] diff_zext32;
+        input [31:0] value;
+        begin
+            diff_zext32 = {32'd0, value};
+        end
+    endfunction
+
+    reg         cmt0_valid;
+    reg  [31:0] cmt0_pc;
+    reg  [31:0] cmt0_inst;
+    reg         cmt0_wen;
+    reg  [ 7:0] cmt0_wdest;
+    reg  [31:0] cmt0_wdata;
+    reg         cmt0_csr_rstat;
+    reg  [31:0] cmt0_csr_data;
+    reg  [ 7:0] cmt0_ld_valid;
+    reg  [ 7:0] cmt0_st_valid;
+    reg  [31:0] cmt0_mem_addr;
+    reg  [31:0] cmt0_st_data;
+
+    reg         cmt1_valid;
+    reg  [31:0] cmt1_pc;
+    reg  [31:0] cmt1_inst;
+    reg         cmt1_wen;
+    reg  [ 7:0] cmt1_wdest;
+    reg  [31:0] cmt1_wdata;
+    reg  [ 7:0] cmt1_ld_valid;
+    reg  [ 7:0] cmt1_st_valid;
+    reg  [31:0] cmt1_mem_addr;
+    reg  [31:0] cmt1_st_data;
+
+    reg         cmt_excp_valid;
+    reg         cmt_ertn;
+    reg  [31:0] cmt_intr_no;
+    reg  [ 5:0] cmt_cause;
+    reg  [31:0] cmt_exception_pc;
+    reg  [31:0] cmt_exception_inst;
+    reg  [63:0] diff_cycle_count;
+    reg  [63:0] diff_instr_count;
+
+    wire cmt0_cnt_low = (cmt0_inst[31:15] == 17'd0)
+                       && (cmt0_inst[14:10] == 5'd24)
+                       && (cmt0_inst[9:5] == 5'd0);
+    wire cmt0_cnt_id = (cmt0_inst[31:15] == 17'd0)
+                      && (cmt0_inst[14:10] == 5'd24)
+                      && (cmt0_inst[4:0] == 5'd0);
+    wire cmt0_cnt_high = (cmt0_inst[31:15] == 17'd0)
+                        && (cmt0_inst[14:10] == 5'd25)
+                        && (cmt0_inst[9:5] == 5'd0);
+    wire cmt0_is_cnt = cmt0_cnt_low | cmt0_cnt_id | cmt0_cnt_high;
+    // Chiplab copies this sampled value into NEMU immediately before it
+    // executes an RDCNT instruction.  The architectural result supplies the
+    // half that was actually observed; the test horizon is below 2^32 clocks.
+    wire [63:0] cmt0_timer_value = cmt0_cnt_high
+                                 ? {cmt0_wdata, 32'd0}
+                                 : {32'd0, cmt0_wdata};
+
+    always @(posedge aclk) begin
+        if (!core_rst_n) begin
+            cmt0_valid <= 1'b0;
+            cmt0_pc <= 32'd0;
+            cmt0_inst <= 32'd0;
+            cmt0_wen <= 1'b0;
+            cmt0_wdest <= 8'd0;
+            cmt0_wdata <= 32'd0;
+            cmt0_csr_rstat <= 1'b0;
+            cmt0_csr_data <= 32'd0;
+            cmt0_ld_valid <= 8'd0;
+            cmt0_st_valid <= 8'd0;
+            cmt0_mem_addr <= 32'd0;
+            cmt0_st_data <= 32'd0;
+            cmt1_valid <= 1'b0;
+            cmt1_pc <= 32'd0;
+            cmt1_inst <= 32'd0;
+            cmt1_wen <= 1'b0;
+            cmt1_wdest <= 8'd0;
+            cmt1_wdata <= 32'd0;
+            cmt1_ld_valid <= 8'd0;
+            cmt1_st_valid <= 8'd0;
+            cmt1_mem_addr <= 32'd0;
+            cmt1_st_data <= 32'd0;
+            cmt_excp_valid <= 1'b0;
+            cmt_ertn <= 1'b0;
+            cmt_intr_no <= 32'd0;
+            cmt_cause <= 6'd0;
+            cmt_exception_pc <= 32'd0;
+            cmt_exception_inst <= 32'd0;
+            diff_cycle_count <= 64'd0;
+            diff_instr_count <= 64'd0;
+        end else begin
+            cmt0_valid <= debug0_wb_valid_i;
+            cmt0_pc <= debug0_wb_pc;
+            cmt0_inst <= debug0_wb_inst_i;
+            cmt0_wen <= |debug0_wb_rf_wen;
+            cmt0_wdest <= {3'd0, debug0_wb_rf_wnum};
+            cmt0_wdata <= debug0_wb_rf_wdata;
+            cmt0_csr_rstat <= debug0_wb_csr_rstat_i;
+            cmt0_csr_data <= debug0_wb_csr_data_i;
+            cmt0_ld_valid <= diff_ld_mask0;
+            cmt0_st_valid <= diff_st_mask0;
+            cmt0_mem_addr <= debug0_wb_mem_addr_i;
+            cmt0_st_data <= diff_st_data0;
+
+            cmt1_valid <= debug1_wb_valid_i;
+            cmt1_pc <= debug1_wb_pc_i;
+            cmt1_inst <= debug1_wb_inst_i;
+            cmt1_wen <= |debug1_wb_rf_wen_i;
+            cmt1_wdest <= {3'd0, debug1_wb_rf_wnum_i};
+            cmt1_wdata <= debug1_wb_rf_wdata_i;
+            cmt1_ld_valid <= diff_ld_mask1;
+            cmt1_st_valid <= diff_st_mask1;
+            cmt1_mem_addr <= debug1_wb_mem_addr_i;
+            cmt1_st_data <= diff_st_data1;
+
+            cmt_excp_valid <= debug_excp_valid_i;
+            cmt_ertn <= debug_ertn_i;
+            cmt_intr_no <= debug_intr_no_i;
+            cmt_cause <= debug_cause_i;
+            cmt_exception_pc <= debug_exception_pc_i;
+            cmt_exception_inst <= debug_exception_inst_i;
+            diff_cycle_count <= diff_cycle_count + 64'd1;
+            diff_instr_count <= diff_instr_count
+                              + {63'd0, debug0_wb_valid_i}
+                              + {63'd0, debug1_wb_valid_i};
+        end
+    end
+
+    DifftestInstrCommit u_difftest_commit0 (
+        .clock(aclk), .coreid(8'd0), .index(8'd0), .valid(cmt0_valid),
+        .pc(diff_zext32(cmt0_pc)), .instr(cmt0_inst), .skip(1'b0),
+        .is_TLBFILL(1'b0), .TLBFILL_index(5'd0), .is_CNTinst(cmt0_is_cnt),
+        .timer_64_value(cmt0_timer_value), .wen(cmt0_wen), .wdest(cmt0_wdest),
+        .wdata(diff_zext32(cmt0_wdata)), .csr_rstat(cmt0_csr_rstat),
+        .csr_data(cmt0_csr_data)
+    );
+
+    DifftestInstrCommit u_difftest_commit1 (
+        .clock(aclk), .coreid(8'd0), .index(8'd1), .valid(cmt1_valid),
+        .pc(diff_zext32(cmt1_pc)), .instr(cmt1_inst), .skip(1'b0),
+        .is_TLBFILL(1'b0), .TLBFILL_index(5'd0), .is_CNTinst(1'b0),
+        .timer_64_value(64'd0), .wen(cmt1_wen), .wdest(cmt1_wdest),
+        .wdata(diff_zext32(cmt1_wdata)), .csr_rstat(1'b0),
+        .csr_data(32'd0)
+    );
+
+    DifftestExcpEvent u_difftest_excp (
+        .clock(aclk), .coreid(8'd0), .excp_valid(cmt_excp_valid),
+        .eret(cmt_ertn), .intrNo(cmt_intr_no), .cause({26'd0, cmt_cause}),
+        .exceptionPC(diff_zext32(cmt_exception_pc)),
+        .exceptionInst(cmt_exception_inst)
+    );
+
+    DifftestTrapEvent u_difftest_trap (
+        .clock(aclk), .coreid(8'd0), .valid(1'b0), .code(3'd0),
+        .pc(diff_zext32(cmt0_pc)), .cycleCnt(diff_cycle_count),
+        .instrCnt(diff_instr_count)
+    );
+
+    DifftestStoreEvent u_difftest_store0 (
+        .clock(aclk), .coreid(8'd0), .index(8'd0),
+        .valid(cmt0_st_valid), .storePAddr(diff_zext32(cmt0_mem_addr)),
+        .storeVAddr(diff_zext32(cmt0_mem_addr)),
+        .storeData(diff_zext32(cmt0_st_data))
+    );
+    DifftestStoreEvent u_difftest_store1 (
+        .clock(aclk), .coreid(8'd0), .index(8'd1),
+        .valid(cmt1_st_valid), .storePAddr(diff_zext32(cmt1_mem_addr)),
+        .storeVAddr(diff_zext32(cmt1_mem_addr)),
+        .storeData(diff_zext32(cmt1_st_data))
+    );
+    DifftestLoadEvent u_difftest_load0 (
+        .clock(aclk), .coreid(8'd0), .index(8'd0),
+        .valid(cmt0_ld_valid), .paddr(diff_zext32(cmt0_mem_addr)),
+        .vaddr(diff_zext32(cmt0_mem_addr))
+    );
+    DifftestLoadEvent u_difftest_load1 (
+        .clock(aclk), .coreid(8'd0), .index(8'd1),
+        .valid(cmt1_ld_valid), .paddr(diff_zext32(cmt1_mem_addr)),
+        .vaddr(diff_zext32(cmt1_mem_addr))
+    );
+
+    DifftestCSRRegState u_difftest_csr (
+        .clock(aclk), .coreid(8'd0),
+        .crmd(diff_zext32(debug_priv_state_i[ 0*32 +: 32])),
+        .prmd(diff_zext32(debug_priv_state_i[ 1*32 +: 32])),
+        .euen(diff_zext32(debug_priv_state_i[ 2*32 +: 32])),
+        .ecfg(diff_zext32(debug_priv_state_i[ 3*32 +: 32])),
+        .estat(diff_zext32(debug_priv_state_i[ 4*32 +: 32])),
+        .era(diff_zext32(debug_priv_state_i[ 5*32 +: 32])),
+        .badv(diff_zext32(debug_priv_state_i[ 6*32 +: 32])),
+        .eentry(diff_zext32(debug_priv_state_i[ 7*32 +: 32])),
+        .tlbidx(diff_zext32(debug_priv_state_i[ 8*32 +: 32])),
+        .tlbehi(diff_zext32(debug_priv_state_i[ 9*32 +: 32])),
+        .tlbelo0(diff_zext32(debug_priv_state_i[10*32 +: 32])),
+        .tlbelo1(diff_zext32(debug_priv_state_i[11*32 +: 32])),
+        .asid(diff_zext32(debug_priv_state_i[12*32 +: 32])),
+        .pgdl(diff_zext32(debug_priv_state_i[13*32 +: 32])),
+        .pgdh(diff_zext32(debug_priv_state_i[14*32 +: 32])),
+        .save0(diff_zext32(debug_priv_state_i[15*32 +: 32])),
+        .save1(diff_zext32(debug_priv_state_i[16*32 +: 32])),
+        .save2(diff_zext32(debug_priv_state_i[17*32 +: 32])),
+        .save3(diff_zext32(debug_priv_state_i[18*32 +: 32])),
+        .tid(diff_zext32(debug_priv_state_i[19*32 +: 32])),
+        .tcfg(diff_zext32(debug_priv_state_i[20*32 +: 32])),
+        .tval(diff_zext32(debug_priv_state_i[21*32 +: 32])),
+        .ticlr(diff_zext32(debug_priv_state_i[22*32 +: 32])),
+        .llbctl(diff_zext32(debug_priv_state_i[23*32 +: 32])),
+        .tlbrentry(diff_zext32(debug_priv_state_i[24*32 +: 32])),
+        .dmw0(diff_zext32(debug_priv_state_i[25*32 +: 32])),
+        .dmw1(diff_zext32(debug_priv_state_i[26*32 +: 32]))
+    );
+
+    DifftestGRegState u_difftest_gpr (
+        .clock(aclk), .coreid(8'd0),
+        .gpr_0(diff_zext32(debug_gpr_state_i[ 0*32 +: 32])),
+        .gpr_1(diff_zext32(debug_gpr_state_i[ 1*32 +: 32])),
+        .gpr_2(diff_zext32(debug_gpr_state_i[ 2*32 +: 32])),
+        .gpr_3(diff_zext32(debug_gpr_state_i[ 3*32 +: 32])),
+        .gpr_4(diff_zext32(debug_gpr_state_i[ 4*32 +: 32])),
+        .gpr_5(diff_zext32(debug_gpr_state_i[ 5*32 +: 32])),
+        .gpr_6(diff_zext32(debug_gpr_state_i[ 6*32 +: 32])),
+        .gpr_7(diff_zext32(debug_gpr_state_i[ 7*32 +: 32])),
+        .gpr_8(diff_zext32(debug_gpr_state_i[ 8*32 +: 32])),
+        .gpr_9(diff_zext32(debug_gpr_state_i[ 9*32 +: 32])),
+        .gpr_10(diff_zext32(debug_gpr_state_i[10*32 +: 32])),
+        .gpr_11(diff_zext32(debug_gpr_state_i[11*32 +: 32])),
+        .gpr_12(diff_zext32(debug_gpr_state_i[12*32 +: 32])),
+        .gpr_13(diff_zext32(debug_gpr_state_i[13*32 +: 32])),
+        .gpr_14(diff_zext32(debug_gpr_state_i[14*32 +: 32])),
+        .gpr_15(diff_zext32(debug_gpr_state_i[15*32 +: 32])),
+        .gpr_16(diff_zext32(debug_gpr_state_i[16*32 +: 32])),
+        .gpr_17(diff_zext32(debug_gpr_state_i[17*32 +: 32])),
+        .gpr_18(diff_zext32(debug_gpr_state_i[18*32 +: 32])),
+        .gpr_19(diff_zext32(debug_gpr_state_i[19*32 +: 32])),
+        .gpr_20(diff_zext32(debug_gpr_state_i[20*32 +: 32])),
+        .gpr_21(diff_zext32(debug_gpr_state_i[21*32 +: 32])),
+        .gpr_22(diff_zext32(debug_gpr_state_i[22*32 +: 32])),
+        .gpr_23(diff_zext32(debug_gpr_state_i[23*32 +: 32])),
+        .gpr_24(diff_zext32(debug_gpr_state_i[24*32 +: 32])),
+        .gpr_25(diff_zext32(debug_gpr_state_i[25*32 +: 32])),
+        .gpr_26(diff_zext32(debug_gpr_state_i[26*32 +: 32])),
+        .gpr_27(diff_zext32(debug_gpr_state_i[27*32 +: 32])),
+        .gpr_28(diff_zext32(debug_gpr_state_i[28*32 +: 32])),
+        .gpr_29(diff_zext32(debug_gpr_state_i[29*32 +: 32])),
+        .gpr_30(diff_zext32(debug_gpr_state_i[30*32 +: 32])),
+        .gpr_31(diff_zext32(debug_gpr_state_i[31*32 +: 32]))
+    );
+`endif
+
     // Keep optional chiplab debug inputs and the compatibility parameter in
     // the exact public contract even though the current core has no scan-read
     // register-file port.
     wire unused_debug_inputs = break_point ^ infor_flag ^ (^reg_num)
-                             ^ (TLBNUM == 0) ^ debug1_wb_valid_i;
+                             ^ (TLBNUM == 0) ^ debug1_wb_valid_i
+                             ^ debug0_wb_exception_i;
 
 endmodule

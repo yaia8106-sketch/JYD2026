@@ -47,12 +47,22 @@ module mem_wb_reg
             wb_payload              <= '0;
         end else if (wb_allowin) begin
             wb_valid                <= mem_valid & mem_ready_go;
+            wb_payload.pc           <= mem_payload.pc;
+            wb_payload.inst         <= mem_payload.inst;
             wb_payload.alu_result   <= mem_payload.alu_result;
             wb_payload.pc_plus_4    <= mem_payload.pc_plus_4;
             wb_payload.rd           <= mem_payload.rd;
             wb_payload.reg_write_en <= mem_payload.reg_write_en;
             wb_payload.wb_sel       <= mem_payload.wb_sel;
             wb_payload.is_load      <= mem_payload.is_load;
+            wb_payload.is_store     <= mem_payload.is_store;
+            wb_payload.mem_size     <= mem_payload.mem_size;
+            wb_payload.mem_unsigned <= mem_payload.mem_unsigned;
+            wb_payload.mem_addr     <= mem_payload.mem_addr;
+            wb_payload.store_data   <= mem_payload.store_data;
+            wb_payload.exception    <= mem_payload.exception;
+            wb_payload.csr_rstat    <= mem_payload.csr_rstat;
+            wb_payload.csr_data     <= mem_payload.csr_data;
 
             // A non-load must retain the last completed load for the EX-stage
             // WB-repair path.  Keeping this field on its own write enable also
