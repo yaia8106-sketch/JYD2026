@@ -403,44 +403,31 @@ module perf_monitor (
     wire        id_valid        = tb_riscv_tests.u_cpu.id_valid;
     wire        id_s1_valid     = tb_riscv_tests.u_cpu.id_s1_valid;
     wire        id_flush_w      = tb_riscv_tests.u_cpu.id_flush;
+    wire        ex1_valid       = tb_riscv_tests.u_cpu.ex1_valid;
+    wire        ex1_s1_valid    = tb_riscv_tests.u_cpu.ex1_s1_valid;
     wire        ex_valid        = tb_riscv_tests.u_cpu.ex_valid;
     wire        ex_s1_valid     = tb_riscv_tests.u_cpu.ex_s1_valid;
     wire        mem_valid       = tb_riscv_tests.u_cpu.mem_valid;
     wire        mem_s1_valid    = tb_riscv_tests.u_cpu.mem_s1_valid;
     wire        if_valid        = tb_riscv_tests.u_cpu.if_valid;
     wire        id_allowin_w    = tb_riscv_tests.u_cpu.id_allowin;
-    wire        ex_allowin_w    = tb_riscv_tests.u_cpu.ex_allowin;
+    wire        ex_allowin_w    = tb_riscv_tests.u_cpu.ex1_allowin;
     wire        if_ready_go_w   = tb_riscv_tests.u_cpu.if_ready_go_w;
     wire        mem_allowin_w   = tb_riscv_tests.u_cpu.mem_allowin;
     wire        wb_allowin_w    = tb_riscv_tests.u_cpu.wb_allowin;
 
-    wire        id_ready_go_w   = tb_riscv_tests.u_cpu.u_forwarding.id_ready_go;
-    wire        load_use_hazard_w = tb_riscv_tests.u_cpu.u_forwarding.load_use_hazard;
-    wire        load_in_ex_w    = tb_riscv_tests.u_cpu.u_forwarding.load_in_ex;
-    wire        load_in_s1_ex_w = tb_riscv_tests.u_cpu.u_forwarding.load_in_s1_ex;
-    wire        load_in_mem_w   = tb_riscv_tests.u_cpu.u_forwarding.load_in_mem;
-    wire        load_in_s1_mem_w = tb_riscv_tests.u_cpu.u_forwarding.load_in_s1_mem;
-    wire        id_s0_uses_ex_load_w = tb_riscv_tests.u_cpu.u_forwarding.id_s0_uses_ex_load;
-    wire        id_s0_uses_s1_ex_load_w = tb_riscv_tests.u_cpu.u_forwarding.id_s0_uses_s1_ex_load;
-    wire        id_s0_uses_mem_load_w = tb_riscv_tests.u_cpu.u_forwarding.id_s0_uses_mem_load;
-    wire        id_s0_uses_s1_mem_load_w = tb_riscv_tests.u_cpu.u_forwarding.id_s0_uses_s1_mem_load;
-    wire        id_s1_uses_ex_load_w = tb_riscv_tests.u_cpu.u_forwarding.id_s1_uses_ex_load;
-    wire        id_s1_uses_s1_ex_load_w = tb_riscv_tests.u_cpu.u_forwarding.id_s1_uses_s1_ex_load;
-    wire        id_s1_uses_mem_load_w = tb_riscv_tests.u_cpu.u_forwarding.id_s1_uses_mem_load;
-    wire        id_s1_uses_s1_mem_load_w = tb_riscv_tests.u_cpu.u_forwarding.id_s1_uses_s1_mem_load;
-    wire        repair_use_hazard_w = tb_riscv_tests.u_cpu.u_forwarding.repair_use_hazard;
-    wire        indirect_control_ex_wait_hazard_w = tb_riscv_tests.u_cpu.u_forwarding.indirect_control_ex_wait_hazard;
-    wire        conditional_control_ex_wait_hazard_w = tb_riscv_tests.u_cpu.u_forwarding.conditional_control_ex_wait_hazard;
-    wire        s1_wb_wait_hazard_w = tb_riscv_tests.u_cpu.u_forwarding.s1_wb_wait_hazard;
-    wire        mul_launch_ex_raw_hazard_w =
-        tb_riscv_tests.u_cpu.u_forwarding.mul_launch_ex_raw_hazard;
+    // The hardware no longer contains the old distributed forwarding block.
+    // Rebuild its profiling observations from the registered stage contents;
+    // these wires are simulation-only and do not feed the processor.
+    wire        id_ready_go_w   = tb_riscv_tests.u_cpu.id_ready_go_raw;
     wire        ex_ready_go_w   = tb_riscv_tests.u_cpu.ex_ready_go_w;
     wire        mem_ready_go_w  = tb_riscv_tests.u_cpu.mem_ready_go_w;
-    wire        mem_load_ready_w = tb_riscv_tests.u_cpu.mem_load_ready;
+    wire        mem_load_ready_w = tb_riscv_tests.u_cpu.ex_load_ready;
     wire        mmio_st_ld_hazard_w = tb_riscv_tests.u_cpu.mmio_st_ld_hazard;
     wire        ex_is_muldiv_w  = tb_riscv_tests.u_cpu.ex_is_muldiv;
     wire [ 2:0] ex_muldiv_op_w  = tb_riscv_tests.u_cpu.ex_muldiv_op;
-    wire        ex_muldiv_req_w = tb_riscv_tests.u_cpu.ex_muldiv_req;
+    wire [ 2:0] ex1_muldiv_op_w = tb_riscv_tests.u_cpu.ex1_muldiv_op;
+    wire        ex1_muldiv_req_w = tb_riscv_tests.u_cpu.ex1_muldiv_req;
     wire        muldiv_done_w   = tb_riscv_tests.u_cpu.muldiv_done;
     wire        muldiv_busy_w   = tb_riscv_tests.u_cpu.muldiv_busy;
     wire        id_mul_prestart_w = tb_riscv_tests.u_cpu.id_mul_prestart;
@@ -449,18 +436,21 @@ module perf_monitor (
     // MUL is accepted one stage earlier than DIV. Count the architectural
     // launch exactly once at its real interface and retain EX-start timing for
     // DIV/REM, whose op[2] bit is set.
-    wire        muldiv_ex_start_event = ex_muldiv_req_w & ex_muldiv_op_w[2]
+    wire        muldiv_ex_start_event = ex1_muldiv_req_w
+                                      & ex1_muldiv_op_w[2]
                                       & ~muldiv_busy_w & ~muldiv_done_w;
     wire        muldiv_start_event = id_mul_prestart_w
                                    | muldiv_ex_start_event;
     wire [ 2:0] muldiv_start_op_w = id_mul_prestart_w
-                                  ? id_mul_prestart_op_w : ex_muldiv_op_w;
+                                  ? id_mul_prestart_op_w : ex1_muldiv_op_w;
     wire        branch_flush_w  = tb_riscv_tests.u_cpu.branch_flush;
     wire        mem_branch_flush_w = tb_riscv_tests.u_cpu.mem_branch_flush;
     wire        frontend_branch_flush_w = tb_riscv_tests.u_cpu.frontend_branch_flush;
     wire pair_bypass_alu_to_store_data_w = ex_valid & ex_s1_valid
-        & tb_riscv_tests.u_cpu.ex_s0_alu_store_data_bypass_r
-        & ex_ready_go_w & mem_allowin_w & ~mem_branch_flush_w;
+        & tb_riscv_tests.u_cpu.ex_s1_mem_write_en
+        & (tb_riscv_tests.u_cpu.ex_s1_rs2_late_src
+           == cpu_defs::LATE_PAIR_S0)
+        & ~mem_branch_flush_w;
     wire        muldiv_profile_abort_event = muldiv_profile_active
                                            & (frontend_branch_flush_w
                                               | mem_branch_flush_w);
@@ -498,18 +488,6 @@ module perf_monitor (
     wire pred_taken_w     = tb_riscv_tests.u_cpu.if_pred_taken_out;
     wire predict_dual_w = tb_riscv_tests.u_cpu.predict_dual;
 
-    // Forwarding hit signals (slot0 rs1)
-    wire fwd_s1_ex  = tb_riscv_tests.u_cpu.u_forwarding.s0_rs1_s1_ex_hit;
-    wire fwd_s0_ex  = tb_riscv_tests.u_cpu.u_forwarding.s0_rs1_s0_ex_hit;
-    wire fwd_s1_mem = tb_riscv_tests.u_cpu.u_forwarding.s0_rs1_s1_mem_hit;
-    wire fwd_s0_mem = tb_riscv_tests.u_cpu.u_forwarding.s0_rs1_s0_mem_hit;
-    wire fwd_s1_wb  = tb_riscv_tests.u_cpu.u_forwarding.s0_rs1_s1_wb_hit;
-    wire fwd_s0_wb  = tb_riscv_tests.u_cpu.u_forwarding.s0_rs1_s0_wb_hit;
-    wire s0_rs1_s1_ex_hit_w = tb_riscv_tests.u_cpu.u_forwarding.s0_rs1_s1_ex_hit;
-    wire s0_rs1_s0_ex_hit_w = tb_riscv_tests.u_cpu.u_forwarding.s0_rs1_s0_ex_hit;
-    wire s0_rs2_s1_ex_hit_w = tb_riscv_tests.u_cpu.u_forwarding.s0_rs2_s1_ex_hit;
-    wire s0_rs2_s0_ex_hit_w = tb_riscv_tests.u_cpu.u_forwarding.s0_rs2_s0_ex_hit;
-
     // S0 load-use role classification. These mirrors are simulation-only and
     // intentionally separate rs1/rs2 so store address/data can be distinguished.
     wire [4:0] id_rs1_addr_w = tb_riscv_tests.u_cpu.id_rs1_addr;
@@ -520,11 +498,31 @@ module perf_monitor (
     wire [4:0] id_s1_rs2_addr_w = tb_riscv_tests.u_cpu.id_s1_rs2_addr;
     wire       id_s1_rs1_used_w = tb_riscv_tests.u_cpu.id_s1_rs1_used;
     wire       id_s1_rs2_used_w = tb_riscv_tests.u_cpu.id_s1_rs2_used;
+    wire [4:0] ex1_rd_w      = tb_riscv_tests.u_cpu.ex1_rd;
+    wire [4:0] ex1_s1_rd_w   = tb_riscv_tests.u_cpu.ex1_s1_rd;
     wire [4:0] ex_rd_w       = tb_riscv_tests.u_cpu.ex_rd;
     wire [4:0] ex_s1_rd_w    = tb_riscv_tests.u_cpu.ex_s1_rd;
     wire [4:0] mem_rd_w      = tb_riscv_tests.u_cpu.mem_rd;
+    wire [4:0] mem_s1_rd_w   = tb_riscv_tests.u_cpu.mem_s1_rd;
+    wire [4:0] wb_rd_w       = tb_riscv_tests.u_cpu.wb_rd;
+    wire [4:0] wb_s1_rd_w    = tb_riscv_tests.u_cpu.wb_s1_rd;
+    wire       ex1_reg_write_en_w =
+        tb_riscv_tests.u_cpu.ex1_reg_write_en;
+    wire       ex1_s1_reg_write_en_w =
+        tb_riscv_tests.u_cpu.ex1_s1_reg_write_en;
     wire       ex_reg_write_en_w = tb_riscv_tests.u_cpu.ex_reg_write_en;
     wire       ex_s1_reg_write_en_w = tb_riscv_tests.u_cpu.ex_s1_reg_write_en;
+    wire       mem_reg_write_en_w =
+        tb_riscv_tests.u_cpu.mem_reg_write_en;
+    wire       mem_s1_reg_write_en_w =
+        tb_riscv_tests.u_cpu.mem_s1_reg_write_en;
+    wire       wb_reg_write_en_w =
+        tb_riscv_tests.u_cpu.wb_reg_write_en;
+    wire       wb_s1_reg_write_en_w =
+        tb_riscv_tests.u_cpu.wb_s1_reg_write_en;
+    wire       ex1_mem_read_w = tb_riscv_tests.u_cpu.ex1_mem_read_en;
+    wire       ex1_s1_mem_read_w =
+        tb_riscv_tests.u_cpu.ex1_s1_mem_read_en;
     wire       ex_mem_read_w    = tb_riscv_tests.u_cpu.ex_mem_read_en;
     wire       ex_s1_mem_read_w = tb_riscv_tests.u_cpu.ex_s1_mem_read_en;
     wire       mem_mem_read_w   = tb_riscv_tests.u_cpu.mem_mem_read_en;
@@ -559,6 +557,108 @@ module perf_monitor (
                       == cpu_defs::CF_DIRECT;
     wire dec_is_jalr_w = tb_riscv_tests.u_cpu.dec_uop.control_flow
                        == cpu_defs::CF_INDIRECT;
+
+    // Priority-qualified forwarding observations for Slot 0 rs1.  The old
+    // report has three age buckets, so physical EX1 maps to "EX", physical
+    // EX2 maps to "MEM", and the two registered result stages share "WB".
+    wire s0_rs1_s1_ex_hit_w = id_rs1_used_w & ex1_s1_valid
+        & ex1_s1_reg_write_en_w & (ex1_s1_rd_w != 5'd0)
+        & (ex1_s1_rd_w == id_rs1_addr_w);
+    wire s0_rs1_s0_ex_hit_w = id_rs1_used_w & ex1_valid
+        & ex1_reg_write_en_w & (ex1_rd_w != 5'd0)
+        & (ex1_rd_w == id_rs1_addr_w);
+    wire s0_rs2_s1_ex_hit_w = id_rs2_used_w & ex1_s1_valid
+        & ex1_s1_reg_write_en_w & (ex1_s1_rd_w != 5'd0)
+        & (ex1_s1_rd_w == id_rs2_addr_w);
+    wire s0_rs2_s0_ex_hit_w = id_rs2_used_w & ex1_valid
+        & ex1_reg_write_en_w & (ex1_rd_w != 5'd0)
+        & (ex1_rd_w == id_rs2_addr_w);
+
+    wire fwd_rs1_ex2_s1_hit = id_rs1_used_w & ex_s1_valid
+        & ex_s1_reg_write_en_w & (ex_s1_rd_w != 5'd0)
+        & (ex_s1_rd_w == id_rs1_addr_w);
+    wire fwd_rs1_ex2_s0_hit = id_rs1_used_w & ex_valid
+        & ex_reg_write_en_w & (ex_rd_w != 5'd0)
+        & (ex_rd_w == id_rs1_addr_w);
+    wire fwd_rs1_mem_s1_hit = id_rs1_used_w & mem_s1_valid
+        & mem_s1_reg_write_en_w & (mem_s1_rd_w != 5'd0)
+        & (mem_s1_rd_w == id_rs1_addr_w);
+    wire fwd_rs1_mem_s0_hit = id_rs1_used_w & mem_valid
+        & mem_reg_write_en_w & (mem_rd_w != 5'd0)
+        & (mem_rd_w == id_rs1_addr_w);
+    wire fwd_rs1_wb_s1_hit = id_rs1_used_w & wb_s1_valid
+        & wb_s1_reg_write_en_w & (wb_s1_rd_w != 5'd0)
+        & (wb_s1_rd_w == id_rs1_addr_w);
+    wire fwd_rs1_wb_s0_hit = id_rs1_used_w & wb_valid
+        & wb_reg_write_en_w & (wb_rd_w != 5'd0)
+        & (wb_rd_w == id_rs1_addr_w);
+
+    wire fwd_s1_ex  = s0_rs1_s1_ex_hit_w;
+    wire fwd_s0_ex  = s0_rs1_s0_ex_hit_w;
+    wire fwd_s1_mem = fwd_rs1_ex2_s1_hit;
+    wire fwd_s0_mem = fwd_rs1_ex2_s0_hit;
+    wire fwd_s1_wb  = fwd_rs1_mem_s1_hit
+                    | (~fwd_rs1_mem_s1_hit & ~fwd_rs1_mem_s0_hit
+                       & fwd_rs1_wb_s1_hit);
+    wire fwd_s0_wb  = fwd_rs1_mem_s0_hit
+                    | (~fwd_rs1_mem_s1_hit & ~fwd_rs1_mem_s0_hit
+                       & ~fwd_rs1_wb_s1_hit & fwd_rs1_wb_s0_hit);
+
+    wire load_in_ex_w    = ex1_valid & ex1_mem_read_w;
+    wire load_in_s1_ex_w = ex1_s1_valid & ex1_s1_mem_read_w;
+    wire load_in_mem_w   = ex_valid & ex_mem_read_w;
+    wire load_in_s1_mem_w = ex_s1_valid & ex_s1_mem_read_w;
+
+    wire id_s0_uses_ex_load_w =
+        (id_rs1_used_w & (id_rs1_addr_w == ex1_rd_w))
+      | (id_rs2_used_w & (id_rs2_addr_w == ex1_rd_w));
+    wire id_s0_uses_s1_ex_load_w =
+        (id_rs1_used_w & (id_rs1_addr_w == ex1_s1_rd_w))
+      | (id_rs2_used_w & (id_rs2_addr_w == ex1_s1_rd_w));
+    wire id_s0_uses_mem_load_w =
+        (id_rs1_used_w & (id_rs1_addr_w == ex_rd_w))
+      | (id_rs2_used_w & (id_rs2_addr_w == ex_rd_w));
+    wire id_s0_uses_s1_mem_load_w =
+        (id_rs1_used_w & (id_rs1_addr_w == ex_s1_rd_w))
+      | (id_rs2_used_w & (id_rs2_addr_w == ex_s1_rd_w));
+    wire id_s1_uses_ex_load_w =
+        (id_s1_rs1_used_w & (id_s1_rs1_addr_w == ex1_rd_w))
+      | (id_s1_rs2_used_w & (id_s1_rs2_addr_w == ex1_rd_w));
+    wire id_s1_uses_s1_ex_load_w =
+        (id_s1_rs1_used_w & (id_s1_rs1_addr_w == ex1_s1_rd_w))
+      | (id_s1_rs2_used_w & (id_s1_rs2_addr_w == ex1_s1_rd_w));
+    wire id_s1_uses_mem_load_w =
+        (id_s1_rs1_used_w & (id_s1_rs1_addr_w == ex_rd_w))
+      | (id_s1_rs2_used_w & (id_s1_rs2_addr_w == ex_rd_w));
+    wire id_s1_uses_s1_mem_load_w =
+        (id_s1_rs1_used_w & (id_s1_rs1_addr_w == ex_s1_rd_w))
+      | (id_s1_rs2_used_w & (id_s1_rs2_addr_w == ex_s1_rd_w));
+
+    wire load_use_hazard_w =
+        (load_in_ex_w & (ex1_rd_w != 5'd0)
+         & (id_s0_uses_ex_load_w
+            | (id_s1_valid & id_s1_uses_ex_load_w)))
+      | (load_in_s1_ex_w & (ex1_s1_rd_w != 5'd0)
+         & (id_s0_uses_s1_ex_load_w
+            | (id_s1_valid & id_s1_uses_s1_ex_load_w)))
+      | (load_in_mem_w & (ex_rd_w != 5'd0)
+         & (id_s0_uses_mem_load_w
+            | (id_s1_valid & id_s1_uses_mem_load_w)))
+      | (load_in_s1_mem_w & (ex_s1_rd_w != 5'd0)
+         & (id_s0_uses_s1_mem_load_w
+            | (id_s1_valid & id_s1_uses_s1_mem_load_w)));
+
+    wire mul_launch_ex_raw_hazard_w =
+        tb_riscv_tests.u_cpu.u_id_forwarding_ex2.mul_rs1_ex_match
+      | tb_riscv_tests.u_cpu.u_id_forwarding_ex2.mul_rs2_ex_match;
+    wire repair_use_hazard_w = ~id_ready_go_w
+                             & ~load_use_hazard_w
+                             & ~mul_launch_ex_raw_hazard_w;
+    wire conditional_control_ex_wait_hazard_w = repair_use_hazard_w
+                                              & dec_is_branch_w;
+    wire indirect_control_ex_wait_hazard_w = repair_use_hazard_w
+                                           & dec_is_jalr_w;
+    wire s1_wb_wait_hazard_w = 1'b0;
 
     localparam [6:0] OP_R_TYPE = 7'b0110011;
     localparam [6:0] OP_I_ALU  = 7'b0010011;
@@ -638,26 +738,46 @@ module perf_monitor (
                             & ~if_pair_raw
                             & if_s1_unsupported;
 
-    wire s0_rs1_ex_load_dep = id_rs1_used_w & ex_valid & ex_mem_read_w
-                            & (ex_rd_w != 5'd0) & (ex_rd_w == id_rs1_addr_w);
-    wire s0_rs2_ex_load_dep = id_rs2_used_w & ex_valid & ex_mem_read_w
-                            & (ex_rd_w != 5'd0) & (ex_rd_w == id_rs2_addr_w);
-    wire s0_rs1_s1_ex_load_dep = id_rs1_used_w & tb_riscv_tests.u_cpu.ex_s1_valid & ex_s1_mem_read_w
-                               & (ex_s1_rd_w != 5'd0) & (ex_s1_rd_w == id_rs1_addr_w);
-    wire s0_rs2_s1_ex_load_dep = id_rs2_used_w & tb_riscv_tests.u_cpu.ex_s1_valid & ex_s1_mem_read_w
-                               & (ex_s1_rd_w != 5'd0) & (ex_s1_rd_w == id_rs2_addr_w);
-    wire s0_rs1_mem_load_dep = id_rs1_used_w & mem_valid & mem_mem_read_w
-                             & (mem_rd_w != 5'd0) & (mem_rd_w == id_rs1_addr_w);
-    wire s0_rs2_mem_load_dep = id_rs2_used_w & mem_valid & mem_mem_read_w
-                             & (mem_rd_w != 5'd0) & (mem_rd_w == id_rs2_addr_w);
+    wire s0_rs1_ex_load_dep = id_rs1_used_w & load_in_ex_w
+                            & (ex1_rd_w != 5'd0)
+                            & (ex1_rd_w == id_rs1_addr_w);
+    wire s0_rs2_ex_load_dep = id_rs2_used_w & load_in_ex_w
+                            & (ex1_rd_w != 5'd0)
+                            & (ex1_rd_w == id_rs2_addr_w);
+    wire s0_rs1_s1_ex_load_dep = id_rs1_used_w & load_in_s1_ex_w
+                               & (ex1_s1_rd_w != 5'd0)
+                               & (ex1_s1_rd_w == id_rs1_addr_w);
+    wire s0_rs2_s1_ex_load_dep = id_rs2_used_w & load_in_s1_ex_w
+                               & (ex1_s1_rd_w != 5'd0)
+                               & (ex1_s1_rd_w == id_rs2_addr_w);
+    wire s0_rs1_mem_load_dep = id_rs1_used_w & load_in_mem_w
+                             & (ex_rd_w != 5'd0)
+                             & (ex_rd_w == id_rs1_addr_w);
+    wire s0_rs2_mem_load_dep = id_rs2_used_w & load_in_mem_w
+                             & (ex_rd_w != 5'd0)
+                             & (ex_rd_w == id_rs2_addr_w);
+    wire s0_rs1_s1_mem_load_dep = id_rs1_used_w & load_in_s1_mem_w
+                                & (ex_s1_rd_w != 5'd0)
+                                & (ex_s1_rd_w == id_rs1_addr_w);
+    wire s0_rs2_s1_mem_load_dep = id_rs2_used_w & load_in_s1_mem_w
+                                & (ex_s1_rd_w != 5'd0)
+                                & (ex_s1_rd_w == id_rs2_addr_w);
 
-    wire s0_rs1_load_dep = s0_rs1_ex_load_dep | s0_rs1_s1_ex_load_dep | s0_rs1_mem_load_dep;
-    wire s0_rs2_load_dep = s0_rs2_ex_load_dep | s0_rs2_s1_ex_load_dep | s0_rs2_mem_load_dep;
+    wire s0_rs1_load_dep = s0_rs1_ex_load_dep
+                         | s0_rs1_s1_ex_load_dep
+                         | s0_rs1_mem_load_dep
+                         | s0_rs1_s1_mem_load_dep;
+    wire s0_rs2_load_dep = s0_rs2_ex_load_dep
+                         | s0_rs2_s1_ex_load_dep
+                         | s0_rs2_mem_load_dep
+                         | s0_rs2_s1_mem_load_dep;
     wire s0_load_dep = s0_rs1_load_dep | s0_rs2_load_dep;
-    wire s0_mem_load_dep = s0_rs1_mem_load_dep | s0_rs2_mem_load_dep;
+    wire s0_mem_load_dep = s0_rs1_mem_load_dep | s0_rs2_mem_load_dep
+                         | s0_rs1_s1_mem_load_dep
+                         | s0_rs2_s1_mem_load_dep;
     wire s0_load_use_event = id_valid & load_use_hazard_w & s0_load_dep;
     wire s0_mem_ready_event = id_valid & ~(load_in_ex_w | load_in_s1_ex_w)
-                            & s0_mem_load_dep & mem_ready_go_w;
+                            & s0_mem_load_dep & mem_load_ready_w;
 
     wire dec_is_ordinary_alu = dec_reg_write_w & (dec_wb_sel_w == 2'b00)
                              & ~dec_mem_read_w & ~dec_mem_write_w

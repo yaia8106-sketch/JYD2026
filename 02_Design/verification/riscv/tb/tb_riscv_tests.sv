@@ -625,8 +625,9 @@ module tb_riscv_tests;
         if (!rst_n)
             same_pair_store_data_bypass_count <= 0;
         else if (u_cpu.ex_valid && u_cpu.ex_s1_valid
-                 && u_cpu.ex_s0_alu_store_data_bypass_r
-                 && u_cpu.ex_ready_go_w && u_cpu.mem_allowin
+                 && u_cpu.ex_s1_mem_write_en
+                 && (u_cpu.ex_s1_rs2_late_src
+                     == cpu_defs::LATE_PAIR_S0)
                  && !u_cpu.mem_branch_flush)
             same_pair_store_data_bypass_count
                 <= same_pair_store_data_bypass_count + 1;

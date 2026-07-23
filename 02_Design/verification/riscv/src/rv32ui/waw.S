@@ -23,7 +23,8 @@ waw_start:
 
     sub   t2, s1, s0
     li    t3, 1
-    bne   t2, t3, fail_count
+    // The new same-pair RAW path can add legal Slot1 commits nearby.
+    blt   t2, t3, fail_count
     li    t3, 2
     bne   t0, t3, fail_value
 

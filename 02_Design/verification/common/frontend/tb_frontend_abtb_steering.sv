@@ -139,6 +139,14 @@ module tb_frontend_abtb_steering;
         enc_auipc = {imm20, rd, 7'b0010111};
     endfunction
 
+    function automatic logic [31:0] enc_lw(
+        input logic [4:0] rd,
+        input logic [4:0] rs1,
+        input integer imm
+    );
+        enc_lw = {imm[11:0], rs1, 3'b010, rd, 7'b0000011};
+    endfunction
+
     function automatic logic [31:0] enc_jal(
         input logic [4:0] rd,
         input integer imm
@@ -980,11 +988,12 @@ module tb_frontend_abtb_steering;
             lead_pc = BASE + PHT_STALL_INDEX * 4;
             branch_pc = lead_pc + 32'd4;
             clear_program();
-            // The RAW dependency prevents dual issue. Pulling cache_ready low
-            // while the ADDI is in EX lets the following branch enter EX on
-            // the next edge and then remain there behind the occupied MEM
-            // stage.
-            irom[PHT_STALL_INDEX] = enc_addi(5'd7, 5'd0, 0);
+            // A same-pair LOAD-use remains unsupported, so this RAW dependency
+            // prevents dual issue. Pulling cache_ready low after the LOAD
+            // leaves EX2 lets the following branch enter EX2
+            // on that edge and then remain there until the shared completion
+            // condition is released.
+            irom[PHT_STALL_INDEX] = enc_lw(5'd7, 5'd0, 0);
             irom[PHT_STALL_INDEX + 1] =
                 enc_branch(3'b000, 5'd7, 5'd0, 12);
             reset_cpu();
@@ -1011,15 +1020,15 @@ module tb_frontend_abtb_steering;
                     @(negedge clk);
                     if (dut.ex_valid && dut.ex_pc == branch_pc
                         && dut.ex_is_conditional_control
-                        && !dut.mem_allowin) begin
+                        && !dut.ex_ready_go_w) begin
                         held_ghr =
                             dut.u_frontend_stage1_direction.committed_ghr;
                         updates_before = dut.stage1_confirmed_branch_count;
                         repeat (4) begin
                             @(negedge clk);
                             check(dut.ex_valid && dut.ex_pc == branch_pc
-                                  && !dut.mem_allowin,
-                                  "backend stall did not hold branch in EX");
+                                  && !dut.ex_ready_go_w,
+                                  "completion stall did not hold branch in EX2");
                             check(!dut.stage1_direction_update_valid,
                                   "stalled branch repeated PHT/GHR update");
                             check(dut.stage1_confirmed_branch_count
@@ -1034,7 +1043,7 @@ module tb_frontend_abtb_steering;
                 end
             end
             check(found_held_branch,
-                  "branch did not remain in EX behind stalled MEM stage");
+                  "branch did not remain in EX2 while completion was stalled");
 
             cache_ready = 1'b1;
             #1;

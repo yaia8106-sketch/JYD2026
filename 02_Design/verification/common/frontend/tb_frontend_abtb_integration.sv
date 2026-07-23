@@ -82,6 +82,15 @@ module tb_frontend_abtb_integration;
     logic ref_id_s1_hit;
     logic ref_id_s1_way;
 
+    logic ref_ex1_valid;
+    logic ref_ex1_s1_valid;
+    logic [31:0] ref_ex1_token;
+    logic [31:0] ref_ex1_s1_token;
+    logic ref_ex1_hit;
+    logic ref_ex1_way;
+    logic ref_ex1_s1_hit;
+    logic ref_ex1_s1_way;
+
     logic ref_ex_valid;
     logic ref_ex_s1_valid;
     logic [31:0] ref_ex_token;
@@ -715,6 +724,7 @@ module tb_frontend_abtb_integration;
         logic [31:0] update_count;
         begin
             @(negedge clk);
+            #1;
             cache_ready = 1'b0;
             found = 1'b0;
             begin : wait_stall_loop
@@ -774,6 +784,7 @@ module tb_frontend_abtb_integration;
                       && dut.abtb_ex_update_count == update_count,
                       "stalled EX instruction escaped the shared predictor fire qualification");
             end
+            #1;
             cache_ready = 1'b1;
         end
     endtask
@@ -785,6 +796,8 @@ module tb_frontend_abtb_integration;
             ref_next_token <= 32'd1;
             ref_id_valid <= 1'b0;
             ref_id_s1_valid <= 1'b0;
+            ref_ex1_valid <= 1'b0;
+            ref_ex1_s1_valid <= 1'b0;
             ref_ex_valid <= 1'b0;
             ref_ex_s1_valid <= 1'b0;
             redirect_clear_observe <= 1'b0;
@@ -879,18 +892,33 @@ module tb_frontend_abtb_integration;
                 end
             end
 
-            if (dut.ex_flush) begin
+            if (dut.ex1_flush) begin
+                ref_ex1_valid <= 1'b0;
+                ref_ex1_s1_valid <= 1'b0;
+            end else if (dut.ex1_allowin) begin
+                ref_ex1_valid <= ref_id_valid && dut.id_ready_go;
+                ref_ex1_s1_valid <= ref_id_s1_valid && dut.id_ready_go;
+                ref_ex1_token <= ref_id_token;
+                ref_ex1_hit <= ref_id_hit;
+                ref_ex1_way <= ref_id_way;
+                ref_ex1_s1_token <= ref_id_s1_token;
+                ref_ex1_s1_hit <= ref_id_s1_hit;
+                ref_ex1_s1_way <= ref_id_s1_way;
+            end
+
+            if (dut.ex2_flush) begin
                 ref_ex_valid <= 1'b0;
                 ref_ex_s1_valid <= 1'b0;
-            end else if (dut.ex_allowin) begin
-                ref_ex_valid <= ref_id_valid && dut.id_ready_go;
-                ref_ex_s1_valid <= ref_id_s1_valid && dut.id_ready_go;
-                ref_ex_token <= ref_id_token;
-                ref_ex_hit <= ref_id_hit;
-                ref_ex_way <= ref_id_way;
-                ref_ex_s1_token <= ref_id_s1_token;
-                ref_ex_s1_hit <= ref_id_s1_hit;
-                ref_ex_s1_way <= ref_id_s1_way;
+            end else if (dut.ex2_allowin) begin
+                ref_ex_valid <= ref_ex1_valid && dut.ex1_ready_go_w;
+                ref_ex_s1_valid <= ref_ex1_s1_valid
+                                 && dut.ex1_ready_go_w;
+                ref_ex_token <= ref_ex1_token;
+                ref_ex_hit <= ref_ex1_hit;
+                ref_ex_way <= ref_ex1_way;
+                ref_ex_s1_token <= ref_ex1_s1_token;
+                ref_ex_s1_hit <= ref_ex1_s1_hit;
+                ref_ex_s1_way <= ref_ex1_s1_way;
             end
         end
     end
@@ -1018,13 +1046,13 @@ module tb_frontend_abtb_integration;
                 check(ref_ex_valid
                       && dut.ex_abtb_hit == ref_ex_hit
                       && dut.ex_abtb_way == ref_ex_way,
-                      "slot0 ID/EX token or sidecar metadata mismatch");
+                      "slot0 EX2 token or sidecar metadata mismatch");
             end
             if (dut.ex_s1_valid) begin
                 check(ref_ex_s1_valid
                       && dut.ex_s1_abtb_hit == ref_ex_s1_hit
                       && dut.ex_s1_abtb_way == ref_ex_s1_way,
-                      "slot1 ID/EX token or sidecar metadata mismatch");
+                      "slot1 EX2 token or sidecar metadata mismatch");
             end
 
             if (wrong_path_watch && dut.abtb_update_valid

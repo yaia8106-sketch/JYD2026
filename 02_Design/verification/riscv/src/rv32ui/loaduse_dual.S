@@ -28,7 +28,8 @@ load_start:
 
     sub   t4, s1, s0
     li    t5, 1
-    bne   t4, t5, fail_count
+    // The adjacent load-use path and RAW ALU chains may add legal pairs.
+    blt   t4, t5, fail_count
     li    t5, 42
     bne   t3, t5, fail_value
 

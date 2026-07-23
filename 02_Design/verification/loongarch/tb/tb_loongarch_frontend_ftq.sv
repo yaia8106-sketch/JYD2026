@@ -303,9 +303,9 @@ module tb_loongarch_frontend_ftq;
         run_pair_case("LoongArch store-address RAW remains blocked",
                       add_w(5'd9, 5'd4, 5'd5),
                       st_w(5'd3, 5'd9), 1'b0);
-        run_pair_case("LoongArch branch rd-field RAW remains blocked",
+        run_pair_case("LoongArch ALU-to-branch rd-field RAW uses EX2",
                       add_w(5'd3, 5'd4, 5'd5),
-                      beq(5'd9, 5'd3), 1'b0);
+                      beq(5'd9, 5'd3), 1'b1);
         run_pair_case("r0 destination does not create a false RAW",
                       add_w(5'd0, 5'd4, 5'd5),
                       add_w(5'd6, 5'd0, 5'd8), 1'b1);

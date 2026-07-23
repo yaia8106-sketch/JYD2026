@@ -33,7 +33,7 @@ RVTEST_CODE_BEGIN
     addi  s1, s1, 0
     sub   t2, s1, s0
     li    t3, 1
-    bne   t2, t3, fail_nt_count
+    blt   t2, t3, fail_nt_count
 
     // Part 2: slot0 ALU + slot1 branch, taken. Fall-through instructions are
     // younger than the slot1 branch and must be flushed by delayed replay.
@@ -64,7 +64,7 @@ s1_taken:
     addi  s1, s1, 0
     sub   t2, s1, s0
     li    t3, 1
-    bne   t2, t3, fail_taken_count
+    blt   t2, t3, fail_taken_count
     bnez  t4, fail_taken
 
     // Part 3: slot0 LSU + slot1 branch is now legal. The taken slot1 branch
@@ -91,7 +91,7 @@ lsu_s1_branch_target:
     addi  s1, s1, 0
     sub   t2, s1, s0
     li    t3, 1
-    bne   t2, t3, fail_lsu_count
+    blt   t2, t3, fail_lsu_count
     bnez  t4, fail_lsu_count
 
 pass:

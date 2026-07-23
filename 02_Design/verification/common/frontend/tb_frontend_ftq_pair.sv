@@ -430,18 +430,38 @@ module tb_frontend_ftq_pair;
                       r_add(5'd5, 5'd1, 5'd2),
                       m_inst(5'd6, 5'd3, 5'd4, 3'b000),
                       1'b0);
-        run_pair_case("RAW rs1 dependency",
+        run_pair_case("ALU to ALU rs1 RAW uses EX2 local result",
                       r_add(5'd5, 5'd0, 5'd0),
                       r_add(5'd6, 5'd5, 5'd0),
-                      1'b0);
-        run_pair_case("RAW rs2 dependency",
+                      1'b1);
+        run_pair_case("ALU to ALU rs2 RAW uses EX2 local result",
                       r_add(5'd5, 5'd0, 5'd0),
                       r_add(5'd6, 5'd0, 5'd5),
+                      1'b1);
+        run_pair_case("ALU to branch RAW uses EX2 local result",
+                      r_add(5'd5, 5'd0, 5'd0),
+                      beq_inst(5'd5, 5'd3),
+                      1'b1);
+        run_pair_case("ALU to JALR target RAW uses EX2 local result",
+                      r_add(5'd5, 5'd0, 5'd0),
+                      jalr_inst(5'd0, 5'd5),
+                      1'b1);
+        run_pair_case("load to ALU RAW remains blocked",
+                      lw_inst(5'd5, 5'd3),
+                      r_add(5'd6, 5'd5, 5'd0),
+                      1'b0);
+        run_pair_case("load to store-data RAW remains blocked",
+                      lw_inst(5'd5, 5'd3),
+                      sw_inst(5'd5, 5'd4),
                       1'b0);
         run_pair_case("ALU to store-data RAW bypass",
                       r_add(5'd5, 5'd1, 5'd2),
                       sw_inst(5'd5, 5'd3),
                       1'b1);
+        run_pair_case("ALU to load-address RAW remains blocked",
+                      r_add(5'd5, 5'd1, 5'd2),
+                      lw_inst(5'd3, 5'd5),
+                      1'b0);
         run_pair_case("ALU to store-address RAW remains blocked",
                       r_add(5'd5, 5'd1, 5'd2),
                       sw_inst(5'd3, 5'd5),

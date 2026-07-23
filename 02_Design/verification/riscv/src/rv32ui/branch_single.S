@@ -28,7 +28,8 @@ branch_taken:
 
     sub   t2, s1, s0
     li    t3, 1
-    bne   t2, t3, fail_count
+    // RAW ALU chains in the window may now dual issue as well.
+    blt   t2, t3, fail_count
     bnez  t0, fail_value
 
 pass:

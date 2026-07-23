@@ -32,8 +32,12 @@ module tb_loongarch_cpu_smoke;
     logic [31:0] mmio_wdata;
 
     logic [31:0] data_mem [0:DATA_WORDS-1];
+    logic cache_req_q;
+    logic cache_wr_q;
     logic [31:0] cache_addr_q;
+    logic [3:0] cache_wea_q;
     logic bad_path_committed;
+    logic bad_path_store_committed;
     integer cache_store_count;
     integer cache_load_count;
 
@@ -121,11 +125,11 @@ module tb_loongarch_cpu_smoke;
         end
     end
 
-    // One-cycle request-address capture models the EX->MEM alignment supplied
-    // by the real DCache.  The smoke program uses an aligned ST.W/LD.W pair;
-    // byte enables are still honored so accidental lane changes are visible.
+    // The request address/strobes are sampled at the EX1/EX2 edge. Store data
+    // is finalized during EX2 and is therefore consumed with the registered
+    // request one cycle later, matching the real DCache.
     wire [31:0] cache_wdata_aligned =
-        cache_wdata << {cache_addr[1:0], 3'b0};
+        cache_wdata << {cache_addr_q[1:0], 3'b0};
     wire [$clog2(DATA_WORDS)-1:0] cache_word_index = cache_addr[9:2];
     wire [$clog2(DATA_WORDS)-1:0] cache_word_index_q = cache_addr_q[9:2];
 
@@ -135,20 +139,27 @@ module tb_loongarch_cpu_smoke;
     always @(posedge clk) begin
         if (!rst_n) begin
             cache_addr_q <= 32'd0;
+            cache_req_q <= 1'b0;
+            cache_wr_q <= 1'b0;
+            cache_wea_q <= 4'd0;
             cache_store_count <= 0;
             cache_load_count <= 0;
-        end else if (cache_req) begin
+        end else begin
+            cache_req_q <= cache_req & ~cache_flush;
+            cache_wr_q <= cache_wr;
             cache_addr_q <= cache_addr;
-            if (cache_wr) begin
+            cache_wea_q <= cache_wea;
+
+            if (cache_req_q && cache_wr_q && !cache_flush) begin
                 cache_store_count <= cache_store_count + 1;
                 for (int byte_lane = 0; byte_lane < 4; byte_lane++) begin
-                    if (cache_wea[byte_lane])
-                        data_mem[cache_word_index][byte_lane*8 +: 8]
+                    if (cache_wea_q[byte_lane])
+                        data_mem[cache_word_index_q][byte_lane*8 +: 8]
                             <= cache_wdata_aligned[byte_lane*8 +: 8];
                 end
-            end else begin
-                cache_load_count <= cache_load_count + 1;
             end
+            if (cache_req && !cache_wr)
+                cache_load_count <= cache_load_count + 1;
         end
     end
 
@@ -336,6 +347,7 @@ module tb_loongarch_cpu_smoke;
     always @(posedge clk) begin
         if (!rst_n) begin
             bad_path_committed <= 1'b0;
+            bad_path_store_committed <= 1'b0;
         end else begin
             if (u_cpu.wb_valid && u_cpu.wb_reg_write_en
                 && (u_cpu.wb_rd == 5'd31)
@@ -345,6 +357,8 @@ module tb_loongarch_cpu_smoke;
                 && (u_cpu.wb_s1_rd == 5'd31)
                 && (u_cpu.wb_s1_write_data != 32'd1))
                 bad_path_committed <= 1'b1;
+            if (|mmio_wea)
+                bad_path_store_committed <= 1'b1;
         end
     end
 
@@ -355,6 +369,7 @@ module tb_loongarch_cpu_smoke;
         irom_data = {LOONGARCH_NOP, LOONGARCH_NOP};
         cache_addr_q = 32'd0;
         bad_path_committed = 1'b0;
+        bad_path_store_committed = 1'b0;
         cache_store_count = 0;
         cache_load_count = 0;
 
@@ -375,9 +390,10 @@ module tb_loongarch_cpu_smoke;
         put_instruction(32'h18, addi_w(5'd7, 5'd6, 12'd1));
         put_instruction(32'h1c, nor_op(5'd8, 5'd7, 5'd0));
 
-        // Taken branch must squash the first bad-path marker.
+        // Taken Slot-0 branch and younger Slot-1 store share EX2.  The branch
+        // decision must suppress the store before it can reach MMIO.
         put_instruction(32'h20, beq(5'd7, 5'd7, 16'd2));
-        put_instruction(32'h24, addi_w(5'd31, 5'd0, 12'h02a));
+        put_instruction(32'h24, st_w(5'd7, 5'd0, 12'd0));
 
         // Ordinary JIRL checks target formation and link writeback.
         put_instruction(32'h28, pcaddu12i(5'd10, 20'd0));
@@ -413,16 +429,36 @@ module tb_loongarch_cpu_smoke;
         put_instruction(32'h70, add_w(5'd16, 5'd0, 5'd7));
 
         // rd==rj requires the old r15 value for the target, then writes link.
+        // Jump to an aligned pair at 0x88 so its same-pair dependencies are
+        // deterministic rather than relying on cross-packet pairing.
         put_instruction(32'h74, pcaddu12i(5'd15, 20'd0));
-        put_instruction(32'h78, addi_w(5'd15, 5'd15, 12'd16));
+        put_instruction(32'h78, addi_w(5'd15, 5'd15, 12'd20));
         put_instruction(32'h7c, jirl(5'd15, 5'd15, 16'd0));
         put_instruction(32'h80, addi_w(5'd31, 5'd0, 12'h02c));
+        put_instruction(32'h84, addi_w(5'd31, 5'd0, 12'h02f));
 
-        // BL must write its architectural link to r1 and squash slot1.
-        put_instruction(32'h84, branch_link(26'd2));
-        put_instruction(32'h88, addi_w(5'd31, 5'd0, 12'h02d));
-        put_instruction(32'h8c, addi_w(5'd31, 5'd0, 12'd1));
-        put_instruction(32'h90, branch_always(26'd0));
+        // Same-pair ALU->ALU, same-pair ALU->store-data, then an adjacent
+        // load-use followed by a consumer->producer dependency chain.
+        put_instruction(32'h88, addi_w(5'd23, 5'd0, 12'd9));
+        put_instruction(32'h8c, add_w(5'd24, 5'd23, 5'd7));
+        put_instruction(32'h90, addi_w(5'd26, 5'd0, 12'h055));
+        put_instruction(32'h94, st_w(5'd26, 5'd12, 12'd12));
+        put_instruction(32'h98, ld_w(5'd27, 5'd12, 12'd12));
+        put_instruction(32'h9c, add_w(5'd28, 5'd27, 5'd7));
+        put_instruction(32'ha0, add_w(5'd29, 5'd28, 5'd7));
+        put_instruction(32'ha4, add_w(5'd30, 5'd29, 5'd7));
+
+        // Slot-1 branch consumes the Slot-0 ALU result in the same pair.
+        // If that local EX2 path is wrong, the bad-path marker at 0xb0 retires.
+        put_instruction(32'ha8, addi_w(5'd9, 5'd0, 12'd1));
+        put_instruction(32'hac, bne(5'd9, 5'd0, 16'd2));
+        put_instruction(32'hb0, addi_w(5'd31, 5'd0, 12'h02e));
+
+        // BL must write its architectural link to r1 and squash its follower.
+        put_instruction(32'hb4, branch_link(26'd2));
+        put_instruction(32'hb8, addi_w(5'd31, 5'd0, 12'h02d));
+        put_instruction(32'hbc, addi_w(5'd31, 5'd0, 12'd1));
+        put_instruction(32'hc0, branch_always(26'd0));
 
         check(irom[32'h08 >> 2][14] == 1'b1,
               "CPU MUL leak guard must set inst[14]");
@@ -451,6 +487,8 @@ module tb_loongarch_cpu_smoke;
 
         check(!bad_path_committed,
               "a squashed branch/JIRL bad-path marker reached writeback");
+        check(!bad_path_store_committed,
+              "a younger same-pair store survived an older taken branch");
         check(u_cpu.u_regfile.regs[3] == 32'd21,
               "MUL.W architectural result");
         check(u_cpu.u_regfile.regs[4] == 32'd22,
@@ -485,7 +523,23 @@ module tb_loongarch_cpu_smoke;
               "r0 write suppression result");
         check(u_cpu.u_regfile.regs[15] == (RESET_PC + 32'h80),
               "JIRL rd==rj source-before-destination result");
-        check(u_cpu.u_regfile.regs[1] == (RESET_PC + 32'h88),
+        check(u_cpu.u_regfile.regs[23] == 32'd9,
+              "same-pair producer architectural result");
+        check(u_cpu.u_regfile.regs[24] == 32'd17,
+              "same-pair ALU-to-ALU forwarding result");
+        check(data_mem[8'h43] == 32'h0000_0055,
+              "same-pair ALU-to-store-data forwarding result");
+        check(u_cpu.u_regfile.regs[27] == 32'h0000_0055,
+              "load after same-pair forwarded store");
+        check(u_cpu.u_regfile.regs[28] == 32'd93,
+              "adjacent load-use forwarding result");
+        check(u_cpu.u_regfile.regs[29] == 32'd101,
+              "consumer-to-producer first chained result");
+        check(u_cpu.u_regfile.regs[30] == 32'd109,
+              "consumer-to-producer same-pair chained result");
+        check(u_cpu.u_regfile.regs[9] == 32'd1,
+              "same-pair ALU-to-branch producer result");
+        check(u_cpu.u_regfile.regs[1] == (RESET_PC + 32'hb8),
               "BL fixed-r1 link result");
         check(u_cpu.u_regfile.regs[31] == 32'd1,
               "completion marker register");

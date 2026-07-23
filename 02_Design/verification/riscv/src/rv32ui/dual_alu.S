@@ -24,7 +24,10 @@ dual_start:
 
     sub   t2, s1, s0
     li    t3, 1
-    bne   t2, t3, fail_count
+    // Same-pair RAW chains are now legal, so the measured window may contain
+    // additional valid Slot1 commits.  The intended independent pair must
+    // still contribute at least one.
+    blt   t2, t3, fail_count
 
     li    t3, 12
     bne   t4, t3, fail_value
