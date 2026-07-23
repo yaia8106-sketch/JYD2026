@@ -1826,9 +1826,12 @@ module cpu_top
             $fatal(1, "MUL entered EX with an unsupported WB-repair tag");
         if (rst_n && mem_valid && mem_is_mul && !muldiv_done)
             $fatal(1, "MEM MUL token is not aligned with registered result");
+        // A completed MUL may remain owned by EX while an older MEM token
+        // blocks the EX-to-MEM transfer.  DIV is also EX-owned until its
+        // completion handshake, so both EX MulDiv forms are legal owners.
         if (rst_n && muldiv_done
                   && !((mem_valid && mem_is_mul)
-                       || (ex_valid && ex_is_muldiv && ex_muldiv_op[2])))
+                       || (ex_valid && ex_is_muldiv)))
             $fatal(1, "Completed MulDiv result has no matching pipeline owner");
     end
 `endif
