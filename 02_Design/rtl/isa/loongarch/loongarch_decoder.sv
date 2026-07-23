@@ -86,6 +86,7 @@ module loongarch_decoder
     wire inst_rdcntvh = (op17 == 17'd0) && (rk == 5'd25)
                        && (rj == 5'd0);
     wire inst_counter = inst_rdcntvl | inst_rdcntid | inst_rdcntvh;
+    wire inst_cpucfg = (op17 == 17'd0) && (rk == 5'd27);
 
     wire is_alu_rr = inst_add_w | inst_sub_w | inst_slt | inst_sltu
                    | inst_nor | inst_and | inst_or | inst_xor
@@ -133,7 +134,19 @@ module loongarch_decoder
         uop.block_younger = 1'b1;
         uop.serializing = 1'b1;
 
-        if (inst_counter) begin
+        if (inst_cpucfg) begin
+            uop.exec_unit = EXEC_PRIV;
+            uop.src0_addr = rj;
+            uop.src0_used = 1'b1;
+            uop.dst_addr = rd;
+            uop.dst_write = 1'b1;
+            uop.wb_src = WB_EXEC;
+            uop.priv_op = PRIV_CPUCFG;
+            uop.exception = EXCEPTION_NONE;
+            uop.lane_mask = 2'b01;
+            uop.block_younger = 1'b1;
+            uop.serializing = 1'b1;
+        end else if (inst_counter) begin
             uop.exec_unit = EXEC_PRIV;
             uop.dst_addr = inst_rdcntid ? rj : rd;
             uop.dst_write = 1'b1;

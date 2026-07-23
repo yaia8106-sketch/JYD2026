@@ -100,7 +100,10 @@ package cpu_defs;
         PRIV_RETURN  = 3'b011,
         // LoongArch stable-counter reads share the privileged result path but
         // are not CSR accesses and remain legal outside PLV0.
-        PRIV_COUNTER = 3'b100
+        PRIV_COUNTER = 3'b100,
+        // CPUCFG also reuses the privileged result path, but is an
+        // unprivileged, read-only architectural configuration query.
+        PRIV_CPUCFG  = 3'b101
     } priv_op_t;
 
     typedef enum logic [2:0] {

@@ -111,6 +111,13 @@ module tb_loongarch_privileged;
         enc_csr = {8'h04, addr, rj, rd};
     endfunction
 
+    function automatic logic [31:0] enc_cpucfg(
+        input logic [4:0] rj,
+        input logic [4:0] rd
+    );
+        enc_cpucfg = {17'd0, 5'd27, rj, rd};
+    endfunction
+
     task automatic check(input logic condition, input string message);
         if (condition !== 1'b1)
             $fatal(1, "[FAIL] %s", message);
@@ -133,8 +140,14 @@ module tb_loongarch_privileged;
         irom['h10 >> 2] = enc_i12(12'd7, 5'd0, 5'd4);
         irom['h14 >> 2] = enc_csr(14'h000, 5'd4, 5'd3); // CRMD xchg
         irom['h18 >> 2] = 32'h002b_0000;                // SYSCALL
-        irom['h1c >> 2] = enc_i12(12'd1, 5'd0, 5'd31);
-        irom['h20 >> 2] = 32'h5000_0000;
+        // ERTN resumes in PLV3. Exercise CPUCFG there as an unprivileged
+        // register-indexed query, including the producer-to-consumer hazard.
+        irom['h1c >> 2] = enc_i12(12'h010, 5'd0, 5'd15);
+        irom['h20 >> 2] = enc_cpucfg(5'd15, 5'd16);
+        irom['h24 >> 2] = enc_i12(12'h001, 5'd0, 5'd15);
+        irom['h28 >> 2] = enc_cpucfg(5'd15, 5'd17);
+        irom['h2c >> 2] = enc_i12(12'd1, 5'd0, 5'd31);
+        irom['h30 >> 2] = 32'h5000_0000;
 
         irom['h100 >> 2] = enc_csr(14'h006, 5'd0, 5'd10); // ERA
         irom['h104 >> 2] = enc_csr(14'h005, 5'd0, 5'd11); // ESTAT
@@ -176,7 +189,11 @@ module tb_loongarch_privileged;
               "ERTN restored CRMD PLV/IE");
         check(priv_state[5*32 +: 32] == RESET_PC + 32'h1c,
               "handler advanced ERA before ERTN");
-        $display("[PASS] LoongArch CSR/SYSCALL/ERTN regression");
+        check(u_cpu.u_regfile.regs[16] == 32'd0,
+              "CPUCFG.0x10 hides caches without CACOP maintenance");
+        check(u_cpu.u_regfile.regs[17] == 32'h0001_f1f0,
+              "CPUCFG.1 reports simplified 32-bit LA32");
+        $display("[PASS] LoongArch CSR/CPUCFG/SYSCALL/ERTN regression");
         $finish;
     end
 endmodule

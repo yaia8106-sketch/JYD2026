@@ -80,8 +80,9 @@ module loongarch_predecode
     wire inst_rdcntvh = (op17 == 17'd0) && (inst[14:10] == 5'd25)
                        && (inst[9:5] == 5'd0);
     wire inst_counter = inst_rdcntvl | inst_rdcntid | inst_rdcntvh;
+    wire inst_cpucfg = (op17 == 17'd0) && (inst[14:10] == 5'd27);
     wire is_privileged = inst_csr | inst_syscall | inst_ertn | inst_break
-                       | inst_counter;
+                       | inst_counter | inst_cpucfg;
     wire privileged_flow_encoding = inst_syscall | inst_ertn | inst_break;
 
     wire is_alu_rr = inst_add_w | inst_sub_w | inst_slt | inst_sltu
@@ -138,10 +139,10 @@ module loongarch_predecode
 
         decoded.writes_dst = is_alu_rr | is_alu_imm | is_upper_imm
                            | is_muldiv | is_load | inst_bl | inst_jirl
-                           | inst_csr | inst_counter;
+                           | inst_csr | inst_counter | inst_cpucfg;
         decoded.uses_src0 = is_alu_rr | is_alu_imm | is_muldiv
                           | is_load | is_store | is_conditional | inst_jirl
-                          | inst_csrwr | inst_csrxchg;
+                          | inst_csrwr | inst_csrxchg | inst_cpucfg;
         decoded.uses_src1 = is_alu_rr | is_muldiv
                           | is_store | is_conditional | inst_csrxchg;
         decoded.src0_addr = inst_csr ? inst[4:0] : inst[9:5];

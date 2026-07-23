@@ -233,7 +233,8 @@ module cpu_top
     wire priv_op_t ex_priv_op = ex_s0_payload.priv_op;
     wire ex_is_priv_reg = ex_priv_op == PRIV_REG;
     wire ex_is_counter = ex_priv_op == PRIV_COUNTER;
-    wire ex_uses_priv_result = ex_is_priv_reg | ex_is_counter;
+    wire ex_is_cpucfg = ex_priv_op == PRIV_CPUCFG;
+    wire ex_uses_priv_result = ex_is_priv_reg | ex_is_counter | ex_is_cpucfg;
     wire ex_priv_uses_imm = ex_s0_payload.priv_uses_imm;
     wire priv_cmd_t ex_priv_cmd = ex_s0_payload.priv_cmd;
     wire [PRIV_ADDR_W-1:0] ex_priv_addr = ex_s0_payload.priv_addr;

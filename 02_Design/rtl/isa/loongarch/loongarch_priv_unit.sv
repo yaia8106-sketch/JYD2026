@@ -133,6 +133,7 @@ module loongarch_priv_unit
     wire [13:0] csr_addr = ex_priv_addr[13:0];
     wire ex_is_csr = ex_priv_op == PRIV_REG;
     wire ex_is_counter = ex_priv_op == PRIV_COUNTER;
+    wire ex_is_cpucfg = ex_priv_op == PRIV_CPUCFG;
     wire ex_is_syscall = ex_priv_op == PRIV_SYSCALL;
     wire ex_is_return = ex_priv_op == PRIV_RETURN;
 
@@ -190,6 +191,24 @@ module loongarch_priv_unit
         end
     endfunction
 
+    function automatic logic [31:0] cpucfg_read(
+        input logic [31:0] word_index
+    );
+        begin
+            case (word_index)
+                // Simplified LA32, 32-bit physical/virtual addresses, no
+                // paging MMU, IOCSR, or unaligned-access support.
+                32'h0000_0001: cpucfg_read = 32'h0001_f1f0;
+                // Do not expose the internal DCache architecturally until a
+                // matching CACOP maintenance path is implemented. This also
+                // lets the reference startup skip all cache-maintenance loops.
+                32'h0000_0010: cpucfg_read = 32'd0;
+                // Undefined configuration words architecturally read as zero.
+                default:       cpucfg_read = 32'd0;
+            endcase
+        end
+    endfunction
+
     wire ex_csr_supported = ~|ex_priv_addr[PRIV_ADDR_W-1:14]
                           & csr_address_supported(csr_addr);
     wire ex_privileged_mode = csr_crmd[1:0] == 2'd0;
@@ -234,7 +253,9 @@ module loongarch_priv_unit
 
     wire [63:0] compensated_counter = stable_counter
                                     + {{32{csr_cntc[31]}}, csr_cntc};
-    assign ex_priv_rdata = ex_is_counter
+    assign ex_priv_rdata = ex_is_cpucfg
+                         ? cpucfg_read(ex_src0_data)
+                         : ex_is_counter
                          ? (ex_priv_addr == 16'hffff) ? csr_tid
                          : (ex_priv_addr == 16'hfffe)
                              ? compensated_counter[63:32]

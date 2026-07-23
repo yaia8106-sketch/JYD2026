@@ -641,6 +641,17 @@ module tb_loongarch_decode_contract;
               && (uop.priv_addr == 16'hffff)
               && uop.dst_write && (uop.dst_addr == 5'd12),
               "RDCNTID.W TID semantics");
+        begin_case(32'h0000_6d91, "CPUCFG");
+        check((uop.exec_unit == EXEC_PRIV)
+              && (uop.priv_op == PRIV_CPUCFG)
+              && (uop.exception == EXCEPTION_NONE)
+              && uop.src0_used && (uop.src0_addr == 5'd12)
+              && !uop.src1_used && uop.dst_write
+              && (uop.dst_addr == 5'd17)
+              && (uop.wb_src == WB_EXEC)
+              && (uop.lane_mask == 2'b01)
+              && uop.block_younger && uop.serializing,
+              "CPUCFG configuration-index/result semantics");
 
         // Remaining architecturally defined encodings belong to later phases
         // and remain contained as side-effect-free illegal uops.
