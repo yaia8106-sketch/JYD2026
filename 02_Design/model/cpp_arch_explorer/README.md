@@ -27,7 +27,7 @@ ctest --test-dir 02_Design/model/cpp_arch_explorer/build --output-on-failure
 
 测试目标在 Release 构建中显式启用 `assert`，避免 `NDEBUG` 让单元测试静默失效。
 
-## 四类实验
+## 六类实验
 
 ### 1. 路径/目标历史初筛
 
@@ -129,6 +129,142 @@ base。F1 只含 tagged tables；tag miss 严格保持 BP/F0 next PC，不训练
 输出 `fdq_per_program.csv` 和 `fdq_aggregate.csv`，包括周期、IPC、empty、
 平均 occupancy、correct 时保留 0～8 条指令的分布以及估计错误 fetch
 block。`--scenarios` 可只运行指定场景。
+
+### 5. 后端 IQ 深度探索
+
+`backend_iq_study` 用实际执行的动态指令流，比较三种 IQ 的深度组合：
+
+- INT IQ：供两个整数 ALU 使用；
+- LS IQ：供一个 LSU 使用；
+- MDU IQ：供一个串行 MDU 使用；
+- 四个 FU 先各自产生最老合法候选，全局再从四个候选中最多发射两条；
+- Rename 每周期最多接收两条，ROB=32、PRF=64、checkpoint=2；
+- PRF 按物理寄存器最低位分成两个 bank，每 bank 每周期最多 2 读 1 写；
+- 默认 MUL=3 cycle、DIV=32 cycle、Load hit/miss=2/10 cycle；
+- 命中 LSU 的 initiation interval 为 1，Load miss 期间阻塞新访存；
+- Cacheable Store 进入两项 Store Buffer，默认每周期可排出一项；
+- GShare 在动态指令流进入后端模型前产生固定预测结果，默认按 6 条动态
+  指令的延迟更新，因此同一程序在不同 IQ 配置下的误预测次数必须相同。
+
+为避免在工程目录内生成构建文件，后端模型推荐构建到 `/tmp`：
+
+```bash
+cmake -S 02_Design/model/cpp_arch_explorer \
+      -B /tmp/cpp_arch_explorer_build \
+      -DCMAKE_BUILD_TYPE=Release
+cmake --build /tmp/cpp_arch_explorer_build -j16 \
+      --target backend_iq_study backend_model_tests
+/tmp/cpp_arch_explorer_build/backend_model_tests
+```
+
+先用截断运行确认环境和输出格式：
+
+```bash
+/tmp/cpp_arch_explorer_build/backend_iq_study \
+    --coe-root 02_Design/verification/riscv/coe/single_issue \
+    --output-dir /tmp/backend_iq_smoke \
+    --programs current \
+    --configs 4:6:2,8:6:2 \
+    --branch-mode gshare \
+    --max-instructions 100000 \
+    --progress 0 \
+    --jobs 1
+```
+
+正式第一轮以 `8:6:2` 为基线，每次只改变一种 IQ。四个 INT 深度加两个额外
+LS 深度共六组，先避免把两种容量的影响混在一起：
+
+```bash
+/tmp/cpp_arch_explorer_build/backend_iq_study \
+    --coe-root 02_Design/verification/riscv/coe/single_issue \
+    --output-dir /tmp/backend_iq_round2 \
+    --programs current,src0,src1,src2,new_without_Mext,new_with_Mext \
+    --configs 4:6:2,6:6:2,8:6:2,12:6:2,8:4:2,8:8:2 \
+    --branch-mode gshare \
+    --progress 100000000 \
+    --jobs 6
+```
+
+若第一轮显示 INT/LS 之间存在明显交互，再扫描 12 个交叉组合：
+
+```bash
+/tmp/cpp_arch_explorer_build/backend_iq_study \
+    --coe-root 02_Design/verification/riscv/coe/single_issue \
+    --output-dir /tmp/backend_iq_round2_full \
+    --programs current,src0,src1,src2,new_without_Mext,new_with_Mext \
+    --int-depths 4,6,8,12 \
+    --ls-depths 4,6,8 \
+    --mdu-depths 2 \
+    --branch-mode gshare \
+    --progress 100000000 \
+    --jobs 6
+```
+
+结果写入 `backend_per_program.csv` 和 `backend_aggregate.csv`。重点比较
+`ipc`、三种 IQ 的 `average/p95/p99/max occupancy`、`full_cycles`、
+`rename_stall_cycles`、PRF 读 bank 冲突、全局双发射限制、FU busy 和写回
+结果保持周期。此外检查 `lsu_miss_blocked`、`store_buffer_full`、
+`lsu_max_inflight` 和 `store_buffer_max_occupancy`。正式结论必须使用不带
+`--max-instructions` 的六程序结果。
+
+这个模型用于比较 IQ 容量，不是 RTL 的逐拍替代品。它只沿正确路径执行；
+GShare 误判会阻塞正确路径直到分支解析并加入重定向代价，但不生成错误路径
+占用。LS IQ 采用保守的最老访存发射；命中请求可以流水，单个 miss 则阻塞
+后续请求。模型尚未包含完整 LSQ 地址推测、Store-to-Load forwarding、replay
+和多 MSHR miss 并发。因此，软件结果先用于排除明显过小或收益已经饱和的
+深度，最终候选仍需单独综合 IQ 仲裁逻辑。
+
+可用 `--branch-mode perfect` 去掉方向误预测干扰；可用 `--checkpoints N`、
+`--lsu-hit-ii N`、`--store-buffer-entries N` 和
+`--store-drain-latency N` 做资源敏感性实验。
+
+第二轮结果把候选继续压缩到更小容量后，可用脚本扫描
+`INT=4/6/8 x LS=2/4/6 x MDU=1/2` 的 18 个组合。先做截断测试：
+
+```bash
+/home/anokyai/Desktop/CPU_Workspace/02_Design/model/cpp_arch_explorer/scripts/run_backend_iq_low_depth.sh smoke
+```
+
+确认环境正常后运行六个完整程序：
+
+```bash
+/home/anokyai/Desktop/CPU_Workspace/02_Design/model/cpp_arch_explorer/scripts/run_backend_iq_low_depth.sh full
+```
+
+正式结果默认写入 `/tmp/backend_iq_round3_low_depth`。脚本本身、构建目录和
+结果目录相互独立；构建仍位于 `/tmp/cpp_arch_explorer_build`。可以使用环境
+变量扩展扫描范围，例如：
+
+```bash
+BACKEND_IQ_INT_DEPTHS=4,6,8,12 \
+    /home/anokyai/Desktop/CPU_Workspace/02_Design/model/cpp_arch_explorer/scripts/run_backend_iq_low_depth.sh full
+```
+
+### 6. 前递网络与连续依赖
+
+`forwarding_study` 使用当前双发射、youngest-writer、load repair、MUL 本地
+副本和同发射 store-data 旁路规则，比较全网络基线与每次删除一组网络的 13
+个差分模型。它还识别严格的动态 `A -> B -> C` 连续依赖：B 消费仍未退休的
+A，并在自身退休前成为 C 实际选择的 producer。
+
+```bash
+/tmp/cpp_arch_explorer_build/forwarding_study \
+    --coe-root 02_Design/verification/riscv/coe/single_issue \
+    --output-dir /tmp/forwarding_study_results \
+    --programs current,src0,src1,src2,new_without_Mext,new_with_Mext \
+    --jobs 6 \
+    --baseline-only
+```
+
+`--baseline-only` 跳过 13 个删路模型，适合只测连续依赖；去掉它会同时生成
+删路数据。连续依赖输出为：
+
+- `forwarding_chain_summary.csv`：条件概率、程序密度、前递流量占比和链深度；
+- `forwarding_chain_networks.csv`：13 条网络作为连续链输入/输出边的统计；
+- `forwarding_chain_matrix.csv`：完整 13×13 的 `A->B` 与 `B->C` 路径矩阵。
+
+详细时钟边界、统计分母和可信范围见
+`02_Design/docs/backend/FORWARDING_ABLATION_MODEL.md`。
 
 ## 当前 RTL 方向基线
 

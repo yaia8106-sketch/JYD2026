@@ -57,6 +57,32 @@ target_compile_options(fdq_study PRIVATE
     $<$<CONFIG:Release>:-O3>
 )
 
+add_executable(backend_iq_study
+    src/backend_main.cpp
+    src/backend_model.cpp
+    src/rv32_sim.cpp
+)
+target_compile_features(backend_iq_study PRIVATE cxx_std_20)
+target_compile_options(backend_iq_study PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+    $<$<CONFIG:Release>:-O3>
+)
+
+add_executable(forwarding_study
+    src/forwarding_main.cpp
+    src/forwarding_model.cpp
+    src/rv32_sim.cpp
+)
+target_compile_features(forwarding_study PRIVATE cxx_std_20)
+target_compile_options(forwarding_study PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+    $<$<CONFIG:Release>:-O3>
+)
+
 add_executable(direction_predictor_tests
     src/direction_predictor_tests.cpp
     src/direction_predictor.cpp
@@ -72,6 +98,14 @@ add_executable(fdq_model_tests
     src/fdq_model.cpp
     src/frontend_model.cpp
     src/direction_predictor.cpp
+)
+add_executable(backend_model_tests
+    src/backend_model_tests.cpp
+    src/backend_model.cpp
+)
+add_executable(forwarding_model_tests
+    src/forwarding_model_tests.cpp
+    src/forwarding_model.cpp
 )
 target_compile_features(frontend_model_tests PRIVATE cxx_std_20)
 target_compile_options(frontend_model_tests PRIVATE
@@ -97,12 +131,30 @@ target_compile_options(fdq_model_tests PRIVATE
     -UNDEBUG
     $<$<CONFIG:Release>:-O3>
 )
+target_compile_features(backend_model_tests PRIVATE cxx_std_20)
+target_compile_options(backend_model_tests PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+    -UNDEBUG
+    $<$<CONFIG:Release>:-O3>
+)
+target_compile_features(forwarding_model_tests PRIVATE cxx_std_20)
+target_compile_options(forwarding_model_tests PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+    -UNDEBUG
+    $<$<CONFIG:Release>:-O3>
+)
 
 include(CTest)
 if(BUILD_TESTING)
     add_test(NAME direction_predictor_tests COMMAND direction_predictor_tests)
     add_test(NAME frontend_model_tests COMMAND frontend_model_tests)
     add_test(NAME fdq_model_tests COMMAND fdq_model_tests)
+    add_test(NAME backend_model_tests COMMAND backend_model_tests)
+    add_test(NAME forwarding_model_tests COMMAND forwarding_model_tests)
     add_test(
         NAME bp_explorer_smoke
         COMMAND bp_explorer
@@ -136,5 +188,38 @@ if(BUILD_TESTING)
             --scenarios D8_RTLPAIR_F1R1_B6_DIR_CAL_EVEN,D8_RTLPAIR_F1R2_B6_DIR_CAL_EVEN
             --max-instructions 100000
             --progress 0
+    )
+    add_test(
+        NAME backend_iq_study_smoke
+        COMMAND backend_iq_study
+            --coe-root ${CMAKE_CURRENT_SOURCE_DIR}/../../verification/riscv/coe/single_issue
+            --output-dir ${CMAKE_CURRENT_BINARY_DIR}/backend_iq_smoke_results
+            --programs current
+            --configs 4:6:2,8:6:2
+            --branch-mode gshare
+            --max-instructions 100000
+            --progress 0
+            --jobs 1
+    )
+    add_test(
+        NAME forwarding_study_smoke
+        COMMAND forwarding_study
+            --coe-root ${CMAKE_CURRENT_SOURCE_DIR}/../../verification/riscv/coe/single_issue
+            --output-dir ${CMAKE_CURRENT_BINARY_DIR}/forwarding_smoke_results
+            --programs current
+            --max-instructions 100000
+            --progress 0
+            --jobs 1
+    )
+    add_test(
+        NAME forwarding_chain_baseline_only_smoke
+        COMMAND forwarding_study
+            --coe-root ${CMAKE_CURRENT_SOURCE_DIR}/../../verification/riscv/coe/single_issue
+            --output-dir ${CMAKE_CURRENT_BINARY_DIR}/forwarding_chain_smoke_results
+            --programs current
+            --max-instructions 100000
+            --progress 0
+            --jobs 1
+            --baseline-only
     )
 endif()

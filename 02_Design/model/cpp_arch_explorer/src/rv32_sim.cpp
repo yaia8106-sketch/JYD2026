@@ -378,6 +378,8 @@ CfiEvent Rv32Machine::step() {
 
         case 0x03u: {  // Loads
             const auto address = add_signed(rs1_value, i_imm);
+            event.memory_kind = MemoryAccessKind::Load;
+            event.memory_address = address;
             switch (funct3) {
                 case 0u:
                     write_rd(static_cast<std::uint32_t>(
@@ -405,6 +407,8 @@ CfiEvent Rv32Machine::step() {
 
         case 0x23u: {  // Stores
             const auto address = add_signed(rs1_value, s_imm);
+            event.memory_kind = MemoryAccessKind::Store;
+            event.memory_address = address;
             switch (funct3) {
                 case 0u:
                     store8(address, static_cast<std::uint8_t>(rs2_value));

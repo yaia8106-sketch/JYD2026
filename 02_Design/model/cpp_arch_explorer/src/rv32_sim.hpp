@@ -20,6 +20,12 @@ enum class CfiKind : std::uint8_t {
     Jalr,
 };
 
+enum class MemoryAccessKind : std::uint8_t {
+    None,
+    Load,
+    Store,
+};
+
 struct CfiEvent {
     CfiKind kind = CfiKind::None;
     std::uint64_t instruction_ordinal = 0;
@@ -28,6 +34,8 @@ struct CfiEvent {
     std::uint32_t target = 0;
     std::uint32_t next_pc = 0;
     bool taken = false;
+    MemoryAccessKind memory_kind = MemoryAccessKind::None;
+    std::uint32_t memory_address = 0;
 };
 
 struct ProgramImage {
