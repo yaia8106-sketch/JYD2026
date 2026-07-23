@@ -36,6 +36,7 @@ module frontend_pair_policy
     logic raw_rs1_dep;
     logic raw_rs2_dep;
     logic slot1_is_store;
+    logic same_pair_raw_supported;
     logic blocking_raw_dep;
     logic slot0_non_lsu_supported;
     logic pair_supported_if_slot0_lsu;
@@ -45,9 +46,10 @@ module frontend_pair_policy
     (* keep = "true" *) logic pair_ok_if_slot0_non_lsu;
 
     // Pairing is conservative: only supported instruction classes, no two LSU
-    // ops, no two CFIs, and no Slot 0 -> Slot 1 RAW except the explicit
-    // ALU-to-store-data bypass below. A multiplier may be the Slot 0 producer,
-    // but cannot use that same-cycle ALU-to-store-data bypass.
+    // ops and no two CFIs.  EX2 adds one local exception to the RAW rule:
+    // Slot 1 may consume a simple Slot-0 ALU result in its final EX2 ALU,
+    // branch comparator/target adder, or store-data input.  LSU addresses still
+    // have to be complete in EX1.
     always_comb begin
         raw_rs1_dep = slot0_meta.writes_dst
                     && (slot0_meta.dst_addr != 5'd0)
@@ -61,13 +63,12 @@ module frontend_pair_policy
 
         // In the current ISA subset, a store is the only LSU class that uses
         // rs2. Its address (rs1) must remain independent, while its data can
-        // consume the Slot 0 ALU result through the EX same-pair bypass.
+        // consume the registered Slot-0 EX1 result in EX2.
         slot1_is_store = slot1_meta.is_lsu & slot1_meta.uses_src1;
-        // Exact reduction of raw_dep & ~store_data_bypassable: an rs1 RAW
-        // always blocks; an rs2-only RAW is allowed only for ALU -> store data.
-        blocking_raw_dep = raw_rs1_dep
-                         | (raw_rs2_dep
-                            & ~(slot0_meta.is_alu_type & slot1_is_store));
+        same_pair_raw_supported = slot0_meta.is_alu_type
+            & (((slot1_meta.is_alu_type | slot1_meta.is_cfi) & raw_dep)
+               | (slot1_is_store & raw_rs2_dep & ~raw_rs1_dep));
+        blocking_raw_dep = raw_dep & ~same_pair_raw_supported;
 
         slot0_non_lsu_supported = slot0_meta.is_alu_type
                                 | slot0_meta.is_cfi

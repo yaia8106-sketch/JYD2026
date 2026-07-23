@@ -4,10 +4,10 @@
 //              Data Cache with Store Buffer
 //
 // Architecture:
-//   - Internal EX->MEM pipeline register (synced with cpu_top's ex_mem_reg)
-//   - Tag: LUTRAM async read, result latched EX->MEM
-//   - Data: BRAM sync read (addr in EX, data in MEM)
-//   - Hit detection: MEM stage (combinational)
+//   - Internal EX1->EX2 request register
+//   - Tag: LUTRAM async read, result latched EX1->EX2
+//   - Data: BRAM sync read (addr in EX1, data in EX2)
+//   - Hit detection: EX2 stage (combinational)
 //   - Load miss: FSM -> refill line from memory backend -> S_DONE
 //   - Store hit: WT to cache + store buffer -> memory backend
 //   - Store miss: no allocate, store buffer only
@@ -38,21 +38,21 @@ module dcache #(
     input  logic        clk,
     input  logic        rst_n,
 
-    // --- EX stage inputs ---
+    // --- EX1 request inputs; cpu_wdata is the aligned EX2 completion value ---
     input  logic        cpu_req,
     input  logic        cpu_wr,
     input  logic [31:0] cpu_addr,
     input  logic [ 3:0] cpu_wea,
-    input  logic [31:0] cpu_wdata,       // raw, aligned after the EX->MEM register
+    input  logic [31:0] cpu_wdata,
     input  logic [ 3:0] cpu_load_mask,
     input  logic        cpu_uncached,
 
-    // --- MEM stage outputs ---
+    // --- EX2 stage outputs ---
     output logic [31:0] cpu_rdata,
     output logic        cpu_ready,
 
     // Pipeline synchronization
-    input  logic        pipeline_stall,  // from cpu_top: ~mem_allowin (keep EX->MEM reg in sync)
+    input  logic        pipeline_stall,  // from cpu_top: ~ex2_allowin
 
     // Pipeline flush
     input  logic        flush,
@@ -112,14 +112,14 @@ module dcache #(
     endfunction
 
     // ================================================================
-    //  EX-stage address decomposition
+    //  EX1-stage address decomposition
     // ================================================================
     wire [TAG_W-1:0]   ex_tag   = cpu_addr[PHYS_ADDR_WIDTH-1:10];
     wire [INDEX_W-1:0] ex_index = cpu_addr[9:4];
     wire [WORD_W-1:0]  ex_word  = cpu_addr[3:2];
 
     // ================================================================
-    //  Internal EX->MEM register (synced with cpu_top's ex_mem_reg)
+    //  Internal EX1->EX2 request register
     // ================================================================
     logic [TAG_W-1:0]   mem_tag;
     logic [INDEX_W-1:0] mem_index;
@@ -128,15 +128,11 @@ module dcache #(
     logic               mem_req;
     logic               mem_wr;
     logic [ 3:0]        mem_wea;
-    logic [31:0]        mem_wdata;
     logic [ 3:0]        mem_load_mask;
     logic               mem_uncached;
 
-    // pipeline_advance must match cpu_top's mem_allowin to keep DCache's
-    // internal EX->MEM register synchronized with cpu_top's ex_mem_reg.
-    // NOTE: Do NOT add "| flush" - flush no longer force-kills the current
-    // MEM instruction in ex_mem_reg (see fix: gate ~mem_branch_flush inside
-    // mem_allowin path). Both must stall/advance together.
+    // pipeline_advance must match cpu_top's ex2_allowin to keep this request
+    // register synchronized with the external EX1/EX2 boundary.
     wire pipeline_advance = ~pipeline_stall;
 
     always_ff @(posedge clk) begin
@@ -148,7 +144,6 @@ module dcache #(
             mem_addr  <= 32'd0;
             mem_wr    <= 1'b0;
             mem_wea   <= 4'd0;
-            mem_wdata <= 32'd0;
             mem_load_mask <= 4'd0;
             mem_uncached <= 1'b0;
         end else if (pipeline_advance) begin
@@ -159,7 +154,6 @@ module dcache #(
             mem_addr  <= cpu_addr;
             mem_wr    <= cpu_wr;
             mem_wea   <= cpu_wea;
-            mem_wdata <= cpu_wdata;
             mem_load_mask <= cpu_load_mask;
             mem_uncached <= UNCACHED_ENABLE & cpu_uncached;
         end
@@ -219,8 +213,8 @@ module dcache #(
     logic [TAG_W-1:0] tag_mem_way1 [0:SETS-1];
     logic             tag_vld [WAYS-1:0][SETS-1:0];
 
-    // Async read with EX-stage index. Refill writes the tag at the clock edge
-    // entering S_DONE, so by the S_DONE cycle the next EX tag read sees it.
+    // Async read with the EX1-stage index. Refill writes the tag at the clock
+    // edge entering S_DONE, so the next EX1 tag read sees it in S_DONE.
     wire [TAG_W-1:0] tag_rd_data [WAYS-1:0];
     wire             tag_rd_vld  [WAYS-1:0];
     assign tag_rd_data[0] = tag_mem_way0[ex_index];
@@ -228,7 +222,7 @@ module dcache #(
     assign tag_rd_vld[0]  = tag_vld[0][ex_index];
     assign tag_rd_vld[1]  = tag_vld[1][ex_index];
 
-    // Latch tag read results EX->MEM
+    // Latch tag read results EX1->EX2
     logic [TAG_W-1:0] mem_tag_rd [WAYS-1:0];
     logic             mem_tag_vld [WAYS-1:0];
 
@@ -245,7 +239,7 @@ module dcache #(
     end
 
     // ================================================================
-    //  Hit detection (MEM stage)
+    //  Hit detection (EX2 stage)
     //  Refill forward covers an immediate same-line access after line fill.
     //  With the current tag write edge it is normally redundant, but it keeps
     //  the next-cycle hit decision independent of LUTRAM read/write phasing.
@@ -344,7 +338,7 @@ module dcache #(
     //  Store Forwarding
     //  A store hit writes the cache RAM at the same edge that a following load
     //  may read it. READ_FIRST BRAM returns the old word, so hold the store
-    //  payload for one cycle and merge it into the MEM-stage read result.
+    //  payload for one cycle and merge it into the EX2-stage read result.
     // ================================================================
     logic        store_fwd_valid;
     logic        store_fwd_way;
@@ -492,10 +486,10 @@ module dcache #(
     wire [31:0] miss_buffer_rdata;
     wire        miss_buffer_covers_load;
 
-    // Delay byte-lane alignment until after the internal EX->MEM register.
-    // This removes the variable shift from the CPU ALU/store-bypass path while
-    // preserving the aligned payload expected by the cache and store buffer.
-    wire [31:0] mem_wdata_aligned = mem_wdata << {mem_addr[1:0], 3'b0};
+    // Store data is finalized in EX2 and held while this request is stalled.
+    // The address and byte strobes remain the registered EX1 request fields.
+    wire [31:0] mem_wdata_aligned =
+        cpu_wdata << {mem_addr[1:0], 3'b0};
 
     dcache_store_buffer u_store_buffer (
         .clk                (clk),
@@ -541,9 +535,13 @@ module dcache #(
             state <= state_next;
     end
 
-    // MEM-stage control signals. Keep the late tag compare on load-hit and
+    // EX2-stage control signals. Keep the late tag compare on load-hit and
     // cache-write decisions; store retirement only needs store-buffer space.
-    wire idle_mem_req = state_idle & mem_req;
+    // A same-group older branch/trap may invalidate a speculative Slot-1 LSU
+    // lookup after the EX1 address edge.  Reads are side-effect free; gating
+    // the logical request here prevents a miss allocation, Cache write, or
+    // store-buffer push for the killed operation.
+    wire idle_mem_req = state_idle & mem_req & ~flush;
     wire idle_uncached = idle_mem_req & mem_uncached;
     wire idle_load    = idle_mem_req & ~mem_uncached & ~mem_wr;
     wire idle_store   = idle_mem_req & ~mem_uncached &  mem_wr;
@@ -778,7 +776,7 @@ module dcache #(
         if (!rst_n)
             lru <= '0;
         else begin
-            if (state_idle && mem_req && cache_hit)
+            if (idle_mem_req && cache_hit)
                 lru[mem_index] <= ~hit_way;
             if (state_done)
                 lru[refill_index] <= ~refill_way;
@@ -804,7 +802,7 @@ module dcache #(
     assign mem_wr_ready  = backend_wr_ready;
 
     // ================================================================
-    //  CPU read data MUX (MEM stage)
+    //  CPU read data MUX (EX2 stage)
     //  Priority: refill target > recent-store miss hit > cache BRAM
     // ================================================================
     always_comb begin
@@ -833,7 +831,8 @@ module dcache #(
                          & (cache_hit | miss_buffer_covers_load);
     wire idle_cpu_ready = idle_load_ready | idle_store_accept;
 
-    assign cpu_ready = ~mem_req
+    assign cpu_ready = flush
+                     | ~mem_req
                      | refill_cpu_ready
                      | idle_cpu_ready
                      | uc_read_fire

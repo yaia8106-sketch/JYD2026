@@ -233,9 +233,10 @@ endmodule
 // ============================================================
 // Module: contest_mmio_adapter
 // Description:
-//   Align the cpu_top EX/MEM split MMIO interface with the template's
-//   same-cycle-read/next-edge-write perip interface.  The existing internal
-//   machine timer remains private; all platform MMIO is forwarded outside.
+//   Align cpu_top's EX1-read/MEM-write MMIO interface with the template's
+//   combinational-read/clocked-write peripheral interface.  The existing
+//   internal machine timer remains private; all platform MMIO is forwarded
+//   outside.
 // ============================================================
 module contest_mmio_adapter (
     input  logic        clk,
@@ -293,12 +294,14 @@ module contest_mmio_adapter (
 
     assign perip_wen = write_valid & write_platform_space & ~write_internal;
 
-    // read_addr_mem is captured from the selected EX LSU address on the same
-    // edge that the EX/MEM registers capture write_addr_mem.  Use that single
-    // registered address for both reads and writes so the late store-valid
-    // signal never selects the shell's wide address/read-data cone.
-    assign perip_addr = (read_platform_space & ~read_internal)
-                      ? read_addr_mem : 32'd0;
+    // EX1 supplies a read address one cycle before EX2 consumes perip_rdata,
+    // hence read_addr_mem is the correctly aligned load address.  Stores are
+    // deliberately held until MEM so an older EX2 branch/trap can cancel
+    // them; their architectural address must therefore come from the
+    // separately aligned write_addr_mem payload.
+    wire [31:0] external_read_addr =
+        (read_platform_space & ~read_internal) ? read_addr_mem : 32'd0;
+    assign perip_addr = perip_wen ? write_addr_mem : external_read_addr;
     assign perip_wdata = write_data_mem;
 
     always_comb begin
@@ -314,9 +317,8 @@ module contest_mmio_adapter (
     end
 
     // Load payload selection depends only on the registered address and read
-    // sources.  During a platform write the shell's returned read data is a
-    // don't-care, and mem_load_valid keeps every MEM/WB load-data register
-    // disabled; do not reintroduce perip_wen as a wide-payload selector here.
+    // sources. During a platform write the returned read data is a don't-care;
+    // do not reintroduce perip_wen as a wide-payload selector here.
     always_comb begin
         if (read_mtime_lo)
             read_data_mem = mtime[31:0];
@@ -367,15 +369,13 @@ module contest_mmio_adapter (
     assign timer_irq_pending = mtime >= mtimecmp;
 
 `ifndef SYNTHESIS
-    // The unified shell address is cycle-equivalent only if the EX address
-    // captured by the adapter is the address held by the corresponding MEM
-    // store.  Check that contract on the exact edge that the shell commits an
-    // external write.
+    // A platform write must always drive the address from the same MEM payload
+    // as its byte enables and data.
     always_ff @(posedge clk) begin
-        if (!rst && perip_wen && (read_addr_mem !== write_addr_mem))
+        if (!rst && perip_wen && (perip_addr !== write_addr_mem))
             $fatal(1,
-                   "MMIO EX/MEM address misalignment: captured=%08x write=%08x",
-                   read_addr_mem, write_addr_mem);
+                   "MMIO MEM write payload misalignment: bus=%08x write=%08x",
+                   perip_addr, write_addr_mem);
     end
 `endif
 

@@ -21,12 +21,7 @@ module id_ex_reg
 
     // Registered payload
     input  id_ex_slot0_t  id_payload,
-    output id_ex_slot0_t  ex_payload,
-
-    // Physically independent repair tags for the ordinary ALU result cone.
-    // The packed copies remain available to address/control consumers.
-    (* keep = "true" *) output logic ex_fast_alu_src1_wb_repair,
-    (* keep = "true" *) output logic ex_fast_alu_src2_wb_repair
+    output id_ex_slot0_t  ex_payload
 );
 
     // Keep the embedded PHT counter reset aligned with frontend defaults.
@@ -42,28 +37,20 @@ module id_ex_reg
         if (!rst_n) begin
             ex_valid <= 1'b0;
             ex_payload <= reset_payload();
-            ex_fast_alu_src1_wb_repair <= 1'b0;
-            ex_fast_alu_src2_wb_repair <= 1'b0;
         end else if (ex_flush) begin
-            // Flush clears validity and repair/prediction tags that could
+            // Flush clears validity and late/prediction tags that could
             // otherwise affect the next instruction accepted into EX.
             ex_valid <= 1'b0;
-            ex_payload.common.rs1_wb_repair <= 1'b0;
-            ex_payload.common.rs2_wb_repair <= 1'b0;
-            ex_payload.common.alu_src1_wb_repair <= 1'b0;
-            ex_payload.common.alu_src2_wb_repair <= 1'b0;
-            ex_fast_alu_src1_wb_repair <= 1'b0;
-            ex_fast_alu_src2_wb_repair <= 1'b0;
+            ex_payload.common.rs1_late_src <= LATE_NONE;
+            ex_payload.common.rs2_late_src <= LATE_NONE;
+            ex_payload.common.alu_src1_late_src <= LATE_NONE;
+            ex_payload.common.alu_src2_late_src <= LATE_NONE;
             ex_payload.common.prediction.prediction.source_abtb <= 1'b0;
             ex_payload.common.prediction.prediction.stage1_branch_owned <=
                 1'b0;
         end else if (ex_allowin) begin
             ex_valid <= id_valid & id_ready_go;
             ex_payload <= id_payload;
-            ex_fast_alu_src1_wb_repair <=
-                id_payload.common.alu_src1_wb_repair;
-            ex_fast_alu_src2_wb_repair <=
-                id_payload.common.alu_src2_wb_repair;
         end
     end
 

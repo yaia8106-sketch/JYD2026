@@ -14,8 +14,8 @@ module id_ex_payload_builder
     input  logic [31:0]      s0_alu_src2,
     input  logic [31:0]      s0_rs1_data,
     input  logic [31:0]      s0_rs2_data,
-    input  logic             s0_rs1_wb_repair,
-    input  logic             s0_rs2_wb_repair,
+    input  late_src_t        s0_rs1_late_src,
+    input  late_src_t        s0_rs2_late_src,
     input  prediction_meta_t s0_prediction,
     input  logic             s0_update_qualified,
     input  logic [ 1:0]      s0_update_cfi_type,
@@ -27,8 +27,8 @@ module id_ex_payload_builder
     input  logic [31:0]      s1_alu_src2,
     input  logic [31:0]      s1_rs1_data,
     input  logic [31:0]      s1_rs2_data,
-    input  logic             s1_rs1_wb_repair,
-    input  logic             s1_rs2_wb_repair,
+    input  late_src_t        s1_rs1_late_src,
+    input  late_src_t        s1_rs2_late_src,
     input  prediction_meta_t s1_prediction,
     input  logic             s1_update_qualified,
     input  logic [ 1:0]      s1_update_cfi_type,
@@ -45,17 +45,17 @@ module id_ex_payload_builder
         slot0_payload.common.alu_src2 = s0_alu_src2;
         slot0_payload.common.rs1_data = s0_rs1_data;
         slot0_payload.common.rs2_data = s0_rs2_data;
-        slot0_payload.common.rs1_wb_repair = s0_rs1_wb_repair;
-        slot0_payload.common.rs2_wb_repair = s0_rs2_wb_repair;
+        slot0_payload.common.rs1_late_src = s0_rs1_late_src;
+        slot0_payload.common.rs2_late_src = s0_rs2_late_src;
         slot0_payload.common.rd = s0_uop.dst_addr;
         slot0_payload.common.rs1_addr = s0_uop.src0_addr;
         slot0_payload.common.rs2_addr = s0_uop.src1_addr;
-        slot0_payload.common.alu_src1_wb_repair =
-            s0_rs1_wb_repair
-            & (s0_uop.operand_a_sel == OPERAND_A_SRC0);
-        slot0_payload.common.alu_src2_wb_repair =
-            s0_rs2_wb_repair
-            & (s0_uop.operand_b_sel == OPERAND_B_SRC1);
+        slot0_payload.common.alu_src1_late_src =
+            (s0_uop.operand_a_sel == OPERAND_A_SRC0)
+                ? s0_rs1_late_src : LATE_NONE;
+        slot0_payload.common.alu_src2_late_src =
+            (s0_uop.operand_b_sel == OPERAND_B_SRC1)
+                ? s0_rs2_late_src : LATE_NONE;
         slot0_payload.common.alu_op = s0_uop.alu_op;
         slot0_payload.common.reg_write_en = s0_uop.dst_write;
         slot0_payload.common.wb_sel = s0_uop.wb_src;
@@ -86,17 +86,17 @@ module id_ex_payload_builder
         slot1_payload.common.alu_src2 = s1_alu_src2;
         slot1_payload.common.rs1_data = s1_rs1_data;
         slot1_payload.common.rs2_data = s1_rs2_data;
-        slot1_payload.common.rs1_wb_repair = s1_rs1_wb_repair;
-        slot1_payload.common.rs2_wb_repair = s1_rs2_wb_repair;
+        slot1_payload.common.rs1_late_src = s1_rs1_late_src;
+        slot1_payload.common.rs2_late_src = s1_rs2_late_src;
         slot1_payload.common.rd = s1_uop.dst_addr;
         slot1_payload.common.rs1_addr = s1_uop.src0_addr;
         slot1_payload.common.rs2_addr = s1_uop.src1_addr;
-        slot1_payload.common.alu_src1_wb_repair =
-            s1_rs1_wb_repair
-            & (s1_uop.operand_a_sel == OPERAND_A_SRC0);
-        slot1_payload.common.alu_src2_wb_repair =
-            s1_rs2_wb_repair
-            & (s1_uop.operand_b_sel == OPERAND_B_SRC1);
+        slot1_payload.common.alu_src1_late_src =
+            (s1_uop.operand_a_sel == OPERAND_A_SRC0)
+                ? s1_rs1_late_src : LATE_NONE;
+        slot1_payload.common.alu_src2_late_src =
+            (s1_uop.operand_b_sel == OPERAND_B_SRC1)
+                ? s1_rs2_late_src : LATE_NONE;
         slot1_payload.common.alu_op = s1_uop.alu_op;
         slot1_payload.common.reg_write_en = s1_uop.dst_write;
         slot1_payload.common.wb_sel = s1_uop.wb_src;

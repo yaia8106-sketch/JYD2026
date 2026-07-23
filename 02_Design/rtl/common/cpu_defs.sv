@@ -49,6 +49,17 @@ package cpu_defs;
         WB_NONE    = 2'b11
     } wb_src_t;
 
+    // An operand normally leaves ID with its final value.  The three non-zero
+    // encodings are the only values that may be substituted later in EX2.
+    // Keeping the producer identity in this narrow tag avoids rebuilding
+    // register-number comparisons in the execute stages.
+    typedef enum logic [1:0] {
+        LATE_NONE    = 2'b00,
+        LATE_PAIR_S0 = 2'b01,
+        LATE_MEM_S0  = 2'b10,
+        LATE_MEM_S1  = 2'b11
+    } late_src_t;
+
     typedef enum logic [1:0] {
         MEM_NONE  = 2'b00,
         MEM_LOAD  = 2'b01,
@@ -474,13 +485,13 @@ package cpu_defs;
         logic [31:0]       alu_src2;
         logic [31:0]       rs1_data;
         logic [31:0]       rs2_data;
-        logic              rs1_wb_repair;
-        logic              rs2_wb_repair;
+        late_src_t          rs1_late_src;
+        late_src_t          rs2_late_src;
         logic [ 4:0]       rd;
         logic [ 4:0]       rs1_addr;
         logic [ 4:0]       rs2_addr;
-        logic              alu_src1_wb_repair;
-        logic              alu_src2_wb_repair;
+        late_src_t          alu_src1_late_src;
+        late_src_t          alu_src2_late_src;
         alu_op_t           alu_op;
         logic              reg_write_en;
         wb_src_t           wb_sel;
@@ -521,6 +532,7 @@ package cpu_defs;
     typedef struct packed {
         logic [31:0] inst;
         logic [31:0] alu_result;
+        logic [31:0] arch_result;
         logic [31:0] pc;
         logic [31:0] pc_plus_4;
         logic [ 4:0] rd;
@@ -543,6 +555,7 @@ package cpu_defs;
         logic [31:0] pc;
         logic [31:0] inst;
         logic [31:0] alu_result;
+        logic [31:0] arch_result;
         logic [31:0] pc_plus_4;
         logic [ 4:0] rd;
         logic        reg_write_en;

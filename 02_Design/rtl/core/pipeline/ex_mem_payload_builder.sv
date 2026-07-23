@@ -12,6 +12,7 @@ module ex_mem_payload_builder
     input  logic [31:0]        redirect_target,
 
     input  logic [31:0]        s0_alu_result,
+    input  logic [31:0]        s0_arch_result,
     input  logic [31:0]        s0_pc,
     input  logic [31:0]        s0_inst,
     input  logic [31:0]        s0_pc_plus_4,
@@ -33,6 +34,7 @@ module ex_mem_payload_builder
     input  logic [31:0]        s1_pc,
     input  logic [31:0]        s1_inst,
     input  logic [31:0]        s1_alu_result,
+    input  logic [31:0]        s1_arch_result,
     input  logic [31:0]        s1_pc_plus_4,
     input  logic [ 4:0]        s1_rd,
     input  logic               s1_reg_write_en,
@@ -59,6 +61,7 @@ module ex_mem_payload_builder
         slot0_payload = '0;
         slot0_payload.inst = s0_inst;
         slot0_payload.alu_result = s0_alu_result;
+        slot0_payload.arch_result = s0_arch_result;
         slot0_payload.pc = s0_pc;
         slot0_payload.pc_plus_4 = s0_pc_plus_4;
         slot0_payload.rd = s0_rd;
@@ -80,6 +83,7 @@ module ex_mem_payload_builder
         slot1_payload.pc = s1_pc;
         slot1_payload.inst = s1_inst;
         slot1_payload.alu_result = s1_alu_result;
+        slot1_payload.arch_result = s1_arch_result;
         slot1_payload.pc_plus_4 = s1_pc_plus_4;
         slot1_payload.rd = s1_rd;
         slot1_payload.reg_write_en = s1_reg_write_en;
