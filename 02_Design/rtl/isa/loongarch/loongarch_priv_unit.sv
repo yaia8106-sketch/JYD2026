@@ -275,7 +275,12 @@ module loongarch_priv_unit
                           | (((ex_priv_cmd == PRIV_CMD_SET)
                               | (ex_priv_cmd == PRIV_CMD_CLEAR))
                              & (|ex_csr_src));
-    wire ex_csr_write_fire = ex_stage_fire & ex_is_csr
+    // CSR writes are serialized behind older MEM/WB tokens below.  Once that
+    // condition is satisfied MEM is empty and can accept the instruction, so
+    // the architectural write no longer needs the late DCache-derived
+    // mem_allowin term carried by ex_redirect_fire.
+    wire ex_csr_write_fire = ex_valid & ex_ready_go & ~mem_branch_flush
+                           & ex_is_csr
                            & ex_csr_supported & ~ex_priv_violation
                            & ex_csr_write_req;
 
@@ -288,7 +293,8 @@ module loongarch_priv_unit
     // until every older MEM/WB token has retired, so CSR state and the
     // Difftest exception event share one precise architectural boundary.
     assign ex_priv_wait_older = ex_valid
-                              & (ex_fetch_misaligned | ex_data_misaligned);
+                              & (ex_fetch_misaligned | ex_data_misaligned
+                                 | (ex_is_csr & ex_csr_write_req));
     assign ex_s1_addr_replay = ex_valid & ex_s1_valid
                              & ex_s1_data_misaligned;
 

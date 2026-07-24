@@ -247,8 +247,6 @@ module dcache #(
     // ================================================================
     //  Hit detection (MEM stage)
     //  Refill forward covers an immediate same-line access after line fill.
-    //  With the current tag write edge it is normally redundant, but it keeps
-    //  the next-cycle hit decision independent of LUTRAM read/write phasing.
     // ================================================================
     logic refill_tag_fwd_valid;
     logic refill_tag_fwd_way;
@@ -273,10 +271,27 @@ module dcache #(
         end
     end
 
-    // Patched tag match: apply refill forward if same set
+    // A monolithic equality becomes a serial CARRY chain on 7-series parts.
+    // Pad to four independent six-bit groups, then combine the five predicates
+    // (four tag groups plus the six-bit index) in one LUT level.
+    wire [23:0] refill_tag_fwd_diff =
+        {{(24-TAG_W){1'b0}}, (refill_tag_fwd_tag ^ mem_tag)};
+    (* keep = "true" *) wire refill_tag_fwd_match0 =
+        ~|refill_tag_fwd_diff[5:0];
+    (* keep = "true" *) wire refill_tag_fwd_match1 =
+        ~|refill_tag_fwd_diff[11:6];
+    (* keep = "true" *) wire refill_tag_fwd_match2 =
+        ~|refill_tag_fwd_diff[17:12];
+    (* keep = "true" *) wire refill_tag_fwd_match3 =
+        ~|refill_tag_fwd_diff[23:18];
+    (* keep = "true" *) wire refill_tag_fwd_index_match =
+        refill_tag_fwd_index == mem_index;
     wire refill_tag_fwd_match = refill_tag_fwd_valid
-                              & (refill_tag_fwd_index == mem_index)
-                              & (refill_tag_fwd_tag == mem_tag);
+                              & refill_tag_fwd_match0
+                              & refill_tag_fwd_match1
+                              & refill_tag_fwd_match2
+                              & refill_tag_fwd_match3
+                              & refill_tag_fwd_index_match;
 
     wire hit_w0_raw = mem_tag_vld[0] & (mem_tag_rd[0] == mem_tag);
     wire hit_w1_raw = mem_tag_vld[1] & (mem_tag_rd[1] == mem_tag);
@@ -559,7 +574,12 @@ module dcache #(
     wire store_miss_accept = idle_store_miss & ~sb_full;
     assign sb_store_enqueue = idle_store_accept;
 
-    wire idle_refill_start = idle_load_miss & ~miss_buffer_hit;
+    // Always refill a cache miss.  The former same-cycle recent-store bypass
+    // put its 16-bit address compare and data merge directly on the MEM/WB
+    // path.  Refill capture below already snapshots and merges recent stores,
+    // so removing only the fast completion path preserves ordering/correctness
+    // at the cost of miss latency in this uncommon store-miss/load sequence.
+    wire idle_refill_start = idle_load_miss;
     // The generic backend serializes drains through the main FSM. Direct
     // BRAM drains independently through its dedicated write port above.
     wire idle_drain_start  = ~DIRECT_BRAM
@@ -814,8 +834,6 @@ module dcache #(
             cpu_rdata = refill_write_data;
         else if (state_done && refill_cpu_pending && ~mem_wr)
             cpu_rdata = refill_target_valid ? refill_target_data : 32'd0;
-        else if (miss_buffer_hit)
-            cpu_rdata = miss_buffer_rdata;
         else
             cpu_rdata = hit_way ? data_rd_fwd[1] : data_rd_fwd[0];
     end
@@ -825,12 +843,7 @@ module dcache #(
     // ================================================================
     wire refill_cpu_ready = refill_target_fire
                           | (state_done & refill_cpu_pending);
-    // idle_load_hit | miss_buffer_hit
-    //   = idle_load & (cache_hit | miss_buffer_covers_load).
-    // This exact factoring prevents the late StoreBuffer address match from
-    // first traversing the cache-miss-qualified miss_buffer_hit cone.
-    wire idle_load_ready = idle_load
-                         & (cache_hit | miss_buffer_covers_load);
+    wire idle_load_ready = idle_load_hit;
     wire idle_cpu_ready = idle_load_ready | idle_store_accept;
 
     assign cpu_ready = ~mem_req

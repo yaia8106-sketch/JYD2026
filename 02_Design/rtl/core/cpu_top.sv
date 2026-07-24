@@ -680,7 +680,9 @@ module cpu_top
         .ex_mem_size         (ex_mem_size),
         .ex_store_wea        (dram_wea),
         .ex_store_data       (ex_rs2_data_repair),
-        .ex_s1_valid         (ex_s1_valid),
+        .ex_s1_lsu_select    (ex_s1_valid
+                              & (ex_s1_mem_read_en
+                                 | ex_s1_mem_write_en)),
         .ex_s1_mem_read_en   (ex_s1_mem_read_en
                               & ~ex_s1_side_effect_kill),
         .ex_s1_mem_write_en  (ex_s1_mem_write_en
@@ -1413,6 +1415,8 @@ module cpu_top
         .ex_reg_write   (ex_forward_reg_write),
         .ex_is_muldiv   (ex_is_muldiv),
         .ex_mem_read    (ex_mem_read_en),
+        .ex_result_repair(ex_alu_src1_wb_repair
+                          | ex_alu_src2_wb_repair),
         .ex_rd          (ex_rd),
         .ex_alu_result  (ex_forward_result),
         .ex_fast_alu    (ex_fast_alu_forward),
@@ -1422,6 +1426,8 @@ module cpu_top
         .ex_s1_valid       (ex_s1_valid),
         .ex_s1_reg_write   (ex_s1_reg_write_en),
         .ex_s1_mem_read    (ex_s1_mem_read_en),
+        .ex_s1_result_repair(ex_s1_alu_src1_wb_repair
+                             | ex_s1_alu_src2_wb_repair),
         .ex_s1_rd          (ex_s1_rd),
         .ex_s1_alu_result  (alu_s1_result),
         .ex_s1_pc_plus_4   (ex_s1_pc_plus_4),
@@ -1685,8 +1691,10 @@ module cpu_top
         .ex_ready_go                (ex_ready_go_w),
         .mem_allowin                (mem_allowin),
         .ex_branch_redirect         (ex_branch_registered_flush),
+        .ex_branch_request          (branch_flush & ~ex_priv_flow),
         .branch_target              (branch_target),
         .ex_priv_redirect           (ex_priv_redirect),
+        .ex_priv_flow               (ex_priv_flow),
         .ex_priv_target             (ex_priv_target),
         .ex_pc_plus_4               (ex_pc_plus_4),
         .ex_s1_pc_plus_4            (ex_s1_pc_plus_4),

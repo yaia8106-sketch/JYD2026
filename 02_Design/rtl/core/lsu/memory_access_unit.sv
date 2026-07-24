@@ -16,7 +16,9 @@ module memory_access_unit #(
     input  logic [ 1:0] ex_mem_size,
     input  logic [ 3:0] ex_store_wea,
     input  logic [31:0] ex_store_data,
-    input  logic        ex_s1_valid,
+    // Ungated decode intent used only for speculative, side-effect-free
+    // address selection. Qualified enables still control real requests.
+    input  logic        ex_s1_lsu_select,
     input  logic        ex_s1_mem_read_en,
     input  logic        ex_s1_mem_write_en,
     input  logic [31:0] ex_s1_alu_addr,
@@ -72,8 +74,10 @@ module memory_access_unit #(
 
     // The shared LSU chooses Slot 1 only when Slot 0 is not using memory.
     wire ex_s0_lsu = ex_mem_read_en | ex_mem_write_en;
-    wire ex_s1_lsu = ex_s1_valid & (ex_s1_mem_read_en | ex_s1_mem_write_en);
-    wire ex_use_s1_lsu = ~ex_s0_lsu & ex_s1_lsu;
+    // Keep the late redirect/trap kill out of the speculative DCache lookup
+    // address. A killed request has both qualified enables low, so cache_req
+    // remains low and only the side-effect-free tag/BRAM address may change.
+    wire ex_use_s1_lsu = ~ex_s0_lsu & ex_s1_lsu_select;
     wire [31:0] ex_lsu_addr = ex_use_s1_lsu ? ex_s1_alu_addr : ex_alu_addr;
     wire        ex_lsu_read = ex_use_s1_lsu ? ex_s1_mem_read_en : ex_mem_read_en;
     wire        ex_lsu_write = ex_use_s1_lsu ? ex_s1_mem_write_en : ex_mem_write_en;

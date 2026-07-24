@@ -47,6 +47,7 @@ module forwarding (
     input  logic        ex_reg_write,
     input  logic        ex_is_muldiv,
     input  logic        ex_mem_read,
+    input  logic        ex_result_repair,
     input  logic [ 4:0] ex_rd,
     input  logic [31:0] ex_alu_result,
     input  logic        ex_fast_alu,
@@ -58,6 +59,7 @@ module forwarding (
     input  logic        ex_s1_valid,
     input  logic        ex_s1_reg_write,
     input  logic        ex_s1_mem_read,
+    input  logic        ex_s1_result_repair,
     input  logic [ 4:0] ex_s1_rd,
     input  logic [31:0] ex_s1_alu_result,
     input  logic [31:0] ex_s1_pc_plus_4,
@@ -195,8 +197,8 @@ module forwarding (
 `define FWD_MUX(TAG, SRC_ADDR, RF_DATA, OUT_DATA) \
     /* Build match bits for one ID operand. Younger pipeline stages have */ \
     /* priority over older ones; within a stage Slot 1 is younger than Slot 0. */ \
-    wire TAG``_s1_ex_hit  = ex_s1_valid  && ex_s1_reg_write  && (ex_s1_rd != 5'd0) && (ex_s1_rd == SRC_ADDR); \
-    wire TAG``_s0_ex_hit  = ex_valid     && ex_reg_write     && (ex_rd != 5'd0) && (ex_rd == SRC_ADDR); \
+    wire TAG``_s1_ex_hit  = ex_s1_valid  && ex_s1_reg_write  && !ex_s1_result_repair && (ex_s1_rd != 5'd0) && (ex_s1_rd == SRC_ADDR); \
+    wire TAG``_s0_ex_hit  = ex_valid     && ex_reg_write     && !ex_result_repair && (ex_rd != 5'd0) && (ex_rd == SRC_ADDR); \
     wire TAG``_s1_mem_hit = mem_s1_valid && mem_s1_reg_write && !mem_s1_is_load && (mem_s1_rd != 5'd0) && (mem_s1_rd == SRC_ADDR); \
     wire TAG``_s0_mem_hit = mem_valid    && mem_reg_write    && !mem_is_load    && (mem_rd    != 5'd0) && (mem_rd    == SRC_ADDR); \
     wire TAG``_s1_wb_hit  = wb_s1_valid  && wb_s1_reg_write  && (wb_s1_rd != 5'd0) && (wb_s1_rd == SRC_ADDR); \
@@ -439,9 +441,27 @@ module forwarding (
         .load_use_hazard_if_mem_wait    (load_use_hazard_if_mem_wait)
     );
 
-    // Repaired S0 EX results are valid ID forwarding sources. Keep this named
-    // wire for the perf monitor; it now reports actual wait cycles, expected 0.
-    wire repair_use_hazard = 1'b0;
+    // Do not serialize WB load repair, the EX ALU and a second ID consumer in
+    // one cycle.  Hold only a true consumer of that repaired EX result; one
+    // cycle later the producer is available through ordinary MEM forwarding.
+    wire id_s0_uses_s0_ex_repair =
+        (id_rs1_used & (ex_rd == id_rs1_addr))
+      | (id_rs2_used & (ex_rd == id_rs2_addr));
+    wire id_s1_uses_s0_ex_repair = id_s1_valid
+        & ((id_s1_rs1_used & (ex_rd == id_s1_rs1_addr))
+         | (id_s1_rs2_used & (ex_rd == id_s1_rs2_addr)));
+    wire id_s0_uses_s1_ex_repair =
+        (id_rs1_used & (ex_s1_rd == id_rs1_addr))
+      | (id_rs2_used & (ex_s1_rd == id_rs2_addr));
+    wire id_s1_uses_s1_ex_repair = id_s1_valid
+        & ((id_s1_rs1_used & (ex_s1_rd == id_s1_rs1_addr))
+         | (id_s1_rs2_used & (ex_s1_rd == id_s1_rs2_addr)));
+    wire repair_use_hazard =
+        (ex_valid & ex_reg_write & ex_result_repair & (ex_rd != 5'd0)
+         & (id_s0_uses_s0_ex_repair | id_s1_uses_s0_ex_repair))
+      | (ex_s1_valid & ex_s1_reg_write & ex_s1_result_repair
+         & (ex_s1_rd != 5'd0)
+         & (id_s0_uses_s1_ex_repair | id_s1_uses_s1_ex_repair));
 
     // A multiplier leaves EX before its registered result is visible. Hold
     // only matching consumers for that cycle; in the following cycle the

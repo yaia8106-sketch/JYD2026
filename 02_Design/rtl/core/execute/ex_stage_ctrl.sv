@@ -49,8 +49,10 @@ module ex_stage_ctrl
     input  logic        ex_ready_go,
     input  logic        mem_allowin,
     input  logic        ex_branch_redirect,
+    input  logic        ex_branch_request,
     input  logic [31:0] branch_target,
     input  logic        ex_priv_redirect,
+    input  logic        ex_priv_flow,
     input  logic [31:0] ex_priv_target,
 
     output logic [31:0] ex_pc_plus_4,
@@ -166,9 +168,14 @@ module ex_stage_ctrl
     // is CF_NONE. In particular, an S1 false positive must resume at S1+4;
     // using decoded control validity here would incorrectly select S0+4 and
     // re-execute S1. S0 has age priority if both slots request repair.
+    // Only redirect.valid is handshake-qualified.  Select the don't-care
+    // target with raw EX requests so DCache backpressure (mem_allowin) cannot
+    // become a data input of every bit in the redirect target register.
+    wire ex_s1_addr_replay_request = ex_valid & ex_s1_valid
+                                   & ex_s1_addr_replay;
     assign ex_registered_branch_target =
-        ex_priv_redirect ? ex_priv_target :
-        ex_branch_redirect ? branch_target :
-        ex_s1_addr_replay_redirect ? ex_s1_pc : ex_s1_redirect_target;
+        ex_priv_flow ? ex_priv_target :
+        ex_branch_request ? branch_target :
+        ex_s1_addr_replay_request ? ex_s1_pc : ex_s1_redirect_target;
 
 endmodule

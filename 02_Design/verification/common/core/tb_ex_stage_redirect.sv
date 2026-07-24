@@ -28,8 +28,10 @@ module tb_ex_stage_redirect;
     logic ex_s1_addr_replay;
     logic mem_branch_flush, ex_ready_go, mem_allowin;
     logic ex_branch_redirect;
+    logic ex_branch_request;
     logic [31:0] branch_target;
     logic ex_priv_redirect;
+    logic ex_priv_flow;
     logic [31:0] ex_priv_target;
 
     logic [31:0] ex_pc_plus_4, ex_s1_pc_plus_4;
@@ -95,8 +97,10 @@ module tb_ex_stage_redirect;
         ex_ready_go = 1'b1;
         mem_allowin = 1'b1;
         ex_branch_redirect = 1'b0;
+        ex_branch_request = 1'b0;
         branch_target = 32'h1c00_1004;
         ex_priv_redirect = 1'b0;
+        ex_priv_flow = 1'b0;
         ex_priv_target = 32'h1c00_3000;
 
         // A false-positive S1 BTB hit is repaired to the instruction after S1.
@@ -112,11 +116,13 @@ module tb_ex_stage_redirect;
 
         // The older S0 redirect wins if both slots request repair.
         ex_branch_redirect = 1'b1;
+        ex_branch_request = 1'b1;
         branch_target = 32'h1c00_2000;
         expect_target(32'h1c00_2000, "S0 age priority");
 
         // A synchronous privilege redirect has highest priority.
         ex_priv_redirect = 1'b1;
+        ex_priv_flow = 1'b1;
         expect_target(32'h1c00_3000, "privilege priority");
 
         $display("[PASS] EX-stage redirect source selection");
