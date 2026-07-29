@@ -1,10 +1,10 @@
 // ============================================================
 // Module: nscscc_axi_bridge
 // Description:
-//   NSCSCC-only memory bridge.  It combines variable-latency 64-bit IROM
-//   fetches and the DCache backend onto the single 32-bit AXI master required
-//   by chiplab.  Data traffic has arbitration priority to guarantee progress
-//   while the pipeline is stalled on an LSU request.
+//   NSCSCC-only memory bridge. It combines ICache refills and the DCache
+//   backend onto the single 32-bit AXI master required by chiplab. Data
+//   traffic has arbitration priority to guarantee progress while the
+//   pipeline is stalled on an LSU request.
 // ============================================================
 
 module nscscc_axi_bridge (
@@ -14,6 +14,7 @@ module nscscc_axi_bridge (
     input  logic        irom_req_valid,
     output logic        irom_req_ready,
     input  logic [31:0] irom_req_addr,
+    input  logic        irom_req_kill,
     output logic        irom_resp_valid,
     output logic [63:0] irom_resp_data,
 
@@ -105,14 +106,14 @@ module nscscc_axi_bridge (
     logic [ 3:0] unused_awqos;
     logic [ 3:0] unused_arqos;
 
-    irom_backend_adapter u_irom_backend_adapter (
+    icache u_icache (
         .clk            (clk),
         .rst_n          (rst_n),
         .irom_req_valid (irom_req_valid),
         .irom_req_ready (irom_req_ready),
         .irom_req_addr  (irom_req_addr),
+        .irom_req_kill  (irom_req_kill),
         .irom_resp_valid(irom_resp_valid),
-        .irom_resp_ready(1'b1),
         .irom_resp_data (irom_resp_data),
         .irom_resp_resp (irom_resp_resp),
         .mem_req_valid  (imem_req_valid),
@@ -234,6 +235,8 @@ module nscscc_axi_bridge (
     always_ff @(posedge clk) begin
         if (rst_n && dmem_rd_cancel)
             $error("NSCSCC AXI reads cannot be cancelled after acceptance");
+        if (rst_n && axi_busy && mem_req_ready)
+            $error("AXI adapter accepted a second outstanding command");
         if (rst_n && irom_resp_valid && (irom_resp_resp != 2'b00))
             $error("IROM AXI read completed with response %b", irom_resp_resp);
         if (rst_n && rvalid && rready && (rid != arid))

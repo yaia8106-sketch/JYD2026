@@ -92,6 +92,7 @@ module myCPU (
         .irom_addr            (core_irom_addr),
         .irom_req_valid       (),
         .irom_req_addr        (),
+        .irom_req_kill        (),
         .irom_req_ready       (1'b0),
         .irom_resp_valid      (1'b0),
         .irom_data            (core_irom_data),

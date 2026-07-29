@@ -7,6 +7,7 @@ module tb_nscscc_axi_bridge;
     logic        irom_req_valid;
     logic        irom_req_ready;
     logic [31:0] irom_req_addr;
+    logic        irom_req_kill;
     logic        irom_resp_valid;
     logic [63:0] irom_resp_data;
 
@@ -73,6 +74,7 @@ module tb_nscscc_axi_bridge;
         .irom_req_valid(irom_req_valid),
         .irom_req_ready(irom_req_ready),
         .irom_req_addr(irom_req_addr),
+        .irom_req_kill(irom_req_kill),
         .irom_resp_valid(irom_resp_valid),
         .irom_resp_data(irom_resp_data),
         .dmem_req_valid(dmem_req_valid),
@@ -192,6 +194,16 @@ module tb_nscscc_axi_bridge;
         end
     endtask
 
+    task automatic kill_irom_request;
+        begin
+            @(negedge clk);
+            irom_req_kill = 1'b1;
+            @(posedge clk);
+            @(negedge clk);
+            irom_req_kill = 1'b0;
+        end
+    endtask
+
     task automatic issue_dmem(
         input logic        write,
         input logic [31:0] addr,
@@ -225,6 +237,7 @@ module tb_nscscc_axi_bridge;
         dmem_read_beats = 0;
         irom_req_valid = 1'b0;
         irom_req_addr = 32'd0;
+        irom_req_kill = 1'b0;
         dmem_req_valid = 1'b0;
         dmem_req_write = 1'b0;
         dmem_req_addr = 32'd0;
@@ -252,7 +265,7 @@ module tb_nscscc_axi_bridge;
         // IROM uses two 32-bit beats and aligns the request to eight bytes.
         $display("[INFO] IROM two-beat read");
         fork
-            issue_irom(32'h1c00_0004);
+            issue_irom(32'h1c00_0000);
             begin
                 accept_ar(32'h1c00_0000, 8'd1);
                 // Hold a DCache miss while IROM owns the AXI transaction.
@@ -303,6 +316,25 @@ module tb_nscscc_axi_bridge;
         repeat (2) @(posedge clk);
         check(dmem_read_beats == 4, "DCache refill did not receive four beats");
 
+        // The ICache line refill uses a second, independently arbitrated
+        // two-beat request after returning the critical 64-bit block.
+        $display("[INFO] ICache non-critical block refill");
+        accept_ar(32'h1c00_0008, 8'd1);
+        send_r(32'h99aa_bbcc, 1'b0);
+        send_r(32'hddee_ff00, 1'b1);
+        repeat (2) @(posedge clk);
+
+        // A completed line must return from the local RAM without AXI traffic.
+        $display("[INFO] ICache local hit");
+        issue_irom(32'h1c00_0000);
+        wait (irom_resp_valid);
+        check(irom_resp_data == 64'h5566_7788_1122_3344,
+              "ICache hit returned incorrect data");
+        repeat (2) begin
+            @(posedge clk);
+            check(!arvalid, "ICache hit unexpectedly issued an AXI read");
+        end
+
         // AXI AW and W may handshake independently; B is backpressured by the
         // DCache response consumer.
         $display("[INFO] DCache write and independent AW/W handshakes");
@@ -347,34 +379,86 @@ module tb_nscscc_axi_bridge;
         @(negedge clk);
         bvalid = 1'b0;
 
-        // When both clients request an idle backend, data wins.
-        $display("[INFO] simultaneous IROM/DCache arbitration");
+        // The ICache lookup is independent of AXI arbitration. Once that
+        // lookup misses, a simultaneous backend command still gives DCache
+        // priority.
+        $display("[INFO] simultaneous ICache/DCache backend arbitration");
         repeat (2) @(posedge clk);
+        issue_irom(32'h1c00_0100);
+        wait (dut.imem_req_valid);
         @(negedge clk);
-        irom_req_addr = 32'h1c00_0100;
-        irom_req_valid = 1'b1;
         dmem_req_write = 1'b0;
         dmem_req_addr = 32'h1fe0_01e0;
         dmem_req_len = 8'd0;
         dmem_req_valid = 1'b1;
         #1;
-        check(dmem_req_ready && !irom_req_ready,
+        check(dmem_req_ready && !dut.imem_req_ready,
               "simultaneous arbitration did not prioritize DCache");
         @(posedge clk);
         @(negedge clk);
         dmem_req_valid = 1'b0;
         accept_ar(32'h1fe0_01e0, 8'd0);
         send_r(32'h0000_005a, 1'b1);
-        wait (irom_req_ready);
-        @(posedge clk);
-        @(negedge clk);
-        irom_req_valid = 1'b0;
         accept_ar(32'h1c00_0100, 8'd1);
         send_r(32'h0102_0304, 1'b0);
         send_r(32'h0506_0708, 1'b1);
         wait (irom_resp_valid);
         check(irom_resp_data == 64'h0506_0708_0102_0304,
               "post-arbitration IROM response mismatch");
+        accept_ar(32'h1c00_0108, 8'd1);
+        send_r(32'h1112_1314, 1'b0);
+        send_r(32'h1516_1718, 1'b1);
+
+        // A miss in the upper half of a line must reverse the two refill
+        // requests while preserving the normal low/high 32-bit packing.
+        $display("[INFO] ICache upper critical block first");
+        issue_irom(32'h1c00_0308);
+        accept_ar(32'h1c00_0308, 8'd1);
+        send_r(32'h4142_4344, 1'b0);
+        send_r(32'h4546_4748, 1'b1);
+        wait (irom_resp_valid);
+        check(irom_resp_data == 64'h4546_4748_4142_4344,
+              "upper critical block response mismatch");
+        accept_ar(32'h1c00_0300, 8'd1);
+        send_r(32'h5152_5354, 1'b0);
+        send_r(32'h5556_5758, 1'b1);
+        repeat (2) @(posedge clk);
+        issue_irom(32'h1c00_0300);
+        wait (irom_resp_valid);
+        check(irom_resp_data == 64'h5556_5758_5152_5354,
+              "lower block hit after reverse refill mismatch");
+
+        // Killing an accepted miss must drain the old AXI request without
+        // blocking an unrelated local hit. Re-requesting the killed line is
+        // retained as one pending miss and starts only after the drain.
+        $display("[INFO] redirect kill, hit-under-drain, and pending miss");
+        issue_irom(32'h1c00_0200);
+        accept_ar(32'h1c00_0200, 8'd1);
+        kill_irom_request();
+
+        issue_irom(32'h1c00_0000);
+        wait (irom_resp_valid);
+        check(irom_resp_data == 64'h5566_7788_1122_3344,
+              "cached hit was blocked or corrupted by stale AXI drain");
+
+        issue_irom(32'h1c00_0200);
+        repeat (2) begin
+            @(posedge clk);
+            check(!irom_resp_valid,
+                  "killed refill produced a stale frontend response");
+        end
+
+        send_r(32'hdead_0001, 1'b0);
+        send_r(32'hdead_0002, 1'b1);
+        accept_ar(32'h1c00_0200, 8'd1);
+        send_r(32'h2122_2324, 1'b0);
+        send_r(32'h2526_2728, 1'b1);
+        wait (irom_resp_valid);
+        check(irom_resp_data == 64'h2526_2728_2122_2324,
+              "pending miss reused data from the killed refill");
+        accept_ar(32'h1c00_0208, 8'd1);
+        send_r(32'h3132_3334, 1'b0);
+        send_r(32'h3536_3738, 1'b1);
 
         repeat (3) @(posedge clk);
         if (errors == 0)

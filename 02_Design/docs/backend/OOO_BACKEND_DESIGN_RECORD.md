@@ -689,7 +689,7 @@ ROB 的恢复只清 `valid/complete/exception/resolved_next_pc_valid` 等小状�
 - **已确认**：分支恢复时，严格更老的 Load miss、DIV 和 FU 保持项继续运行；严格年轻者在本地取消。迭代 DIV 应提供 owner kill 后清 busy 的通路，避免一条已被清除的 32 周期除法继续占住 MDU。
 - **已确认**：年轻 Load 已被存储后端接受时，能取消的本地 BRAM 请求立即取消；AXI 等不可取消请求进入 drain/drop 状态，返回数据只负责结束旧事务，不产生 PRF 写回、唤醒、ROB complete 或异常。选择性分支恢复不能把仍然存活的老 Load miss送入 drop。
 - **已确认**：6 bit ROB tag 足以比较当前 32 项窗口的年龄，但它不是可以无限期复用的外部事务编号。任何可能晚于 ROB 多次绕回才返回的接口，必须一直保留“这是一个已取消旧事务”的本地状态直到返回排空，或显式携带更宽 transaction ID；不能在很久以后收到返回时仅重新比较 1 bit generation。
-- **已确认，取指接口约束**：固定一拍 IROM 可用当前 epoch 丢掉 redirect 前的一拍返回。可变延迟 IROM 的返回包没有请求编号，因此必须保证最多一个请求在途，并且后端在旧响应排空前保持 `irom_req_ready=0`；redirect 后旧响应先被丢弃，正确 PC 请求随后才会被接受。当前 `irom_backend_adapter` 的 `IDLE -> READ -> RESP` 状态满足该约束。若将来允许多个取指请求在途，响应必须回传 epoch/transaction ID，仅扩大当前 2 bit 本地 epoch 不能解决错误配对。
+- **已确认，取指接口约束**：固定一拍 IROM 可用当前 epoch 丢掉 redirect 前的一拍返回。NSCSCC 的 ICache 将前端查询和 AXI 回填分开：redirect 时钟沿杀掉旧取指 owner；已经被 AXI 接受的旧读继续排空，该沿之后返回的数据不再写 Cache，也不产生前端响应。若最后一个返回拍恰好与 redirect 同沿，允许把正确的只读指令数据写入 Cache，但前端仍按 redirect 优先级丢弃该响应，从而避免形成“分支判断组合控制 BRAM 写使能”的长路径。排空期间仍可接受正确 PC 的新查询，命中直接返回，未命中最多暂存一条，等旧 AXI 读结束后再发起新的后端请求。因此当前允许同时存在“一条已杀死、只负责排空的 AXI 读”和“一条仍存活的前端查询/待处理未命中”，但仍然只有一个存活的前端响应 owner，不需要返回 ID。若以后允许多个存活的取指未命中同时进入后端，则必须增加 MSHR 和 transaction ID；仅扩大当前 2 bit 本地 epoch 不能解决返回配对。
 - **已确认**：误预测 owner 自己的预测器训练和 Decode 纠错自己的 ABTB 失效可以随对应恢复保留；若同周期存在更老的 ROB 头恢复，使 owner 本身失效，则这些更新也取消。
 
 ### 9.7 恢复后哪一拍重新工作
@@ -750,7 +750,7 @@ RTL 至少设置以下断言：
 - 分支恢复沿之后，不得残留任何严格年轻的 IQ、SQ、FU、Load 或 MDU valid，严格更老者必须保持；
 - 全部恢复后，不得残留未提交 ROB/IQ/FU 状态，已提交 Store Queue 项必须仍然存在；
 - 任何迟到响应若 owner 已失效，不得写 PRF ready、ROB complete、异常或恢复状态；
-- 可变延迟 IROM 在旧响应未排空时不得接受新请求；若以后改成多在途，必须验证返回 ID；
+- ICache 在旧 AXI 读排空期间可以接受新查询并返回本地命中；新的未命中只能占用唯一待处理项，不得在旧读结束前发起第二笔后端事务；redirect 沿之后的旧返回不得写 Cache 或产生前端响应；
 - 每次恢复只产生一个前端 redirect 脉冲，恢复后的第一次有效请求地址必须等于选中的目标；
 - `architectural_next_pc` 在 ROB 为空时必须等于下一条应执行的架构 PC。
 

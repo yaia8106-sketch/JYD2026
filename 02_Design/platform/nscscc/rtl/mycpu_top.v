@@ -87,6 +87,7 @@ module core_top #(
     wire        irom_req_valid;
     wire        irom_req_ready;
     wire [31:0] irom_req_addr;
+    wire        irom_req_kill;
     wire        irom_resp_valid;
     wire [63:0] irom_resp_data;
 
@@ -163,6 +164,7 @@ module core_top #(
         .irom_addr           (),
         .irom_req_valid      (irom_req_valid),
         .irom_req_addr       (irom_req_addr),
+        .irom_req_kill       (irom_req_kill),
         .irom_req_ready      (irom_req_ready),
         .irom_resp_valid     (irom_resp_valid),
         .irom_data           (irom_resp_data),
@@ -270,6 +272,7 @@ module core_top #(
         .irom_req_valid (irom_req_valid),
         .irom_req_ready (irom_req_ready),
         .irom_req_addr  (irom_req_addr),
+        .irom_req_kill  (irom_req_kill),
         .irom_resp_valid(irom_resp_valid),
         .irom_resp_data (irom_resp_data),
         .dmem_req_valid (dmem_req_valid),

@@ -32,6 +32,7 @@ module tb_loongarch_privileged;
     cpu_top #(.RESET_PC(RESET_PC)) u_cpu (
         .clk(clk), .rst_n(rst_n),
         .irom_addr(irom_addr), .irom_req_valid(), .irom_req_addr(),
+        .irom_req_kill(),
         .irom_req_ready(1'b0), .irom_resp_valid(1'b0), .irom_data(irom_data),
         .cache_req(), .cache_wr(), .cache_addr(), .cache_wea(),
         .cache_wdata(), .cache_load_mask(), .cache_uncached(),

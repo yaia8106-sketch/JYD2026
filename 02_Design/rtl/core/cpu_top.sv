@@ -32,6 +32,7 @@ module cpu_top
     output logic [11:0] irom_addr,
     output logic        irom_req_valid,
     output logic [31:0] irom_req_addr,
+    output logic        irom_req_kill,
     input  logic        irom_req_ready,
     input  logic        irom_resp_valid,
     input  logic [63:0] irom_data,
@@ -1267,6 +1268,8 @@ module cpu_top
     wire raw_inst0_is_jump = 1'b0;
     wire if_sequential_fetch = ~if_pred_taken_out;
     wire skip_inst0_valid = 1'b0;
+
+    assign irom_req_kill = frontend_branch_flush;
 
     // Frontend FTQ owns BP0/F0/F1 fetch flow and returns at most two
     // predecoded instructions to the existing IF/ID register.

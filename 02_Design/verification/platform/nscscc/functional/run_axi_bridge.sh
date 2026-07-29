@@ -16,7 +16,7 @@ vcs -full64 -sverilog -timescale=1ns/1ps \
     -o "$WORK_DIR/simv" \
     "$RTL_DIR/bus/axi/axi_master_adapter.sv" \
     "$RTL_DIR/bus/axi/memory_backend_arbiter.sv" \
-    "$RTL_DIR/memory/backends/irom_backend_adapter.sv" \
+    "$RTL_DIR/memory/icache.sv" \
     "$PLATFORM_RTL_DIR/nscscc_axi_bridge.sv" \
     "$NSCSCC_DIR/tb/tb_nscscc_axi_bridge.sv" \
     "$VCS_SHIM" >"$WORK_DIR/compile.log" 2>&1
