@@ -600,10 +600,14 @@ module frontend_ftq
     wire ftq_alloc_ready = (ftq_count < FTQ_DEPTH_COUNT);
     wire fq_credit_for_bp0 = f0_valid_r ? (fq_count <= FQ_DEPTH_MINUS_4)
                                         : (fq_count <= FQ_DEPTH_MINUS_2);
+    // A variable-latency F0 entry that responds now frees its slot at the same
+    // edge. Permit the next BP request to replace it without an empty bubble.
+    wire variable_f0_slot_ready = ~f0_valid_r | f0_response_fire;
     assign irom_req_valid = ftq_alloc_ready
                           && fq_credit_for_bp0
                           && !redirect_valid
-                          && (!VARIABLE_IROM_LATENCY || !f0_valid_r);
+                          && (!VARIABLE_IROM_LATENCY
+                              || variable_f0_slot_ready);
     assign bp0_fire = irom_req_valid
                     && (!VARIABLE_IROM_LATENCY || irom_req_ready);
     assign abtb_lookup_accept = bp0_fire;

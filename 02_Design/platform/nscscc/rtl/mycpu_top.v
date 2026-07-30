@@ -108,8 +108,12 @@ module core_top #(
     wire        dmem_req_write;
     wire [31:0] dmem_req_addr;
     wire [ 7:0] dmem_req_len;
-    wire [31:0] dmem_req_wdata;
-    wire [ 3:0] dmem_req_wstrb;
+    wire [ 1:0] dmem_req_burst;
+    wire        dmem_w_valid;
+    wire        dmem_w_ready;
+    wire [31:0] dmem_w_data;
+    wire [ 3:0] dmem_w_strb;
+    wire        dmem_w_last;
     wire        dmem_rd_valid;
     wire        dmem_rd_ready;
     wire [31:0] dmem_rd_data;
@@ -222,13 +226,7 @@ module core_top #(
         .debug_exception_inst(debug_exception_inst_i)
     );
 
-    dcache #(
-        .BACKEND_CANCEL     (1'b0),
-        .DIRECT_BRAM        (1'b0),
-        .CRITICAL_WORD_FIRST(1'b0),
-        .PHYS_ADDR_WIDTH    (32),
-        .UNCACHED_ENABLE    (1'b1)
-    ) u_dcache (
+    dcache u_dcache (
         .clk                 (aclk),
         .rst_n               (core_rst_n),
         .cpu_req             (cache_req),
@@ -236,7 +234,6 @@ module core_top #(
         .cpu_addr            (cache_addr),
         .cpu_wea             (cache_wea),
         .cpu_wdata           (cache_wdata),
-        .cpu_load_mask       (cache_load_mask),
         .cpu_uncached        (cache_uncached),
         .cpu_rdata           (cache_rdata),
         .cpu_ready           (cache_ready),
@@ -247,8 +244,12 @@ module core_top #(
         .mem_req_write       (dmem_req_write),
         .mem_req_addr        (dmem_req_addr),
         .mem_req_len         (dmem_req_len),
-        .mem_req_wdata       (dmem_req_wdata),
-        .mem_req_wstrb       (dmem_req_wstrb),
+        .mem_req_burst       (dmem_req_burst),
+        .mem_w_valid         (dmem_w_valid),
+        .mem_w_ready         (dmem_w_ready),
+        .mem_w_data          (dmem_w_data),
+        .mem_w_strb          (dmem_w_strb),
+        .mem_w_last          (dmem_w_last),
         .mem_rd_valid        (dmem_rd_valid),
         .mem_rd_ready        (dmem_rd_ready),
         .mem_rd_data         (dmem_rd_data),
@@ -257,13 +258,7 @@ module core_top #(
         .mem_rd_cancel       (dmem_rd_cancel),
         .mem_wr_valid        (dmem_wr_valid),
         .mem_wr_ready        (dmem_wr_ready),
-        .mem_wr_resp         (dmem_wr_resp),
-        .bram_rd_en          (),
-        .bram_rd_addr        (),
-        .bram_rd_data        (32'd0),
-        .bram_wr_addr        (),
-        .bram_wea            (),
-        .bram_wdata          ()
+        .mem_wr_resp         (dmem_wr_resp)
     );
 
     nscscc_axi_bridge u_nscscc_axi_bridge (
@@ -280,8 +275,12 @@ module core_top #(
         .dmem_req_write (dmem_req_write),
         .dmem_req_addr  (dmem_req_addr),
         .dmem_req_len   (dmem_req_len),
-        .dmem_req_wdata (dmem_req_wdata),
-        .dmem_req_wstrb (dmem_req_wstrb),
+        .dmem_req_burst (dmem_req_burst),
+        .dmem_w_valid   (dmem_w_valid),
+        .dmem_w_ready   (dmem_w_ready),
+        .dmem_w_data    (dmem_w_data),
+        .dmem_w_strb    (dmem_w_strb),
+        .dmem_w_last    (dmem_w_last),
         .dmem_rd_valid  (dmem_rd_valid),
         .dmem_rd_ready  (dmem_rd_ready),
         .dmem_rd_data   (dmem_rd_data),

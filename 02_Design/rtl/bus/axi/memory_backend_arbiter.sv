@@ -2,114 +2,192 @@
 // Module: memory_backend_arbiter
 // Description:
 //   Two-client arbiter for the common memory-backend command/response stream.
-//   It locks ownership until the selected read burst or write response ends.
-//   DCache has priority so an LSU miss that stalls retirement cannot be
-//   starved by speculative instruction fetches.
+//
+//   ICache and DCache reads use different AXI IDs, so one read from each
+//   client may remain outstanding at the same time. Read data is returned by
+//   RID instead of by one global owner bit. DCache writes remain
+//   single-outstanding and are serialized against both read clients.
+//
+//   DCache has command priority so an LSU miss that stalls retirement cannot
+//   be starved by speculative instruction fetches.
 // ============================================================
 
-module memory_backend_arbiter (
-    input  logic        clk,
-    input  logic        rst_n,
+module memory_backend_arbiter #(
+    parameter integer ID_WIDTH = 4,
+    parameter logic [ID_WIDTH-1:0] I_READ_ID  = 'd0,
+    parameter logic [ID_WIDTH-1:0] D_READ_ID  = 'd1,
+    parameter logic [ID_WIDTH-1:0] D_WRITE_ID = 'd2
+) (
+    input  logic                    clk,
+    input  logic                    rst_n,
 
-    input  logic        i_req_valid,
-    output logic        i_req_ready,
-    input  logic [31:0] i_req_addr,
-    input  logic [ 7:0] i_req_len,
-    output logic        i_rd_valid,
-    input  logic        i_rd_ready,
-    output logic [31:0] i_rd_data,
-    output logic        i_rd_last,
-    output logic [ 1:0] i_rd_resp,
+    input  logic                    i_req_valid,
+    output logic                    i_req_ready,
+    input  logic [31:0]             i_req_addr,
+    input  logic [ 7:0]             i_req_len,
+    input  logic [ 1:0]             i_req_burst,
+    output logic                    i_rd_valid,
+    input  logic                    i_rd_ready,
+    output logic [31:0]             i_rd_data,
+    output logic                    i_rd_last,
+    output logic [ 1:0]             i_rd_resp,
 
-    input  logic        d_req_valid,
-    output logic        d_req_ready,
-    input  logic        d_req_write,
-    input  logic [31:0] d_req_addr,
-    input  logic [ 7:0] d_req_len,
-    input  logic [31:0] d_req_wdata,
-    input  logic [ 3:0] d_req_wstrb,
-    output logic        d_rd_valid,
-    input  logic        d_rd_ready,
-    output logic [31:0] d_rd_data,
-    output logic        d_rd_last,
-    output logic [ 1:0] d_rd_resp,
-    output logic        d_wr_valid,
-    input  logic        d_wr_ready,
-    output logic [ 1:0] d_wr_resp,
+    input  logic                    d_req_valid,
+    output logic                    d_req_ready,
+    input  logic                    d_req_write,
+    input  logic [31:0]             d_req_addr,
+    input  logic [ 7:0]             d_req_len,
+    input  logic [ 1:0]             d_req_burst,
+    input  logic                    d_w_valid,
+    output logic                    d_w_ready,
+    input  logic [31:0]             d_w_data,
+    input  logic [ 3:0]             d_w_strb,
+    input  logic                    d_w_last,
+    output logic                    d_rd_valid,
+    input  logic                    d_rd_ready,
+    output logic [31:0]             d_rd_data,
+    output logic                    d_rd_last,
+    output logic [ 1:0]             d_rd_resp,
+    output logic                    d_wr_valid,
+    input  logic                    d_wr_ready,
+    output logic [ 1:0]             d_wr_resp,
 
-    output logic        m_req_valid,
-    input  logic        m_req_ready,
-    output logic        m_req_write,
-    output logic [31:0] m_req_addr,
-    output logic [ 7:0] m_req_len,
-    output logic [31:0] m_req_wdata,
-    output logic [ 3:0] m_req_wstrb,
-    input  logic        m_rd_valid,
-    output logic        m_rd_ready,
-    input  logic [31:0] m_rd_data,
-    input  logic        m_rd_last,
-    input  logic [ 1:0] m_rd_resp,
-    input  logic        m_wr_valid,
-    output logic        m_wr_ready,
-    input  logic [ 1:0] m_wr_resp
+    output logic                    m_req_valid,
+    input  logic                    m_req_ready,
+    output logic                    m_req_write,
+    output logic [31:0]             m_req_addr,
+    output logic [ 7:0]             m_req_len,
+    output logic [ 1:0]             m_req_burst,
+    output logic [ID_WIDTH-1:0]     m_req_id,
+    output logic                    m_w_valid,
+    input  logic                    m_w_ready,
+    output logic [31:0]             m_w_data,
+    output logic [ 3:0]             m_w_strb,
+    output logic                    m_w_last,
+    input  logic                    m_rd_valid,
+    output logic                    m_rd_ready,
+    input  logic [31:0]             m_rd_data,
+    input  logic                    m_rd_last,
+    input  logic [ 1:0]             m_rd_resp,
+    input  logic [ID_WIDTH-1:0]     m_rd_id,
+    input  logic                    m_wr_valid,
+    output logic                    m_wr_ready,
+    input  logic [ 1:0]             m_wr_resp
 );
 
-    typedef enum logic [1:0] {
-        OWNER_NONE,
-        OWNER_IROM,
-        OWNER_DCACHE
-    } owner_t;
+    logic i_read_active_q;
+    logic d_read_active_q;
+    logic d_write_active_q;
 
-    owner_t owner;
-    wire select_dcache = (owner == OWNER_NONE) & d_req_valid;
-    wire select_irom = (owner == OWNER_NONE) & ~d_req_valid & i_req_valid;
+    // One DCache command can be active at a time. A DCache read may overlap
+    // the ICache read; a DCache write may not overlap either read.
+    wire d_slot_free = ~d_read_active_q & ~d_write_active_q;
+    wire select_dcache =
+        d_req_valid
+        & d_slot_free
+        & (~d_req_write | ~i_read_active_q);
+    wire select_irom =
+        i_req_valid
+        & ~i_read_active_q
+        & ~d_write_active_q
+        & ~select_dcache;
+
     wire command_fire = m_req_valid & m_req_ready;
-    wire read_done = m_rd_valid & m_rd_ready & m_rd_last;
+    wire i_read_done =
+        m_rd_valid & m_rd_ready & m_rd_last & (m_rd_id == I_READ_ID);
+    wire d_read_done =
+        m_rd_valid & m_rd_ready & m_rd_last & (m_rd_id == D_READ_ID);
     wire write_done = m_wr_valid & m_wr_ready;
 
     assign m_req_valid = select_dcache | select_irom;
     assign m_req_write = select_dcache ? d_req_write : 1'b0;
     assign m_req_addr = select_dcache ? d_req_addr : i_req_addr;
     assign m_req_len = select_dcache ? d_req_len : i_req_len;
-    assign m_req_wdata = select_dcache ? d_req_wdata : 32'd0;
-    assign m_req_wstrb = select_dcache ? d_req_wstrb : 4'd0;
+    assign m_req_burst = select_dcache ? d_req_burst : i_req_burst;
+    assign m_req_id =
+        select_dcache
+            ? (d_req_write ? D_WRITE_ID : D_READ_ID)
+            : I_READ_ID;
 
     assign d_req_ready = select_dcache & m_req_ready;
     assign i_req_ready = select_irom & m_req_ready;
 
-    assign i_rd_valid = (owner == OWNER_IROM) & m_rd_valid;
-    assign i_rd_data  = m_rd_data;
-    assign i_rd_last  = m_rd_last;
-    assign i_rd_resp  = m_rd_resp;
-    assign d_rd_valid = (owner == OWNER_DCACHE) & m_rd_valid;
-    assign d_rd_data  = m_rd_data;
-    assign d_rd_last  = m_rd_last;
-    assign d_rd_resp  = m_rd_resp;
-    assign d_wr_valid = (owner == OWNER_DCACHE) & m_wr_valid;
-    assign d_wr_resp  = m_wr_resp;
+    assign m_w_valid = d_write_active_q & d_w_valid;
+    assign m_w_data  = d_w_data;
+    assign m_w_strb  = d_w_strb;
+    assign m_w_last  = d_w_last;
+    assign d_w_ready = d_write_active_q & m_w_ready;
 
-    assign m_rd_ready = (owner == OWNER_IROM) ? i_rd_ready
-                      : (owner == OWNER_DCACHE) ? d_rd_ready
-                      : 1'b0;
-    assign m_wr_ready = (owner == OWNER_DCACHE) & d_wr_ready;
+    assign i_rd_valid =
+        i_read_active_q & m_rd_valid & (m_rd_id == I_READ_ID);
+    assign i_rd_data = m_rd_data;
+    assign i_rd_last = m_rd_last;
+    assign i_rd_resp = m_rd_resp;
+
+    assign d_rd_valid =
+        d_read_active_q & m_rd_valid & (m_rd_id == D_READ_ID);
+    assign d_rd_data = m_rd_data;
+    assign d_rd_last = m_rd_last;
+    assign d_rd_resp = m_rd_resp;
+
+    assign d_wr_valid = d_write_active_q & m_wr_valid;
+    assign d_wr_resp = m_wr_resp;
+
+    assign m_rd_ready =
+        (m_rd_id == I_READ_ID) ? (i_read_active_q & i_rd_ready)
+      : (m_rd_id == D_READ_ID) ? (d_read_active_q & d_rd_ready)
+                               : 1'b0;
+    assign m_wr_ready = d_write_active_q & d_wr_ready;
 
     always_ff @(posedge clk) begin
         if (!rst_n) begin
-            owner <= OWNER_NONE;
+            i_read_active_q <= 1'b0;
+            d_read_active_q <= 1'b0;
+            d_write_active_q <= 1'b0;
         end else begin
-            if (owner == OWNER_NONE) begin
-                if (command_fire)
-                    owner <= select_dcache ? OWNER_DCACHE : OWNER_IROM;
-            end else if (read_done | write_done) begin
-                owner <= OWNER_NONE;
+            if (i_read_done)
+                i_read_active_q <= 1'b0;
+            if (d_read_done)
+                d_read_active_q <= 1'b0;
+            if (write_done)
+                d_write_active_q <= 1'b0;
+
+            if (command_fire) begin
+                if (select_dcache) begin
+                    if (d_req_write)
+                        d_write_active_q <= 1'b1;
+                    else
+                        d_read_active_q <= 1'b1;
+                end else begin
+                    i_read_active_q <= 1'b1;
+                end
             end
         end
     end
 
 `ifndef SYNTHESIS
+    initial begin
+        if ((I_READ_ID == D_READ_ID)
+            || (I_READ_ID == D_WRITE_ID)
+            || (D_READ_ID == D_WRITE_ID))
+            $error("Memory backend AXI IDs must be distinct");
+    end
+
     always_ff @(posedge clk) begin
-        if (rst_n && (owner == OWNER_IROM) && m_wr_valid)
-            $error("IROM backend received an impossible AXI write response");
+        if (rst_n && m_rd_valid
+            && (m_rd_id != I_READ_ID) && (m_rd_id != D_READ_ID))
+            $error("Memory backend received unknown AXI RID %0d", m_rd_id);
+        if (rst_n && m_rd_valid && (m_rd_id == I_READ_ID)
+            && !i_read_active_q)
+            $error("Memory backend received ICache data without an I read");
+        if (rst_n && m_rd_valid && (m_rd_id == D_READ_ID)
+            && !d_read_active_q)
+            $error("Memory backend received DCache data without a D read");
+        if (rst_n && !d_write_active_q && d_w_valid)
+            $error("DCache supplied write data without an active write");
+        if (rst_n && d_write_active_q
+            && (i_read_active_q || d_read_active_q))
+            $error("DCache AXI write overlapped an outstanding read");
     end
 `endif
 

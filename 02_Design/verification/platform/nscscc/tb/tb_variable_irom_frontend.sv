@@ -110,6 +110,27 @@ module tb_variable_irom_frontend;
         end
     endtask
 
+    task automatic return_packet_and_accept_next(
+        input logic [63:0] packet,
+        input logic [31:0] expected_next_addr
+    );
+        begin
+            @(negedge clk);
+            irom_data = packet;
+            irom_resp_valid = 1'b1;
+            irom_req_ready = 1'b1;
+            #1;
+            check(irom_req_valid,
+                  "frontend inserted a bubble while F0 response returned");
+            check(irom_req_addr == expected_next_addr,
+                  "same-cycle replacement request address mismatch");
+            @(posedge clk);
+            @(negedge clk);
+            irom_resp_valid = 1'b0;
+            irom_req_ready = 1'b0;
+        end
+    endtask
+
     task automatic redirect(input logic [31:0] target);
         begin
             @(negedge clk);
@@ -149,7 +170,10 @@ module tb_variable_irom_frontend;
             check(!if_valid, "frontend consumed instruction data before response");
         end
 
-        return_packet(64'h0340_0000_0280_0021);
+        return_packet_and_accept_next(
+            64'h0340_0000_0280_0021,
+            32'h1c00_0008
+        );
         #1;
         check(if_valid, "frontend did not enqueue delayed IROM response");
         check(if_payload.pc == 32'h1c00_0000,
@@ -158,6 +182,8 @@ module tb_variable_irom_frontend;
               "delayed response slot 0 mismatch");
         check(if_payload.slot1.inst == 32'h0340_0000,
               "delayed response slot 1 mismatch");
+        check(dut.f0_valid_r,
+              "same-cycle replacement request did not remain in F0");
 
         // Flush the queued packet, accept a request at 0x40, then redirect it
         // while outstanding.  Its stale response must not enter the FQ.

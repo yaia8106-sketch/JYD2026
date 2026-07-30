@@ -3,13 +3,13 @@
 module dcache_data_ram (
     input  logic        clka,
     input  logic [ 3:0] wea,
-    input  logic [ 7:0] addra,
+    input  logic [ 8:0] addra,
     input  logic [31:0] dina,
     input  logic        clkb,
-    input  logic [ 7:0] addrb,
+    input  logic [ 8:0] addrb,
     output logic [31:0] doutb
 );
-    (* ram_style = "block" *) logic [31:0] mem [0:255];
+    (* ram_style = "block" *) logic [31:0] mem [0:511];
 
     always_ff @(posedge clka) begin
         if (wea[0]) mem[addra][ 7: 0] <= dina[ 7: 0];

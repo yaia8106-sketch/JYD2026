@@ -163,7 +163,8 @@ module myCPU (
     dcache #(
         .BACKEND_CANCEL      (1'b1),
         .DIRECT_BRAM         (1'b1),
-        .CRITICAL_WORD_FIRST (1'b1)
+        .CRITICAL_WORD_FIRST (1'b1),
+        .WRITE_BACK          (1'b0)
     ) u_dcache (
         .clk                  (cpu_clk),
         .rst_n                (cpu_rst_n),
@@ -183,8 +184,12 @@ module myCPU (
         .mem_req_write        (),
         .mem_req_addr         (),
         .mem_req_len          (),
-        .mem_req_wdata        (),
-        .mem_req_wstrb        (),
+        .mem_req_burst        (),
+        .mem_w_valid          (),
+        .mem_w_ready          (1'b0),
+        .mem_w_data           (),
+        .mem_w_strb           (),
+        .mem_w_last           (),
         .mem_rd_valid         (1'b0),
         .mem_rd_ready         (),
         .mem_rd_data          (32'd0),

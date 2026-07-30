@@ -2,9 +2,10 @@
 // Module: nscscc_axi_bridge
 // Description:
 //   NSCSCC-only memory bridge. It combines ICache refills and the DCache
-//   backend onto the single 32-bit AXI master required by chiplab. Data
-//   traffic has arbitration priority to guarantee progress while the
-//   pipeline is stalled on an LSU request.
+//   backend onto the single 32-bit AXI master required by chiplab. ICache and
+//   DCache reads use distinct IDs and may be outstanding together; DCache
+//   traffic has command priority to guarantee progress while the pipeline is
+//   stalled on an LSU request.
 // ============================================================
 
 module nscscc_axi_bridge (
@@ -23,8 +24,12 @@ module nscscc_axi_bridge (
     input  logic        dmem_req_write,
     input  logic [31:0] dmem_req_addr,
     input  logic [ 7:0] dmem_req_len,
-    input  logic [31:0] dmem_req_wdata,
-    input  logic [ 3:0] dmem_req_wstrb,
+    input  logic [ 1:0] dmem_req_burst,
+    input  logic        dmem_w_valid,
+    output logic        dmem_w_ready,
+    input  logic [31:0] dmem_w_data,
+    input  logic [ 3:0] dmem_w_strb,
+    input  logic        dmem_w_last,
     output logic        dmem_rd_valid,
     input  logic        dmem_rd_ready,
     output logic [31:0] dmem_rd_data,
@@ -78,6 +83,7 @@ module nscscc_axi_bridge (
     logic        imem_req_ready;
     logic [31:0] imem_req_addr;
     logic [ 7:0] imem_req_len;
+    logic [ 1:0] imem_req_burst;
     logic        imem_rd_valid;
     logic        imem_rd_ready;
     logic [31:0] imem_rd_data;
@@ -90,13 +96,19 @@ module nscscc_axi_bridge (
     logic        mem_req_write;
     logic [31:0] mem_req_addr;
     logic [ 7:0] mem_req_len;
-    logic [31:0] mem_req_wdata;
-    logic [ 3:0] mem_req_wstrb;
+    logic [ 1:0] mem_req_burst;
+    logic [ 3:0] mem_req_id;
+    logic        mem_w_valid;
+    logic        mem_w_ready;
+    logic [31:0] mem_w_data;
+    logic [ 3:0] mem_w_strb;
+    logic        mem_w_last;
     logic        mem_rd_valid;
     logic        mem_rd_ready;
     logic [31:0] mem_rd_data;
     logic        mem_rd_last;
     logic [ 1:0] mem_rd_resp;
+    logic [ 3:0] mem_rd_id;
     logic        mem_wr_valid;
     logic        mem_wr_ready;
     logic [ 1:0] mem_wr_resp;
@@ -120,6 +132,7 @@ module nscscc_axi_bridge (
         .mem_req_ready  (imem_req_ready),
         .mem_req_addr   (imem_req_addr),
         .mem_req_len    (imem_req_len),
+        .mem_req_burst  (imem_req_burst),
         .mem_rd_valid   (imem_rd_valid),
         .mem_rd_ready   (imem_rd_ready),
         .mem_rd_data    (imem_rd_data),
@@ -134,6 +147,7 @@ module nscscc_axi_bridge (
         .i_req_ready  (imem_req_ready),
         .i_req_addr   (imem_req_addr),
         .i_req_len    (imem_req_len),
+        .i_req_burst  (imem_req_burst),
         .i_rd_valid   (imem_rd_valid),
         .i_rd_ready   (imem_rd_ready),
         .i_rd_data    (imem_rd_data),
@@ -144,8 +158,12 @@ module nscscc_axi_bridge (
         .d_req_write  (dmem_req_write),
         .d_req_addr   (dmem_req_addr),
         .d_req_len    (dmem_req_len),
-        .d_req_wdata  (dmem_req_wdata),
-        .d_req_wstrb  (dmem_req_wstrb),
+        .d_req_burst  (dmem_req_burst),
+        .d_w_valid    (dmem_w_valid),
+        .d_w_ready    (dmem_w_ready),
+        .d_w_data     (dmem_w_data),
+        .d_w_strb     (dmem_w_strb),
+        .d_w_last     (dmem_w_last),
         .d_rd_valid   (dmem_rd_valid),
         .d_rd_ready   (dmem_rd_ready),
         .d_rd_data    (dmem_rd_data),
@@ -159,13 +177,19 @@ module nscscc_axi_bridge (
         .m_req_write  (mem_req_write),
         .m_req_addr   (mem_req_addr),
         .m_req_len    (mem_req_len),
-        .m_req_wdata  (mem_req_wdata),
-        .m_req_wstrb  (mem_req_wstrb),
+        .m_req_burst  (mem_req_burst),
+        .m_req_id     (mem_req_id),
+        .m_w_valid    (mem_w_valid),
+        .m_w_ready    (mem_w_ready),
+        .m_w_data     (mem_w_data),
+        .m_w_strb     (mem_w_strb),
+        .m_w_last     (mem_w_last),
         .m_rd_valid   (mem_rd_valid),
         .m_rd_ready   (mem_rd_ready),
         .m_rd_data    (mem_rd_data),
         .m_rd_last    (mem_rd_last),
         .m_rd_resp    (mem_rd_resp),
+        .m_rd_id      (mem_rd_id),
         .m_wr_valid   (mem_wr_valid),
         .m_wr_ready   (mem_wr_ready),
         .m_wr_resp    (mem_wr_resp)
@@ -179,13 +203,19 @@ module nscscc_axi_bridge (
         .req_write     (mem_req_write),
         .req_addr      (mem_req_addr),
         .req_len       (mem_req_len),
-        .req_wdata     (mem_req_wdata),
-        .req_wstrb     (mem_req_wstrb),
+        .req_burst     (mem_req_burst),
+        .req_id        (mem_req_id),
+        .w_valid       (mem_w_valid),
+        .w_ready       (mem_w_ready),
+        .w_data        (mem_w_data),
+        .w_strb        (mem_w_strb),
+        .w_last        (mem_w_last),
         .rd_valid      (mem_rd_valid),
         .rd_ready      (mem_rd_ready),
         .rd_data       (mem_rd_data),
         .rd_last       (mem_rd_last),
         .rd_resp       (mem_rd_resp),
+        .rd_id         (mem_rd_id),
         .wr_valid      (mem_wr_valid),
         .wr_ready      (mem_wr_ready),
         .wr_resp       (mem_wr_resp),
@@ -216,8 +246,10 @@ module nscscc_axi_bridge (
         .m_axi_arcache (arcache),
         .m_axi_arprot  (arprot),
         .m_axi_arqos   (unused_arqos),
+        .m_axi_arid    (arid),
         .m_axi_arvalid (arvalid),
         .m_axi_arready (arready),
+        .m_axi_rid     (rid),
         .m_axi_rdata   (rdata),
         .m_axi_rresp   (rresp),
         .m_axi_rlast   (rlast),
@@ -225,9 +257,8 @@ module nscscc_axi_bridge (
         .m_axi_rready  (rready)
     );
 
-    assign arid = 4'h0;
-    assign awid = 4'h1;
-    assign wid = 4'h1;
+    assign awid = 4'h2;
+    assign wid = 4'h2;
     assign arlock = {1'b0, axi_arlock};
     assign awlock = {1'b0, axi_awlock};
 
@@ -235,12 +266,10 @@ module nscscc_axi_bridge (
     always_ff @(posedge clk) begin
         if (rst_n && dmem_rd_cancel)
             $error("NSCSCC AXI reads cannot be cancelled after acceptance");
-        if (rst_n && axi_busy && mem_req_ready)
-            $error("AXI adapter accepted a second outstanding command");
         if (rst_n && irom_resp_valid && (irom_resp_resp != 2'b00))
             $error("IROM AXI read completed with response %b", irom_resp_resp);
-        if (rst_n && rvalid && rready && (rid != arid))
-            $error("AXI read ID mismatch: expected %0d got %0d", arid, rid);
+        if (rst_n && rvalid && (rid != 4'h0) && (rid != 4'h1))
+            $error("AXI read response used unknown ID %0d", rid);
         if (rst_n && bvalid && bready && (bid != awid))
             $error("AXI write ID mismatch: expected %0d got %0d", awid, bid);
     end

@@ -8,7 +8,7 @@
 //   - 4 KiB, direct-mapped, 16-byte lines
 //   - one 512 x 64 simple-dual-port block RAM for instruction data
 //   - distributed tag storage with one valid bit per complete line
-//   - critical 64-bit block first, followed by a separate two-beat refill
+//   - one four-beat WRAP refill starting at the critical 64-bit block
 //
 // A request is accepted when irom_req_valid and irom_req_ready are both high.
 // A local hit is returned from the synchronous data RAM in the following
@@ -40,6 +40,7 @@ module icache (
     input  logic        mem_req_ready,
     output logic [31:0] mem_req_addr,
     output logic [ 7:0] mem_req_len,
+    output logic [ 1:0] mem_req_burst,
     input  logic        mem_rd_valid,
     output logic        mem_rd_ready,
     input  logic [31:0] mem_rd_data,
@@ -78,6 +79,8 @@ module icache (
     // ----------------------------------------------------------------
 
     logic        lookup_valid_q;
+    logic        lookup_hit_q;
+    logic        lookup_refill_hit_q;
     logic [28:0] lookup_block_addr_q;
 
     logic        pending_miss_valid_q;
@@ -87,30 +90,80 @@ module icache (
     logic [63:0] miss_resp_data_q;
     logic [ 1:0] miss_resp_resp_q;
 
+    logic [27:0] refill_buffer_line_addr_q;
+    logic [ 1:0] refill_buffer_filled_q;
+    logic [63:0] refill_buffer_block0_q;
+    logic [63:0] refill_buffer_block1_q;
+    logic [ 1:0] refill_line_resp_q;
+
     wire irom_req_fire = irom_req_valid & irom_req_ready;
     wire [INDEX_WIDTH-1:0] irom_req_index = irom_req_addr[11:4];
+    wire [TAG_WIDTH-1:0] irom_req_tag = irom_req_addr[31:12];
     wire irom_req_block = irom_req_addr[3];
     wire [INDEX_WIDTH:0] irom_req_data_row = {
         irom_req_index,
         irom_req_block
     };
 
+    // A registered local hit is consumed by the frontend in this cycle, so
+    // its lookup slot may be replaced by the next BP request at the same edge.
+    // A miss retains ownership until it has been copied to pending_miss.
     assign irom_req_ready =
-        ~lookup_valid_q
+        (~lookup_valid_q | lookup_hit_q)
         & ~pending_miss_valid_q
         & ~miss_resp_valid_q;
+
+    // BP-stage hit computation. The address is applied to tag LUTRAM and data
+    // BRAM together; only the already-decided hit/refill source bits cross the
+    // BP->F0 edge. Split wide equalities so Vivado can evaluate their groups
+    // in parallel rather than building serial carry chains.
+    wire [TAG_WIDTH-1:0] irom_req_tag_diff =
+        tag_mem[irom_req_index] ^ irom_req_tag;
+    wire irom_req_tag_eq0 = ~|irom_req_tag_diff[5:0];
+    wire irom_req_tag_eq1 = ~|irom_req_tag_diff[11:6];
+    wire irom_req_tag_eq2 = ~|irom_req_tag_diff[17:12];
+    wire irom_req_tag_eq3 = ~|irom_req_tag_diff[19:18];
+    wire irom_req_array_hit =
+        line_valid_q[irom_req_index]
+        & irom_req_tag_eq0 & irom_req_tag_eq1
+        & irom_req_tag_eq2 & irom_req_tag_eq3;
+
+    wire [27:0] irom_req_refill_diff =
+        irom_req_addr[31:4] ^ refill_buffer_line_addr_q;
+    wire irom_req_refill_eq0 = ~|irom_req_refill_diff[5:0];
+    wire irom_req_refill_eq1 = ~|irom_req_refill_diff[11:6];
+    wire irom_req_refill_eq2 = ~|irom_req_refill_diff[17:12];
+    wire irom_req_refill_eq3 = ~|irom_req_refill_diff[23:18];
+    wire irom_req_refill_eq4 = ~|irom_req_refill_diff[27:24];
+    wire irom_req_refill_block_valid =
+        irom_req_block ? refill_buffer_filled_q[1]
+                       : refill_buffer_filled_q[0];
+    wire irom_req_refill_hit =
+        irom_req_refill_block_valid
+        & irom_req_refill_eq0 & irom_req_refill_eq1
+        & irom_req_refill_eq2 & irom_req_refill_eq3
+        & irom_req_refill_eq4;
+    wire irom_req_hit = irom_req_array_hit | irom_req_refill_hit;
 
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             lookup_valid_q <= 1'b0;
+            lookup_hit_q <= 1'b0;
+            lookup_refill_hit_q <= 1'b0;
             lookup_block_addr_q <= 29'd0;
         end else if (irom_req_kill) begin
             lookup_valid_q <= 1'b0;
+            lookup_hit_q <= 1'b0;
+            lookup_refill_hit_q <= 1'b0;
         end else if (irom_req_fire) begin
             lookup_valid_q <= 1'b1;
+            lookup_hit_q <= irom_req_hit;
+            lookup_refill_hit_q <= irom_req_refill_hit;
             lookup_block_addr_q <= irom_req_addr[31:3];
         end else if (lookup_valid_q) begin
             lookup_valid_q <= 1'b0;
+            lookup_hit_q <= 1'b0;
+            lookup_refill_hit_q <= 1'b0;
         end
     end
 
@@ -127,18 +180,12 @@ module icache (
     logic [31:0] refill_word0_q;
     logic [ 1:0] refill_block_resp_q;
 
-    logic [27:0] refill_buffer_line_addr_q;
-    logic [ 1:0] refill_buffer_filled_q;
-    logic [63:0] refill_buffer_block0_q;
-    logic [63:0] refill_buffer_block1_q;
-    logic [ 1:0] refill_line_resp_q;
-
     wire mem_req_fire = mem_req_valid & mem_req_ready;
     wire mem_rd_fire = mem_rd_valid & mem_rd_ready;
     wire refill_block_complete =
         (refill_state_q == REFILL_DATA)
         & mem_rd_fire
-        & mem_rd_last;
+        & refill_beat_q;
     wire [63:0] refill_block_data =
         refill_beat_q
             ? {mem_rd_data, refill_word0_q}
@@ -147,7 +194,8 @@ module icache (
         refill_block_resp_q | mem_rd_resp;
     wire refill_block_commit =
         refill_block_complete
-        & ~refill_drop_q;
+        & ~refill_drop_q
+        & ~irom_req_kill;
 
     wire [INDEX_WIDTH-1:0] refill_index = refill_line_addr_q[7:0];
     wire [TAG_WIDTH-1:0] refill_tag = refill_line_addr_q[27:8];
@@ -155,9 +203,7 @@ module icache (
         refill_index,
         refill_block_q
     };
-    wire refill_line_start =
-        mem_req_fire
-        & ~refill_second_block_q;
+    wire refill_line_start = mem_req_fire;
     wire [1:0] refill_complete_resp =
         refill_line_resp_q | refill_block_resp;
     wire refill_line_complete =
@@ -222,33 +268,15 @@ module icache (
     // Lookup result and frontend response
     // ----------------------------------------------------------------
 
-    wire [INDEX_WIDTH-1:0] lookup_index =
-        lookup_block_addr_q[8:1];
-    wire [TAG_WIDTH-1:0] lookup_tag =
-        lookup_block_addr_q[28:9];
     wire lookup_block = lookup_block_addr_q[0];
-    wire lookup_array_hit =
-        lookup_valid_q
-        & line_valid_q[lookup_index]
-        & (tag_mem[lookup_index] == lookup_tag);
-    wire lookup_refill_line_match =
-        lookup_block_addr_q[28:1] == refill_buffer_line_addr_q;
-    wire lookup_refill_block_valid =
-        lookup_block
-            ? refill_buffer_filled_q[1]
-            : refill_buffer_filled_q[0];
-    wire lookup_refill_hit =
-        lookup_valid_q
-        & lookup_refill_line_match
-        & lookup_refill_block_valid;
-    wire lookup_hit = lookup_array_hit | lookup_refill_hit;
+    wire lookup_hit = lookup_valid_q & lookup_hit_q;
     wire lookup_miss = lookup_valid_q & ~lookup_hit;
     wire [63:0] lookup_refill_data =
         lookup_block
             ? refill_buffer_block1_q
             : refill_buffer_block0_q;
     wire [63:0] lookup_hit_data =
-        lookup_refill_hit
+        lookup_refill_hit_q
             ? lookup_refill_data
             : lookup_data_q;
 
@@ -342,9 +370,11 @@ module icache (
                     refill_drop_q <= 1'b0;
                 end
             end else if (refill_state_q == REFILL_DATA) begin
-                if (refill_block_complete) begin
+                if (mem_rd_fire && mem_rd_last) begin
                     refill_state_q <= REFILL_IDLE;
                     refill_drop_q <= 1'b0;
+                    refill_beat_q <= 1'b0;
+                    refill_second_block_q <= 1'b0;
                 end else begin
                     refill_drop_q <= 1'b1;
                 end
@@ -373,23 +403,23 @@ module icache (
 
                 REFILL_DATA: begin
                     if (mem_rd_fire) begin
-                        refill_block_resp_q <= refill_block_resp;
-                        if (!mem_rd_last) begin
+                        if (!refill_beat_q) begin
                             refill_word0_q <= mem_rd_data;
                             refill_beat_q <= 1'b1;
-                        end else if (refill_drop_q) begin
-                            refill_state_q <= REFILL_IDLE;
-                            refill_drop_q <= 1'b0;
-                            refill_response_needed_q <= 1'b0;
-                        end else if (!refill_second_block_q) begin
-                            refill_block_q <= ~refill_block_q;
-                            refill_second_block_q <= 1'b1;
-                            refill_response_needed_q <= 1'b0;
-                            refill_state_q <= REFILL_REQ;
+                            refill_block_resp_q <= refill_block_resp;
                         end else begin
-                            refill_state_q <= REFILL_IDLE;
-                            refill_second_block_q <= 1'b0;
-                            refill_response_needed_q <= 1'b0;
+                            refill_beat_q <= 1'b0;
+                            refill_block_resp_q <= 2'b00;
+                            if (!refill_second_block_q) begin
+                                refill_block_q <= ~refill_block_q;
+                                refill_second_block_q <= 1'b1;
+                                refill_response_needed_q <= 1'b0;
+                            end else if (mem_rd_last) begin
+                                refill_state_q <= REFILL_IDLE;
+                                refill_second_block_q <= 1'b0;
+                                refill_response_needed_q <= 1'b0;
+                                refill_drop_q <= 1'b0;
+                            end
                         end
                     end
                 end
@@ -409,7 +439,8 @@ module icache (
         refill_block_q,
         3'b000
     };
-    assign mem_req_len = 8'd1;
+    assign mem_req_len = 8'd3;
+    assign mem_req_burst = 2'b10;
     assign mem_rd_ready = refill_state_q == REFILL_DATA;
 
 `ifndef SYNTHESIS
@@ -417,18 +448,10 @@ module icache (
         if (rst_n && irom_req_fire && (irom_req_addr[2:0] != 3'b000))
             $error("ICache request address is not 64-bit aligned");
         if (rst_n
-            && refill_block_complete
-            && !refill_drop_q
-            && !irom_req_kill
-            && !refill_beat_q)
-            $error("ICache refill ended before two 32-bit beats");
-        if (rst_n
             && mem_rd_fire
-            && !refill_drop_q
-            && !irom_req_kill
-            && !mem_rd_last
-            && refill_beat_q)
-            $error("ICache refill exceeded two 32-bit beats");
+            && (mem_rd_last !=
+                (refill_second_block_q & refill_beat_q)))
+            $error("ICache four-beat WRAP refill RLAST mismatch");
         if (rst_n && lookup_hit && miss_resp_valid_q)
             $error("ICache produced two frontend responses in one cycle");
         if (rst_n && refill_matches_lookup && refill_matches_pending)

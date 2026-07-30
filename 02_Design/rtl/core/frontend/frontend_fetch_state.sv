@@ -71,10 +71,10 @@ module frontend_fetch_state
             always_ff @(posedge clk) begin
                 if (!rst_n || redirect_valid)
                     f0_state.valid <= 1'b0;
-                else if (response)
-                    f0_state.valid <= 1'b0;
                 else if (accept)
                     f0_state.valid <= 1'b1;
+                else if (response)
+                    f0_state.valid <= 1'b0;
             end
         end else begin : g_fixed_irom_valid
             always_ff @(posedge clk) begin

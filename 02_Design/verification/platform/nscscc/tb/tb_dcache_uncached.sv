@@ -8,7 +8,6 @@ module tb_dcache_uncached;
     logic [31:0] cpu_addr;
     logic [ 3:0] cpu_wea;
     logic [31:0] cpu_wdata;
-    logic [ 3:0] cpu_load_mask;
     logic cpu_uncached;
     logic [31:0] cpu_rdata;
     logic cpu_ready;
@@ -19,8 +18,12 @@ module tb_dcache_uncached;
     logic mem_req_write;
     logic [31:0] mem_req_addr;
     logic [ 7:0] mem_req_len;
-    logic [31:0] mem_req_wdata;
-    logic [ 3:0] mem_req_wstrb;
+    logic [ 1:0] mem_req_burst;
+    logic mem_w_valid;
+    logic mem_w_ready;
+    logic [31:0] mem_w_data;
+    logic [ 3:0] mem_w_strb;
+    logic mem_w_last;
     logic mem_rd_valid;
     logic mem_rd_ready;
     logic [31:0] mem_rd_data;
@@ -33,13 +36,7 @@ module tb_dcache_uncached;
 
     wire pipeline_stall = ~cpu_ready;
 
-    dcache #(
-        .BACKEND_CANCEL(1'b0),
-        .DIRECT_BRAM(1'b0),
-        .CRITICAL_WORD_FIRST(1'b0),
-        .PHYS_ADDR_WIDTH(32),
-        .UNCACHED_ENABLE(1'b1)
-    ) dut (
+    dcache dut (
         .clk(clk),
         .rst_n(rst_n),
         .cpu_req(cpu_req),
@@ -47,7 +44,6 @@ module tb_dcache_uncached;
         .cpu_addr(cpu_addr),
         .cpu_wea(cpu_wea),
         .cpu_wdata(cpu_wdata),
-        .cpu_load_mask(cpu_load_mask),
         .cpu_uncached(cpu_uncached),
         .cpu_rdata(cpu_rdata),
         .cpu_ready(cpu_ready),
@@ -58,8 +54,12 @@ module tb_dcache_uncached;
         .mem_req_write(mem_req_write),
         .mem_req_addr(mem_req_addr),
         .mem_req_len(mem_req_len),
-        .mem_req_wdata(mem_req_wdata),
-        .mem_req_wstrb(mem_req_wstrb),
+        .mem_req_burst(mem_req_burst),
+        .mem_w_valid(mem_w_valid),
+        .mem_w_ready(mem_w_ready),
+        .mem_w_data(mem_w_data),
+        .mem_w_strb(mem_w_strb),
+        .mem_w_last(mem_w_last),
         .mem_rd_valid(mem_rd_valid),
         .mem_rd_ready(mem_rd_ready),
         .mem_rd_data(mem_rd_data),
@@ -68,13 +68,7 @@ module tb_dcache_uncached;
         .mem_rd_cancel(),
         .mem_wr_valid(mem_wr_valid),
         .mem_wr_ready(mem_wr_ready),
-        .mem_wr_resp(mem_wr_resp),
-        .bram_rd_en(),
-        .bram_rd_addr(),
-        .bram_rd_data(32'd0),
-        .bram_wr_addr(),
-        .bram_wea(),
-        .bram_wdata()
+        .mem_wr_resp(mem_wr_resp)
     );
 
     always #5 clk = ~clk;
@@ -102,7 +96,6 @@ module tb_dcache_uncached;
             cpu_addr = addr;
             cpu_wea = wea;
             cpu_wdata = wdata;
-            cpu_load_mask = 4'b1111;
             cpu_req = 1'b1;
             @(posedge clk);
             @(negedge clk);
@@ -152,10 +145,10 @@ module tb_dcache_uncached;
         cpu_addr = 32'd0;
         cpu_wea = 4'd0;
         cpu_wdata = 32'd0;
-        cpu_load_mask = 4'b1111;
         cpu_uncached = 1'b0;
         flush = 1'b0;
         mem_req_ready = 1'b0;
+        mem_w_ready = 1'b0;
         mem_rd_valid = 1'b0;
         mem_rd_data = 32'd0;
         mem_rd_last = 1'b0;
@@ -172,10 +165,13 @@ module tb_dcache_uncached;
         // not allocate a DCache line.
         launch_cpu(1'b0, 1'b1, 32'h1fe0_01e2, 4'd0, 32'd0);
         wait (mem_req_valid);
+        #1;
         check(!mem_req_write, "uncached load emitted a write command");
         check(mem_req_addr == 32'h1fe0_01e0,
               "uncached load address was not word-aligned");
         check(mem_req_len == 8'd0, "uncached load was not single-beat");
+        check(mem_req_burst == 2'b01,
+              "uncached load did not use an INCR burst");
         accept_command();
         return_read(32'h89ab_cdef, 1'b1);
         repeat (2) @(posedge clk);
@@ -186,6 +182,8 @@ module tb_dcache_uncached;
         wait (mem_req_valid);
         check(!mem_req_write && mem_req_len == 8'd3,
               "cacheable load did not request a four-beat refill");
+        check(mem_req_burst == 2'b10,
+              "cacheable refill did not use a WRAP burst");
         accept_command();
         return_read(32'h0000_0001, 1'b0);
         return_read(32'h0000_0002, 1'b0);
@@ -193,19 +191,29 @@ module tb_dcache_uncached;
         return_read(32'h0000_0004, 1'b1);
         repeat (3) @(posedge clk);
 
-        // Uncached stores bypass the store buffer, retain byte lanes, and do
-        // not retire until the AXI write response is accepted.
+        // Uncached stores retain byte lanes and do not retire until the AXI
+        // write response is accepted.
         launch_cpu(1'b1, 1'b1, 32'h1faf_fff1, 4'b0010, 32'h0000_005a);
         wait (mem_req_valid);
+        #1;
         check(mem_req_write, "uncached store emitted a read command");
         check(mem_req_addr == 32'h1faf_fff0,
               "uncached store address was not word-aligned");
         check(mem_req_len == 8'd0, "uncached store was not single-beat");
-        check(mem_req_wstrb == 4'b0010,
-              "uncached store byte strobe mismatch");
-        check(mem_req_wdata == 32'h0000_5a00,
-              "uncached store data alignment mismatch");
+        check(mem_req_burst == 2'b01,
+              "uncached store did not use an INCR burst");
         accept_command();
+        wait (mem_w_valid);
+        check(mem_w_strb == 4'b0010,
+              "uncached store byte strobe mismatch");
+        check(mem_w_data == 32'h0000_5a00,
+              "uncached store data alignment mismatch");
+        check(mem_w_last, "uncached store did not mark its only data beat last");
+        @(negedge clk);
+        mem_w_ready = 1'b1;
+        @(posedge clk);
+        @(negedge clk);
+        mem_w_ready = 1'b0;
         wait (mem_wr_ready);
         check(!cpu_ready, "uncached store retired before AXI B response");
         @(negedge clk);
@@ -217,8 +225,6 @@ module tb_dcache_uncached;
         @(negedge clk);
         mem_wr_valid = 1'b0;
         repeat (3) @(posedge clk);
-        check(!dut.sb_any_valid,
-              "uncached store incorrectly entered the cache store buffer");
 
         if (errors == 0)
             $display("[PASS] NSCSCC DCache uncached AXI path test");

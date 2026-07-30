@@ -56,8 +56,10 @@ module tb_riscv_tests;
     wire        dmem_req_write;
     wire [31:0] dmem_req_addr;
     wire [ 7:0] dmem_req_len;
-    wire [31:0] dmem_req_wdata;
-    wire [ 3:0] dmem_req_wstrb;
+    wire        dmem_w_valid;
+    wire [31:0] dmem_w_data;
+    wire [ 3:0] dmem_w_strb;
+    wire        dmem_w_last;
     wire        dmem_rd_valid;
     wire        dmem_rd_ready;
     wire [31:0] dmem_rd_data;
@@ -152,7 +154,8 @@ module tb_riscv_tests;
     dcache #(
         .BACKEND_CANCEL       (1'b1),
         .DIRECT_BRAM          (1'b1),
-        .CRITICAL_WORD_FIRST  (1'b1)
+        .CRITICAL_WORD_FIRST  (1'b1),
+        .WRITE_BACK           (1'b0)
     ) u_dcache (
         .clk         (clk),
         .rst_n       (rst_n),
@@ -172,8 +175,12 @@ module tb_riscv_tests;
         .mem_req_write (dmem_req_write),
         .mem_req_addr  (dmem_req_addr),
         .mem_req_len   (dmem_req_len),
-        .mem_req_wdata (dmem_req_wdata),
-        .mem_req_wstrb (dmem_req_wstrb),
+        .mem_req_burst (),
+        .mem_w_valid   (dmem_w_valid),
+        .mem_w_ready   (1'b0),
+        .mem_w_data    (dmem_w_data),
+        .mem_w_strb    (dmem_w_strb),
+        .mem_w_last    (dmem_w_last),
         .mem_rd_valid  (1'b0),
         .mem_rd_ready  (dmem_rd_ready),
         .mem_rd_data   (32'd0),

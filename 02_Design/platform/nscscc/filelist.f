@@ -2,7 +2,6 @@
 // the LoongArch ISA boundary; the JYD manifest separately selects RISC-V.
 -F ../../rtl/filelists/loongarch_cpu.f
 ../../rtl/core/cpu_top.sv
-../../rtl/memory/dcache_store_buffer.sv
 ../../rtl/memory/dcache.sv
 ../../rtl/memory/icache.sv
 ../../rtl/bus/axi/memory_backend_arbiter.sv
