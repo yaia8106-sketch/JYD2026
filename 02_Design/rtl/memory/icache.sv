@@ -6,7 +6,8 @@
 //
 // Organization:
 //   - 4 KiB, direct-mapped, 16-byte lines
-//   - one 512 x 64 simple-dual-port block RAM for instruction data
+//   - one 512 x 72 simple-dual-port block RAM for instruction data plus
+//     refill-time predecode metadata
 //   - distributed tag storage with one valid bit per complete line
 //   - one four-beat WRAP refill starting at the critical 64-bit block
 //
@@ -33,6 +34,7 @@ module icache (
     input  logic        irom_req_kill,
     output logic        irom_resp_valid,
     output logic [63:0] irom_resp_data,
+    output logic [ 7:0] irom_resp_predecode,
     output logic [ 1:0] irom_resp_resp,
 
     // Shared 32-bit memory-backend read channel
@@ -65,14 +67,16 @@ module icache (
     // Cache arrays
     // ----------------------------------------------------------------
 
-    // 512 x 64 maps directly to one RAMB36 in simple-dual-port mode.
+    // 512 x 72 maps directly to one RAMB36 in simple-dual-port mode. The
+    // upper eight bits occupy the primitive parity storage and hold four
+    // predecode bits for each of the two 32-bit instructions.
     (* ram_style = "block" *)
-    logic [63:0] data_mem [0:DATA_ROWS-1];
+    logic [71:0] data_mem [0:DATA_ROWS-1];
     (* ram_style = "distributed" *)
     logic [TAG_WIDTH-1:0] tag_mem [0:SETS-1];
     logic [SETS-1:0] line_valid_q;
 
-    logic [63:0] lookup_data_q;
+    logic [71:0] lookup_payload_q;
 
     // ----------------------------------------------------------------
     // One-cycle lookup pipeline
@@ -87,13 +91,13 @@ module icache (
     logic [28:0] pending_miss_block_addr_q;
 
     logic        miss_resp_valid_q;
-    logic [63:0] miss_resp_data_q;
+    logic [71:0] miss_resp_payload_q;
     logic [ 1:0] miss_resp_resp_q;
 
     logic [27:0] refill_buffer_line_addr_q;
     logic [ 1:0] refill_buffer_filled_q;
-    logic [63:0] refill_buffer_block0_q;
-    logic [63:0] refill_buffer_block1_q;
+    logic [71:0] refill_buffer_block0_q;
+    logic [71:0] refill_buffer_block1_q;
     logic [ 1:0] refill_line_resp_q;
 
     wire irom_req_fire = irom_req_valid & irom_req_ready;
@@ -190,6 +194,11 @@ module icache (
         refill_beat_q
             ? {mem_rd_data, refill_word0_q}
             : {32'd0, mem_rd_data};
+    wire [7:0] refill_block_predecode;
+    wire [71:0] refill_block_payload = {
+        refill_block_predecode,
+        refill_block_data
+    };
     wire [1:0] refill_block_resp =
         refill_block_resp_q | mem_rd_resp;
     wire refill_block_commit =
@@ -213,14 +222,21 @@ module icache (
         refill_line_complete
         & (refill_complete_resp == 2'b00);
 
+    // This decoder is outside the hit path: it runs only on the completed
+    // 64-bit refill block before that block is committed to the RAMB36.
+    loongarch_icache_block_predecode u_refill_predecode (
+        .block_data     (refill_block_data),
+        .block_metadata (refill_block_predecode)
+    );
+
     // Keep the data read and refill write as two independent BRAM ports.
     // A same-row collision is harmless: that row has no valid line yet, and
     // the partial-line buffer supplies matching refill data instead.
     always_ff @(posedge clk) begin
         if (irom_req_fire)
-            lookup_data_q <= data_mem[irom_req_data_row];
+            lookup_payload_q <= data_mem[irom_req_data_row];
         if (refill_block_commit)
-            data_mem[refill_data_row] <= refill_block_data;
+            data_mem[refill_data_row] <= refill_block_payload;
     end
 
     always_ff @(posedge clk) begin
@@ -240,8 +256,8 @@ module icache (
         if (!rst_n) begin
             refill_buffer_line_addr_q <= 28'd0;
             refill_buffer_filled_q <= 2'b00;
-            refill_buffer_block0_q <= 64'd0;
-            refill_buffer_block1_q <= 64'd0;
+            refill_buffer_block0_q <= 72'd0;
+            refill_buffer_block1_q <= 72'd0;
             refill_line_resp_q <= 2'b00;
         end else if (irom_req_kill) begin
             refill_buffer_filled_q <= 2'b00;
@@ -257,9 +273,9 @@ module icache (
                 refill_line_resp_q <=
                     refill_line_resp_q | refill_block_resp;
                 if (refill_block_q)
-                    refill_buffer_block1_q <= refill_block_data;
+                    refill_buffer_block1_q <= refill_block_payload;
                 else
-                    refill_buffer_block0_q <= refill_block_data;
+                    refill_buffer_block0_q <= refill_block_payload;
             end
         end
     end
@@ -271,14 +287,14 @@ module icache (
     wire lookup_block = lookup_block_addr_q[0];
     wire lookup_hit = lookup_valid_q & lookup_hit_q;
     wire lookup_miss = lookup_valid_q & ~lookup_hit;
-    wire [63:0] lookup_refill_data =
+    wire [71:0] lookup_refill_payload =
         lookup_block
             ? refill_buffer_block1_q
             : refill_buffer_block0_q;
-    wire [63:0] lookup_hit_data =
+    wire [71:0] lookup_hit_payload =
         lookup_refill_hit_q
-            ? lookup_refill_data
-            : lookup_data_q;
+            ? lookup_refill_payload
+            : lookup_payload_q;
 
     wire refill_matches_lookup =
         refill_block_commit
@@ -319,14 +335,14 @@ module icache (
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             miss_resp_valid_q <= 1'b0;
-            miss_resp_data_q <= 64'd0;
+            miss_resp_payload_q <= 72'd0;
             miss_resp_resp_q <= 2'b00;
         end else if (irom_req_kill) begin
             miss_resp_valid_q <= 1'b0;
         end else begin
             miss_resp_valid_q <= refill_frontend_response;
             if (refill_frontend_response) begin
-                miss_resp_data_q <= refill_block_data;
+                miss_resp_payload_q <= refill_block_payload;
                 miss_resp_resp_q <= refill_block_resp;
             end
         end
@@ -335,8 +351,12 @@ module icache (
     assign irom_resp_valid = lookup_hit | miss_resp_valid_q;
     assign irom_resp_data =
         lookup_hit
-            ? lookup_hit_data
-            : miss_resp_data_q;
+            ? lookup_hit_payload[63:0]
+            : miss_resp_payload_q[63:0];
+    assign irom_resp_predecode =
+        lookup_hit
+            ? lookup_hit_payload[71:64]
+            : miss_resp_payload_q[71:64];
     assign irom_resp_resp =
         lookup_hit
             ? 2'b00

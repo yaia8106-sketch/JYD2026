@@ -42,6 +42,7 @@ module frontend_ftq
     input  logic        irom_req_ready,
     input  logic        irom_resp_valid,
     input  logic [63:0] irom_data,
+    input  logic [ 7:0] irom_resp_predecode,
 
     // Shadow ABTB metadata for the physical fetch-block banks. These fields
     // are captured only when abtb_lookup_accept is asserted.
@@ -295,6 +296,7 @@ module frontend_ftq
         .start_pc          (f0_start_pc_r),
         .base_mask         (f0_base_mask_r),
         .irom_data         (irom_data),
+        .irom_predecode    (irom_resp_predecode),
         .steer_taken       (f0_steer_taken_r),
         .steer_source_abtb (f0_steer_source_abtb_r),
         .steer_bank        (f0_steer_bank_r),

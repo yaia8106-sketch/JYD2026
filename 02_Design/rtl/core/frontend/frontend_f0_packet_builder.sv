@@ -16,6 +16,7 @@ module frontend_f0_packet_builder
     //* base_mask可以用start_pc[2]直接代替,并且我们在start_pc[2] = 1时slot1中已经有了NOP指令,所以我们不需要使用这个信号来控制slot1的valid。
     input  logic [ 1:0]                base_mask, // if pc[2] = 0, base_mask = 2'b11, else base_mask = 2'b01
     input  logic [63:0]                irom_data, // PC[2:0] = 0取出来的64bit指令包
+    input  logic [ 7:0]                irom_predecode,
 
     // pred metadata
     input  logic                       steer_taken, // 第一级预测器的预测结果为taken时为1,否则为0
@@ -56,7 +57,10 @@ module frontend_f0_packet_builder
 
     frontend_predecode_t slot0_dec;
     frontend_predecode_t slot1_dec;
-    logic slot0_system_redirect;
+    frontend_icache_predecode_t block0_cached_dec;
+    frontend_icache_predecode_t block1_cached_dec;
+    frontend_icache_predecode_t slot0_cached_dec;
+    frontend_icache_predecode_t slot1_cached_dec;
     logic slot0_branch_owned;
     logic slot1_branch_owned;
     logic slot0_pred_taken;
@@ -79,6 +83,15 @@ module frontend_f0_packet_builder
         .decoded (slot1_dec)
     );
 
+    assign block0_cached_dec = irom_predecode[3:0];
+    assign block1_cached_dec = irom_predecode[7:4];
+    assign slot0_cached_dec = start_pc[2] ? block1_cached_dec
+                                           : block0_cached_dec;
+    // slot1 is architecturally absent when start_pc[2] is one. Its payload is
+    // ignored in that case, but clearing the cached controls keeps the invalid
+    // entry deterministic.
+    assign slot1_cached_dec = start_pc[2] ? '0 : block1_cached_dec;
+
     // 这个结构体包含了fq entry需要的所有信息。
     function automatic frontend_fq_entry_t make_entry(
         input logic                  valid,
@@ -86,6 +99,7 @@ module frontend_f0_packet_builder
         input logic [31:0]           inst,
         //? 为什么要存decode信息？
         input frontend_predecode_t   decoded,
+        input logic                  writes_dst,
         input logic                  force_single,
         input logic                  pred_taken,
         input logic [31:0]           pred_target,
@@ -125,7 +139,7 @@ module frontend_f0_packet_builder
             make_entry.is_load = decoded.is_load;
             make_entry.is_store = decoded.is_store;
             make_entry.is_alu_type = decoded.is_alu_type;
-            make_entry.writes_dst = decoded.writes_dst;
+            make_entry.writes_dst = writes_dst;
             make_entry.uses_src0 = decoded.uses_src0;
             make_entry.uses_src1 = decoded.uses_src1;
             make_entry.is_jump = decoded.is_jump;
@@ -139,6 +153,7 @@ module frontend_f0_packet_builder
     function automatic frontend_pair_meta_t make_pair_meta(
         input frontend_predecode_t decoded, // 包含了指令的类型信息和寄存器使用信息，以及指令是否需要单独发射的信息。
         input logic                pred_taken,
+        input logic                writes_dst,
         input logic                force_single
     );
         begin
@@ -149,7 +164,7 @@ module frontend_f0_packet_builder
             make_pair_meta.is_alu_type = decoded.is_alu_type;
             make_pair_meta.is_lsu = decoded.is_lsu;
             make_pair_meta.is_cfi = decoded.is_cfi;
-            make_pair_meta.writes_dst = decoded.writes_dst;
+            make_pair_meta.writes_dst = writes_dst;
             make_pair_meta.uses_src0 = decoded.uses_src0;
             make_pair_meta.uses_src1 = decoded.uses_src1;
             make_pair_meta.dst_addr = decoded.dst_addr;
@@ -161,7 +176,6 @@ module frontend_f0_packet_builder
     // Derive the prediction and predecode fields consumed by both entries.
     // 统一计算两个 make_entry 调用所需的预测与预译码字段。
     always_comb begin
-        slot0_system_redirect = slot0_dec.is_privileged_flow;
         slot0_branch_owned =
             slot0_dec.is_conditional_branch
             && (start_pc[2] ? bank1_meta.branch_owned
@@ -188,9 +202,7 @@ module frontend_f0_packet_builder
 
         // 当slot0被预测为跳转/确实是跳转的时候，对slot1的指令进行冲刷。
         kill_after_slot0 =
-            slot0_dec.is_direct_jump
-            || slot0_dec.is_indirect_jump
-            || slot0_system_redirect
+            slot0_cached_dec.static_kill_younger
             || slot0_pred_taken;
         enq0_payload = accept_base && base_mask[0];
         enq1_payload = accept_base && base_mask[1];
@@ -203,7 +215,8 @@ module frontend_f0_packet_builder
             slot0_pc, // pc
             slot0_inst, // inst
             slot0_dec, // frontend_predecode_t decoded
-            slot0_dec.block_younger, // force_single
+            slot0_cached_dec.writes_dst,
+            slot0_cached_dec.block_younger, // force_single
             slot0_pred_taken, // pred_taken
             slot0_pred_target, // pred_target
             slot0_pred_source_abtb, // pred_source_abtb
@@ -217,7 +230,8 @@ module frontend_f0_packet_builder
             slot1_pc,
             slot1_inst,
             slot1_dec,
-            ~slot1_dec.lane_mask[1],
+            slot1_cached_dec.writes_dst,
+            slot1_cached_dec.slot1_disallowed,
             slot1_pred_taken,
             slot1_pred_target,
             slot1_pred_source_abtb,
@@ -232,12 +246,14 @@ module frontend_f0_packet_builder
         pair_meta0 = make_pair_meta(
             slot0_dec, // frontend_predecode_t decoded
             slot0_pred_taken, // pred_taken
-            slot0_dec.block_younger // force_single
+            slot0_cached_dec.writes_dst,
+            slot0_cached_dec.block_younger // force_single
         );
         pair_meta1 = make_pair_meta(
             slot1_dec,
             slot1_pred_taken,
-            ~slot1_dec.lane_mask[1]
+            slot1_cached_dec.writes_dst,
+            slot1_cached_dec.slot1_disallowed
         );
     end
 

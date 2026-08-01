@@ -63,10 +63,13 @@ module id_stage_derive
     assign id_s1_rs1_used = slot1_hint.src0_used;
     assign id_s1_rs2_used = slot1_hint.src1_used;
 
-    // Only ordinary ALU results use the existing late MEM-load repair path.
-    // MDU and privileged results capture or produce data through other paths.
+    // Ordinary ALU/LSU operations may consume the registered WB repair value
+    // in EX. Control flow deliberately waits for normal WB forwarding so a
+    // repaired load cannot enter the branch compare/redirect cone.
     assign id_s0_alu_only = slot0_hint.alu_only;
-    assign id_s1_repair_ok = slot1_hint.src0_used | slot1_hint.src1_used;
+    assign id_s1_repair_ok = slot1_hint.alu_only
+                           | slot1_hint.mem_read
+                           | slot1_hint.mem_write;
 
     // Call/return conventions are decoded at the ISA boundary. The common
     // predictor receives only an implementation-neutral CFI classification.

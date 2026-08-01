@@ -90,6 +90,7 @@ module core_top #(
     wire        irom_req_kill;
     wire        irom_resp_valid;
     wire [63:0] irom_resp_data;
+    wire [ 7:0] irom_resp_predecode;
 
     wire        cache_req;
     wire        cache_wr;
@@ -172,6 +173,7 @@ module core_top #(
         .irom_req_ready      (irom_req_ready),
         .irom_resp_valid     (irom_resp_valid),
         .irom_data           (irom_resp_data),
+        .irom_resp_predecode (irom_resp_predecode),
         .cache_req           (cache_req),
         .cache_wr            (cache_wr),
         .cache_addr          (cache_addr),
@@ -270,6 +272,7 @@ module core_top #(
         .irom_req_kill  (irom_req_kill),
         .irom_resp_valid(irom_resp_valid),
         .irom_resp_data (irom_resp_data),
+        .irom_resp_predecode(irom_resp_predecode),
         .dmem_req_valid (dmem_req_valid),
         .dmem_req_ready (dmem_req_ready),
         .dmem_req_write (dmem_req_write),

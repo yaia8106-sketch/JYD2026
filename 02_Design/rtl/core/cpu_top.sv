@@ -36,6 +36,7 @@ module cpu_top
     input  logic        irom_req_ready,
     input  logic        irom_resp_valid,
     input  logic [63:0] irom_data,
+    input  logic [ 7:0] irom_resp_predecode,
 
     // DCache interface (EX to MEM stage)
     output logic        cache_req,       // EX stage: memory request valid
@@ -213,8 +214,6 @@ module cpu_top
         ex_s0_payload.common.alu_src1_wb_repair;
     wire        ex_alu_src2_wb_repair =
         ex_s0_payload.common.alu_src2_wb_repair;
-    wire        ex_fast_alu_src1_wb_repair;
-    wire        ex_fast_alu_src2_wb_repair;
     wire alu_op_t ex_alu_op = ex_s0_payload.common.alu_op;
     wire        ex_reg_write_en = ex_s0_payload.common.reg_write_en;
     wire wb_src_t ex_wb_sel = ex_s0_payload.common.wb_sel;
@@ -280,8 +279,6 @@ module cpu_top
         ex_s1_payload.common.alu_src1_wb_repair;
     wire        ex_s1_alu_src2_wb_repair =
         ex_s1_payload.common.alu_src2_wb_repair;
-    wire        ex_s1_fast_alu_src1_wb_repair;
-    wire        ex_s1_fast_alu_src2_wb_repair;
 
     // ---- ALU ----
     wire [31:0] alu_result;
@@ -290,6 +287,8 @@ module cpu_top
     wire [31:0] alu_s1_result;
     wire [31:0] alu_s1_sum;
     wire [31:0] alu_s1_addr;
+    wire [31:0] ex_fast_forward_result;
+    wire [31:0] ex_s1_fast_forward_result;
     wire [31:0] ex_alu_src1_repair;
     wire [31:0] ex_alu_src2_repair;
     wire [31:0] ex_s1_alu_src1_repair;
@@ -298,10 +297,6 @@ module cpu_top
     wire [31:0] ex_rs2_data_repair;
     wire [31:0] ex_s1_rs1_data_repair;
     wire [31:0] ex_s1_rs2_data_repair;
-    wire [31:0] ex_fast_alu_src1;
-    wire [31:0] ex_fast_alu_src2;
-    wire [31:0] ex_s1_fast_alu_src1;
-    wire [31:0] ex_s1_fast_alu_src2;
     wire [ 1:0] ex_store_addr_low;
     wire [ 1:0] ex_s1_store_addr_low;
 
@@ -444,15 +439,6 @@ module cpu_top
     wire [31:0] wb_csr_data = wb_s0_payload.csr_data;
     wire [31:0] wb_load_data_ex;
 
-    assign ex_fast_alu_src1 = ex_fast_alu_src1_wb_repair
-                            ? wb_load_data_ex : ex_alu_src1;
-    assign ex_fast_alu_src2 = ex_fast_alu_src2_wb_repair
-                            ? wb_load_data_ex : ex_alu_src2;
-    assign ex_s1_fast_alu_src1 = ex_s1_fast_alu_src1_wb_repair
-                               ? wb_load_data_ex : ex_s1_alu_src1;
-    assign ex_s1_fast_alu_src2 = ex_s1_fast_alu_src2_wb_repair
-                               ? wb_load_data_ex : ex_s1_alu_src2;
-
     // ---- Slot 1 shadow WB ----
     wire        wb_s1_valid;
     wire cpu_defs::mem_wb_slot1_t mem_wb_s1_payload;
@@ -507,8 +493,15 @@ module cpu_top
         ({32{mem_is_mul}}  & muldiv_result)
       | ({32{~mem_is_mul}} & mem_alu_result);
 
+    // Only values that are physically present on the fast EX bypass network
+    // advertise an EX forwarding hit. Loads, MulDiv, and privileged results
+    // are consumed from a registered older stage instead.
     wire        ex_forward_reg_write = ex_reg_write_en
-                                             & (~ex_is_muldiv | muldiv_done);
+                                      & ~ex_mem_read_en
+                                      & ~ex_is_muldiv
+                                      & ~ex_uses_priv_result;
+    wire        ex_s1_forward_reg_write = ex_s1_reg_write_en
+                                         & ~ex_s1_mem_read_en;
     // ---- Dual-issue performance counter ----
     wire [31:0] dual_issue_count;
 
@@ -519,6 +512,11 @@ module cpu_top
                          | ~ex_muldiv_op[2] | muldiv_done;
     wire ex_priv_older_pending = mem_valid | wb_valid
                                | mem_s1_valid | wb_s1_valid;
+    // Privileged instructions are serialized before entering EX; late address
+    // faults explicitly wait for the same registered older-token condition.
+    // This class-specific commit readiness therefore does not need the generic
+    // DCache-derived mem_allowin cone.
+    wire ex_priv_commit_ready = ~ex_priv_older_pending;
     wire ex_priv_ready = ~ex_priv_wait_older | ~ex_priv_older_pending;
     wire ex_ready_go_w  = ~mmio_st_ld_hazard
                         & ex_muldiv_ready & ex_priv_ready;
@@ -1313,6 +1311,7 @@ module cpu_top
         .irom_req_ready   (irom_req_ready),
         .irom_resp_valid  (irom_resp_valid),
         .irom_data        (irom_data),
+        .irom_resp_predecode(irom_resp_predecode),
         .abtb_bank0_lookup_hit  (abtb_bank0_lookup_hit),
         .abtb_bank0_hit         (abtb_bank0_hit),
         .abtb_bank0_way         (abtb_bank0_way),
@@ -1446,18 +1445,22 @@ module cpu_top
         .ex_result_repair(ex_alu_src1_wb_repair
                           | ex_alu_src2_wb_repair),
         .ex_rd          (ex_rd),
-        .ex_alu_result  (ex_forward_result),
+        // Keep CSR/MulDiv/WB-repaired architectural results physically out of
+        // the next-ID operand network.  The fast copy uses only ID/EX-register
+        // operands; repaired producers are already covered by the repair-use
+        // interlock until their correct result reaches MEM.
+        .ex_alu_result  (ex_fast_forward_result),
         .ex_fast_alu    (ex_fast_alu_forward),
-        .ex_fast_alu_result(alu_result),
+        .ex_fast_alu_result(ex_fast_forward_result),
         .ex_pc_plus_4   (ex_pc_plus_4),
         .ex_wb_sel      (ex_wb_sel),
         .ex_s1_valid       (ex_s1_valid),
-        .ex_s1_reg_write   (ex_s1_reg_write_en),
+        .ex_s1_reg_write   (ex_s1_forward_reg_write),
         .ex_s1_mem_read    (ex_s1_mem_read_en),
         .ex_s1_result_repair(ex_s1_alu_src1_wb_repair
                              | ex_s1_alu_src2_wb_repair),
         .ex_s1_rd          (ex_s1_rd),
-        .ex_s1_alu_result  (alu_s1_result),
+        .ex_s1_alu_result  (ex_s1_fast_forward_result),
         .ex_s1_pc_plus_4   (ex_s1_pc_plus_4),
         .ex_s1_wb_sel      (ex_s1_wb_sel),
         .mem_valid      (mem_valid),
@@ -1645,9 +1648,7 @@ module cpu_top
         .ex_valid         (ex_valid),
         .ex_flush         (ex_flush),
         .id_payload       (id_ex_s0_payload),
-        .ex_payload       (ex_s0_payload),
-        .ex_fast_alu_src1_wb_repair(ex_fast_alu_src1_wb_repair),
-        .ex_fast_alu_src2_wb_repair(ex_fast_alu_src2_wb_repair)
+        .ex_payload       (ex_s0_payload)
     );
 
     id_ex_reg_s1 u_id_ex_reg_s1 (
@@ -1659,9 +1660,7 @@ module cpu_top
         .ex_flush            (ex_flush),
         .ex_s1_valid         (ex_s1_valid),
         .id_payload          (id_ex_s1_payload),
-        .ex_payload          (ex_s1_payload),
-        .ex_fast_alu_src1_wb_repair(ex_s1_fast_alu_src1_wb_repair),
-        .ex_fast_alu_src2_wb_repair(ex_s1_fast_alu_src2_wb_repair)
+        .ex_payload          (ex_s1_payload)
     );
 
     // Keep this timing-sensitive one-bit control separate from the wide Slot 1
@@ -1677,9 +1676,10 @@ module cpu_top
     end
 
     // ==================== EX stage ====================
-    // MEM-ready load consumers repair their operands from WB here. The
-    // repaired result is allowed to feed younger ID consumers after moving CFI
-    // target/compare work out of ID.
+    // MEM-ready load consumers repair their architectural operands from WB
+    // here.  A physically separate raw-operand ALU below serves younger ID
+    // consumers, and repair_use_hazard holds any true consumer until the
+    // corrected result is registered in MEM.
     ex_stage_ctrl u_ex_stage_ctrl (
         .ex_pc                      (ex_pc),
         .ex_s1_pc                   (ex_s1_pc),
@@ -1746,8 +1746,8 @@ module cpu_top
 
     alu u_alu (
         .alu_op       (ex_alu_op),
-        .alu_src1     (ex_fast_alu_src1),
-        .alu_src2     (ex_fast_alu_src2),
+        .alu_src1     (ex_alu_src1_repair),
+        .alu_src2     (ex_alu_src2_repair),
         .alu_addr_src1(ex_alu_src1_repair),
         .alu_addr_src2(ex_alu_src2_repair),
         .alu_result   (alu_result),
@@ -1757,13 +1757,33 @@ module cpu_top
 
     alu u_alu_s1 (
         .alu_op       (ex_s1_alu_op),
-        .alu_src1     (ex_s1_fast_alu_src1),
-        .alu_src2     (ex_s1_fast_alu_src2),
+        .alu_src1     (ex_s1_alu_src1_repair),
+        .alu_src2     (ex_s1_alu_src2_repair),
         .alu_addr_src1(ex_s1_alu_src1_repair),
         .alu_addr_src2(ex_s1_alu_src2_repair),
         .alu_result   (alu_s1_result),
         .alu_sum      (alu_s1_sum),
         .alu_addr     (alu_s1_addr)
+    );
+
+    // Physically independent ordinary-result copies for EX-to-ID forwarding.
+    // These inputs come directly from the ID/EX payload registers, so neither
+    // WB load repair nor privileged read data can enter the bypass datapath.
+    // The existing architectural ALUs above retain all corrected behavior.
+    alu_result_datapath u_ex_fast_forward_alu (
+        .alu_op     (ex_alu_op),
+        .alu_src1   (ex_alu_src1),
+        .alu_src2   (ex_alu_src2),
+        .alu_result (ex_fast_forward_result),
+        .alu_sum    ()
+    );
+
+    alu_result_datapath u_ex_s1_fast_forward_alu (
+        .alu_op     (ex_s1_alu_op),
+        .alu_src1   (ex_s1_alu_src1),
+        .alu_src2   (ex_s1_alu_src2),
+        .alu_result (ex_s1_fast_forward_result),
+        .alu_sum    ()
     );
 
     // Byte-lane selection only depends on addition modulo four.  Compute that
@@ -1823,25 +1843,25 @@ module cpu_top
                   && ((id_s1_alu_src1 !== id_s1_alu_src1_reference)
                       || (id_s1_alu_src2 !== id_s1_alu_src2_reference)))
             $fatal(1, "Slot-1 parallel ALU source selection changed value");
-        if (rst_n
-                  && ((ex_fast_alu_src1_wb_repair
-                       !== ex_alu_src1_wb_repair)
-                      || (ex_fast_alu_src2_wb_repair
-                          !== ex_alu_src2_wb_repair)
-                      || (ex_s1_fast_alu_src1_wb_repair
-                          !== ex_s1_alu_src1_wb_repair)
-                      || (ex_s1_fast_alu_src2_wb_repair
-                          !== ex_s1_alu_src2_wb_repair)))
-            $fatal(1, "Fast ALU repair tags changed ID/EX state");
-        if (rst_n
-                  && ((ex_fast_alu_src1 !== ex_alu_src1_repair)
-                      || (ex_fast_alu_src2 !== ex_alu_src2_repair)
-                      || (ex_s1_fast_alu_src1 !== ex_s1_alu_src1_repair)
-                      || (ex_s1_fast_alu_src2 !== ex_s1_alu_src2_repair)))
-            $fatal(1, "Fast ALU repair operands changed value");
-        if (rst_n && ex_fast_alu_forward
-                  && (alu_result !== ex_forward_result))
-            $fatal(1, "Fast EX ALU forwarding candidate changed value");
+        if (rst_n && ex_valid && ex_fast_alu_forward
+                  && !(ex_alu_src1_wb_repair | ex_alu_src2_wb_repair)
+                  && (ex_fast_forward_result !== alu_result))
+            $fatal(1, "Slot-0 fast EX ALU copy changed architectural value");
+        if (rst_n && ex_s1_valid
+                  && !(ex_s1_alu_src1_wb_repair
+                       | ex_s1_alu_src2_wb_repair)
+                  && (ex_s1_fast_forward_result !== alu_s1_result))
+            $fatal(1, "Slot-1 fast EX ALU copy changed architectural value");
+        if (rst_n && ex_valid && (ex_control_flow != CF_NONE)
+                  && (ex_rs1_wb_repair | ex_rs2_wb_repair))
+            $fatal(1, "Slot-0 control flow entered EX with WB repair");
+        if (rst_n && ex_s1_valid && (ex_s1_control_flow != CF_NONE)
+                  && (ex_s1_rs1_wb_repair | ex_s1_rs2_wb_repair))
+            $fatal(1, "Slot-1 control flow entered EX with WB repair");
+        if (rst_n && ex_valid && ex_s1_valid
+                  && (ex_mem_read_en | ex_mem_write_en)
+                  && (ex_s1_mem_read_en | ex_s1_mem_write_en))
+            $fatal(1, "Dual-issue pair contains two LSU instructions");
         if (rst_n && id_mul_prestart
                   && u_forwarding.mul_launch_ex_raw_hazard)
             $fatal(1, "MUL launched across an EX RAW interlock");
@@ -1870,6 +1890,7 @@ module cpu_top
         .rst_n              (rst_n),
         .ex_valid           (ex_valid),
         .ex_ready_go        (ex_ready_go_w),
+        .ex_priv_commit_ready(ex_priv_commit_ready),
         .mem_allowin        (mem_allowin),
         .mem_branch_flush   (mem_branch_flush),
         .ex_redirect_fire   (ex_redirect_fire),

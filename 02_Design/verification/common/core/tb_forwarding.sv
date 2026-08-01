@@ -35,8 +35,10 @@ module tb_forwarding;
     logic        ex_reg_write;
     logic        ex_is_muldiv;
     logic        ex_mem_read;
+    logic        ex_result_repair;
     logic [ 4:0] ex_rd;
     logic [31:0] ex_alu_result;
+    logic [31:0] ex_fast_alu_result;
     logic [31:0] ex_pc_plus_4;
     logic [ 1:0] ex_wb_sel;
     wire         ex_fast_alu = ~ex_is_muldiv & (ex_wb_sel != 2'b10);
@@ -44,6 +46,7 @@ module tb_forwarding;
     logic        ex_s1_valid;
     logic        ex_s1_reg_write;
     logic        ex_s1_mem_read;
+    logic        ex_s1_result_repair;
     logic [ 4:0] ex_s1_rd;
     logic [31:0] ex_s1_alu_result;
     logic [31:0] ex_s1_pc_plus_4;
@@ -97,6 +100,9 @@ module tb_forwarding;
     logic        id_s1_rs1_wb_repair_s1;
     logic        id_s1_rs2_wb_repair_s1;
     logic        id_ready_go;
+    logic        id_ready_go_if_mem_ready;
+    logic        id_ready_go_if_mem_wait;
+    integer      random_seed;
 
     forwarding dut (
         .id_rs1_addr      (id_rs1_addr),
@@ -131,17 +137,17 @@ module tb_forwarding;
         .ex_reg_write     (ex_reg_write),
         .ex_is_muldiv     (ex_is_muldiv),
         .ex_mem_read      (ex_mem_read),
-        .ex_result_repair (1'b0),
+        .ex_result_repair (ex_result_repair),
         .ex_rd            (ex_rd),
         .ex_alu_result    (ex_alu_result),
         .ex_fast_alu      (ex_fast_alu),
-        .ex_fast_alu_result(ex_alu_result),
+        .ex_fast_alu_result(ex_fast_alu_result),
         .ex_pc_plus_4     (ex_pc_plus_4),
         .ex_wb_sel        (ex_wb_sel),
         .ex_s1_valid      (ex_s1_valid),
         .ex_s1_reg_write  (ex_s1_reg_write),
         .ex_s1_mem_read   (ex_s1_mem_read),
-        .ex_s1_result_repair(1'b0),
+        .ex_s1_result_repair(ex_s1_result_repair),
         .ex_s1_rd         (ex_s1_rd),
         .ex_s1_alu_result (ex_s1_alu_result),
         .ex_s1_pc_plus_4  (ex_s1_pc_plus_4),
@@ -187,7 +193,9 @@ module tb_forwarding;
         .id_s1_rs2_wb_repair(id_s1_rs2_wb_repair),
         .id_s1_rs1_wb_repair_s1(id_s1_rs1_wb_repair_s1),
         .id_s1_rs2_wb_repair_s1(id_s1_rs2_wb_repair_s1),
-        .id_ready_go      (id_ready_go)
+        .id_ready_go      (id_ready_go),
+        .id_ready_go_if_mem_ready(id_ready_go_if_mem_ready),
+        .id_ready_go_if_mem_wait(id_ready_go_if_mem_wait)
     );
 
     mul_operand_forwarding mul_dut (
@@ -259,14 +267,17 @@ module tb_forwarding;
             ex_reg_write = 1'b0;
             ex_is_muldiv = 1'b0;
             ex_mem_read = 1'b0;
+            ex_result_repair = 1'b0;
             ex_rd = 5'd0;
             ex_alu_result = 32'hAAAA_0000;
+            ex_fast_alu_result = 32'hAAAA_0000;
             ex_pc_plus_4 = 32'hAAAA_0004;
             ex_wb_sel = 2'b00;
 
             ex_s1_valid = 1'b0;
             ex_s1_reg_write = 1'b0;
             ex_s1_mem_read = 1'b0;
+            ex_s1_result_repair = 1'b0;
             ex_s1_rd = 5'd0;
             ex_s1_alu_result = 32'hBBBB_0000;
             ex_s1_pc_plus_4 = 32'hBBBB_0004;
@@ -325,19 +336,169 @@ module tb_forwarding;
         end
     endtask
 
+    task automatic check_repaired_ex_interlock(
+        input logic producer_slot1,
+        input logic consumer_slot1,
+        input logic operand2
+    );
+        begin
+            clear_inputs();
+            if (consumer_slot1) begin
+                id_s1_valid = 1'b1;
+                if (operand2) begin
+                    id_s1_rs2_addr = 5'd5;
+                    id_s1_rs2_used = 1'b1;
+                end else begin
+                    id_s1_rs1_addr = 5'd5;
+                    id_s1_rs1_used = 1'b1;
+                end
+            end else begin
+                id_s0_alu_only = 1'b1;
+                if (operand2) begin
+                    id_rs2_addr = 5'd5;
+                    id_rs2_used = 1'b1;
+                end else begin
+                    id_rs1_addr = 5'd5;
+                    id_rs1_used = 1'b1;
+                end
+            end
+
+            if (producer_slot1) begin
+                ex_s1_valid = 1'b1;
+                ex_s1_reg_write = 1'b1;
+                ex_s1_result_repair = 1'b1;
+                ex_s1_rd = 5'd5;
+                ex_s1_alu_result = 32'hBAD1_0005;
+            end else begin
+                ex_valid = 1'b1;
+                ex_reg_write = 1'b1;
+                ex_result_repair = 1'b1;
+                ex_rd = 5'd5;
+                ex_alu_result = 32'hBAD0_0005;
+                ex_fast_alu_result = 32'hFA57_0005;
+            end
+            #1;
+
+            check(!id_ready_go,
+                  "consumer of a repaired EX result must wait one cycle");
+            check_no_wb_repair(
+                "EX repair-use interlock must not invent a MEM repair tag");
+            if (consumer_slot1) begin
+                if (operand2)
+                    check(id_s1_rs2_data == rf_s1_rs2_data,
+                          "repaired EX raw value leaked to S1 rs2");
+                else
+                    check(id_s1_rs1_data == rf_s1_rs1_data,
+                          "repaired EX raw value leaked to S1 rs1");
+            end else begin
+                if (operand2)
+                    check(id_rs2_data == rf_rs2_data,
+                          "repaired EX raw value leaked to S0 rs2");
+                else
+                    check(id_rs1_data == rf_rs1_data,
+                          "repaired EX raw value leaked to S0 rs1");
+            end
+        end
+    endtask
+
+    task automatic check_mem_load_repair_matrix(
+        input logic producer_slot1,
+        input logic consumer_slot1,
+        input logic operand2
+    );
+        begin
+            clear_inputs();
+            if (consumer_slot1) begin
+                id_s1_valid = 1'b1;
+                id_s1_repair_ok = 1'b1;
+                if (operand2) begin
+                    id_s1_rs2_addr = 5'd6;
+                    id_s1_rs2_used = 1'b1;
+                end else begin
+                    id_s1_rs1_addr = 5'd6;
+                    id_s1_rs1_used = 1'b1;
+                end
+            end else begin
+                id_s0_alu_only = 1'b1;
+                if (operand2) begin
+                    id_rs2_addr = 5'd6;
+                    id_rs2_used = 1'b1;
+                end else begin
+                    id_rs1_addr = 5'd6;
+                    id_rs1_used = 1'b1;
+                end
+            end
+
+            if (producer_slot1) begin
+                mem_s1_valid = 1'b1;
+                mem_s1_reg_write = 1'b1;
+                mem_s1_is_load = 1'b1;
+                mem_s1_rd = 5'd6;
+            end else begin
+                mem_valid = 1'b1;
+                mem_reg_write = 1'b1;
+                mem_is_load = 1'b1;
+                mem_rd = 5'd6;
+            end
+
+            mem_load_ready = 1'b0;
+            #1;
+            check(!id_ready_go,
+                  "unready MEM load must hold every repairable consumer");
+            check_no_wb_repair("unready MEM load must not issue a repair tag");
+            check(id_ready_go == id_ready_go_if_mem_wait,
+                  "MEM-wait readiness cofactor mismatch");
+
+            mem_load_ready = 1'b1;
+            #1;
+            check(id_ready_go,
+                  "ready MEM load should repair an ALU/LSU consumer");
+            check(id_ready_go == id_ready_go_if_mem_ready,
+                  "MEM-ready readiness cofactor mismatch");
+            if (consumer_slot1) begin
+                if (operand2) begin
+                    check(id_s1_rs2_wb_repair,
+                          "S1 rs2 repair tag missing");
+                    check(id_s1_rs2_wb_repair_s1 == producer_slot1,
+                          "S1 rs2 repair producer slot mismatch");
+                end else begin
+                    check(id_s1_rs1_wb_repair,
+                          "S1 rs1 repair tag missing");
+                    check(id_s1_rs1_wb_repair_s1 == producer_slot1,
+                          "S1 rs1 repair producer slot mismatch");
+                end
+            end else begin
+                if (operand2) begin
+                    check(id_rs2_wb_repair,
+                          "S0 rs2 repair tag missing");
+                    check(id_rs2_wb_repair_s1 == producer_slot1,
+                          "S0 rs2 repair producer slot mismatch");
+                end else begin
+                    check(id_rs1_wb_repair,
+                          "S0 rs1 repair tag missing");
+                    check(id_rs1_wb_repair_s1 == producer_slot1,
+                          "S0 rs1 repair producer slot mismatch");
+                end
+            end
+        end
+    endtask
+
     function automatic logic [31:0] reference_forward(
         input logic [ 4:0] src_addr,
         input logic [31:0] rf_data
     );
         begin
-            if (ex_s1_valid && ex_s1_reg_write && (ex_s1_rd != 5'd0)
+            if (ex_s1_valid && ex_s1_reg_write && !ex_s1_result_repair
+                    && (ex_s1_rd != 5'd0)
                     && (ex_s1_rd == src_addr))
                 reference_forward = (ex_s1_wb_sel == 2'b10)
                                   ? ex_s1_pc_plus_4 : ex_s1_alu_result;
-            else if (ex_valid && ex_reg_write
+            else if (ex_valid && ex_reg_write && !ex_result_repair
                     && (ex_rd != 5'd0) && (ex_rd == src_addr))
                 reference_forward = (ex_wb_sel == 2'b10)
-                                  ? ex_pc_plus_4 : ex_alu_result;
+                                  ? ex_pc_plus_4
+                                  : ex_fast_alu
+                                    ? ex_fast_alu_result : ex_alu_result;
             else if (mem_s1_valid && mem_s1_reg_write && !mem_s1_is_load
                     && (mem_s1_rd != 5'd0) && (mem_s1_rd == src_addr))
                 reference_forward = (mem_s1_wb_sel == 2'b10)
@@ -407,6 +568,10 @@ module tb_forwarding;
     endfunction
 
     initial begin
+        if (!$value$plusargs("seed=%d", random_seed))
+            random_seed = 32'h2026_0801;
+        void'($urandom(random_seed));
+
         clear_inputs();
         #1;
         check(id_ready_go, "baseline should be ready");
@@ -417,6 +582,95 @@ module tb_forwarding;
               "baseline S0 ALU src2 should come from RF");
         check(mul_rs1_data == rf_rs1_data,
               "baseline MUL rs1 should come from RF");
+
+        // The ordinary EX bypass must select the raw-operand fast copy, not
+        // the architectural copy whose inputs may include late WB repair.
+        clear_inputs();
+        id_rs1_addr = 5'd4;
+        id_rs1_used = 1'b1;
+        id_s0_alu_only = 1'b1;
+        ex_valid = 1'b1;
+        ex_reg_write = 1'b1;
+        ex_rd = 5'd4;
+        ex_alu_result = 32'hA2C4_0004;
+        ex_fast_alu_result = 32'hFA57_0004;
+        #1;
+        check(ex_fast_alu, "ordinary EX ALU was not classified as fast");
+        check(id_rs1_data == 32'hFA57_0004,
+              "ordinary EX forwarding did not select the fast ALU copy");
+
+        // Sweep both producer slots, both consumer slots, and both operands.
+        // This is the boundary that was previously tied off in this testbench.
+        for (int producer_slot = 0; producer_slot < 2; producer_slot++) begin
+            for (int consumer_slot = 0; consumer_slot < 2; consumer_slot++) begin
+                for (int operand = 0; operand < 2; operand++) begin
+                    check_repaired_ex_interlock(
+                        producer_slot[0], consumer_slot[0], operand[0]
+                    );
+                    check_mem_load_repair_matrix(
+                        producer_slot[0], consumer_slot[0], operand[0]
+                    );
+                end
+            end
+        end
+
+        clear_inputs();
+        id_rs1_addr = 5'd0;
+        id_rs1_used = 1'b1;
+        ex_valid = 1'b1;
+        ex_reg_write = 1'b1;
+        ex_result_repair = 1'b1;
+        ex_rd = 5'd0;
+        mem_valid = 1'b1;
+        mem_reg_write = 1'b1;
+        mem_is_load = 1'b1;
+        mem_load_ready = 1'b1;
+        mem_rd = 5'd0;
+        #1;
+        check(id_ready_go, "r0 must never create a repair dependency");
+        check_no_wb_repair("r0 must never carry a repair tag");
+
+        // A younger ordinary EX writer wins over an older ready MEM load with
+        // the same destination. The load must not leave a stale repair tag.
+        clear_inputs();
+        id_rs1_addr = 5'd7;
+        id_rs1_used = 1'b1;
+        id_s0_alu_only = 1'b1;
+        ex_valid = 1'b1;
+        ex_reg_write = 1'b1;
+        ex_rd = 5'd7;
+        ex_fast_alu_result = 32'hFA57_0007;
+        mem_valid = 1'b1;
+        mem_reg_write = 1'b1;
+        mem_is_load = 1'b1;
+        mem_load_ready = 1'b1;
+        mem_rd = 5'd7;
+        #1;
+        check(id_ready_go, "younger EX writer should hide older MEM load");
+        check(id_rs1_data == 32'hFA57_0007,
+              "younger EX value lost priority over older MEM load");
+        check_no_wb_repair("hidden older MEM load emitted a stale repair tag");
+
+        // If both MEM slots name the same destination, Slot 1 is younger and
+        // must be recorded as the repair source.
+        clear_inputs();
+        id_rs1_addr = 5'd8;
+        id_rs1_used = 1'b1;
+        id_s0_alu_only = 1'b1;
+        mem_valid = 1'b1;
+        mem_reg_write = 1'b1;
+        mem_is_load = 1'b1;
+        mem_rd = 5'd8;
+        mem_s1_valid = 1'b1;
+        mem_s1_reg_write = 1'b1;
+        mem_s1_is_load = 1'b1;
+        mem_s1_rd = 5'd8;
+        mem_load_ready = 1'b1;
+        #1;
+        check(id_ready_go && id_rs1_wb_repair,
+              "same-rd dual MEM loads did not provide a repair");
+        check(id_rs1_wb_repair_s1,
+              "same-rd dual MEM loads did not select younger Slot 1");
 
         clear_inputs();
         id_s0_alu_src1_sel = 2'b01;
@@ -446,6 +700,7 @@ module tb_forwarding;
         ex_reg_write = 1'b1;
         ex_rd = 5'd5;
         ex_alu_result = 32'h1234_5678;
+        ex_fast_alu_result = 32'h1234_5678;
         #1;
         check(id_ready_go, "repaired S0 EX producer should not stall S0 branch");
         check(id_rs1_data == 32'h1234_5678, "repaired S0 EX value should forward to rs1");
@@ -458,6 +713,7 @@ module tb_forwarding;
         ex_reg_write = 1'b1;
         ex_rd = 5'd5;
         ex_alu_result = 32'h8765_4321;
+        ex_fast_alu_result = 32'h8765_4321;
         #1;
         check(id_ready_go, "repaired S0 EX producer should not stall S0 JALR");
         check(id_rs1_data == 32'h8765_4321,
@@ -473,9 +729,23 @@ module tb_forwarding;
         mem_load_ready = 1'b1;
         mem_rd = 5'd6;
         #1;
-        check(id_ready_go, "ready MEM load should repair S0 branch");
-        check(id_rs1_wb_repair, "S0 branch rs1 should select S0 WB load repair");
-        check(!id_rs1_wb_repair_s1, "S0 branch rs1 repair source should be Slot0");
+        check(!id_ready_go,
+              "ready MEM load must wait before an S0 conditional branch");
+        check_no_wb_repair("S0 conditional branch must not use WB repair");
+
+        clear_inputs();
+        id_rs1_addr = 5'd6;
+        id_rs1_used = 1'b1;
+        id_s0_indirect_control = 1'b1;
+        mem_valid = 1'b1;
+        mem_reg_write = 1'b1;
+        mem_is_load = 1'b1;
+        mem_load_ready = 1'b1;
+        mem_rd = 5'd6;
+        #1;
+        check(!id_ready_go,
+              "ready MEM load must wait before an S0 indirect jump");
+        check_no_wb_repair("S0 indirect jump must not use WB repair");
 
         clear_inputs();
         id_rs2_addr = 5'd7;
@@ -556,9 +826,9 @@ module tb_forwarding;
         mem_s1_rd = 5'd10;
         mem_load_ready = 1'b1;
         #1;
-        check(id_ready_go, "ready S1 MEM load should repair S0 consumer");
-        check(id_rs1_wb_repair, "S0 rs1 should select WB load repair");
-        check(id_rs1_wb_repair_s1, "S0 rs1 repair source should be Slot1");
+        check(!id_ready_go,
+              "ready S1 MEM load must wait before an S0 branch");
+        check_no_wb_repair("S0 branch must not repair from an S1 MEM load");
 
         clear_inputs();
         id_s1_valid = 1'b1;
@@ -715,6 +985,7 @@ module tb_forwarding;
         ex_reg_write = 1'b1;
         ex_rd = 5'd5;
         ex_alu_result = 32'hA100_0005;
+        ex_fast_alu_result = 32'hA100_0005;
         wb_valid = 1'b1;
         wb_reg_write = 1'b1;
         wb_rd = 5'd5;
@@ -730,6 +1001,7 @@ module tb_forwarding;
         ex_reg_write = 1'b1;
         ex_rd = 5'd6;
         ex_alu_result = 32'hA100_0006;
+        ex_fast_alu_result = 32'hA100_0006;
         ex_s1_valid = 1'b1;
         ex_s1_reg_write = 1'b1;
         ex_s1_rd = 5'd6;
@@ -793,13 +1065,29 @@ module tb_forwarding;
               "S1 WB producer must beat S0 WB");
 
         // Randomized equivalence check against the architectural priority
-        // tree for every operand output.
-        for (int trial = 0; trial < 1000; trial = trial + 1) begin
+        // tree for every operand output.  Hazard/repair controls are included;
+        // the former test randomized payload priority but left all source-use
+        // and repaired-result controls at zero.
+        for (int trial = 0; trial < 4000; trial = trial + 1) begin
+            int s0_class;
             clear_inputs();
             id_rs1_addr = $urandom_range(0, 31);
             id_rs2_addr = $urandom_range(0, 31);
+            id_rs1_used = $urandom_range(0, 1);
+            id_rs2_used = $urandom_range(0, 1);
+            s0_class = $urandom_range(0, 5);
+            id_s0_alu_only = s0_class == 1;
+            id_s0_conditional_control = s0_class == 2;
+            id_s0_indirect_control = s0_class == 3;
+            id_s0_mem_read = s0_class == 4;
+            id_s0_mem_write = s0_class == 5;
+            id_s0_is_mul = $urandom_range(0, 1);
+            id_s1_valid = $urandom_range(0, 1);
             id_s1_rs1_addr = $urandom_range(0, 31);
             id_s1_rs2_addr = $urandom_range(0, 31);
+            id_s1_rs1_used = $urandom_range(0, 1);
+            id_s1_rs2_used = $urandom_range(0, 1);
+            id_s1_repair_ok = $urandom_range(0, 1);
             rf_rs1_data = $urandom;
             rf_rs2_data = $urandom;
             rf_s1_rs1_data = $urandom;
@@ -815,15 +1103,19 @@ module tb_forwarding;
 
             ex_valid = $urandom_range(0, 1);
             ex_reg_write = $urandom_range(0, 1);
+            ex_is_muldiv = $urandom_range(0, 1);
             ex_mem_read = $urandom_range(0, 1);
+            ex_result_repair = $urandom_range(0, 1);
             ex_rd = $urandom_range(0, 31);
             ex_wb_sel = $urandom_range(0, 2);
             ex_alu_result = $urandom;
+            ex_fast_alu_result = $urandom;
             ex_pc_plus_4 = $urandom;
 
             ex_s1_valid = $urandom_range(0, 1);
             ex_s1_reg_write = $urandom_range(0, 1);
             ex_s1_mem_read = $urandom_range(0, 1);
+            ex_s1_result_repair = $urandom_range(0, 1);
             ex_s1_rd = $urandom_range(0, 31);
             ex_s1_wb_sel = $urandom_range(0, 2);
             ex_s1_alu_result = $urandom;
@@ -846,6 +1138,8 @@ module tb_forwarding;
             mem_s1_wb_sel = $urandom_range(0, 2);
             mem_s1_alu_result = $urandom;
             mem_s1_pc_plus_4 = $urandom;
+
+            mem_load_ready = $urandom_range(0, 1);
 
             wb_valid = $urandom_range(0, 1);
             wb_reg_write = $urandom_range(0, 1);
@@ -891,9 +1185,58 @@ module tb_forwarding;
             check(mul_rs2_data === reference_mul_forward(
                       id_rs2_addr, rf_rs2_data),
                   "random MUL rs2 forwarding mismatch");
+
+            check(id_ready_go === (mem_load_ready
+                    ? id_ready_go_if_mem_ready
+                    : id_ready_go_if_mem_wait),
+                  "random late MEM-ready cofactor selection mismatch");
+            if (!mem_load_ready)
+                check_no_wb_repair(
+                    "random unready MEM load emitted a repair tag");
+            if (id_rs1_wb_repair) begin
+                check(id_rs1_used && (id_rs1_addr != 5'd0),
+                      "random S0 rs1 repair lacks a real source");
+                check(id_s0_alu_only | id_s0_mem_read | id_s0_mem_write,
+                      "random S0 rs1 repair escaped the ALU/LSU policy");
+                check(id_rs1_wb_repair_s1
+                      ? (mem_s1_valid && mem_s1_reg_write
+                         && mem_s1_is_load && mem_s1_rd == id_rs1_addr)
+                      : (mem_valid && mem_reg_write && mem_is_load
+                         && mem_rd == id_rs1_addr),
+                      "random S0 rs1 repair source metadata mismatch");
+            end
+            if (id_rs2_wb_repair) begin
+                check(id_rs2_used && (id_rs2_addr != 5'd0),
+                      "random S0 rs2 repair lacks a real source");
+                check(id_s0_alu_only | id_s0_mem_read | id_s0_mem_write,
+                      "random S0 rs2 repair escaped the ALU/LSU policy");
+            end
+            if (id_s1_rs1_wb_repair | id_s1_rs2_wb_repair)
+                check(id_s1_valid && id_s1_repair_ok,
+                      "random S1 repair escaped its issue policy");
+            if (ex_valid && ex_reg_write && ex_result_repair
+                && (ex_rd != 5'd0)
+                && ((id_rs1_used && id_rs1_addr == ex_rd)
+                    || (id_rs2_used && id_rs2_addr == ex_rd)
+                    || (id_s1_valid && id_s1_rs1_used
+                        && id_s1_rs1_addr == ex_rd)
+                    || (id_s1_valid && id_s1_rs2_used
+                        && id_s1_rs2_addr == ex_rd)))
+                check(!id_ready_go,
+                      "random repaired Slot-0 EX consumer was not interlocked");
+            if (ex_s1_valid && ex_s1_reg_write && ex_s1_result_repair
+                && (ex_s1_rd != 5'd0)
+                && ((id_rs1_used && id_rs1_addr == ex_s1_rd)
+                    || (id_rs2_used && id_rs2_addr == ex_s1_rd)
+                    || (id_s1_valid && id_s1_rs1_used
+                        && id_s1_rs1_addr == ex_s1_rd)
+                    || (id_s1_valid && id_s1_rs2_used
+                        && id_s1_rs2_addr == ex_s1_rd)))
+                check(!id_ready_go,
+                      "random repaired Slot-1 EX consumer was not interlocked");
         end
 
-        $display("[PASS] forwarding directed test");
+        $display("[PASS] forwarding directed test seed=%0d", random_seed);
         $finish;
     end
 endmodule

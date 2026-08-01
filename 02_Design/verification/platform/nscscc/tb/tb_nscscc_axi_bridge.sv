@@ -10,6 +10,8 @@ module tb_nscscc_axi_bridge;
     logic        irom_req_kill;
     logic        irom_resp_valid;
     logic [63:0] irom_resp_data;
+    logic [ 7:0] irom_resp_predecode;
+    logic [ 7:0] expected_irom_predecode;
 
     logic        dmem_req_valid;
     logic        dmem_req_ready;
@@ -81,6 +83,7 @@ module tb_nscscc_axi_bridge;
         .irom_req_kill(irom_req_kill),
         .irom_resp_valid(irom_resp_valid),
         .irom_resp_data(irom_resp_data),
+        .irom_resp_predecode(irom_resp_predecode),
         .dmem_req_valid(dmem_req_valid),
         .dmem_req_ready(dmem_req_ready),
         .dmem_req_write(dmem_req_write),
@@ -139,6 +142,11 @@ module tb_nscscc_axi_bridge;
         .bready(bready)
     );
 
+    loongarch_icache_block_predecode u_expected_irom_predecode (
+        .block_data     (irom_resp_data),
+        .block_metadata (expected_irom_predecode)
+    );
+
     always #5 clk = ~clk;
 
     task automatic check(input logic condition, input string message);
@@ -149,6 +157,12 @@ module tb_nscscc_axi_bridge;
             end
         end
     endtask
+
+    always @(negedge clk) begin
+        if (rst_n && irom_resp_valid)
+            check(irom_resp_predecode === expected_irom_predecode,
+                  "ICache response predecode did not match response data");
+    end
 
     task automatic accept_ar(
         input logic [31:0] expected_addr,

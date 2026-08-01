@@ -72,12 +72,13 @@ module memory_access_unit #(
 
     localparam logic [31:0] DUAL_ISSUE_CNT_ADDR = 32'h8020_0060;
 
-    // The shared LSU chooses Slot 1 only when Slot 0 is not using memory.
-    wire ex_s0_lsu = ex_mem_read_en | ex_mem_write_en;
+    // Pairing already forbids two LSU instructions.  ex_s1_lsu_select therefore
+    // is the selected-lane bit by itself; repeating the Slot-0 classification
+    // here only places another control level in front of the DCache tag RAM.
     // Keep the late redirect/trap kill out of the speculative DCache lookup
     // address. A killed request has both qualified enables low, so cache_req
     // remains low and only the side-effect-free tag/BRAM address may change.
-    wire ex_use_s1_lsu = ~ex_s0_lsu & ex_s1_lsu_select;
+    wire ex_use_s1_lsu = ex_s1_lsu_select;
     wire [31:0] ex_lsu_addr = ex_use_s1_lsu ? ex_s1_alu_addr : ex_alu_addr;
     wire        ex_lsu_read = ex_use_s1_lsu ? ex_s1_mem_read_en : ex_mem_read_en;
     wire        ex_lsu_write = ex_use_s1_lsu ? ex_s1_mem_write_en : ex_mem_write_en;

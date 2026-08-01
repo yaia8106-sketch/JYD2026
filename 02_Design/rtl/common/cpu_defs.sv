@@ -255,6 +255,16 @@ package cpu_defs;
         logic       serializing;
     } frontend_predecode_t;
 
+    // Four timing-critical predecode bits cached alongside each instruction.
+    // A 64-bit ICache row contains two instructions and therefore carries two
+    // of these records in the otherwise-unused RAMB36 parity bits.
+    typedef struct packed {
+        logic static_kill_younger;
+        logic block_younger;
+        logic slot1_disallowed;
+        logic writes_dst;
+    } frontend_icache_predecode_t;
+
     typedef struct packed {
         logic        valid;
         logic [31:0] pc;

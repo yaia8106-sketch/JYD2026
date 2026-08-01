@@ -1,6 +1,6 @@
 # LoongArch verification
 
-Run the phase-2 ordinary-integer verification gate with:
+Run the ordinary-integer decode/execute gate with:
 
 ```bash
 bash functional/run_decode_contract.sh
@@ -20,6 +20,20 @@ The gate now has three layers:
 
 Shared microarchitecture unit tests remain under `../common/`.
 
-This phase intentionally excludes PRELD, LL.W/SC.W, DBAR/IBAR, counter reads,
-SYSCALL/BREAK, CSR/TLB/cache-maintenance instructions, precise ALE/INE/ADEF
-handling, and the NSCSCC AXI/platform wrapper.
+For the competition-facing regression, including caches, AXI, interrupts,
+privileged boundary cases and the exact NSCSCC `core_top`, run:
+
+```bash
+bash ../platform/nscscc/functional/run_rtl_regression.sh
+```
+
+The privileged boundary layer deliberately backpressures MEM while CSR,
+SYSCALL and ERTN flow through the backend. It checks that older instructions
+are drained first, that a legal privileged token commits exactly once without
+depending on DCache readiness, and that misaligned load/store/fetch, Slot-1
+alignment replay and wrong-path flush cases retain precise behavior.
+
+Unsupported architectural features remain outside this gate unless the core
+advertises them: PRELD, LL.W/SC.W, DBAR/IBAR, TLB operations and CACOP cache
+maintenance. The gate does cover the implemented counter/CPUCFG, CSR,
+SYSCALL/BREAK, ERTN, ALE/INE/ADEF and NSCSCC AXI behavior.

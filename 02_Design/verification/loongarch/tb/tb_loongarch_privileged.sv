@@ -10,6 +10,7 @@ module tb_loongarch_privileged;
     logic rst_n;
     logic [11:0] irom_addr;
     logic [63:0] irom_data;
+    logic [ 7:0] irom_predecode;
     logic [31:0] irom [0:255];
     logic debug0_valid;
     logic [31:0] debug0_pc;
@@ -26,17 +27,31 @@ module tb_loongarch_privileged;
     logic [5:0] excp_cause;
     logic [31:0] excp_pc;
     logic [31:0] excp_inst;
+    logic cache_ready;
+    logic [2:0] cache_phase;
     integer excp_count;
     integer ertn_count;
+    integer csr_write_count;
+    integer cache_wait_cycles;
+    integer serializing_wait_cycles;
+    integer csr_fire_while_cache_wait_count;
+    integer trap_fire_while_cache_wait_count;
+    integer ertn_fire_while_cache_wait_count;
+
+    loongarch_icache_block_predecode u_irom_predecode (
+        .block_data     (irom_data),
+        .block_metadata (irom_predecode)
+    );
 
     cpu_top #(.RESET_PC(RESET_PC)) u_cpu (
         .clk(clk), .rst_n(rst_n),
         .irom_addr(irom_addr), .irom_req_valid(), .irom_req_addr(),
         .irom_req_kill(),
         .irom_req_ready(1'b0), .irom_resp_valid(1'b0), .irom_data(irom_data),
+        .irom_resp_predecode(irom_predecode),
         .cache_req(), .cache_wr(), .cache_addr(), .cache_wea(),
         .cache_wdata(), .cache_load_mask(), .cache_uncached(),
-        .cache_rdata(32'd0), .cache_ready(1'b1), .cache_flush(),
+        .cache_rdata(32'd0), .cache_ready(cache_ready), .cache_flush(),
         .cache_pipeline_stall(), .mmio_addr(), .mmio_wr_addr(),
         .mmio_wea(), .mmio_wdata(), .mmio_rdata(32'd0),
         .timer_irq_pending(1'b0),
@@ -65,6 +80,20 @@ module tb_loongarch_privileged;
         forever #5 clk = ~clk;
     end
 
+    // Exercise the class-specific privileged commit cone independently of
+    // the generic DCache-ready selector. Ordinary MEM tokens see periodic
+    // backpressure. Once a privileged instruction legally reaches an empty
+    // EX/backend boundary, force cache_ready low for that cycle: it must still
+    // commit exactly once because an empty MEM stage has mem_allowin=1.
+    always_comb begin
+        if (!rst_n)
+            cache_ready = 1'b1;
+        else if (u_cpu.ex_valid && (u_cpu.ex_priv_op != PRIV_NONE))
+            cache_ready = 1'b0;
+        else
+            cache_ready = cache_phase[1:0] != 2'b00;
+    end
+
     always @(posedge clk) begin
         if (!rst_n)
             irom_data <= {NOP, NOP};
@@ -77,15 +106,40 @@ module tb_loongarch_privileged;
         if (!rst_n) begin
             excp_count <= 0;
             ertn_count <= 0;
+            csr_write_count <= 0;
+            cache_phase <= 3'd0;
+            cache_wait_cycles <= 0;
+            serializing_wait_cycles <= 0;
+            csr_fire_while_cache_wait_count <= 0;
+            trap_fire_while_cache_wait_count <= 0;
+            ertn_fire_while_cache_wait_count <= 0;
         end else begin
+            cache_phase <= cache_phase + 3'd1;
+            if (!cache_ready)
+                cache_wait_cycles <= cache_wait_cycles + 1;
+            if (u_cpu.id_valid && !u_cpu.id_serializing_ready)
+                serializing_wait_cycles <= serializing_wait_cycles + 1;
+            if (u_cpu.u_isa_priv_unit.u_impl.ex_csr_write_fire) begin
+                csr_write_count <= csr_write_count + 1;
+                if (!cache_ready)
+                    csr_fire_while_cache_wait_count <=
+                        csr_fire_while_cache_wait_count + 1;
+            end
             if (excp_valid) begin
                 excp_count <= excp_count + 1;
+                if (!cache_ready)
+                    trap_fire_while_cache_wait_count <=
+                        trap_fire_while_cache_wait_count + 1;
                 if (excp_cause !== 6'h0b || excp_pc !== RESET_PC + 32'h18
                     || excp_inst !== 32'h002b_0000)
                     $fatal(1, "[FAIL] malformed SYSCALL exception event");
             end
-            if (ertn_event)
+            if (ertn_event) begin
                 ertn_count <= ertn_count + 1;
+                if (!cache_ready)
+                    ertn_fire_while_cache_wait_count <=
+                        ertn_fire_while_cache_wait_count + 1;
+            end
         end
     end
 
@@ -131,6 +185,13 @@ module tb_loongarch_privileged;
         irom_data = {NOP, NOP};
         excp_count = 0;
         ertn_count = 0;
+        csr_write_count = 0;
+        cache_phase = 3'd0;
+        cache_wait_cycles = 0;
+        serializing_wait_cycles = 0;
+        csr_fire_while_cache_wait_count = 0;
+        trap_fire_while_cache_wait_count = 0;
+        ertn_fire_while_cache_wait_count = 0;
         for (int i = 0; i < 256; i++)
             irom[i] = NOP;
 
@@ -178,6 +239,18 @@ module tb_loongarch_privileged;
         repeat (3) @(posedge clk);
         check(excp_count == 1, "exactly one SYSCALL trap");
         check(ertn_count == 1, "exactly one ERTN event");
+        check(csr_write_count == 3,
+              "exactly three architectural CSR writes");
+        check(cache_wait_cycles > 0,
+              "privileged regression did not exercise MEM backpressure");
+        check(serializing_wait_cycles > 0,
+              "privileged regression did not wait behind an older token");
+        check(csr_fire_while_cache_wait_count == 3,
+              "CSR commit still depends on DCache ready or repeated");
+        check(trap_fire_while_cache_wait_count == 1,
+              "SYSCALL commit still depends on DCache ready or repeated");
+        check(ertn_fire_while_cache_wait_count == 1,
+              "ERTN commit still depends on DCache ready or repeated");
         check(u_cpu.u_regfile.regs[10] == RESET_PC + 32'h18,
               "ERA captured the faulting SYSCALL PC");
         check(u_cpu.u_regfile.regs[11][21:16] == 6'h0b,

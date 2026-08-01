@@ -18,6 +18,7 @@ module nscscc_axi_bridge (
     input  logic        irom_req_kill,
     output logic        irom_resp_valid,
     output logic [63:0] irom_resp_data,
+    output logic [ 7:0] irom_resp_predecode,
 
     input  logic        dmem_req_valid,
     output logic        dmem_req_ready,
@@ -127,6 +128,7 @@ module nscscc_axi_bridge (
         .irom_req_kill  (irom_req_kill),
         .irom_resp_valid(irom_resp_valid),
         .irom_resp_data (irom_resp_data),
+        .irom_resp_predecode(irom_resp_predecode),
         .irom_resp_resp (irom_resp_resp),
         .mem_req_valid  (imem_req_valid),
         .mem_req_ready  (imem_req_ready),

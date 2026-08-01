@@ -14,6 +14,9 @@ vcs -full64 -sverilog -timescale=1ns/1ps \
     -top tb_nscscc_axi_bridge \
     -Mdir="$WORK_DIR/csrc" \
     -o "$WORK_DIR/simv" \
+    "$RTL_DIR/common/cpu_defs.sv" \
+    "$RTL_DIR/isa/loongarch/loongarch_defs.sv" \
+    "$RTL_DIR/isa/loongarch/loongarch_predecode.sv" \
     "$RTL_DIR/bus/axi/axi_master_adapter.sv" \
     "$RTL_DIR/bus/axi/memory_backend_arbiter.sv" \
     "$RTL_DIR/memory/icache.sv" \

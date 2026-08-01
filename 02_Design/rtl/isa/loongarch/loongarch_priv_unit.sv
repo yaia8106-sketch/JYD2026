@@ -14,6 +14,7 @@ module loongarch_priv_unit
     input  logic        rst_n,
     input  logic        ex_valid,
     input  logic        ex_ready_go,
+    input  logic        ex_priv_commit_ready,
     input  logic        mem_allowin,
     input  logic        mem_branch_flush,
     input  logic        ex_redirect_fire,
@@ -231,9 +232,14 @@ module loongarch_priv_unit
                       | ex_priv_violation | ex_bad_csr
                       | ex_fetch_misaligned | ex_data_misaligned;
     wire ex_valid_return = ex_is_return & ~ex_priv_violation;
-    wire ex_stage_fire = ex_valid & ex_redirect_fire;
-    wire ex_sync_trap_fire = ex_stage_fire & ex_sync_trap;
-    wire ex_return_fire = ex_stage_fire & ex_valid_return;
+    // A privileged flow reaches EX only after older backend tokens are gone;
+    // address faults discovered in EX wait for that same condition.  Commit
+    // directly from the registered token cone so AXI/DCache readiness cannot
+    // enter trap, ERTN, or CSR register enables.
+    wire ex_priv_stage_fire = ex_valid & ex_priv_commit_ready
+                            & ~mem_branch_flush;
+    wire ex_sync_trap_fire = ex_priv_stage_fire & ex_sync_trap;
+    wire ex_return_fire = ex_priv_stage_fire & ex_valid_return;
 
     logic [5:0] ex_sync_cause;
     always_comb begin
@@ -275,14 +281,42 @@ module loongarch_priv_unit
                           | (((ex_priv_cmd == PRIV_CMD_SET)
                               | (ex_priv_cmd == PRIV_CMD_CLEAR))
                              & (|ex_csr_src));
-    // CSR writes are serialized behind older MEM/WB tokens below.  Once that
-    // condition is satisfied MEM is empty and can accept the instruction, so
-    // the architectural write no longer needs the late DCache-derived
-    // mem_allowin term carried by ex_redirect_fire.
-    wire ex_csr_write_fire = ex_valid & ex_ready_go & ~mem_branch_flush
+    // CSR writes are serialized behind older MEM/WB tokens before entering EX.
+    // Use that registered class-specific readiness directly: the generic
+    // ex_ready_go also contains address-fault, LSU, and MulDiv conditions which
+    // are mutually exclusive with a decoded CSR but otherwise enter every CSR
+    // register enable.
+    wire ex_csr_write_fire = ex_priv_stage_fire
                            & ex_is_csr
                            & ex_csr_supported & ~ex_priv_violation
                            & ex_csr_write_req;
+
+`ifndef SYNTHESIS
+    // Retain the original expression as an executable equivalence check.  The
+    // serializing decoder guarantees that the two readiness terms agree for a
+    // CSR write without putting the old cone back into the synthesized design.
+    wire ex_csr_write_fire_reference =
+        ex_valid & ex_ready_go & ~mem_branch_flush
+        & ex_is_csr & ex_csr_supported & ~ex_priv_violation
+        & ex_csr_write_req;
+    wire ex_sync_trap_fire_reference = ex_valid & ex_redirect_fire
+                                     & ex_sync_trap;
+    wire ex_return_fire_reference = ex_valid & ex_redirect_fire
+                                  & ex_valid_return;
+    always_ff @(posedge clk) begin
+        if (rst_n
+            && (ex_csr_write_fire !== ex_csr_write_fire_reference))
+            $fatal(1, "Class-specific CSR write readiness changed commit timing");
+        if (rst_n
+            && ((ex_sync_trap_fire !== ex_sync_trap_fire_reference)
+                || (ex_return_fire !== ex_return_fire_reference)))
+            $fatal(1, "Class-specific privileged readiness changed redirect timing");
+        if (rst_n && ex_priv_stage_fire
+            && (ex_sync_trap | ex_valid_return)
+            && (!ex_ready_go || !mem_allowin))
+            $fatal(1, "Privileged commit fired before the generic pipeline was ready");
+    end
+`endif
 
     assign ex_priv_flow = ex_valid & (ex_sync_trap | ex_valid_return);
     assign ex_priv_redirect = ex_sync_trap_fire | ex_return_fire;
@@ -474,11 +508,6 @@ module loongarch_priv_unit
         end
     end
 
-    // Keep interface inputs intentionally consumed even though the current
-    // execute fire is already summarized by ex_redirect_fire.
-    wire unused_stage_inputs = ex_ready_go ^ mem_allowin ^ mem_branch_flush
-                             ^ stable_counter[0];
-
 endmodule
 
 module isa_priv_unit
@@ -488,6 +517,7 @@ module isa_priv_unit
     input  logic        rst_n,
     input  logic        ex_valid,
     input  logic        ex_ready_go,
+    input  logic        ex_priv_commit_ready,
     input  logic        mem_allowin,
     input  logic        mem_branch_flush,
     input  logic        ex_redirect_fire,

@@ -14,6 +14,7 @@ module tb_loongarch_frontend_ftq;
     logic [31:0] ex_redirect_target;
     logic [11:0] irom_addr;
     logic [63:0] irom_data;
+    logic [ 7:0] irom_predecode;
     logic [63:0] imem [0:IMEM_WORDS-1];
 
     logic if_valid;
@@ -39,6 +40,11 @@ module tb_loongarch_frontend_ftq;
     integer case_count;
     integer fail_count;
 
+    loongarch_icache_block_predecode u_irom_predecode (
+        .block_data     (irom_data),
+        .block_metadata (irom_predecode)
+    );
+
     frontend_ftq dut (
         .clk(clk),
         .rst_n(rst_n),
@@ -51,6 +57,7 @@ module tb_loongarch_frontend_ftq;
         .irom_req_ready(1'b0),
         .irom_resp_valid(1'b0),
         .irom_data(irom_data),
+        .irom_resp_predecode(irom_predecode),
         .abtb_bank0_lookup_hit(1'b0),
         .abtb_bank0_hit(1'b0),
         .abtb_bank0_way(1'b0),

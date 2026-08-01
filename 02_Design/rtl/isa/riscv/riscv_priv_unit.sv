@@ -197,6 +197,7 @@ module isa_priv_unit
     input  logic        rst_n,
     input  logic        ex_valid,
     input  logic        ex_ready_go,
+    input  logic        ex_priv_commit_ready,
     input  logic        mem_allowin,
     input  logic        mem_branch_flush,
     input  logic        ex_redirect_fire,

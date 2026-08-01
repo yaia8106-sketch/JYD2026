@@ -166,6 +166,53 @@ module loongarch_predecode
 
 endmodule
 
+// Compact metadata generated only when an ICache refill block is completed.
+// Keeping this derived information in the RAMB36 parity bits removes the full
+// instruction-classification cone from the normal ICache-hit -> FQ path.
+module loongarch_icache_predecode
+    import cpu_defs::*;
+(
+    input  logic [31:0]                  inst,
+    output frontend_icache_predecode_t   metadata
+);
+    frontend_predecode_t decoded;
+
+    loongarch_predecode u_predecode (
+        .inst    (inst),
+        .decoded (decoded)
+    );
+
+    always_comb begin
+        metadata = '0;
+        metadata.static_kill_younger = decoded.is_jump;
+        metadata.block_younger = decoded.block_younger;
+        metadata.slot1_disallowed = ~decoded.lane_mask[1];
+        metadata.writes_dst = decoded.writes_dst;
+    end
+endmodule
+
+module loongarch_icache_block_predecode
+    import cpu_defs::*;
+(
+    input  logic [63:0] block_data,
+    output logic [ 7:0] block_metadata
+);
+    frontend_icache_predecode_t low_metadata;
+    frontend_icache_predecode_t high_metadata;
+
+    loongarch_icache_predecode u_low_predecode (
+        .inst     (block_data[31:0]),
+        .metadata (low_metadata)
+    );
+
+    loongarch_icache_predecode u_high_predecode (
+        .inst     (block_data[63:32]),
+        .metadata (high_metadata)
+    );
+
+    assign block_metadata = {high_metadata, low_metadata};
+endmodule
+
 module isa_predecode
     import cpu_defs::*;
 (

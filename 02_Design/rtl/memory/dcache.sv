@@ -686,9 +686,9 @@ module dcache (
     //  same cache way as the already-confirmed store hit, so this comparison
     //  does not need to wait for the younger load's tag-RAM lookup.
     //
-    //  Only raw_bypass_valid is control-dependent. The payload registers are
-    //  written unconditionally and ignored while valid is clear, preventing
-    //  raw_bypass_capture from becoming the CE of 36 payload flops.
+    //  The payload registers are written unconditionally.  Capture a harmless
+    //  same-word candidate without the late request/flush cone, then qualify
+    //  its use with the registered MEM-stage load token below.
     // ================================================================
     wire [29:0] raw_bypass_word_addr_diff =
         cpu_addr[31:2] ^ mem_addr[31:2];
@@ -703,8 +703,15 @@ module dcache (
         & raw_bypass_addr_eq4;
     wire raw_bypass_capture = pipeline_advance
                             & store_cache_write
-                            & cpu_req & ~cpu_wr & ~cpu_uncached & ~flush
                             & raw_bypass_same_word;
+
+`ifndef SYNTHESIS
+    wire raw_bypass_capture_reference =
+        pipeline_advance & store_cache_write
+        & cpu_req & ~cpu_wr & ~cpu_uncached & ~flush
+        & raw_bypass_same_word;
+    logic raw_bypass_valid_reference_q;
+`endif
 
     always_ff @(posedge clk) begin
         raw_bypass_data <= store_cache_write_data;
@@ -812,10 +819,12 @@ module dcache (
     //  Priority: uncached/refill response > cache BRAM plus registered RAW fix
     // ================================================================
     wire [31:0] cache_bank_data = hit_way ? data_rd[1] : data_rd[0];
+    wire raw_bypass_apply = raw_bypass_valid
+                          & mem_req & ~mem_wr & ~mem_uncached;
     wire [31:0] cache_read_data = merge_bytes(
         cache_bank_data,
         raw_bypass_data,
-        raw_bypass_wea & {4{raw_bypass_valid}}
+        raw_bypass_wea & {4{raw_bypass_apply}}
     );
 
     always_comb begin
@@ -844,6 +853,17 @@ module dcache (
                      | uc_write_fire;
 
 `ifndef SYNTHESIS
+    always_ff @(posedge clk) begin
+        if (!rst_n)
+            raw_bypass_valid_reference_q <= 1'b0;
+        else begin
+            raw_bypass_valid_reference_q <= raw_bypass_capture_reference;
+            if (mem_req && ~mem_wr && ~mem_uncached
+                && (raw_bypass_valid !== raw_bypass_valid_reference_q))
+                $fatal(1, "Speculative RAW candidate changed load-visible bypass");
+        end
+    end
+
     always_ff @(posedge clk) begin
         if (rst_n) begin
             for (int s = 0; s < SETS; s++) begin

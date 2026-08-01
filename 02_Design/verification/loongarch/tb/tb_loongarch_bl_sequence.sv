@@ -10,6 +10,7 @@ module tb_loongarch_bl_sequence;
     logic rst_n;
     logic [11:0] irom_addr;
     logic [63:0] irom_data;
+    logic [ 7:0] irom_predecode;
     logic [31:0] irom [0:255];
 
     logic debug0_valid;
@@ -23,6 +24,11 @@ module tb_loongarch_bl_sequence;
     logic [4:0] debug1_wnum;
     logic [31:0] debug1_wdata;
 
+    loongarch_icache_block_predecode u_irom_predecode (
+        .block_data     (irom_data),
+        .block_metadata (irom_predecode)
+    );
+
     cpu_top #(.RESET_PC(RESET_PC)) u_cpu (
         .clk(clk),
         .rst_n(rst_n),
@@ -33,6 +39,7 @@ module tb_loongarch_bl_sequence;
         .irom_req_ready(1'b0),
         .irom_resp_valid(1'b0),
         .irom_data(irom_data),
+        .irom_resp_predecode(irom_predecode),
         .cache_req(),
         .cache_wr(),
         .cache_addr(),

@@ -10,6 +10,7 @@ module tb_loongarch_interrupt;
     logic rst_n;
     logic [11:0] irom_addr;
     logic [63:0] irom_data;
+    logic [ 7:0] irom_predecode;
     logic [31:0] irom [0:255];
     logic debug0_valid;
     logic [3:0] debug0_wen;
@@ -30,11 +31,17 @@ module tb_loongarch_interrupt;
     integer soft_count;
     integer timer_count;
 
+    loongarch_icache_block_predecode u_irom_predecode (
+        .block_data     (irom_data),
+        .block_metadata (irom_predecode)
+    );
+
     cpu_top #(.RESET_PC(RESET_PC)) u_cpu (
         .clk(clk), .rst_n(rst_n),
         .irom_addr(irom_addr), .irom_req_valid(), .irom_req_addr(),
         .irom_req_kill(),
         .irom_req_ready(1'b0), .irom_resp_valid(1'b0), .irom_data(irom_data),
+        .irom_resp_predecode(irom_predecode),
         .cache_req(), .cache_wr(), .cache_addr(), .cache_wea(),
         .cache_wdata(), .cache_load_mask(), .cache_uncached(),
         .cache_rdata(32'd0), .cache_ready(1'b1), .cache_flush(),

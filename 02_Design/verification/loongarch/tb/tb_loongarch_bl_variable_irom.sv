@@ -16,6 +16,7 @@ module tb_loongarch_bl_variable_irom;
     logic [31:0] irom_req_addr;
     logic irom_resp_valid;
     logic [63:0] irom_data;
+    logic [ 7:0] irom_predecode;
     logic [31:0] irom [0:255];
     irom_state_t irom_state;
     logic [31:0] pending_addr;
@@ -35,6 +36,11 @@ module tb_loongarch_bl_variable_irom;
     integer request_count;
     integer response_count;
 
+    loongarch_icache_block_predecode u_irom_predecode (
+        .block_data     (irom_data),
+        .block_metadata (irom_predecode)
+    );
+
     cpu_top #(
         .IROM_VARIABLE_LATENCY(1'b1),
         .RESET_PC(RESET_PC)
@@ -47,6 +53,7 @@ module tb_loongarch_bl_variable_irom;
         .irom_req_ready(irom_req_ready),
         .irom_resp_valid(irom_resp_valid),
         .irom_data(irom_data),
+        .irom_resp_predecode(irom_predecode),
         .cache_req(), .cache_wr(), .cache_addr(), .cache_wea(),
         .cache_wdata(), .cache_load_mask(), .cache_uncached(),
         .cache_rdata(32'd0), .cache_ready(1'b1), .cache_flush(),

@@ -1,5 +1,31 @@
 # NSCSCC platform verification
 
+Run the complete NSCSCC/LoongArch RTL boundary gate with:
+
+```bash
+bash functional/run_rtl_regression.sh
+```
+
+This gate is intentionally separate from the Chiplab official software
+sign-off. The official 58-point `func` image and all 20 `perf` programs still
+need to pass in the Chiplab simulation/CI environment; the RTL gate adds the
+short, localized checks that those long programs do not diagnose precisely.
+
+The aggregate gate includes:
+
+- all 11 valid ALU operations over fixed edge operands and multiple random
+  seeds, comparing the architectural and fast-forward copies against an
+  independent semantic model;
+- forwarding priority and load-repair matrices across both producer slots,
+  both consumer slots and both operands, including repaired-EX interlocks,
+  r0, same-destination WAW priority and multiple random seeds;
+- CSR/SYSCALL/ERTN under artificial MEM backpressure, plus direct alignment,
+  flush suppression and exactly-once commit checks;
+- LoongArch decode, FTQ pairing, dual-issue `cpu_top`, BL, variable IROM,
+  interrupts, MulDiv and redirect tests;
+- all cache/AXI protocol tests described below and exact NSCSCC top-level
+  elaboration in single- and dual-debug-commit configurations.
+
 `functional/run_axi_bridge.sh` checks the platform bridge independently of the
 ISA pipeline.  It covers four-beat critical-first WRAP refills, simultaneous
 ICache-ID-0 and DCache-ID-1 reads, interleaved RID response routing,

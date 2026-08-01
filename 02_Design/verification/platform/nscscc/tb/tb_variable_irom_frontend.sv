@@ -14,12 +14,18 @@ module tb_variable_irom_frontend;
     logic irom_req_ready;
     logic irom_resp_valid;
     logic [63:0] irom_data;
+    logic [ 7:0] irom_predecode;
     logic if_valid;
     logic if_ready_go;
     logic if_s1_valid;
     if_id_payload_t if_payload;
     logic [31:0] current_pc;
     integer errors;
+
+    loongarch_icache_block_predecode u_irom_predecode (
+        .block_data     (irom_data),
+        .block_metadata (irom_predecode)
+    );
 
     frontend_ftq #(
         .VARIABLE_IROM_LATENCY(1'b1),
@@ -36,6 +42,7 @@ module tb_variable_irom_frontend;
         .irom_req_ready(irom_req_ready),
         .irom_resp_valid(irom_resp_valid),
         .irom_data(irom_data),
+        .irom_resp_predecode(irom_predecode),
         .abtb_bank0_lookup_hit(1'b0),
         .abtb_bank0_hit(1'b0),
         .abtb_bank0_way(1'b0),

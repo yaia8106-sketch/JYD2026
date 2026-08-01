@@ -16,7 +16,7 @@ VCS_EXTRA_OPTS="${VCS_EXTRA_OPTS:-}"
 VCS_SHIM="$VERIFICATION_DIR/tools/vcs_pthread_yield.c"
 SIM_BIN="$WORK_DIR/forwarding_simv"
 COMPILE_LOG="$WORK_DIR/forwarding_vcs.log"
-SIM_LOG="$WORK_DIR/forwarding_sim.log"
+FORWARDING_SEEDS="${FORWARDING_SEEDS:-1 7 29 20260801}"
 
 mkdir -p "$WORK_DIR"
 
@@ -48,13 +48,16 @@ if ! vcs $VCS_OPTS $VCS_EXTRA_OPTS -top tb_forwarding \
 fi
 
 head -20 "$COMPILE_LOG"
-echo "[INFO] Running forwarding directed test..."
-if ! "$SIM_BIN" >"$SIM_LOG" 2>&1; then
+for seed in $FORWARDING_SEEDS; do
+    SIM_LOG="$WORK_DIR/forwarding_sim_${seed}.log"
+    echo "[INFO] Running forwarding directed/random test seed=$seed..."
+    if ! "$SIM_BIN" "+seed=$seed" >"$SIM_LOG" 2>&1; then
+        cat "$SIM_LOG"
+        exit 1
+    fi
     cat "$SIM_LOG"
-    exit 1
-fi
-cat "$SIM_LOG"
-if ! grep -qF "[PASS] forwarding directed test" "$SIM_LOG"; then
-    echo "ERROR: forwarding simulation did not report PASS"
-    exit 1
-fi
+    if ! grep -qF "[PASS] forwarding directed test" "$SIM_LOG"; then
+        echo "ERROR: forwarding simulation seed=$seed did not report PASS"
+        exit 1
+    fi
+done

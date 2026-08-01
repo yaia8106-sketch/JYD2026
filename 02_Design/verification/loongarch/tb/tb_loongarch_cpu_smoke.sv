@@ -13,6 +13,7 @@ module tb_loongarch_cpu_smoke;
 
     logic [11:0] irom_addr;
     logic [63:0] irom_data;
+    logic [ 7:0] irom_predecode;
     logic [31:0] irom [0:IROM_WORDS-1];
 
     logic cache_req;
@@ -34,8 +35,15 @@ module tb_loongarch_cpu_smoke;
     logic [31:0] data_mem [0:DATA_WORDS-1];
     logic [31:0] cache_addr_q;
     logic bad_path_committed;
+    logic repaired_alu_observed;
+    logic repaired_consumer_wait_observed;
     integer cache_store_count;
     integer cache_load_count;
+
+    loongarch_icache_block_predecode u_irom_predecode (
+        .block_data     (irom_data),
+        .block_metadata (irom_predecode)
+    );
 
     cpu_top u_cpu (
         .clk(clk),
@@ -47,6 +55,7 @@ module tb_loongarch_cpu_smoke;
         .irom_req_ready(1'b0),
         .irom_resp_valid(1'b0),
         .irom_data(irom_data),
+        .irom_resp_predecode(irom_predecode),
         .cache_req(cache_req),
         .cache_wr(cache_wr),
         .cache_addr(cache_addr),
@@ -337,6 +346,8 @@ module tb_loongarch_cpu_smoke;
     always @(posedge clk) begin
         if (!rst_n) begin
             bad_path_committed <= 1'b0;
+            repaired_alu_observed <= 1'b0;
+            repaired_consumer_wait_observed <= 1'b0;
         end else begin
             if (u_cpu.wb_valid && u_cpu.wb_reg_write_en
                 && (u_cpu.wb_rd == 5'd31)
@@ -346,6 +357,12 @@ module tb_loongarch_cpu_smoke;
                 && (u_cpu.wb_s1_rd == 5'd31)
                 && (u_cpu.wb_s1_write_data != 32'd1))
                 bad_path_committed <= 1'b1;
+            if (u_cpu.ex_valid && u_cpu.ex_fast_alu_forward
+                && (u_cpu.ex_alu_src1_wb_repair
+                    | u_cpu.ex_alu_src2_wb_repair))
+                repaired_alu_observed <= 1'b1;
+            if (u_cpu.u_forwarding.repair_use_hazard)
+                repaired_consumer_wait_observed <= 1'b1;
         end
     end
 
@@ -356,6 +373,8 @@ module tb_loongarch_cpu_smoke;
         irom_data = {LOONGARCH_NOP, LOONGARCH_NOP};
         cache_addr_q = 32'd0;
         bad_path_committed = 1'b0;
+        repaired_alu_observed = 1'b0;
+        repaired_consumer_wait_observed = 1'b0;
         cache_store_count = 0;
         cache_load_count = 0;
 
@@ -422,8 +441,15 @@ module tb_loongarch_cpu_smoke;
         // BL must write its architectural link to r1 and squash slot1.
         put_instruction(32'h84, branch_link(26'd2));
         put_instruction(32'h88, addi_w(5'd31, 5'd0, 12'h02d));
-        put_instruction(32'h8c, addi_w(5'd31, 5'd0, 12'd1));
-        put_instruction(32'h90, branch_always(26'd0));
+        // Exercise the split architectural/fast ALUs. The first ADDI enters
+        // EX with WB load repair; its immediately following consumer must wait
+        // until the corrected value has reached MEM instead of consuming the
+        // raw-operand forwarding copy.
+        put_instruction(32'h8c, ld_w(5'd23, 5'd12, 12'd0));
+        put_instruction(32'h90, addi_w(5'd24, 5'd23, 12'd5));
+        put_instruction(32'h94, addi_w(5'd25, 5'd24, 12'd1));
+        put_instruction(32'h98, addi_w(5'd31, 5'd0, 12'd1));
+        put_instruction(32'h9c, branch_always(26'd0));
 
         check(irom[32'h08 >> 2][14] == 1'b1,
               "CPU MUL leak guard must set inst[14]");
@@ -488,6 +514,16 @@ module tb_loongarch_cpu_smoke;
               "JIRL rd==rj source-before-destination result");
         check(u_cpu.u_regfile.regs[1] == (RESET_PC + 32'h88),
               "BL fixed-r1 link result");
+        check(u_cpu.u_regfile.regs[23] == 32'd8,
+              "split-ALU test load result");
+        check(u_cpu.u_regfile.regs[24] == 32'd13,
+              "WB-repaired architectural ALU result");
+        check(u_cpu.u_regfile.regs[25] == 32'd14,
+              "consumer after repaired ALU result");
+        check(repaired_alu_observed,
+              "split-ALU test never exercised a repaired ALU producer");
+        check(repaired_consumer_wait_observed,
+              "split-ALU test never exercised the repair-use interlock");
         check(u_cpu.u_regfile.regs[31] == 32'd1,
               "completion marker register");
         check((cache_store_count >= 1) && (cache_load_count >= 1),

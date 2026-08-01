@@ -1,28 +1,23 @@
 // ============================================================
-// Module: alu
-// Description: 32-bit ALU with hardware-shared adder, comparator, and shifter
-// Domain: execute.
-// Spec: 02_Design/spec/alu_spec.md
-// Encoding: semantic values are defined by cpu_defs::alu_op_t.
+// Module: alu_result_datapath
+// Description: Ordinary integer-result logic without the LSU address adder.
+//
+// The execute stage instantiates this block twice per issue lane: the
+// architectural copy consumes WB-repaired operands and terminates at EX/MEM,
+// while the forwarding copy consumes only registered raw operands and
+// terminates at the ID bypass network.  Keeping the address adder outside this
+// block avoids duplicating an LSU resource that is not part of EX forwarding.
 // ============================================================
 
-module alu
+module alu_result_datapath
     import cpu_defs::*;
 (
     input  logic [ 3:0] alu_op,
     input  logic [31:0] alu_src1,
     input  logic [31:0] alu_src2,
-    input  logic [31:0] alu_addr_src1,
-    input  logic [31:0] alu_addr_src2,
     output logic [31:0] alu_result,
-    output logic [31:0] alu_sum,       // Raw shared adder output, before result MUX
-    output logic [31:0] alu_addr       // Independent address adder, does not depend on alu_op
+    output logic [31:0] alu_sum
 );
-
-
-    // Pure src1+src2 adder for load/store address calculation. This bypasses
-    // the subtract/compare negate logic and removes alu_op from the address path.
-    assign alu_addr = alu_addr_src1 + alu_addr_src2;
 
     // ---- 3.1 Shared adder/subtractor ----
     // negate src2 for SUB(1_000), SLT(0_010), SLTU(0_011)
@@ -71,5 +66,40 @@ module alu
             bit_reverse[i] = in[31-i];
         end
     endfunction
+
+endmodule
+
+// ============================================================
+// Module: alu
+// Description: Architectural integer result plus independent LSU address add.
+// Domain: execute.
+// Spec: 02_Design/spec/alu_spec.md
+// Encoding: semantic values are defined by cpu_defs::alu_op_t.
+// ============================================================
+
+module alu
+    import cpu_defs::*;
+(
+    input  logic [ 3:0] alu_op,
+    input  logic [31:0] alu_src1,
+    input  logic [31:0] alu_src2,
+    input  logic [31:0] alu_addr_src1,
+    input  logic [31:0] alu_addr_src2,
+    output logic [31:0] alu_result,
+    output logic [31:0] alu_sum,
+    output logic [31:0] alu_addr
+);
+
+    alu_result_datapath u_result_datapath (
+        .alu_op     (alu_op),
+        .alu_src1   (alu_src1),
+        .alu_src2   (alu_src2),
+        .alu_result (alu_result),
+        .alu_sum    (alu_sum)
+    );
+
+    // LSU address calculation is deliberately not part of the duplicated
+    // forwarding datapath.  Its operands retain WB repair semantics.
+    assign alu_addr = alu_addr_src1 + alu_addr_src2;
 
 endmodule

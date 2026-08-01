@@ -335,9 +335,10 @@ module forwarding (
     // ================================================================
     // Repair is a one-cycle promise: the consumer moves to EX now and will
     // substitute WB load data there on the next cycle.
+    // A load-dependent branch/JIRL is a true WB -> compare/target -> redirect
+    // dependency.  Let it wait for ordinary WB forwarding instead of carrying
+    // a repair tag into the same-cycle redirect cone.
     wire id_s0_repair_ok = id_s0_alu_only
-                         | id_s0_conditional_control
-                         | id_s0_indirect_control
                          | id_s0_mem_read
                          | id_s0_mem_write;
 
