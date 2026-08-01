@@ -375,6 +375,7 @@ module icache (
                     refill_drop_q <= 1'b0;
                     refill_beat_q <= 1'b0;
                     refill_second_block_q <= 1'b0;
+                    refill_block_resp_q <= 2'b00;
                 end else begin
                     refill_drop_q <= 1'b1;
                 end
@@ -403,7 +404,22 @@ module icache (
 
                 REFILL_DATA: begin
                     if (mem_rd_fire) begin
-                        if (!refill_beat_q) begin
+                        // Once a redirect kills this refill, AXI RLAST is the
+                        // only trustworthy completion marker. A kill may
+                        // coincide with an accepted middle beat, so the local
+                        // beat/block counters no longer describe the remaining
+                        // bus transaction and must not drive normal refill
+                        // sequencing.
+                        if (refill_drop_q) begin
+                            if (mem_rd_last) begin
+                                refill_state_q <= REFILL_IDLE;
+                                refill_drop_q <= 1'b0;
+                                refill_beat_q <= 1'b0;
+                                refill_second_block_q <= 1'b0;
+                                refill_response_needed_q <= 1'b0;
+                                refill_block_resp_q <= 2'b00;
+                            end
+                        end else if (!refill_beat_q) begin
                             refill_word0_q <= mem_rd_data;
                             refill_beat_q <= 1'b1;
                             refill_block_resp_q <= refill_block_resp;
@@ -449,6 +465,8 @@ module icache (
             $error("ICache request address is not 64-bit aligned");
         if (rst_n
             && mem_rd_fire
+            && !refill_drop_q
+            && !irom_req_kill
             && (mem_rd_last !=
                 (refill_second_block_q & refill_beat_q)))
             $error("ICache four-beat WRAP refill RLAST mismatch");

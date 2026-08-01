@@ -530,6 +530,27 @@ module cpu_top
     wire mem_mul_owner_releases = ~mem_valid | ~mem_is_mul
                                 | mem_ready_go_w;
     wire id_muldiv_unit_ready = ~id_issue_is_muldiv | ~muldiv_busy;
+    // done is deliberately excluded from muldiv_busy, but a completed owner
+    // is not necessarily leaving the unit on this edge. In particular, a MUL
+    // may still be held in EX behind an older non-MUL MEM request. Do not let a
+    // younger MulDiv prestart until the completed EX/MEM owner is consumed.
+    //
+    // Keep the late cache-ready split explicit. With cache_ready=1 MEM always
+    // allows in, while cache_ready=0 only a completed EX divide above an empty
+    // MEM stage can release its owner.
+    wire muldiv_done_releases_if_cache_ready =
+        (mem_valid & mem_is_mul)
+        | (ex_valid & ex_is_muldiv & ex_muldiv_op[2]
+           & ~mem_branch_flush);
+    wire muldiv_done_releases_if_cache_wait =
+        ex_valid & ex_is_muldiv & ex_muldiv_op[2]
+        & ~mem_valid & ~mem_branch_flush;
+    wire id_muldiv_done_ready_if_cache_ready =
+        ~id_issue_is_muldiv | ~muldiv_done
+        | muldiv_done_releases_if_cache_ready;
+    wire id_muldiv_done_ready_if_cache_wait =
+        ~id_issue_is_muldiv | ~muldiv_done
+        | muldiv_done_releases_if_cache_wait;
     // Serializing instructions (CSR/trap/return and ISA-defined illegal
     // operations) enter an empty backend and keep younger instructions out
     // until their WB token retires.  Besides precise traps, this guarantees
@@ -561,10 +582,12 @@ module cpu_top
                                              | ~mem_valid | ~mem_is_mul;
 
     (* keep = "true" *) wire id_ready_go_if_cache_ready =
-        id_base_ready_if_cache_ready & id_muldiv_unit_ready;
+        id_base_ready_if_cache_ready & id_muldiv_unit_ready
+                                     & id_muldiv_done_ready_if_cache_ready;
     (* keep = "true" *) wire id_ready_go_if_cache_wait =
         id_base_ready_if_cache_wait & id_muldiv_unit_ready
-                                    & id_muldiv_owner_ready_if_cache_wait;
+                                    & id_muldiv_owner_ready_if_cache_wait
+                                    & id_muldiv_done_ready_if_cache_wait;
 
     // wb_allowin is permanently true. Therefore MEM is always able to advance
     // when cache_ready=1, while cache_ready=0 permits EX to advance only into
@@ -594,6 +617,8 @@ module cpu_top
                                & id_serializing_ready
                                & id_barrier_ready
                                & id_muldiv_unit_ready
+                               & (~id_issue_is_muldiv | ~muldiv_done
+                                  | muldiv_consume)
                                & (~id_issue_is_muldiv
                                   | mem_mul_owner_releases);
     wire ex_allowin_reference = ~ex_valid

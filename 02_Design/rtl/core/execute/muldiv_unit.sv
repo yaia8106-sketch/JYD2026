@@ -347,7 +347,9 @@ module muldiv_unit
                         || !((state == S_IDLE)
                              || (((state == S_MUL_DONE) || (state == S_DONE))
                                  && consume))))
-                $fatal(1, "Invalid or unserviceable MUL prestart");
+                $fatal(1,
+                    "Invalid or unserviceable MUL prestart: state=%0d consume=%0b op=%0d",
+                    state, consume, mul_prestart_op);
             if ((state == S_IDLE) && req_valid && !req_op[2]
                     && !mul_prestart_valid)
                 $fatal(1, "EX MUL reached idle unit without ID prestart");

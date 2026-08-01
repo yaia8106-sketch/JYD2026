@@ -623,6 +623,30 @@ module tb_nscscc_axi_bridge;
         send_r(4'h0, 32'h3132_3334, 1'b0);
         send_r(4'h0, 32'h3536_3738, 1'b1);
 
+        // A redirect may coincide with an accepted middle R beat. The killed
+        // refill must drain by the AXI RLAST itself; its stale local beat
+        // position must not leave the ICache waiting for a fifth beat.
+        $display("[INFO] redirect kill coincident with a middle refill beat");
+        issue_irom(32'h1c00_0400);
+        accept_ar(32'h1c00_0400, 8'd3, 2'b10, 4'h0);
+        send_r(4'h0, 32'hdead_1001, 1'b0);
+        fork
+            send_r(4'h0, 32'hdead_1002, 1'b0);
+            kill_irom_request();
+        join
+        send_r(4'h0, 32'hdead_1003, 1'b0);
+        send_r(4'h0, 32'hdead_1004, 1'b1);
+
+        issue_irom(32'h1c00_0400);
+        accept_ar(32'h1c00_0400, 8'd3, 2'b10, 4'h0);
+        send_r(4'h0, 32'h6162_6364, 1'b0);
+        send_r(4'h0, 32'h6566_6768, 1'b0);
+        wait (irom_resp_valid);
+        check(irom_resp_data == 64'h6566_6768_6162_6364,
+              "post-kill refill did not return the critical block");
+        send_r(4'h0, 32'h7172_7374, 1'b0);
+        send_r(4'h0, 32'h7576_7778, 1'b1);
+
         repeat (3) @(posedge clk);
         if (errors == 0)
             $display("[PASS] NSCSCC IROM/DCache AXI bridge protocol test");
