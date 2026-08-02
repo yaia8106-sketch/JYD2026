@@ -32,6 +32,7 @@ RTL_FILES="
     $RTL_DIR/common/cpu_defs.sv
     $RTL_DIR/core/execute/branch_condition.sv
     $RTL_DIR/core/execute/ex_stage_ctrl.sv
+    $RTL_DIR/core/control/redirect_target_select.sv
     $SCRIPT_DIR/tb_ex_stage_redirect.sv
 "
 

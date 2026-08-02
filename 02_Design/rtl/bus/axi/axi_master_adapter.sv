@@ -164,59 +164,66 @@ module axi_master_adapter #(
     assign rd_resp = m_axi_rresp;
     assign rd_id = m_axi_rid;
 
+    // Only ownership/valid state is reset. Address and burst payload is loaded
+    // by the command-accept event before the corresponding valid becomes
+    // externally visible.
     always_ff @(posedge clk) begin
-        if (!rst_n) begin
-            read_busy_q <= '0;
+        if (!rst_n)
             read_cmd_valid_q <= 1'b0;
-            read_addr_q <= '0;
-            read_len_q <= 8'd0;
-            read_burst_q <= 2'b01;
-            read_id_q <= '0;
+        else if (read_req_fire)
+            read_cmd_valid_q <= 1'b1;
+        else if (ar_fire)
+            read_cmd_valid_q <= 1'b0;
+    end
 
-            write_active_q <= 1'b0;
-            write_aw_pending_q <= 1'b0;
-            write_data_done_q <= 1'b0;
-            write_addr_q <= '0;
-            write_len_q <= 8'd0;
-            write_burst_q <= 2'b01;
-            write_beat_q <= 8'd0;
-        end else begin
-            if (read_req_fire) begin
+    always_ff @(posedge clk) begin
+        if (!rst_n)
+            read_busy_q <= '0;
+        else begin
+            if (read_req_fire)
                 read_busy_q[req_id] <= 1'b1;
-                read_cmd_valid_q <= 1'b1;
-                read_addr_q <= req_addr;
-                read_len_q <= req_len;
-                read_burst_q <= req_burst;
-                read_id_q <= req_id;
-            end else if (ar_fire) begin
-                read_cmd_valid_q <= 1'b0;
-            end
-
             if (r_fire & m_axi_rlast)
                 read_busy_q[m_axi_rid] <= 1'b0;
+        end
+    end
 
-            if (write_req_fire) begin
-                write_active_q <= 1'b1;
-                write_aw_pending_q <= 1'b1;
-                write_data_done_q <= 1'b0;
-                write_addr_q <= req_addr;
-                write_len_q <= req_len;
-                write_burst_q <= req_burst;
-                write_beat_q <= 8'd0;
-            end else begin
-                if (aw_fire)
-                    write_aw_pending_q <= 1'b0;
-                if (w_fire) begin
-                    if (expected_wlast)
-                        write_data_done_q <= 1'b1;
-                    else
-                        write_beat_q <= write_beat_q + 1'b1;
-                end
-                if (b_fire) begin
-                    write_active_q <= 1'b0;
-                    write_data_done_q <= 1'b0;
-                end
+    always_ff @(posedge clk) begin
+        if (read_req_fire) begin
+            read_addr_q <= req_addr;
+            read_len_q <= req_len;
+            read_burst_q <= req_burst;
+            read_id_q <= req_id;
+        end
+    end
+
+    always_ff @(posedge clk) begin
+        if (!rst_n)
+            write_active_q <= 1'b0;
+        else if (write_req_fire)
+            write_active_q <= 1'b1;
+        else if (b_fire)
+            write_active_q <= 1'b0;
+    end
+
+    always_ff @(posedge clk) begin
+        if (write_req_fire) begin
+            write_aw_pending_q <= 1'b1;
+            write_data_done_q <= 1'b0;
+            write_addr_q <= req_addr;
+            write_len_q <= req_len;
+            write_burst_q <= req_burst;
+            write_beat_q <= 8'd0;
+        end else begin
+            if (aw_fire)
+                write_aw_pending_q <= 1'b0;
+            if (w_fire) begin
+                if (expected_wlast)
+                    write_data_done_q <= 1'b1;
+                else
+                    write_beat_q <= write_beat_q + 1'b1;
             end
+            if (b_fire)
+                write_data_done_q <= 1'b0;
         end
     end
 

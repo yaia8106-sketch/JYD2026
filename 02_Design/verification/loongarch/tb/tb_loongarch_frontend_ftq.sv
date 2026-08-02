@@ -14,7 +14,7 @@ module tb_loongarch_frontend_ftq;
     logic [31:0] ex_redirect_target;
     logic [11:0] irom_addr;
     logic [63:0] irom_data;
-    logic [ 7:0] irom_predecode;
+    logic [13:0] irom_predecode;
     logic [63:0] imem [0:IMEM_WORDS-1];
 
     logic if_valid;

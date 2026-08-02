@@ -75,20 +75,12 @@ module frontend_fetch_queue
     wire enq_two = enq1_valid;
     wire enq_one = enq0_valid && !enq1_valid;
     wire enq_none = !enq0_valid;
+    wire enq_fire = enq0_valid;
 
     // Head/tail/count are computed independently so enqueue and dequeue can
     // occur in the same cycle.
     wire deq_none = ~(deq_single | deq_dual);
-
-    wire [FQ_PTR_W-1:0] head_next =
-        ({FQ_PTR_W{deq_dual}}   & head_p2) |
-        ({FQ_PTR_W{deq_single}} & head_p1) |
-        ({FQ_PTR_W{deq_none}}   & head);
-
-    wire [FQ_PTR_W-1:0] tail_next =
-        ({FQ_PTR_W{enq_two}}  & tail_p2) |
-        ({FQ_PTR_W{enq_one}}  & tail_p1) |
-        ({FQ_PTR_W{enq_none}} & tail);
+    wire deq_fire = deq_single | deq_dual;
 
     wire [FQ_PTR_W:0] count_p2 =
         count + {{(FQ_PTR_W-1){1'b0}}, 2'd2};
@@ -122,9 +114,6 @@ module frontend_fetch_queue
 
     wire [31:0] enq_last_next_pc =
         enq_two ? (enq_entry1.pc + 32'd4) : (enq_entry0.pc + 32'd4);
-    wire [31:0] tail_next_pc_next =
-        enq0_valid ? enq_last_next_pc : tail_next_pc;
-
     // Only these pointers/counters define which queue entries are valid.
     // Payload storage is intentionally left unreset: stale words cannot be
     // observed while count is zero, and every newly allocated slot is written
@@ -132,20 +121,37 @@ module frontend_fetch_queue
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             head <= '0;
-            tail <= '0;
-            count <= '0;
-            tail_next_pc <= 32'd0;
         end else if (flush) begin
             head <= '0;
+        end else if (deq_fire)
+            // Backend acceptance reaches only CE.  Once enabled, the data
+            // input depends solely on the early one-entry/two-entry choice.
+            head <= deq_dual ? head_p2 : head_p1;
+    end
+
+    always_ff @(posedge clk) begin
+        if (!rst_n)
             tail <= '0;
+        else if (flush)
+            tail <= '0;
+        else if (enq_fire)
+            tail <= enq_two ? tail_p2 : tail_p1;
+    end
+
+    always_ff @(posedge clk) begin
+        if (!rst_n)
             count <= '0;
-            tail_next_pc <= 32'd0;
-        end else begin
-            head <= head_next;
-            tail <= tail_next;
+        else if (flush)
+            count <= '0;
+        else if (enq_fire | deq_fire)
             count <= count_next;
-            tail_next_pc <= tail_next_pc_next;
-        end
+    end
+
+    // count==0 masks this continuity payload after reset/flush.  The next
+    // accepted packet overwrites it before it is observed.
+    always_ff @(posedge clk) begin
+        if (enq_fire)
+            tail_next_pc <= enq_last_next_pc;
     end
 
     // Decode boundary-bit write addresses into per-entry enables. A packet's
@@ -166,7 +172,7 @@ module frontend_fetch_queue
                                  : prev_tail_contiguous;
 
             always_ff @(posedge clk) begin
-                if (rst_n && !flush && pair_write_enable)
+                if (pair_write_enable)
                     pair_contiguous_mem[pair_idx] <= pair_write_data;
             end
         end
@@ -177,16 +183,15 @@ module frontend_fetch_queue
     // no successor, then overwritten through the per-entry block above when
     // the next packet arrives.
     always_ff @(posedge clk) begin
-        if (rst_n && !flush) begin
-            // A speculative payload write is harmless until count exposes it.
-            if (enq0_payload) begin
-                entry_mem[tail] <= enq_entry0;
-                pair_meta_mem[tail] <= enq_pair_meta0;
-            end
-            if (enq1_payload) begin
-                entry_mem[tail_p1] <= enq_entry1;
-                pair_meta_mem[tail_p1] <= enq_pair_meta1;
-            end
+        // A speculative reset/flush-coincident write is harmless until count
+        // exposes it; a later allocation overwrites the selected slot.
+        if (enq0_payload) begin
+            entry_mem[tail] <= enq_entry0;
+            pair_meta_mem[tail] <= enq_pair_meta0;
+        end
+        if (enq1_payload) begin
+            entry_mem[tail_p1] <= enq_entry1;
+            pair_meta_mem[tail_p1] <= enq_pair_meta1;
         end
     end
 

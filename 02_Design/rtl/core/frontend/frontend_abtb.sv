@@ -321,8 +321,8 @@ module frontend_abtb (
     wire bank1_update_fire = update_valid &  update_bank;
 
     integer set_i;
-    // Valid bits and LRU state are explicit registers; payload RAM is written
-    // separately to keep reset from blocking distributed RAM inference.
+    // Only valid bits need reset. An LRU bit is observed only after both ways
+    // in its set are valid, and every fill/access establishes its next value.
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             for (set_i = 0; set_i < SETS; set_i = set_i + 1) begin
@@ -330,32 +330,33 @@ module frontend_abtb (
                 bank0_way1_valid[set_i] <= 1'b0;
                 bank1_way0_valid[set_i] <= 1'b0;
                 bank1_way1_valid[set_i] <= 1'b0;
-                bank0_lru[set_i] <= 1'b0;
-                bank1_lru[set_i] <= 1'b0;
             end
         end else begin
-            if (lookup_valid && !predict_pc[2] && bank0_hit)
-                bank0_lru[pred_lookup_set] <= !bank0_way;
-
             if (bank0_update_fire) begin
                 if (!bank0_update_selected_way)
                     bank0_way0_valid[update_set] <= 1'b1;
                 else
                     bank0_way1_valid[update_set] <= 1'b1;
-                bank0_lru[update_set] <= !bank0_update_selected_way;
             end
-
-            if (lookup_valid && bank1_hit && !bank0_pred_taken)
-                bank1_lru[pred_lookup_set] <= !bank1_way;
-
             if (bank1_update_fire) begin
                 if (!bank1_update_selected_way)
                     bank1_way0_valid[update_set] <= 1'b1;
                 else
                     bank1_way1_valid[update_set] <= 1'b1;
-                bank1_lru[update_set] <= !bank1_update_selected_way;
             end
         end
+    end
+
+    always_ff @(posedge clk) begin
+        if (lookup_valid && !predict_pc[2] && bank0_hit)
+            bank0_lru[pred_lookup_set] <= !bank0_way;
+        if (bank0_update_fire)
+            bank0_lru[update_set] <= !bank0_update_selected_way;
+
+        if (lookup_valid && bank1_hit && !bank0_pred_taken)
+            bank1_lru[pred_lookup_set] <= !bank1_way;
+        if (bank1_update_fire)
+            bank1_lru[update_set] <= !bank1_update_selected_way;
     end
 
     // Payload contents are irrelevant until the corresponding valid bit is

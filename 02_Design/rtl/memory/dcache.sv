@@ -114,18 +114,16 @@ module dcache (
     wire pipeline_advance = ~pipeline_stall;
 
     always_ff @(posedge clk) begin
-        if (!rst_n) begin
-            mem_req   <= 1'b0;
-            mem_tag   <= '0;
-            mem_index <= '0;
-            mem_word  <= '0;
-            mem_addr  <= 32'd0;
-            mem_wr    <= 1'b0;
-            mem_wea   <= 4'd0;
-            mem_wdata <= 32'd0;
-            mem_uncached <= 1'b0;
-        end else if (pipeline_advance) begin
-            mem_req   <= cpu_req & ~flush;
+        if (!rst_n)
+            mem_req <= 1'b0;
+        else if (pipeline_advance)
+            mem_req <= cpu_req & ~flush;
+    end
+
+    // mem_req is the sole owner of the EX/MEM request payload.  Flush/reset
+    // therefore touch only that valid bit; a normal advance is the payload CE.
+    always_ff @(posedge clk) begin
+        if (pipeline_advance) begin
             mem_tag   <= ex_tag;
             mem_index <= ex_index;
             mem_word  <= ex_word;
@@ -247,12 +245,7 @@ module dcache (
     logic mem_hit_w1;
 
     always_ff @(posedge clk) begin
-        if (!rst_n) begin
-            mem_tag_rd[0]  <= '0;  mem_tag_vld[0] <= 1'b0;
-            mem_tag_rd[1]  <= '0;  mem_tag_vld[1] <= 1'b0;
-            mem_hit_w0      <= 1'b0;
-            mem_hit_w1      <= 1'b0;
-        end else if (pipeline_advance | state_replay) begin
+        if (pipeline_advance | state_replay) begin
             mem_tag_rd[0]  <= tag_rd_data[0];
             mem_tag_vld[0] <= tag_rd_vld[0];
             mem_tag_rd[1]  <= tag_rd_data[1];
@@ -555,51 +548,34 @@ module dcache (
     end
 
     always_ff @(posedge clk) begin
-        if (!rst_n) begin
-            refill_beat <= '0;
-            refill_way      <= 1'b0;
-            refill_tag      <= '0;
-            refill_index      <= '0;
-            refill_fetch_addr <= 32'd0;
-            refill_target_word <= '0;
-            refill_is_store    <= 1'b0;
-            refill_store_data  <= 32'd0;
-            refill_store_wea   <= 4'd0;
-            victim_line_addr   <= 32'd0;
-            refill_cpu_pending <= 1'b0;
+        if (refill_start) begin
+            refill_beat         <= '0;
+            refill_way          <= victim_way_candidate;
+            refill_tag          <= mem_tag;
+            refill_index        <= mem_index;
+            refill_fetch_addr   <= {mem_addr[31:4], mem_word, 2'b00};
+            refill_target_word  <= mem_word;
+            refill_is_store     <= mem_wr;
+            refill_store_data   <= mem_wdata_aligned;
+            refill_store_wea    <= mem_wea;
+            victim_line_addr    <= {
+                victim_tag_candidate, mem_index, 4'b0000
+            };
+            refill_cpu_pending  <= ~mem_wr;
             refill_target_valid <= 1'b0;
             refill_target_data  <= 32'd0;
-        end else begin
-            if (refill_start) begin
-                refill_beat         <= '0;
-                refill_way          <= victim_way_candidate;
-                refill_tag          <= mem_tag;
-                refill_index        <= mem_index;
-                refill_fetch_addr   <= {mem_addr[31:4], mem_word, 2'b00};
-                refill_target_word  <= mem_word;
-                refill_is_store     <= mem_wr;
-                refill_store_data   <= mem_wdata_aligned;
-                refill_store_wea    <= mem_wea;
-                victim_line_addr    <= {
-                    victim_tag_candidate, mem_index, 4'b0000
-                };
-                refill_cpu_pending  <= ~mem_wr;
-                refill_target_valid <= 1'b0;
-                refill_target_data  <= 32'd0;
-            end else if (refill_data_fire) begin
-                refill_beat <= refill_beat + 1'b1;
-                if (refill_word == refill_target_word) begin
-                    refill_target_valid <= 1'b1;
-                    refill_target_data  <= refill_write_data;
-                end
-                if (refill_target_fire)
-                    refill_cpu_pending <= 1'b0;
-            end else if (refill_abort | refill_drop_done) begin
-                refill_cpu_pending <= 1'b0;
-            end else if (state_done) begin
-                refill_cpu_pending <= 1'b0;
+        end else if (refill_data_fire) begin
+            refill_beat <= refill_beat + 1'b1;
+            if (refill_word == refill_target_word) begin
+                refill_target_valid <= 1'b1;
+                refill_target_data  <= refill_write_data;
             end
-        end
+            if (refill_target_fire)
+                refill_cpu_pending <= 1'b0;
+        end else if (refill_abort | refill_drop_done)
+            refill_cpu_pending <= 1'b0;
+        else if (state_done)
+            refill_cpu_pending <= 1'b0;
     end
 
     assign refill_data_fire = state_refill_data & backend_rd_valid & backend_rd_ready;
@@ -608,20 +584,13 @@ module dcache (
     // reused as the refill shadow. Port B is synchronous, so valid_q aligns
     // each registered RAM result with its capture index.
     always_ff @(posedge clk) begin
-        if (!rst_n) begin
+        if (refill_start) begin
             wb_read_issue_count   <= '0;
             wb_read_capture_count <= '0;
             wb_read_valid_q       <= 1'b0;
             wb_send_beat          <= '0;
-            for (int b = 0; b < LINE_WORDS; b++)
-                line_buffer[b] <= 32'd0;
         end else begin
-            if (refill_start) begin
-                wb_read_issue_count   <= '0;
-                wb_read_capture_count <= '0;
-                wb_read_valid_q       <= 1'b0;
-                wb_send_beat          <= '0;
-            end else if (state_wb_capture) begin
+            if (state_wb_capture) begin
                 wb_read_valid_q <= wb_read_issue;
                 if (wb_read_issue)
                     wb_read_issue_count <= wb_read_issue_count + 1'b1;
@@ -730,46 +699,52 @@ module dcache (
             for (int w = 0; w < WAYS; w++)
                 for (int s = 0; s < SETS; s++)
                     tag_vld[w][s] <= 1'b0;
-            dirty_way0 <= '0;
-            dirty_way1 <= '0;
         end else begin
             // Retain a dirty victim until its writeback succeeds. Invalidate
             // the selected way only when the replacement read is accepted.
-            if (refill_req_fire) begin
+            if (refill_req_fire)
                 tag_vld[refill_way][refill_index] <= 1'b0;
-                if (refill_way)
-                    dirty_way1[refill_index] <= 1'b0;
-                else
-                    dirty_way0[refill_index] <= 1'b0;
-            end
-
-            // A successful writeback leaves a killed load's original line
-            // valid but clean. On the normal path it is invalidated next.
-            if (wb_resp_ok) begin
-                if (refill_way)
-                    dirty_way1[refill_index] <= 1'b0;
-                else
-                    dirty_way0[refill_index] <= 1'b0;
-            end
-
-            if (store_cache_write) begin
-                if (store_cache_write_way)
-                    dirty_way1[mem_index] <= 1'b1;
-                else
-                    dirty_way0[mem_index] <= 1'b1;
-            end
 
             // Validate and write tag at the edge entering S_DONE. During
             // S_DONE the next EX tag read already sees the updated LUTRAM.
-            if (refill_complete) begin
+            if (refill_complete)
                 tag_vld[refill_way][refill_index] <= 1'b1;
-                if (refill_way) begin
-                    tag_mem_way1[refill_index] <= refill_tag;
-                    dirty_way1[refill_index] <= refill_is_store;
-                end else begin
-                    tag_mem_way0[refill_index] <= refill_tag;
-                    dirty_way0[refill_index] <= refill_is_store;
-                end
+        end
+    end
+
+    // Dirty/tag payload is masked by tag_vld. Every allocation or store hit
+    // initializes it before it can influence victim writeback selection.
+    always_ff @(posedge clk) begin
+        if (refill_req_fire) begin
+            if (refill_way)
+                dirty_way1[refill_index] <= 1'b0;
+            else
+                dirty_way0[refill_index] <= 1'b0;
+        end
+
+        // A successful writeback leaves a killed load's original line valid
+        // but clean. On the normal path it is invalidated next.
+        if (wb_resp_ok) begin
+            if (refill_way)
+                dirty_way1[refill_index] <= 1'b0;
+            else
+                dirty_way0[refill_index] <= 1'b0;
+        end
+
+        if (store_cache_write) begin
+            if (store_cache_write_way)
+                dirty_way1[mem_index] <= 1'b1;
+            else
+                dirty_way0[mem_index] <= 1'b1;
+        end
+
+        if (refill_complete) begin
+            if (refill_way) begin
+                tag_mem_way1[refill_index] <= refill_tag;
+                dirty_way1[refill_index] <= refill_is_store;
+            end else begin
+                tag_mem_way0[refill_index] <= refill_tag;
+                dirty_way0[refill_index] <= refill_is_store;
             end
         end
     end
@@ -778,14 +753,10 @@ module dcache (
     //  LRU update
     // ================================================================
     always_ff @(posedge clk) begin
-        if (!rst_n)
-            lru <= '0;
-        else begin
-            if (state_idle && mem_req && cache_hit)
-                lru[mem_index] <= ~hit_way;
-            if (state_done)
-                lru[refill_index] <= ~refill_way;
-        end
+        if (state_idle && mem_req && cache_hit)
+            lru[mem_index] <= ~hit_way;
+        if (state_done)
+            lru[refill_index] <= ~refill_way;
     end
 
     // ================================================================
@@ -866,12 +837,6 @@ module dcache (
 
     always_ff @(posedge clk) begin
         if (rst_n) begin
-            for (int s = 0; s < SETS; s++) begin
-                if (dirty_way0[s] && !tag_vld[0][s])
-                    $error("DCache way 0 contains a dirty invalid line");
-                if (dirty_way1[s] && !tag_vld[1][s])
-                    $error("DCache way 1 contains a dirty invalid line");
-            end
             if (refill_req_fire
                 && (refill_way ? dirty_way1[refill_index]
                                : dirty_way0[refill_index]))

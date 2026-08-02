@@ -20,53 +20,20 @@ module id_ex_reg_s1
     output id_ex_slot1_t  ex_payload
 );
 
-    function automatic id_ex_slot1_t reset_payload();
-        begin
-            reset_payload = '0;
-            reset_payload.common.prediction.prediction.stage1_pht_counter =
-                2'b01;
-        end
-    endfunction
-
-    // Slot 1 shares the Slot 0 handshake. When Slot 1 is absent, keep debug
-    // fields visible but mask all side-effect controls.
-    function automatic id_ex_slot1_t accepted_payload(
-        input id_ex_slot1_t payload,
-        input logic         slot_valid
-    );
-        begin
-            accepted_payload = payload;
-            accepted_payload.common.rs1_wb_repair &= slot_valid;
-            accepted_payload.common.rs2_wb_repair &= slot_valid;
-            accepted_payload.common.alu_src1_wb_repair &= slot_valid;
-            accepted_payload.common.alu_src2_wb_repair &= slot_valid;
-            accepted_payload.common.reg_write_en  &= slot_valid;
-            accepted_payload.common.mem_read_en   &= slot_valid;
-            accepted_payload.common.mem_write_en  &= slot_valid;
-            if (!slot_valid)
-                accepted_payload.common.control_flow = CF_NONE;
-        end
-    endfunction
-
     always_ff @(posedge clk) begin
-        if (!rst_n) begin
+        if (!rst_n)
             ex_s1_valid <= 1'b0;
-            ex_payload <= reset_payload();
-        end else if (ex_flush) begin
-            // Prediction and repair tags are cleared with validity on redirects.
+        else if (ex_flush)
             ex_s1_valid <= 1'b0;
-            ex_payload.common.rs1_wb_repair <= 1'b0;
-            ex_payload.common.rs2_wb_repair <= 1'b0;
-            ex_payload.common.alu_src1_wb_repair <= 1'b0;
-            ex_payload.common.alu_src2_wb_repair <= 1'b0;
-            ex_payload.common.prediction.prediction.taken <= 1'b0;
-            ex_payload.common.prediction.prediction.source_abtb <= 1'b0;
-            ex_payload.common.prediction.prediction.stage1_branch_owned <=
-                1'b0;
-        end else if (ex_allowin) begin
+        else if (ex_allowin)
             ex_s1_valid <= id_s1_valid & id_ready_go;
-            ex_payload <= accepted_payload(id_payload, id_s1_valid);
-        end
+    end
+
+    // All Slot-1 architectural consumers are qualified by ex_s1_valid.  Keep
+    // the shared allow signal out of individual payload D-input masks.
+    always_ff @(posedge clk) begin
+        if (ex_allowin)
+            ex_payload <= id_payload;
     end
 
 endmodule

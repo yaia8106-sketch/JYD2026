@@ -93,6 +93,17 @@ package cpu_defs;
         CFI_TYPE_RETURN = 2'b11
     } cfi_type_t;
 
+    // A redirect crosses EX/MEM as a source selector, not as a final 32-bit
+    // target.  MEM selects the target from candidates already carried by the
+    // normal pipeline payload, keeping the late EX branch decision away from
+    // every bit of a wide redirect register.
+    typedef enum logic [1:0] {
+        REDIRECT_S0_CONTROL = 2'b00,
+        REDIRECT_PRIVILEGED = 2'b01,
+        REDIRECT_S1_CONTROL = 2'b10,
+        REDIRECT_S1_REPLAY  = 2'b11
+    } redirect_source_t;
+
     typedef enum logic [2:0] {
         PRIV_NONE    = 3'b000,
         PRIV_REG     = 3'b001,
@@ -255,14 +266,30 @@ package cpu_defs;
         logic       serializing;
     } frontend_predecode_t;
 
-    // Four timing-critical predecode bits cached alongside each instruction.
-    // A 64-bit ICache row contains two instructions and therefore carries two
-    // of these records in the otherwise-unused RAMB36 parity bits.
+    // Coarse instruction class generated at ICache-refill time.  The common
+    // frontend may derive ordinary scheduling controls from this small field
+    // while the complete ISA predecoder remains available in parallel for
+    // privileged, illegal and otherwise uncommon instructions.
+    typedef enum logic [2:0] {
+        ICACHE_CLASS_OTHER,
+        ICACHE_CLASS_ALU_RR,
+        ICACHE_CLASS_ALU_IMM,
+        ICACHE_CLASS_UPPER_IMM,
+        ICACHE_CLASS_LOAD,
+        ICACHE_CLASS_STORE,
+        ICACHE_CLASS_MULDIV,
+        ICACHE_CLASS_CFI
+    } icache_inst_class_t;
+
+    // Seven timing-critical predecode bits are cached for each instruction.
+    // The original four controls remain in the RAMB36 parity bits.  The three
+    // class bits live beside the shortened NSCSCC ICache tag in LUTRAM.
     typedef struct packed {
         logic static_kill_younger;
         logic block_younger;
         logic slot1_disallowed;
         logic writes_dst;
+        icache_inst_class_t inst_class;
     } frontend_icache_predecode_t;
 
     typedef struct packed {
@@ -524,8 +551,9 @@ package cpu_defs;
 
     // ---- EX/MEM payloads ----
     typedef struct packed {
-        logic        valid;
-        logic [31:0] target;
+        logic             valid;
+        redirect_source_t source;
+        logic             actual_taken;
     } redirect_t;
 
     typedef struct packed {
@@ -533,6 +561,8 @@ package cpu_defs;
         logic [31:0] alu_result;
         logic [31:0] pc;
         logic [31:0] pc_plus_4;
+        logic [ 1:0] target_clear_mask;
+        logic [31:0] priv_target;
         logic [ 4:0] rd;
         logic        reg_write_en;
         wb_src_t    wb_sel;
@@ -554,6 +584,7 @@ package cpu_defs;
         logic [31:0] inst;
         logic [31:0] alu_result;
         logic [31:0] pc_plus_4;
+        logic [ 1:0] target_clear_mask;
         logic [ 4:0] rd;
         logic        reg_write_en;
         wb_src_t    wb_sel;

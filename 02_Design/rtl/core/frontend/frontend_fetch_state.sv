@@ -91,22 +91,7 @@ module frontend_fetch_state
     // frontend; even if both are driven in a unit test, the speculative payload
     // write is harmless because the valid block above gives redirect priority.
     always_ff @(posedge clk) begin
-        if (!rst_n) begin
-            f0_state.epoch <= 2'd0;
-            f0_state.start_pc <= 32'd0;
-            f0_state.base_mask <= 2'd0;
-            f0_state.steer <= '0;
-            f0_state.bank0_meta.branch_owned <= 1'b0;
-            f0_state.bank0_meta.pht_index <= 8'd0;
-            f0_state.bank0_meta.pht_counter <= 2'b01;
-            f0_state.bank1_meta.branch_owned <= 1'b0;
-            f0_state.bank1_meta.pht_index <= 8'd0;
-            f0_state.bank1_meta.pht_counter <= 2'b01;
-            f0_abtb_bank0_hit_r <= 1'b0;
-            f0_abtb_bank0_way_r <= 1'b0;
-            f0_abtb_bank1_hit_r <= 1'b0;
-            f0_abtb_bank1_way_r <= 1'b0;
-        end else if (accept) begin
+        if (accept) begin
             f0_state.epoch <= frontend_epoch;
             f0_state.start_pc <= current_pc;
             f0_state.base_mask <= accept_base_mask;
@@ -137,7 +122,7 @@ module frontend_fetch_state
                     outstanding_count + {{FTQ_PTR_W{1'b0}}, 1'b1};
                 2'b01: outstanding_count <=
                     outstanding_count - {{FTQ_PTR_W{1'b0}}, 1'b1};
-                default: outstanding_count <= outstanding_count;
+                default: ;
             endcase
         end
     end
@@ -165,16 +150,7 @@ module frontend_fetch_state
             assign f0_abtb_bank1_meta.pred_target = bank1_pred_target_r;
 
             always_ff @(posedge clk) begin
-                if (!rst_n) begin
-                    bank0_cfi_type_r <= 2'd0;
-                    bank0_target_r <= 32'd0;
-                    bank0_pred_taken_r <= 1'b0;
-                    bank0_pred_target_r <= 32'd0;
-                    bank1_cfi_type_r <= 2'd0;
-                    bank1_target_r <= 32'd0;
-                    bank1_pred_taken_r <= 1'b0;
-                    bank1_pred_target_r <= 32'd0;
-                end else if (!redirect_valid && accept) begin
+                if (accept) begin
                     bank0_cfi_type_r <= accept_abtb_bank0_meta.cfi_type;
                     bank0_target_r <= accept_abtb_bank0_meta.target;
                     bank0_pred_taken_r <= accept_abtb_bank0_meta.pred_taken;

@@ -4,7 +4,7 @@
 // Domain: execute.
 //   With branch prediction: compares predicted vs actual outcome.
 //   Flush only on misprediction (not on every taken branch).
-//   Redirect target is calculated in EX, then registered before frontend replay.
+//   EX emits only direction/repair control; MEM selects the final replay PC.
 // Spec: 02_Design/spec/branch_unit_spec.md
 // ============================================================
 
@@ -12,7 +12,6 @@ module branch_unit
     import cpu_defs::*;
 (
     input  logic [31:0] target_pc,
-    input  logic [31:0] fallthrough_pc,
     input  logic [31:0] src0_data,
     input  logic [31:0] src1_data,
     input  control_flow_t control_flow,
@@ -25,7 +24,6 @@ module branch_unit
 
     // Flush outputs
     output logic        branch_flush,
-    output logic [31:0] branch_target,    // redirect target (correct PC)
 
     // Actual outcome (for predictor update)
     output logic        actual_taken,
@@ -64,10 +62,5 @@ module branch_unit
     assign branch_flush = ex_valid & (direction_to_target
                                     | direction_to_fallthrough
                                     | target_mismatch_flush);
-
-    // ---- Flush target (correct next PC) ----
-    // Actual taken -> redirect to actual target
-    // Actual not-taken (but predicted taken) -> redirect to ex_pc + 4
-    assign branch_target = actual_taken ? actual_target : fallthrough_pc;
 
 endmodule

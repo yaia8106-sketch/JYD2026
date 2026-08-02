@@ -36,7 +36,7 @@ module cpu_top
     input  logic        irom_req_ready,
     input  logic        irom_resp_valid,
     input  logic [63:0] irom_data,
-    input  logic [ 7:0] irom_resp_predecode,
+    input  logic [13:0] irom_resp_predecode,
 
     // DCache interface (EX to MEM stage)
     output logic        cache_req,       // EX stage: memory request valid
@@ -302,7 +302,6 @@ module cpu_top
 
     // ---- Branch ----
     wire        branch_flush;          // EX stage combinational (for predictor update)
-    wire [31:0] branch_target;         // EX stage combinational
     wire        actual_taken;          // for predictor update
     wire [31:0] actual_target;         // for predictor update
     wire [31:0] ex_control_target;     // EX-computed target for Slot 0 CFI
@@ -327,7 +326,8 @@ module cpu_top
     wire        ex_fast_redirect;
     wire [31:0] ex_fast_redirect_target;
     wire        ex_registered_branch_flush;
-    wire [31:0] ex_registered_branch_target;
+    wire cpu_defs::redirect_source_t ex_registered_redirect_source;
+    wire        ex_registered_redirect_actual_taken;
 
     // Ordinary Slot 0 branch misses are registered through EX/MEM. System and
     // timer redirects use the fast frontend redirect path instead.
@@ -338,7 +338,7 @@ module cpu_top
     wire cpu_defs::redirect_t ex_mem_redirect;
     wire cpu_defs::redirect_t mem_redirect;
     wire        mem_branch_flush = mem_redirect.valid;
-    wire [31:0] mem_branch_target = mem_redirect.target;
+    wire [31:0] mem_branch_target;
     wire        mem_branch_replay;
     wire        frontend_branch_flush;
     wire [31:0] frontend_branch_target;
@@ -1668,9 +1668,7 @@ module cpu_top
     // ID/EX register without perturbing the packed payload layout and fanout.
     logic ex_s0_alu_store_data_bypass_r;
     always_ff @(posedge clk) begin
-        if (!rst_n || ex_flush)
-            ex_s0_alu_store_data_bypass_r <= 1'b0;
-        else if (ex_allowin)
+        if (ex_allowin)
             ex_s0_alu_store_data_bypass_r <= id_ready_go
                                              & id_s0_alu_store_data_bypass;
     end
@@ -1720,10 +1718,9 @@ module cpu_top
         .mem_allowin                (mem_allowin),
         .ex_branch_redirect         (ex_branch_registered_flush),
         .ex_branch_request          (branch_flush & ~ex_priv_flow),
-        .branch_target              (branch_target),
+        .ex_branch_actual_taken     (actual_taken),
         .ex_priv_redirect           (ex_priv_redirect),
         .ex_priv_flow               (ex_priv_flow),
-        .ex_priv_target             (ex_priv_target),
         .ex_pc_plus_4               (ex_pc_plus_4),
         .ex_s1_pc_plus_4            (ex_s1_pc_plus_4),
         .ex_alu_src1_repair         (ex_alu_src1_repair),
@@ -1741,7 +1738,9 @@ module cpu_top
         .ex_s1_actual_taken         (ex_s1_actual_taken),
         .ex_s1_branch_redirect      (ex_s1_branch_redirect),
         .ex_registered_branch_flush (ex_registered_branch_flush),
-        .ex_registered_branch_target(ex_registered_branch_target)
+        .ex_registered_redirect_source(ex_registered_redirect_source),
+        .ex_registered_redirect_actual_taken(
+            ex_registered_redirect_actual_taken)
     );
 
     alu u_alu (
@@ -1939,7 +1938,6 @@ module cpu_top
     // handled in ex_stage_ctrl because it has separate younger-slot priority.
     branch_unit u_branch_unit (
         .target_pc        (ex_control_target),
-        .fallthrough_pc   (ex_pc_plus_4),
         .src0_data        (ex_rs1_data_repair),
         .src1_data        (ex_rs2_data_repair),
         .control_flow     (ex_control_flow),
@@ -1948,7 +1946,6 @@ module cpu_top
         .predicted_taken  (ex_pred_taken),
         .predicted_target (ex_pred_target),
         .branch_flush     (branch_flush),
-        .branch_target    (branch_target),
         .actual_taken     (actual_taken),
         .actual_target    (actual_target)
     );
@@ -2024,11 +2021,14 @@ module cpu_top
 
     ex_mem_payload_builder u_ex_mem_payload_builder (
         .redirect_valid  (ex_registered_branch_flush),
-        .redirect_target (ex_registered_branch_target),
+        .redirect_source (ex_registered_redirect_source),
+        .redirect_actual_taken(ex_registered_redirect_actual_taken),
         .s0_alu_result   (ex_pipe_alu_result),
         .s0_pc           (ex_pc),
         .s0_inst         (ex_inst),
         .s0_pc_plus_4    (ex_pc_plus_4),
+        .s0_target_clear_mask(ex_target_clear_mask),
+        .s0_priv_target  (ex_priv_target),
         .s0_rd           (ex_rd),
         .s0_reg_write_en (ex_reg_write_en & ~ex_priv_trap),
         .s0_wb_sel       (ex_wb_sel),
@@ -2049,6 +2049,7 @@ module cpu_top
         .s1_inst         (ex_s1_inst),
         .s1_alu_result   (alu_s1_result),
         .s1_pc_plus_4    (ex_s1_pc_plus_4),
+        .s1_target_clear_mask(ex_s1_target_clear_mask),
         .s1_rd           (ex_s1_rd),
         .s1_reg_write_en (ex_s1_reg_write_en & ~ex_s1_side_effect_kill),
         .s1_wb_sel       (ex_s1_wb_sel),
@@ -2092,6 +2093,58 @@ module cpu_top
         .ex_payload          (ex_mem_s1_payload),
         .mem_payload         (mem_s1_payload)
     );
+
+    redirect_target_select u_redirect_target_select (
+        .redirect     (mem_redirect),
+        .slot0_payload(mem_s0_payload),
+        .slot1_payload(mem_s1_payload),
+        .target       (mem_branch_target)
+    );
+
+`ifndef SYNTHESIS
+    // Executable reference for the former EX-wide target path.  It is kept
+    // out of synthesis so verification checks the new narrow-control/MEM-mux
+    // implementation without recreating the timing path in hardware.
+    wire [31:0] ex_redirect_target_reference =
+        ex_priv_flow ? ex_priv_target :
+        (branch_flush & ~ex_priv_flow)
+            ? (actual_taken ? ex_control_target : ex_pc_plus_4) :
+        (ex_valid & ex_s1_valid & ex_s1_addr_replay) ? ex_s1_pc :
+        ex_s1_actual_taken ? ex_s1_branch_target : ex_s1_pc_plus_4;
+    logic        redirect_reference_valid_q;
+    logic [31:0] redirect_reference_target_q;
+
+    always_ff @(posedge clk) begin
+        if (!rst_n) begin
+            redirect_reference_valid_q <= 1'b0;
+        end else begin
+            if (mem_redirect.valid !== redirect_reference_valid_q)
+                $fatal(1, "Registered redirect valid changed latency");
+            if (redirect_reference_valid_q
+                && (mem_branch_target !== redirect_reference_target_q))
+                $fatal(1, "MEM redirect target differs from EX reference");
+
+            redirect_reference_valid_q <= ex_registered_branch_flush;
+            if (ex_registered_branch_flush)
+                redirect_reference_target_q <= ex_redirect_target_reference;
+
+            if (ex_registered_branch_flush
+                && (ex_registered_redirect_source == REDIRECT_S0_CONTROL)
+                && ex_registered_redirect_actual_taken
+                && ((ex_pipe_alu_result
+                     & ~{30'd0, ex_target_clear_mask})
+                    !== ex_control_target))
+                $fatal(1, "Slot0 EX/MEM ALU candidate differs from CFI target");
+            if (ex_registered_branch_flush
+                && (ex_registered_redirect_source == REDIRECT_S1_CONTROL)
+                && ex_registered_redirect_actual_taken
+                && ((alu_s1_result
+                     & ~{30'd0, ex_s1_target_clear_mask})
+                    !== ex_s1_branch_target))
+                $fatal(1, "Slot1 EX/MEM ALU candidate differs from CFI target");
+        end
+    end
+`endif
 
     // ==================== MEM/WB ====================
 

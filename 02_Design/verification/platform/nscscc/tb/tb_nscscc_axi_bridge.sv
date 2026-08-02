@@ -10,8 +10,8 @@ module tb_nscscc_axi_bridge;
     logic        irom_req_kill;
     logic        irom_resp_valid;
     logic [63:0] irom_resp_data;
-    logic [ 7:0] irom_resp_predecode;
-    logic [ 7:0] expected_irom_predecode;
+    logic [13:0] irom_resp_predecode;
+    logic [13:0] expected_irom_predecode;
 
     logic        dmem_req_valid;
     logic        dmem_req_ready;
@@ -427,6 +427,51 @@ module tb_nscscc_axi_bridge;
         irom_req_valid = 1'b0;
         @(posedge clk);
         @(negedge clk);
+
+        // The shortened tag is valid only inside 0x1c0xxxxx.  An address with
+        // identical low 20 bits but a different prefix must miss, retain its
+        // full AXI address, avoid allocation, and leave the resident line
+        // untouched.
+        $display("[INFO] shortened-tag window and prefix-alias containment");
+        fork
+            issue_irom(32'h2c00_0000);
+            accept_ar(32'h2c00_0000, 8'd3, 2'b10, 4'h0);
+        join
+        send_r(4'h0, 32'h0102_0304, 1'b0);
+        send_r(4'h0, 32'h0506_0708, 1'b0);
+        send_r(4'h0, 32'h1112_1314, 1'b0);
+        send_r(4'h0, 32'h1516_1718, 1'b1);
+        repeat (2) @(posedge clk);
+
+        @(negedge clk);
+        irom_req_addr = 32'h1c00_0000;
+        irom_req_valid = 1'b1;
+        check(irom_req_ready,
+              "resident line was unavailable after out-of-window refill");
+        @(posedge clk);
+        @(negedge clk);
+        #1;
+        check(irom_resp_valid,
+              "resident line missed after out-of-window refill");
+        check(irom_resp_data == 64'h5566_7788_1122_3344,
+              "out-of-window refill corrupted resident ICache data");
+        check(!arvalid,
+              "resident line unexpectedly issued AXI after alias refill");
+        irom_req_valid = 1'b0;
+        @(posedge clk);
+        @(negedge clk);
+
+        // Repeating the outside-window request must issue another read: those
+        // responses are forwarded to the frontend but never become cache hits.
+        fork
+            issue_irom(32'h2c00_0000);
+            accept_ar(32'h2c00_0000, 8'd3, 2'b10, 4'h0);
+        join
+        send_r(4'h0, 32'h2122_2324, 1'b0);
+        send_r(4'h0, 32'h2526_2728, 1'b0);
+        send_r(4'h0, 32'h3132_3334, 1'b0);
+        send_r(4'h0, 32'h3536_3738, 1'b1);
+        repeat (2) @(posedge clk);
 
         // Reads may overlap reads, but writes are deliberately serialized
         // against both read IDs. Hold a DCache write behind an ICache refill,

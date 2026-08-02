@@ -61,6 +61,8 @@ run_case "privileged commit/alignment/flush boundaries" \
 # NSCSCC cache and AXI protocol boundaries.
 run_case "variable-latency IROM and stale-response kill" \
     "$SCRIPT_DIR/run_variable_irom.sh"
+run_case "ICache shortened-tag/class metadata boundaries" \
+    "$SCRIPT_DIR/run_icache_metadata.sh"
 run_case "DCache uncached single-beat path" \
     "$SCRIPT_DIR/run_dcache_uncached.sh"
 run_case "DCache WB+WA refill/evict/RAW/flush" \

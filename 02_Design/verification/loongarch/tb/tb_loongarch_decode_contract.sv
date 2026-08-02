@@ -6,6 +6,11 @@ module tb_loongarch_decode_contract;
     logic [31:0] inst;
     decoded_uop_t uop;
     frontend_predecode_t predecode;
+    frontend_icache_predecode_t icache_predecode;
+    frontend_predecode_t expanded_predecode;
+    frontend_predecode_t poisoned_predecode;
+    frontend_predecode_t poisoned_expanded_predecode;
+    logic [7:0] icache_class_seen;
 
     logic [31:0] alu_src1;
     logic [31:0] alu_src2;
@@ -25,6 +30,30 @@ module tb_loongarch_decode_contract;
     loongarch_predecode u_predecode (
         .inst    (inst),
         .decoded (predecode)
+    );
+
+    loongarch_icache_predecode u_icache_predecode (
+        .inst     (inst),
+        .metadata (icache_predecode)
+    );
+
+    loongarch_cached_predecode_expand u_cached_expand (
+        .inst         (inst),
+        .full_decoded (predecode),
+        .cached       (icache_predecode),
+        .expanded     (expanded_predecode)
+    );
+
+    // Deliberately make the fallback input disagree with the real decoder.
+    // Ordinary cached classes must reconstruct every field without observing
+    // this value; ICACHE_CLASS_OTHER must preserve it exactly.
+    assign poisoned_predecode = ~predecode;
+
+    loongarch_cached_predecode_expand u_poisoned_cached_expand (
+        .inst         (inst),
+        .full_decoded (poisoned_predecode),
+        .cached       (icache_predecode),
+        .expanded     (poisoned_expanded_predecode)
     );
 
     alu u_alu (
@@ -151,6 +180,44 @@ module tb_loongarch_decode_contract;
         end
     endfunction
 
+    function automatic icache_inst_class_t expected_icache_class;
+        begin
+            if (predecode.is_alu_type
+                && predecode.uses_src0 && predecode.uses_src1)
+                expected_icache_class = ICACHE_CLASS_ALU_RR;
+            else if (predecode.is_alu_type && predecode.uses_src0)
+                expected_icache_class = ICACHE_CLASS_ALU_IMM;
+            else if (predecode.is_alu_type)
+                expected_icache_class = ICACHE_CLASS_UPPER_IMM;
+            else if (predecode.is_load)
+                expected_icache_class = ICACHE_CLASS_LOAD;
+            else if (predecode.is_store)
+                expected_icache_class = ICACHE_CLASS_STORE;
+            else if (predecode.is_muldiv)
+                expected_icache_class = ICACHE_CLASS_MULDIV;
+            else if (predecode.is_cfi)
+                expected_icache_class = ICACHE_CLASS_CFI;
+            else
+                expected_icache_class = ICACHE_CLASS_OTHER;
+        end
+    endfunction
+
+    function automatic logic icache_metadata_matches_predecode;
+        begin
+            icache_metadata_matches_predecode =
+                (icache_predecode.static_kill_younger
+                    == predecode.is_jump)
+                && (icache_predecode.block_younger
+                    == predecode.block_younger)
+                && (icache_predecode.slot1_disallowed
+                    == ~predecode.lane_mask[1])
+                && (icache_predecode.writes_dst
+                    == predecode.writes_dst)
+                && (icache_predecode.inst_class
+                    == expected_icache_class());
+        end
+    endfunction
+
     // Independent literal table for the complete phase-2 legality boundary.
     // LA32R legality in this subset depends only on inst[31:15], so enumerating
     // every value of that prefix covers every possible 32-bit instruction's
@@ -224,6 +291,24 @@ module tb_loongarch_decode_contract;
                 $fatal(1,
                        "[FAIL] %s: predecode differs from full decoder (inst=%08x)",
                        current_case, inst);
+            if (!icache_metadata_matches_predecode())
+                $fatal(1,
+                       "[FAIL] %s: ICache metadata differs from predecode (inst=%08x)",
+                       current_case, inst);
+            if (expanded_predecode !== predecode)
+                $fatal(1,
+                       "[FAIL] %s: cached-class expansion differs from predecode (inst=%08x)",
+                       current_case, inst);
+            if ((icache_predecode.inst_class == ICACHE_CLASS_OTHER)
+                && (poisoned_expanded_predecode !== poisoned_predecode))
+                $fatal(1,
+                       "[FAIL] %s: OTHER class did not select the complete fallback (inst=%08x)",
+                       current_case, inst);
+            if ((icache_predecode.inst_class != ICACHE_CLASS_OTHER)
+                && (poisoned_expanded_predecode !== predecode))
+                $fatal(1,
+                       "[FAIL] %s: ordinary class still depends on complete decode (inst=%08x)",
+                       current_case, inst);
         end
     endtask
 
@@ -256,6 +341,7 @@ module tb_loongarch_decode_contract;
         logic expected_legal;
         begin
             legal_prefix_count = 0;
+            icache_class_seen = '0;
             $display("[INFO] Exhaustively checking all 131072 inst[31:15] prefixes...");
             for (int unsigned prefix = 0; prefix < 131072; prefix++) begin
                 inst = {prefix[16:0], 15'd0};
@@ -276,6 +362,25 @@ module tb_loongarch_decode_contract;
                     $fatal(1,
                            "[FAIL] prefix %05x: predecode/full-decode mismatch",
                            prefix[16:0]);
+                if (!icache_metadata_matches_predecode())
+                    $fatal(1,
+                           "[FAIL] prefix %05x: ICache metadata mismatch",
+                           prefix[16:0]);
+                if (expanded_predecode !== predecode)
+                    $fatal(1,
+                           "[FAIL] prefix %05x: cached-class expansion mismatch",
+                           prefix[16:0]);
+                if ((icache_predecode.inst_class == ICACHE_CLASS_OTHER)
+                    && (poisoned_expanded_predecode !== poisoned_predecode))
+                    $fatal(1,
+                           "[FAIL] prefix %05x: OTHER fallback mismatch",
+                           prefix[16:0]);
+                if ((icache_predecode.inst_class != ICACHE_CLASS_OTHER)
+                    && (poisoned_expanded_predecode !== predecode))
+                    $fatal(1,
+                           "[FAIL] prefix %05x: ordinary class uses fallback decode",
+                           prefix[16:0]);
+                icache_class_seen[icache_predecode.inst_class] = 1'b1;
                 if (!expected_legal
                     && ((uop.exec_unit != EXEC_NONE)
                         || uop.dst_write || (uop.mem_cmd != MEM_NONE)
@@ -288,6 +393,8 @@ module tb_loongarch_decode_contract;
             end
             check(legal_prefix_count == 22807,
                   "independent legal-prefix population");
+            check(&icache_class_seen,
+                  "all eight ICache instruction classes were observed");
             opcode_prefix_count = 131072;
         end
     endtask

@@ -9,12 +9,15 @@ module ex_mem_payload_builder
     import cpu_defs::*;
 (
     input  logic               redirect_valid,
-    input  logic [31:0]        redirect_target,
+    input  redirect_source_t   redirect_source,
+    input  logic               redirect_actual_taken,
 
     input  logic [31:0]        s0_alu_result,
     input  logic [31:0]        s0_pc,
     input  logic [31:0]        s0_inst,
     input  logic [31:0]        s0_pc_plus_4,
+    input  logic [ 1:0]        s0_target_clear_mask,
+    input  logic [31:0]        s0_priv_target,
     input  logic [ 4:0]        s0_rd,
     input  logic               s0_reg_write_en,
     input  wb_src_t             s0_wb_sel,
@@ -34,6 +37,7 @@ module ex_mem_payload_builder
     input  logic [31:0]        s1_inst,
     input  logic [31:0]        s1_alu_result,
     input  logic [31:0]        s1_pc_plus_4,
+    input  logic [ 1:0]        s1_target_clear_mask,
     input  logic [ 4:0]        s1_rd,
     input  logic               s1_reg_write_en,
     input  wb_src_t             s1_wb_sel,
@@ -54,13 +58,16 @@ module ex_mem_payload_builder
     // stage may propagate the redirect even when MEM is backpressured.
     always_comb begin
         redirect.valid = redirect_valid;
-        redirect.target = redirect_target;
+        redirect.source = redirect_source;
+        redirect.actual_taken = redirect_actual_taken;
 
         slot0_payload = '0;
         slot0_payload.inst = s0_inst;
         slot0_payload.alu_result = s0_alu_result;
         slot0_payload.pc = s0_pc;
         slot0_payload.pc_plus_4 = s0_pc_plus_4;
+        slot0_payload.target_clear_mask = s0_target_clear_mask;
+        slot0_payload.priv_target = s0_priv_target;
         slot0_payload.rd = s0_rd;
         slot0_payload.reg_write_en = s0_reg_write_en;
         slot0_payload.wb_sel = s0_wb_sel;
@@ -81,6 +88,7 @@ module ex_mem_payload_builder
         slot1_payload.inst = s1_inst;
         slot1_payload.alu_result = s1_alu_result;
         slot1_payload.pc_plus_4 = s1_pc_plus_4;
+        slot1_payload.target_clear_mask = s1_target_clear_mask;
         slot1_payload.rd = s1_rd;
         slot1_payload.reg_write_en = s1_reg_write_en;
         slot1_payload.wb_sel = s1_wb_sel;

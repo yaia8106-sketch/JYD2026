@@ -90,7 +90,7 @@ module core_top #(
     wire        irom_req_kill;
     wire        irom_resp_valid;
     wire [63:0] irom_resp_data;
-    wire [ 7:0] irom_resp_predecode;
+    wire [13:0] irom_resp_predecode;
 
     wire        cache_req;
     wire        cache_wr;

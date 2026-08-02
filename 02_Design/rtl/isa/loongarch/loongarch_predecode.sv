@@ -167,8 +167,8 @@ module loongarch_predecode
 endmodule
 
 // Compact metadata generated only when an ICache refill block is completed.
-// Keeping this derived information in the RAMB36 parity bits removes the full
-// instruction-classification cone from the normal ICache-hit -> FQ path.
+// The four original controls occupy RAMB36 parity bits and the new class is
+// stored beside the shortened tag, keeping refill decode off the hit path.
 module loongarch_icache_predecode
     import cpu_defs::*;
 (
@@ -188,6 +188,109 @@ module loongarch_icache_predecode
         metadata.block_younger = decoded.block_younger;
         metadata.slot1_disallowed = ~decoded.lane_mask[1];
         metadata.writes_dst = decoded.writes_dst;
+
+        if (decoded.is_alu_type && decoded.uses_src0 && decoded.uses_src1)
+            metadata.inst_class = ICACHE_CLASS_ALU_RR;
+        else if (decoded.is_alu_type && decoded.uses_src0)
+            metadata.inst_class = ICACHE_CLASS_ALU_IMM;
+        else if (decoded.is_alu_type)
+            metadata.inst_class = ICACHE_CLASS_UPPER_IMM;
+        else if (decoded.is_load)
+            metadata.inst_class = ICACHE_CLASS_LOAD;
+        else if (decoded.is_store)
+            metadata.inst_class = ICACHE_CLASS_STORE;
+        else if (decoded.is_muldiv)
+            metadata.inst_class = ICACHE_CLASS_MULDIV;
+        else if (decoded.is_cfi)
+            metadata.inst_class = ICACHE_CLASS_CFI;
+        else
+            metadata.inst_class = ICACHE_CLASS_OTHER;
+    end
+endmodule
+
+// Expand refill-time metadata into the ordinary scheduling view.  The full
+// predecode result is computed in parallel and remains the exact fallback for
+// ICACHE_CLASS_OTHER (privileged and illegal encodings).
+module loongarch_cached_predecode_expand
+    import cpu_defs::*;
+(
+    input  logic [31:0]                 inst,
+    input  frontend_predecode_t         full_decoded,
+    input  frontend_icache_predecode_t  cached,
+    output frontend_predecode_t         expanded
+);
+    logic class_alu_rr;
+    logic class_alu_imm;
+    logic class_upper_imm;
+    logic class_load;
+    logic class_store;
+    logic class_muldiv;
+    logic class_cfi;
+    logic cfi_conditional;
+    logic cfi_direct;
+    logic cfi_indirect;
+
+    always_comb begin
+        class_alu_rr = cached.inst_class == ICACHE_CLASS_ALU_RR;
+        class_alu_imm = cached.inst_class == ICACHE_CLASS_ALU_IMM;
+        class_upper_imm = cached.inst_class == ICACHE_CLASS_UPPER_IMM;
+        class_load = cached.inst_class == ICACHE_CLASS_LOAD;
+        class_store = cached.inst_class == ICACHE_CLASS_STORE;
+        class_muldiv = cached.inst_class == ICACHE_CLASS_MULDIV;
+        class_cfi = cached.inst_class == ICACHE_CLASS_CFI;
+
+        cfi_conditional = class_cfi && !cached.static_kill_younger;
+        cfi_direct = class_cfi
+                   && cached.static_kill_younger
+                   && !cached.block_younger;
+        cfi_indirect = class_cfi
+                     && cached.static_kill_younger
+                     && cached.block_younger;
+
+        expanded = full_decoded;
+        if (cached.inst_class != ICACHE_CLASS_OTHER) begin
+            expanded.is_conditional_branch = cfi_conditional;
+            expanded.is_direct_jump = cfi_direct;
+            expanded.is_indirect_jump = cfi_indirect;
+            expanded.is_privileged = 1'b0;
+            expanded.is_privileged_flow = 1'b0;
+            expanded.is_fence = 1'b0;
+            expanded.is_illegal = 1'b0;
+            expanded.is_muldiv = class_muldiv;
+            expanded.is_mul = class_muldiv && !cached.block_younger;
+            expanded.is_load = class_load;
+            expanded.is_store = class_store;
+            expanded.is_alu_type =
+                class_alu_rr | class_alu_imm | class_upper_imm;
+            expanded.is_jump = cached.static_kill_younger;
+            expanded.is_control = class_cfi;
+            expanded.is_lsu = class_load | class_store;
+            expanded.is_cfi = class_cfi;
+            expanded.writes_dst = cached.writes_dst;
+            expanded.uses_src0 =
+                class_alu_rr | class_alu_imm | class_load
+                | class_store | class_muldiv
+                | cfi_conditional | cfi_indirect;
+            expanded.uses_src1 =
+                class_alu_rr | class_store | class_muldiv
+                | cfi_conditional;
+            expanded.src0_addr = inst[9:5];
+            expanded.src1_addr =
+                (class_store | cfi_conditional)
+                    ? inst[4:0]
+                    : inst[14:10];
+            expanded.dst_addr =
+                (cfi_direct && cached.writes_dst)
+                    ? 5'd1
+                    : inst[4:0];
+            expanded.lane_mask = {
+                ~cached.slot1_disallowed,
+                1'b1
+            };
+            expanded.block_younger = cached.block_younger;
+            expanded.serializing =
+                class_muldiv && cached.block_younger;
+        end
     end
 endmodule
 
@@ -195,7 +298,7 @@ module loongarch_icache_block_predecode
     import cpu_defs::*;
 (
     input  logic [63:0] block_data,
-    output logic [ 7:0] block_metadata
+    output logic [13:0] block_metadata
 );
     frontend_icache_predecode_t low_metadata;
     frontend_icache_predecode_t high_metadata;
@@ -222,5 +325,21 @@ module isa_predecode
     loongarch_predecode u_impl (
         .inst    (inst),
         .decoded (decoded)
+    );
+endmodule
+
+module isa_cached_predecode_expand
+    import cpu_defs::*;
+(
+    input  logic [31:0]                 inst,
+    input  frontend_predecode_t         full_decoded,
+    input  frontend_icache_predecode_t  cached,
+    output frontend_predecode_t         expanded
+);
+    loongarch_cached_predecode_expand u_impl (
+        .inst         (inst),
+        .full_decoded (full_decoded),
+        .cached       (cached),
+        .expanded     (expanded)
     );
 endmodule

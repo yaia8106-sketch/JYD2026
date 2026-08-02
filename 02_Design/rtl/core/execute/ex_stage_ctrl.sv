@@ -50,10 +50,9 @@ module ex_stage_ctrl
     input  logic        mem_allowin,
     input  logic        ex_branch_redirect,
     input  logic        ex_branch_request,
-    input  logic [31:0] branch_target,
+    input  logic        ex_branch_actual_taken,
     input  logic        ex_priv_redirect,
     input  logic        ex_priv_flow,
-    input  logic [31:0] ex_priv_target,
 
     output logic [31:0] ex_pc_plus_4,
     output logic [31:0] ex_s1_pc_plus_4,
@@ -72,7 +71,8 @@ module ex_stage_ctrl
     output logic        ex_s1_actual_taken,
     output logic        ex_s1_branch_redirect,
     output logic        ex_registered_branch_flush,
-    output logic [31:0] ex_registered_branch_target
+    output redirect_source_t ex_registered_redirect_source,
+    output logic        ex_registered_redirect_actual_taken
 );
 
     wire ex_s1_branch_taken;
@@ -142,10 +142,6 @@ module ex_stage_ctrl
                             & (ex_s1_control_target
                                != ex_s1_predicted_target);
     wire ex_s1_mispredict = ex_s1_direction_wrong | ex_s1_target_wrong;
-    wire [31:0] ex_s1_redirect_target = ex_s1_actual_taken_w
-                                      ? ex_s1_control_target
-                                      : ex_s1_pc_plus_4;
-
     assign ex_s1_branch_target = ex_s1_control_target;
     assign ex_s1_actual_taken = ex_s1_actual_taken_w;
     assign ex_s1_branch_redirect = ex_s1_valid
@@ -163,19 +159,30 @@ module ex_stage_ctrl
                                       | ex_priv_redirect
                                       | ex_s1_branch_redirect
                                       | ex_s1_addr_replay_redirect;
-    // Select by the redirect source, not by the decoded CFI class. A false
-    // positive BTB hit deliberately redirects even when the decoded operation
-    // is CF_NONE. In particular, an S1 false positive must resume at S1+4;
-    // using decoded control validity here would incorrectly select S0+4 and
-    // re-execute S1. S0 has age priority if both slots request repair.
-    // Only redirect.valid is handshake-qualified.  Select the don't-care
-    // target with raw EX requests so DCache backpressure (mem_allowin) cannot
-    // become a data input of every bit in the redirect target register.
+    // Register only the redirect source and actual direction.  MEM selects the
+    // final 32-bit PC from candidates already present in the EX/MEM payload.
+    // A false-positive BTB hit deliberately redirects even when the decoded
+    // operation is CF_NONE, so source selection must use the raw repair
+    // request rather than the decoded CFI class.  S0 has age priority over S1,
+    // and synchronous privileged flow has priority over both slots.
     wire ex_s1_addr_replay_request = ex_valid & ex_s1_valid
                                    & ex_s1_addr_replay;
-    assign ex_registered_branch_target =
-        ex_priv_flow ? ex_priv_target :
-        ex_branch_request ? branch_target :
-        ex_s1_addr_replay_request ? ex_s1_pc : ex_s1_redirect_target;
+    always_comb begin
+        ex_registered_redirect_source = REDIRECT_S1_CONTROL;
+        ex_registered_redirect_actual_taken = ex_s1_actual_taken_w;
+
+        if (ex_s1_addr_replay_request) begin
+            ex_registered_redirect_source = REDIRECT_S1_REPLAY;
+            ex_registered_redirect_actual_taken = 1'b0;
+        end
+        if (ex_branch_request) begin
+            ex_registered_redirect_source = REDIRECT_S0_CONTROL;
+            ex_registered_redirect_actual_taken = ex_branch_actual_taken;
+        end
+        if (ex_priv_flow) begin
+            ex_registered_redirect_source = REDIRECT_PRIVILEGED;
+            ex_registered_redirect_actual_taken = 1'b0;
+        end
+    end
 
 endmodule

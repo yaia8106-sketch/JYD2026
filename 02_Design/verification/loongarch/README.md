@@ -11,7 +11,9 @@ The gate now has three layers:
 - the decoded-uop contract covers all 46 ordinary LA32R integer encodings,
   immediate/register edge cases, named out-of-scope containment, every one of
   the 131072 possible `inst[31:15]` opcode prefixes, full/predecode
-  consistency, and the shared ALU's NOR operation;
+  consistency, all eight ICache classes, independence of ordinary cached-class
+  expansion from a deliberately corrupted full decode, exact `OTHER` fallback,
+  and the shared ALU's NOR operation;
 - the frontend test carries semantic multiply/divide metadata through
   F0 -> FTQ -> IF/ID and checks LoongArch-specific pairing dependencies;
 - the `cpu_top` execution smoke runs a real instruction stream through dual

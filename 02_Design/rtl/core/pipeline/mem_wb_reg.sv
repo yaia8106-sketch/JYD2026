@@ -30,23 +30,20 @@ module mem_wb_reg
     wire wb_ready_go = 1'b1;
     assign wb_allowin = !wb_valid || wb_ready_go;
 
-    // Synchronous zero reset gives synthesis an ordinary zero-reset FF shape
-    // instead of an FDSE set-pin implementation. KEEP prevents merging this
-    // placement copy into wb_payload.load_data. Its reset value is irrelevant
-    // architecturally because every repair tag is invalid during reset.
     always_ff @(posedge clk) begin
-        if (!rst_n)
-            wb_load_data_ex <= 32'd0;
-        else if (mem_load_valid && mem_ready_go)
+        if (mem_load_valid && mem_ready_go)
             wb_load_data_ex <= mem_payload.load_data;
     end
 
     always_ff @(posedge clk) begin
-        if (!rst_n) begin
-            wb_valid                <= 1'b0;
-            wb_payload              <= '0;
-        end else if (wb_allowin) begin
-            wb_valid                <= mem_valid & mem_ready_go;
+        if (!rst_n)
+            wb_valid <= 1'b0;
+        else if (wb_allowin)
+            wb_valid <= mem_valid & mem_ready_go;
+    end
+
+    always_ff @(posedge clk) begin
+        if (wb_allowin) begin
             wb_payload.pc           <= mem_payload.pc;
             wb_payload.inst         <= mem_payload.inst;
             wb_payload.alu_result   <= mem_payload.alu_result;
@@ -64,9 +61,7 @@ module mem_wb_reg
             wb_payload.csr_rstat    <= mem_payload.csr_rstat;
             wb_payload.csr_data     <= mem_payload.csr_data;
 
-            // A non-load must retain the last completed load for the EX-stage
-            // WB-repair path.  Keeping this field on its own write enable also
-            // prevents unrelated MMIO/store selection from feeding its D pin.
+            // A non-load retains the last completed load for WB repair.
             if (mem_load_valid & mem_ready_go)
                 wb_payload.load_data <= mem_payload.load_data;
         end

@@ -145,15 +145,13 @@ module frontend_abtb_sidecar
                                              : meta1_write_data;
 
     always_ff @(posedge clk) begin
-        if (rst_n && !redirect_valid) begin
-            if (even_write) begin
-                even_hit[even_write_row] <= even_write_data.hit;
-                even_way[even_write_row] <= even_write_data.way;
-            end
-            if (odd_write) begin
-                odd_hit[odd_write_row] <= odd_write_data.hit;
-                odd_way[odd_write_row] <= odd_write_data.way;
-            end
+        if (even_write) begin
+            even_hit[even_write_row] <= even_write_data.hit;
+            even_way[even_write_row] <= even_write_data.way;
+        end
+        if (odd_write) begin
+            odd_hit[odd_write_row] <= odd_write_data.hit;
+            odd_way[odd_write_row] <= odd_write_data.way;
         end
     end
 
@@ -168,12 +166,10 @@ module frontend_abtb_sidecar
             assign odd_wide_read = odd_dbg[odd_read_row];
 
             always_ff @(posedge clk) begin
-                if (rst_n && !redirect_valid) begin
-                    if (even_write)
-                        even_dbg[even_write_row] <= even_write_data;
-                    if (odd_write)
-                        odd_dbg[odd_write_row] <= odd_write_data;
-                end
+                if (even_write)
+                    even_dbg[even_write_row] <= even_write_data;
+                if (odd_write)
+                    odd_dbg[odd_write_row] <= odd_write_data;
             end
         end else begin : g_narrow_meta
             assign even_wide_read = '0;

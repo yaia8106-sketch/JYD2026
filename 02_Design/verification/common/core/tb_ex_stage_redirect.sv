@@ -29,7 +29,7 @@ module tb_ex_stage_redirect;
     logic mem_branch_flush, ex_ready_go, mem_allowin;
     logic ex_branch_redirect;
     logic ex_branch_request;
-    logic [31:0] branch_target;
+    logic ex_branch_actual_taken;
     logic ex_priv_redirect;
     logic ex_priv_flow;
     logic [31:0] ex_priv_target;
@@ -43,18 +43,54 @@ module tb_ex_stage_redirect;
     logic [31:0] ex_control_target, ex_s1_branch_target;
     logic ex_s1_actual_taken, ex_s1_branch_redirect;
     logic ex_registered_branch_flush;
-    logic [31:0] ex_registered_branch_target;
+    redirect_source_t ex_registered_redirect_source;
+    logic ex_registered_redirect_actual_taken;
+
+    redirect_t mem_redirect;
+    ex_mem_slot0_t mem_s0_payload;
+    ex_mem_slot1_t mem_s1_payload;
+    logic [31:0] selected_redirect_target;
 
     ex_stage_ctrl dut (.*);
 
+    always_comb begin
+        mem_redirect = '0;
+        mem_redirect.valid = ex_registered_branch_flush;
+        mem_redirect.source = ex_registered_redirect_source;
+        mem_redirect.actual_taken = ex_registered_redirect_actual_taken;
+
+        mem_s0_payload = '0;
+        mem_s0_payload.alu_result = alu_result;
+        mem_s0_payload.pc = ex_pc;
+        mem_s0_payload.pc_plus_4 = ex_pc_plus_4;
+        mem_s0_payload.target_clear_mask = ex_target_clear_mask;
+        mem_s0_payload.priv_target = ex_priv_target;
+
+        mem_s1_payload = '0;
+        mem_s1_payload.alu_result = ex_s1_branch_target;
+        mem_s1_payload.pc = ex_s1_pc;
+        mem_s1_payload.pc_plus_4 = ex_s1_pc_plus_4;
+        mem_s1_payload.target_clear_mask = ex_s1_target_clear_mask;
+    end
+
+    redirect_target_select u_redirect_target_select (
+        .redirect     (mem_redirect),
+        .slot0_payload(mem_s0_payload),
+        .slot1_payload(mem_s1_payload),
+        .target       (selected_redirect_target)
+    );
+
     task automatic expect_target(input logic [31:0] expected,
+                                 input redirect_source_t expected_source,
                                  input string name);
         #1;
         if (!ex_registered_branch_flush
-            || ex_registered_branch_target !== expected) begin
-            $fatal(1, "%s: flush=%0b target=%08x expected=%08x",
+            || ex_registered_redirect_source !== expected_source
+            || selected_redirect_target !== expected) begin
+            $fatal(1, "%s: flush=%0b source=%0d target=%08x expected=%08x",
                    name, ex_registered_branch_flush,
-                   ex_registered_branch_target, expected);
+                   ex_registered_redirect_source,
+                   selected_redirect_target, expected);
         end
     endtask
 
@@ -98,32 +134,56 @@ module tb_ex_stage_redirect;
         mem_allowin = 1'b1;
         ex_branch_redirect = 1'b0;
         ex_branch_request = 1'b0;
-        branch_target = 32'h1c00_1004;
+        ex_branch_actual_taken = 1'b0;
         ex_priv_redirect = 1'b0;
         ex_priv_flow = 1'b0;
         ex_priv_target = 32'h1c00_3000;
 
         // A false-positive S1 BTB hit is repaired to the instruction after S1.
-        expect_target(32'h1c00_1008, "S1 false-positive BTB repair");
+        expect_target(32'h1c00_1008, REDIRECT_S1_CONTROL,
+                      "S1 false-positive BTB repair");
         if (!ex_s1_branch_redirect || ex_s1_actual_taken)
             $fatal(1, "S1 false-positive was not classified as a redirect");
 
+        // A taken S1 repair selects its registered ALU target candidate.
+        ex_s1_control_flow = CF_DIRECT;
+        ex_s1_predicted_taken = 1'b0;
+        ex_s1_alu_src1 = 32'h1c00_1800;
+        ex_s1_alu_src2 = 32'h0000_0003;
+        ex_s1_target_clear_mask = 2'b11;
+        expect_target(32'h1c00_1800, REDIRECT_S1_CONTROL,
+                      "S1 taken target and clear mask");
+
         // A faulting S1 LSU is replayed from S1 itself so the older S0 can
         // retire before the instruction re-enters as a precise S0 exception.
+        ex_s1_control_flow = CF_NONE;
+        ex_s1_target_clear_mask = 2'b00;
         ex_s1_predicted_taken = 1'b0;
         ex_s1_addr_replay = 1'b1;
-        expect_target(32'h1c00_1004, "S1 address-exception replay");
+        expect_target(32'h1c00_1004, REDIRECT_S1_REPLAY,
+                      "S1 address-exception replay");
 
-        // The older S0 redirect wins if both slots request repair.
+        // A false-positive S0 prediction repairs to the registered S0 PC+4.
+        ex_s1_addr_replay = 1'b0;
         ex_branch_redirect = 1'b1;
         ex_branch_request = 1'b1;
-        branch_target = 32'h1c00_2000;
-        expect_target(32'h1c00_2000, "S0 age priority");
+        ex_branch_actual_taken = 1'b0;
+        expect_target(32'h1c00_1004, REDIRECT_S0_CONTROL,
+                      "S0 false-positive BTB repair");
+
+        // The older S0 redirect wins if both slots request repair.
+        ex_s1_addr_replay = 1'b1;
+        ex_branch_actual_taken = 1'b1;
+        ex_target_clear_mask = 2'b11;
+        alu_result = 32'h1c00_2003;
+        expect_target(32'h1c00_2000, REDIRECT_S0_CONTROL,
+                      "S0 age priority");
 
         // A synchronous privilege redirect has highest priority.
         ex_priv_redirect = 1'b1;
         ex_priv_flow = 1'b1;
-        expect_target(32'h1c00_3000, "privilege priority");
+        expect_target(32'h1c00_3000, REDIRECT_PRIVILEGED,
+                      "privilege priority");
 
         $display("[PASS] EX-stage redirect source selection");
         $finish;

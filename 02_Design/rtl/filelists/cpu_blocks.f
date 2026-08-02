@@ -26,6 +26,7 @@
 ../core/frontend/frontend_abtb_sidecar.sv
 ../core/frontend/frontend_ftq.sv
 ../core/lsu/mem_interface.sv
+../core/control/redirect_target_select.sv
 ../core/control/redirect_ctrl.sv
 ../core/control/timer_irq_ctrl.sv
 ../core/lsu/memory_access_unit.sv

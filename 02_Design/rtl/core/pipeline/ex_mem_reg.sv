@@ -34,22 +34,33 @@ module ex_mem_reg
     // A registered redirect invalidates the younger EX instruction only when
     // MEM can advance. A stalled miss must remain valid until completion.
     always_ff @(posedge clk) begin
-        if (!rst_n) begin
+        if (!rst_n)
             mem_valid <= 1'b0;
-            mem_payload <= '0;
-        end else if (mem_allowin) begin
+        else if (mem_allowin)
             mem_valid <= ex_valid & ex_ready_go & ~mem_redirect.valid;
+    end
+
+    // The payload has no independent lifetime; mem_valid is its sole owner.
+    always_ff @(posedge clk) begin
+        if (mem_allowin)
             mem_payload <= ex_payload;
-        end
     end
 
     // Redirect propagation must not be blocked by MEM backpressure.
     // Frontend replay must see control-flow recovery even while a load waits.
     always_ff @(posedge clk) begin
         if (!rst_n)
-            mem_redirect <= '0;
+            mem_redirect.valid <= 1'b0;
         else
-            mem_redirect <= ex_redirect;
+            mem_redirect.valid <= ex_redirect.valid;
+    end
+
+    // The source and direction are don't-care unless redirect.valid is set.
+    // Keeping them outside reset prevents the reset net from reaching payload
+    // flops and leaves only three narrow control bits on this boundary.
+    always_ff @(posedge clk) begin
+        mem_redirect.source <= ex_redirect.source;
+        mem_redirect.actual_taken <= ex_redirect.actual_taken;
     end
 
 endmodule

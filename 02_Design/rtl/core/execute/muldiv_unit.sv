@@ -212,16 +212,7 @@ module muldiv_unit
     // EX-owned divide request. Flush/consume invalidate it through the FSM;
     // they never gate these wide registers directly.
     always_ff @(posedge clk) begin
-        if (!rst_n) begin
-            div_divisor_1x_r <= 34'd0;
-            div_divisor_2x_r <= 34'd0;
-            div_divisor_3x_r <= 34'd0;
-            div_remainder <= 33'd0;
-            div_quotient  <= 32'd0;
-            div_count     <= 6'd0;
-            div_quot_neg  <= 1'b0;
-            div_rem_neg   <= 1'b0;
-        end else if ((state == S_IDLE) && req_valid && req_op[2]) begin
+        if ((state == S_IDLE) && req_valid && req_op[2]) begin
             // Always preload the iterative payload. Fast/special divides
             // ignore it, but keeping their late compares off the write enable
             // preserves a shallow CE path.
@@ -248,9 +239,7 @@ module muldiv_unit
     // multiplier never writes result_r. Flush invalidates the owner state, so
     // the stale payload is unobservable and does not need a late clear input.
     always_ff @(posedge clk) begin
-        if (!rst_n)
-            result_r <= 32'd0;
-        else if ((state == S_IDLE) && req_valid && req_op[2]) begin
+        if ((state == S_IDLE) && req_valid && req_op[2]) begin
             if (req_div_by_zero | req_div_overflow)
                 result_r <= req_special_result;
             else if (req_div_fast_valid)
@@ -263,20 +252,14 @@ module muldiv_unit
     // Only narrow ownership/control sees launch/consume/flush. A same-edge
     // younger MUL prestart has priority over releasing the old completed owner.
     always_ff @(posedge clk) begin
-        if (!rst_n) begin
-            state    <= S_IDLE;
-            op_r     <= MULDIV_MUL;
-        end else if (flush) begin
-            state    <= S_IDLE;
-            op_r     <= MULDIV_MUL;
-        end else begin
+        if (!rst_n || flush)
+            state <= S_IDLE;
+        else begin
             case (state)
                 S_IDLE: begin
                     if (mul_prestart_valid) begin
-                        op_r <= mul_prestart_op;
                         state <= S_MUL_EXEC;
                     end else if (req_valid && req_op[2]) begin
-                        op_r <= req_op;
                         if (req_div_by_zero | req_div_overflow) begin
                             state <= S_DONE;
                         end else if (req_div_fast_valid) begin
@@ -295,7 +278,6 @@ module muldiv_unit
 
                 S_MUL_DONE: begin
                     if (mul_prestart_valid) begin
-                        op_r <= mul_prestart_op;
                         state <= S_MUL_EXEC;
                     end else if (consume) begin
                         state <= S_IDLE;
@@ -313,7 +295,6 @@ module muldiv_unit
 
                 S_DONE: begin
                     if (mul_prestart_valid) begin
-                        op_r <= mul_prestart_op;
                         state <= S_MUL_EXEC;
                     end else if (consume) begin
                         state <= S_IDLE;
@@ -325,6 +306,17 @@ module muldiv_unit
                 end
             endcase
         end
+    end
+
+    // op_r is payload owned by the FSM. Launch establishes it before any MUL
+    // or DIV result selector can observe it; flush only invalidates state.
+    always_ff @(posedge clk) begin
+        if (mul_prestart_valid
+            && ((state == S_IDLE) || (state == S_MUL_DONE)
+                                  || (state == S_DONE)))
+            op_r <= mul_prestart_op;
+        else if ((state == S_IDLE) && req_valid && req_op[2])
+            op_r <= req_op;
     end
 
 `ifndef SYNTHESIS

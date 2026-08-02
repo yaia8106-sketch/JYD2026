@@ -28,50 +28,27 @@ module if_id_reg
     output if_id_payload_t id_payload
 );
 
-    // Reset prediction counters to weakly-not-taken so early training matches
-    // the standalone PHT reset convention.
-    function automatic if_id_payload_t reset_payload();
-        begin
-            reset_payload = '0;
-            reset_payload.slot0.prediction.stage1_pht_counter = 2'b01;
-            reset_payload.slot1.prediction.stage1_pht_counter = 2'b01;
-        end
-    endfunction
-
-    // Keep the wide payload write-enable as an explicit, replicated boundary.
-    // Without this boundary Vivado absorbs id_allowin and id_flush into one
-    // high-fanout LUT, extending the late DCache-ready path into every payload
-    // register CE.  The expression is identical to the priority chain below;
-    // only its physical implementation is constrained.
-    (* keep = "true", max_fanout = 32 *)
-    wire id_payload_write_en = id_allowin & ~id_flush;
-
-    // ---- Pipeline register ----
+    // Validity owns reset/flush semantics.  The payload is ignored whenever
+    // both slot-valid bits are clear, so neither reset nor a late redirect
+    // needs to reach the wide data registers.
     always_ff @(posedge clk) begin
         if (!rst_n) begin
-            id_valid                                      <= 1'b0;
-            id_s1_valid                                   <= 1'b0;
-            id_payload                                    <= reset_payload();
-        end else begin
-            if (id_flush) begin
-                // Flush kills validity and speculative prediction ownership,
-                // but leaves unrelated payload fields untouched until the
-                // next accept.
-                id_valid                                        <= 1'b0;
-                id_s1_valid                                     <= 1'b0;
-                id_payload.slot0.prediction.source_abtb         <= 1'b0;
-                id_payload.slot0.prediction.stage1_branch_owned <= 1'b0;
-                id_payload.slot1.prediction.taken               <= 1'b0;
-                id_payload.slot1.prediction.source_abtb         <= 1'b0;
-                id_payload.slot1.prediction.stage1_branch_owned <= 1'b0;
-            end else if (id_allowin) begin
-                id_valid    <= if_valid & if_ready_go;
-                id_s1_valid <= if_valid & if_ready_go & if_s1_valid;
-            end
-
-            if (id_payload_write_en)
-                id_payload <= if_payload;
+            id_valid    <= 1'b0;
+            id_s1_valid <= 1'b0;
+        end else if (id_flush) begin
+            id_valid    <= 1'b0;
+            id_s1_valid <= 1'b0;
+        end else if (id_allowin) begin
+            id_valid    <= if_valid & if_ready_go;
+            id_s1_valid <= if_valid & if_ready_go & if_s1_valid;
         end
+    end
+
+    // id_allowin is only a clock enable for payload storage.  A simultaneous
+    // flush may write speculative data, but the valid block above discards it.
+    always_ff @(posedge clk) begin
+        if (id_allowin)
+            id_payload <= if_payload;
     end
 
 endmodule

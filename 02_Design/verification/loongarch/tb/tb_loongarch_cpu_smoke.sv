@@ -13,7 +13,7 @@ module tb_loongarch_cpu_smoke;
 
     logic [11:0] irom_addr;
     logic [63:0] irom_data;
-    logic [ 7:0] irom_predecode;
+    logic [13:0] irom_predecode;
     logic [31:0] irom [0:IROM_WORDS-1];
 
     logic cache_req;

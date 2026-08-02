@@ -16,7 +16,7 @@ module frontend_f0_packet_builder
     //* base_mask可以用start_pc[2]直接代替,并且我们在start_pc[2] = 1时slot1中已经有了NOP指令,所以我们不需要使用这个信号来控制slot1的valid。
     input  logic [ 1:0]                base_mask, // if pc[2] = 0, base_mask = 2'b11, else base_mask = 2'b01
     input  logic [63:0]                irom_data, // PC[2:0] = 0取出来的64bit指令包
-    input  logic [ 7:0]                irom_predecode,
+    input  logic [13:0]                irom_predecode,
 
     // pred metadata
     input  logic                       steer_taken, // 第一级预测器的预测结果为taken时为1,否则为0
@@ -57,6 +57,8 @@ module frontend_f0_packet_builder
 
     frontend_predecode_t slot0_dec;
     frontend_predecode_t slot1_dec;
+    frontend_predecode_t slot0_effective_dec;
+    frontend_predecode_t slot1_effective_dec;
     frontend_icache_predecode_t block0_cached_dec;
     frontend_icache_predecode_t block1_cached_dec;
     frontend_icache_predecode_t slot0_cached_dec;
@@ -83,14 +85,31 @@ module frontend_f0_packet_builder
         .decoded (slot1_dec)
     );
 
-    assign block0_cached_dec = irom_predecode[3:0];
-    assign block1_cached_dec = irom_predecode[7:4];
+    assign block0_cached_dec = irom_predecode[6:0];
+    assign block1_cached_dec = irom_predecode[13:7];
     assign slot0_cached_dec = start_pc[2] ? block1_cached_dec
                                            : block0_cached_dec;
     // slot1 is architecturally absent when start_pc[2] is one. Its payload is
     // ignored in that case, but clearing the cached controls keeps the invalid
     // entry deterministic.
     assign slot1_cached_dec = start_pc[2] ? '0 : block1_cached_dec;
+
+    // The complete decoders and compact-class expanders run in parallel.  A
+    // small late select inside the ISA-specific expander chooses the complete
+    // result only for ICACHE_CLASS_OTHER.
+    isa_cached_predecode_expand u_expand_slot0 (
+        .inst         (slot0_inst),
+        .full_decoded (slot0_dec),
+        .cached       (slot0_cached_dec),
+        .expanded     (slot0_effective_dec)
+    );
+
+    isa_cached_predecode_expand u_expand_slot1 (
+        .inst         (slot1_inst),
+        .full_decoded (slot1_dec),
+        .cached       (slot1_cached_dec),
+        .expanded     (slot1_effective_dec)
+    );
 
     // 这个结构体包含了fq entry需要的所有信息。
     function automatic frontend_fq_entry_t make_entry(
@@ -177,11 +196,11 @@ module frontend_f0_packet_builder
     // 统一计算两个 make_entry 调用所需的预测与预译码字段。
     always_comb begin
         slot0_branch_owned =
-            slot0_dec.is_conditional_branch
+            slot0_effective_dec.is_conditional_branch
             && (start_pc[2] ? bank1_meta.branch_owned
                             : bank0_meta.branch_owned);
         slot1_branch_owned =
-            slot1_dec.is_conditional_branch
+            slot1_effective_dec.is_conditional_branch
             && !start_pc[2] && bank1_meta.branch_owned;
 
         slot0_pred_taken = steer_taken && (steer_bank == start_pc[2]);
@@ -214,7 +233,7 @@ module frontend_f0_packet_builder
             enq0_valid, // valid
             slot0_pc, // pc
             slot0_inst, // inst
-            slot0_dec, // frontend_predecode_t decoded
+            slot0_effective_dec, // frontend_predecode_t decoded
             slot0_cached_dec.writes_dst,
             slot0_cached_dec.block_younger, // force_single
             slot0_pred_taken, // pred_taken
@@ -229,7 +248,7 @@ module frontend_f0_packet_builder
             enq1_valid,
             slot1_pc,
             slot1_inst,
-            slot1_dec,
+            slot1_effective_dec,
             slot1_cached_dec.writes_dst,
             slot1_cached_dec.slot1_disallowed,
             slot1_pred_taken,
@@ -244,13 +263,13 @@ module frontend_f0_packet_builder
 
         // 预译码信息。
         pair_meta0 = make_pair_meta(
-            slot0_dec, // frontend_predecode_t decoded
+            slot0_effective_dec, // frontend_predecode_t decoded
             slot0_pred_taken, // pred_taken
             slot0_cached_dec.writes_dst,
             slot0_cached_dec.block_younger // force_single
         );
         pair_meta1 = make_pair_meta(
-            slot1_dec,
+            slot1_effective_dec,
             slot1_pred_taken,
             slot1_cached_dec.writes_dst,
             slot1_cached_dec.slot1_disallowed

@@ -14,7 +14,7 @@ module tb_variable_irom_frontend;
     logic irom_req_ready;
     logic irom_resp_valid;
     logic [63:0] irom_data;
-    logic [ 7:0] irom_predecode;
+    logic [13:0] irom_predecode;
     logic if_valid;
     logic if_ready_go;
     logic if_s1_valid;

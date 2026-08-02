@@ -24,34 +24,19 @@ module id_ex_reg
     output id_ex_slot0_t  ex_payload
 );
 
-    // Keep the embedded PHT counter reset aligned with frontend defaults.
-    function automatic id_ex_slot0_t reset_payload();
-        begin
-            reset_payload = '0;
-            reset_payload.common.prediction.prediction.stage1_pht_counter =
-                2'b01;
-        end
-    endfunction
+    // Reset and redirect invalidate the stage; stale payload is unobservable.
+    always_ff @(posedge clk) begin
+        if (!rst_n)
+            ex_valid <= 1'b0;
+        else if (ex_flush)
+            ex_valid <= 1'b0;
+        else if (ex_allowin)
+            ex_valid <= id_valid & id_ready_go;
+    end
 
     always_ff @(posedge clk) begin
-        if (!rst_n) begin
-            ex_valid <= 1'b0;
-            ex_payload <= reset_payload();
-        end else if (ex_flush) begin
-            // Flush clears validity and repair/prediction tags that could
-            // otherwise affect the next instruction accepted into EX.
-            ex_valid <= 1'b0;
-            ex_payload.common.rs1_wb_repair <= 1'b0;
-            ex_payload.common.rs2_wb_repair <= 1'b0;
-            ex_payload.common.alu_src1_wb_repair <= 1'b0;
-            ex_payload.common.alu_src2_wb_repair <= 1'b0;
-            ex_payload.common.prediction.prediction.source_abtb <= 1'b0;
-            ex_payload.common.prediction.prediction.stage1_branch_owned <=
-                1'b0;
-        end else if (ex_allowin) begin
-            ex_valid <= id_valid & id_ready_go;
+        if (ex_allowin)
             ex_payload <= id_payload;
-        end
     end
 
 endmodule

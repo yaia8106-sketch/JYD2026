@@ -25,32 +25,16 @@ module ex_mem_reg_s1
     // registered MEM redirect invalidates it.
     wire s1_flush = ex_branch_flush | mem_branch_flush;
 
-    // Preserve payload fields for observability, but mask all architectural
-    // side effects when Slot 1 is not actually active.
-    function automatic ex_mem_slot1_t accepted_payload(
-        input ex_mem_slot1_t payload,
-        input logic          slot_active
-    );
-        begin
-            accepted_payload = payload;
-            accepted_payload.reg_write_en &= slot_active;
-            accepted_payload.mem_read_en  &= slot_active;
-            accepted_payload.mem_write_en &= slot_active;
-            accepted_payload.store_wea = slot_active ? payload.store_wea : 4'd0;
-        end
-    endfunction
+    always_ff @(posedge clk) begin
+        if (!rst_n)
+            mem_s1_valid <= 1'b0;
+        else if (mem_allowin)
+            mem_s1_valid <= ex_s1_valid & ex_ready_go & ~s1_flush;
+    end
 
     always_ff @(posedge clk) begin
-        if (!rst_n) begin
-            mem_s1_valid <= 1'b0;
-            mem_payload <= '0;
-        end else if (mem_allowin) begin
-            mem_s1_valid <= ex_s1_valid & ex_ready_go & ~s1_flush;
-            mem_payload <= accepted_payload(
-                ex_payload,
-                ex_s1_valid & ~s1_flush
-            );
-        end
+        if (mem_allowin)
+            mem_payload <= ex_payload;
     end
 
 endmodule
