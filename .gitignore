@@ -48,3 +48,6 @@ __pycache__/
 
 # --- Local Editor Config ---
 .windsurfrules
+
+# AI Rules
+00_AI_Rules/
