@@ -13,7 +13,7 @@ The chiplab processor contract is implemented by `rtl/mycpu_top.v`:
 - the AXI port is the AXI3-style chiplab shape, including `arid`, `awid`, and
   `wid`.
 
-The NSCSCC DCache is 4 KiB, 2-way set associative, with 64 sets and
+The NSCSCC DCache is 8 KiB, 2-way set associative, with 128 sets and
 32-byte lines.  It uses write-back plus write-allocate: cacheable stores update
 the local line and set its dirty bit; a dirty replacement is emitted as one
 eight-beat AXI write burst before the new line is refilled.  Consecutive

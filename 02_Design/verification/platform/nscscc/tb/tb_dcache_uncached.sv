@@ -44,7 +44,7 @@ module tb_dcache_uncached;
         .cpu_req(cpu_req),
         .cpu_wr(cpu_wr),
         .cpu_addr(cpu_addr),
-        .cpu_lookup_addr(cpu_addr[10:2]),
+        .cpu_lookup_addr(cpu_addr[11:2]),
         .cpu_wea(cpu_wea),
         .cpu_wdata(cpu_wdata),
         .cpu_load_size(cpu_load_size),

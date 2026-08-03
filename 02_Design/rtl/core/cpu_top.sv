@@ -43,7 +43,7 @@ module cpu_top
     output logic        cache_req,       // EX stage: memory request valid
     output logic        cache_wr,        // EX stage: 0=load, 1=store
     output logic [31:0] cache_addr,      // EX stage: memory address
-    output logic [ 8:0] cache_lookup_addr, // EX stage: addr[10:2], short DCache lookup path
+    output logic [ 9:0] cache_lookup_addr, // EX stage: addr[11:2], short DCache lookup path
     output logic [ 3:0] cache_wea,       // EX stage: byte write enable
     output logic [31:0] cache_wdata,     // EX stage: raw store data
     output logic [ 3:0] cache_load_mask, // EX stage: load byte lanes
@@ -302,12 +302,12 @@ module cpu_top
     wire [31:0] ex_rs2_data_repair;
     wire [31:0] ex_s1_rs1_data_repair;
     wire [31:0] ex_s1_rs2_data_repair;
-    wire [10:0] ex_lsu_addr_low_raw;
-    wire [10:0] ex_lsu_addr_low_wb;
-    wire [10:0] ex_lsu_addr_low;
-    wire [10:0] ex_s1_lsu_addr_low_raw;
-    wire [10:0] ex_s1_lsu_addr_low_wb;
-    wire [10:0] ex_s1_lsu_addr_low;
+    wire [11:0] ex_lsu_addr_low_raw;
+    wire [11:0] ex_lsu_addr_low_wb;
+    wire [11:0] ex_lsu_addr_low;
+    wire [11:0] ex_s1_lsu_addr_low_raw;
+    wire [11:0] ex_s1_lsu_addr_low_wb;
+    wire [11:0] ex_s1_lsu_addr_low;
     wire [ 1:0] ex_store_addr_low;
     wire [ 1:0] ex_s1_store_addr_low;
 
@@ -1815,21 +1815,21 @@ module cpu_top
 
     // An LSU address is base-register + immediate, so only source 1 can carry
     // a late WB-load repair.  Form the raw-base and repaired-base low-address
-    // candidates in parallel, then select after their short 11-bit adders.
+    // candidates in parallel, then select after their short 12-bit adders.
     // The full 32-bit address adder remains the architectural address source;
-    // this independent modulo-2^11 copy feeds only DCache lookup, byte-lane
+    // this independent modulo-2^12 copy feeds only DCache lookup, byte-lane
     // selection, and alignment checks.
-    assign ex_lsu_addr_low_raw = ex_alu_src1[10:0]
-                               + ex_alu_src2[10:0];
-    assign ex_lsu_addr_low_wb = wb_load_data_ex[10:0]
-                              + ex_alu_src2[10:0];
+    assign ex_lsu_addr_low_raw = ex_alu_src1[11:0]
+                               + ex_alu_src2[11:0];
+    assign ex_lsu_addr_low_wb = wb_load_data_ex[11:0]
+                              + ex_alu_src2[11:0];
     assign ex_lsu_addr_low = ex_alu_src1_wb_repair
                            ? ex_lsu_addr_low_wb : ex_lsu_addr_low_raw;
 
-    assign ex_s1_lsu_addr_low_raw = ex_s1_alu_src1[10:0]
-                                  + ex_s1_alu_src2[10:0];
-    assign ex_s1_lsu_addr_low_wb = wb_load_data_ex[10:0]
-                                 + ex_s1_alu_src2[10:0];
+    assign ex_s1_lsu_addr_low_raw = ex_s1_alu_src1[11:0]
+                                  + ex_s1_alu_src2[11:0];
+    assign ex_s1_lsu_addr_low_wb = wb_load_data_ex[11:0]
+                                 + ex_s1_alu_src2[11:0];
     assign ex_s1_lsu_addr_low = ex_s1_alu_src1_wb_repair
                               ? ex_s1_lsu_addr_low_wb
                               : ex_s1_lsu_addr_low_raw;
@@ -2065,14 +2065,14 @@ module cpu_top
         if (rst_n && ex_valid && (ex_mem_read_en | ex_mem_write_en)) begin
             if (ex_alu_src2_wb_repair)
                 $fatal(1, "Slot0 LSU unexpectedly repairs immediate source 2");
-            if (ex_lsu_addr_low !== alu_addr[10:0])
+            if (ex_lsu_addr_low !== alu_addr[11:0])
                 $fatal(1, "Slot0 short LSU address disagrees with full address");
         end
         if (rst_n && ex_s1_valid
                   && (ex_s1_mem_read_en | ex_s1_mem_write_en)) begin
             if (ex_s1_alu_src2_wb_repair)
                 $fatal(1, "Slot1 LSU unexpectedly repairs immediate source 2");
-            if (ex_s1_lsu_addr_low !== alu_s1_addr[10:0])
+            if (ex_s1_lsu_addr_low !== alu_s1_addr[11:0])
                 $fatal(1, "Slot1 short LSU address disagrees with full address");
         end
         if (rst_n && ex_s1_valid

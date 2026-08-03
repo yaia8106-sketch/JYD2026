@@ -95,7 +95,7 @@ module core_top #(
     wire        cache_req;
     wire        cache_wr;
     wire [31:0] cache_addr;
-    wire [ 8:0] cache_lookup_addr;
+    wire [ 9:0] cache_lookup_addr;
     wire [ 3:0] cache_wea;
     wire [31:0] cache_wdata;
     wire [ 3:0] cache_load_mask;

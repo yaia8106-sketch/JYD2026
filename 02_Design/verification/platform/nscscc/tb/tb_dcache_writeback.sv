@@ -48,7 +48,7 @@ module tb_dcache_writeback;
         .cpu_req(cpu_req),
         .cpu_wr(cpu_wr),
         .cpu_addr(cpu_addr),
-        .cpu_lookup_addr(cpu_addr[10:2]),
+        .cpu_lookup_addr(cpu_addr[11:2]),
         .cpu_wea(cpu_wea),
         .cpu_wdata(cpu_wdata),
         .cpu_load_size(cpu_load_size),
@@ -605,13 +605,15 @@ module tb_dcache_writeback;
     integer writes_before;
 
     localparam logic [31:0] A = 32'h1c08_0040;
-    // A/B/C and S/T/U use the same set in the 64-set cache. One way holds
-    // 2KB, so identical set indices are 0x800 bytes apart.
-    localparam logic [31:0] B = 32'h1c08_0840;
-    localparam logic [31:0] C = 32'h1c08_1040;
+    // A/B/C and S/T/U use the same set in the 128-set cache. One way holds
+    // 4KB, so identical set indices are 0x1000 bytes apart. A_INDEX_HI differs
+    // only in index bit addr[11] and must coexist with all three same-set lines.
+    localparam logic [31:0] A_INDEX_HI = 32'h1c08_0840;
+    localparam logic [31:0] B = 32'h1c08_1040;
+    localparam logic [31:0] C = 32'h1c08_2040;
     localparam logic [31:0] S = 32'h1c08_0060;
-    localparam logic [31:0] T = 32'h1c08_0860;
-    localparam logic [31:0] U = 32'h1c08_1060;
+    localparam logic [31:0] T = 32'h1c08_1060;
+    localparam logic [31:0] U = 32'h1c08_2060;
     localparam logic [31:0] V = 32'h1c08_0080;
 
     initial begin
@@ -667,6 +669,19 @@ module tb_dcache_writeback;
         load_hit_formatted(A + 9, 2'b00, 1'b0, 32'hffff_ffaa);
         load_hit_formatted(A + 9, 2'b00, 1'b1, 32'h0000_00aa);
         load_hit_formatted(A + 10, 2'b01, 1'b1, 32'h0000_3333);
+
+        $display("[INFO] addr[11] selects an independent 4KB way half");
+        load_miss(
+            A_INDEX_HI,
+            32'h5800_0000, 32'h5800_0001,
+            32'h5800_0002, 32'h5800_0003,
+            32'h5800_0004, 32'h5800_0005,
+            32'h5800_0006, 32'h5800_0007,
+            result
+        );
+        check(result == 32'h5800_0000,
+              "upper-index-half refill result mismatch");
+        load_hit(A + 8, 32'h3333_aa44);
 
         $display("[INFO] use invalid way for B, then dirty B");
         load_miss(
@@ -735,6 +750,7 @@ module tb_dcache_writeback;
             result
         );
         check(result == 32'hc000_0000, "C refill result mismatch");
+        load_hit(A_INDEX_HI, 32'h5800_0000);
 
         $display("[INFO] store miss allocates and merges only selected bytes");
         writes_before = write_commands;
@@ -786,7 +802,7 @@ module tb_dcache_writeback;
 
         check(write_commands == 2,
               "unexpected number of dirty writeback commands");
-        check(read_commands == 7,
+        check(read_commands == 8,
               "unexpected number of cache-line refill commands");
 
         repeat (3) @(posedge clk);

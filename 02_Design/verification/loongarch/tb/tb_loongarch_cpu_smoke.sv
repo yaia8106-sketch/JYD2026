@@ -19,7 +19,7 @@ module tb_loongarch_cpu_smoke;
     logic cache_req;
     logic cache_wr;
     logic [31:0] cache_addr;
-    logic [8:0] cache_lookup_addr;
+    logic [9:0] cache_lookup_addr;
     logic [3:0] cache_wea;
     logic [31:0] cache_wdata;
     logic [3:0] cache_load_mask;
@@ -160,7 +160,7 @@ module tb_loongarch_cpu_smoke;
         end else if (cache_req) begin
             logic [3:0] expected_load_mask;
 
-            if (cache_lookup_addr !== cache_addr[10:2])
+            if (cache_lookup_addr !== cache_addr[11:2])
                 $fatal(1,
                        "[FAIL] short DCache lookup address differs from full address");
             short_lookup_request_count <= short_lookup_request_count + 1;

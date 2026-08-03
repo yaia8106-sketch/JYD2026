@@ -55,9 +55,12 @@ and never allocate a cache line.
 
 `functional/run_dcache_writeback.sh` checks the NSCSCC write-back/write-allocate
 policy.  It covers store hits remaining local, byte-store merge on allocation,
-invalid-way preference, critical-word-first eight-beat WRAP refill, ordered eight-beat
-dirty eviction, write-data backpressure, a following held request, and
-preservation of an already acknowledged store across a pipeline flush.  A
+invalid-way preference, critical-word-first eight-beat WRAP refill, ordered
+eight-beat dirty eviction, write-data backpressure, a following held request,
+and preservation of an already acknowledged store across a pipeline flush.
+It also checks that address bit 11 selects the upper half of the 8 KiB data
+array
+without aliasing the same-offset line in the lower half. A
 directed same-word store-hit/load-hit pair checks the registered BRAM RAW
 collision bypass and requires zero load stall.
 
