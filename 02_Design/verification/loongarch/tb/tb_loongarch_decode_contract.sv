@@ -8,9 +8,7 @@ module tb_loongarch_decode_contract;
     frontend_predecode_t predecode;
     frontend_icache_predecode_t icache_predecode;
     frontend_predecode_t expanded_predecode;
-    frontend_predecode_t poisoned_predecode;
-    frontend_predecode_t poisoned_expanded_predecode;
-    logic [7:0] icache_class_seen;
+    logic [31:0] icache_kind_seen;
 
     logic [31:0] alu_src1;
     logic [31:0] alu_src2;
@@ -38,22 +36,9 @@ module tb_loongarch_decode_contract;
     );
 
     loongarch_cached_predecode_expand u_cached_expand (
-        .inst         (inst),
-        .full_decoded (predecode),
-        .cached       (icache_predecode),
-        .expanded     (expanded_predecode)
-    );
-
-    // Deliberately make the fallback input disagree with the real decoder.
-    // Ordinary cached classes must reconstruct every field without observing
-    // this value; ICACHE_CLASS_OTHER must preserve it exactly.
-    assign poisoned_predecode = ~predecode;
-
-    loongarch_cached_predecode_expand u_poisoned_cached_expand (
-        .inst         (inst),
-        .full_decoded (poisoned_predecode),
-        .cached       (icache_predecode),
-        .expanded     (poisoned_expanded_predecode)
+        .inst     (inst),
+        .cached   (icache_predecode),
+        .expanded (expanded_predecode)
     );
 
     alu u_alu (
@@ -180,41 +165,62 @@ module tb_loongarch_decode_contract;
         end
     endfunction
 
-    function automatic icache_inst_class_t expected_icache_class;
+    function automatic icache_inst_kind_t expected_icache_kind;
         begin
-            if (predecode.is_alu_type
+            if (predecode.is_illegal)
+                expected_icache_kind = ICACHE_KIND_ILLEGAL;
+            else if (predecode.is_alu_type
                 && predecode.uses_src0 && predecode.uses_src1)
-                expected_icache_class = ICACHE_CLASS_ALU_RR;
+                expected_icache_kind = ICACHE_KIND_ALU_RR;
             else if (predecode.is_alu_type && predecode.uses_src0)
-                expected_icache_class = ICACHE_CLASS_ALU_IMM;
+                expected_icache_kind = ICACHE_KIND_ALU_IMM;
             else if (predecode.is_alu_type)
-                expected_icache_class = ICACHE_CLASS_UPPER_IMM;
+                expected_icache_kind = ICACHE_KIND_UPPER_IMM;
             else if (predecode.is_load)
-                expected_icache_class = ICACHE_CLASS_LOAD;
+                expected_icache_kind = ICACHE_KIND_LOAD;
             else if (predecode.is_store)
-                expected_icache_class = ICACHE_CLASS_STORE;
+                expected_icache_kind = ICACHE_KIND_STORE;
+            else if (predecode.is_mul)
+                expected_icache_kind = ICACHE_KIND_MUL;
             else if (predecode.is_muldiv)
-                expected_icache_class = ICACHE_CLASS_MULDIV;
-            else if (predecode.is_cfi)
-                expected_icache_class = ICACHE_CLASS_CFI;
+                expected_icache_kind = ICACHE_KIND_DIVMOD;
+            else if (predecode.is_conditional_branch)
+                expected_icache_kind = ICACHE_KIND_CONDITIONAL;
+            else if (predecode.is_direct_jump && predecode.writes_dst)
+                expected_icache_kind = ICACHE_KIND_BRANCH_LINK;
+            else if (predecode.is_direct_jump)
+                expected_icache_kind = ICACHE_KIND_BRANCH;
+            else if (predecode.is_indirect_jump)
+                expected_icache_kind = ICACHE_KIND_JIRL;
+            else if ((inst[31:24] == 8'h04) && (inst[9:5] == 5'd0))
+                expected_icache_kind = ICACHE_KIND_CSR_READ;
+            else if ((inst[31:24] == 8'h04) && (inst[9:5] == 5'd1))
+                expected_icache_kind = ICACHE_KIND_CSR_WRITE;
+            else if (inst[31:24] == 8'h04)
+                expected_icache_kind = ICACHE_KIND_CSR_EXCHANGE;
+            else if ((uop.priv_op == PRIV_COUNTER)
+                     && (uop.priv_addr == 16'hffff))
+                expected_icache_kind = ICACHE_KIND_COUNTER_ID;
+            else if (uop.priv_op == PRIV_COUNTER)
+                expected_icache_kind = ICACHE_KIND_COUNTER;
+            else if (uop.priv_op == PRIV_CPUCFG)
+                expected_icache_kind = ICACHE_KIND_CPUCFG;
+            else if (predecode.is_privileged_flow)
+                expected_icache_kind = ICACHE_KIND_PRIV_FLOW;
             else
-                expected_icache_class = ICACHE_CLASS_OTHER;
+                expected_icache_kind = ICACHE_KIND_ILLEGAL;
         end
     endfunction
 
     function automatic logic icache_metadata_matches_predecode;
         begin
             icache_metadata_matches_predecode =
-                (icache_predecode.static_kill_younger
-                    == predecode.is_jump)
-                && (icache_predecode.block_younger
+                (icache_predecode.block_younger
                     == predecode.block_younger)
-                && (icache_predecode.slot1_disallowed
-                    == ~predecode.lane_mask[1])
                 && (icache_predecode.writes_dst
                     == predecode.writes_dst)
-                && (icache_predecode.inst_class
-                    == expected_icache_class());
+                && (icache_predecode.inst_kind
+                    == expected_icache_kind());
         end
     endfunction
 
@@ -297,18 +303,9 @@ module tb_loongarch_decode_contract;
                        current_case, inst);
             if (expanded_predecode !== predecode)
                 $fatal(1,
-                       "[FAIL] %s: cached-class expansion differs from predecode (inst=%08x)",
+                       "[FAIL] %s: cached-kind expansion differs from predecode (inst=%08x)",
                        current_case, inst);
-            if ((icache_predecode.inst_class == ICACHE_CLASS_OTHER)
-                && (poisoned_expanded_predecode !== poisoned_predecode))
-                $fatal(1,
-                       "[FAIL] %s: OTHER class did not select the complete fallback (inst=%08x)",
-                       current_case, inst);
-            if ((icache_predecode.inst_class != ICACHE_CLASS_OTHER)
-                && (poisoned_expanded_predecode !== predecode))
-                $fatal(1,
-                       "[FAIL] %s: ordinary class still depends on complete decode (inst=%08x)",
-                       current_case, inst);
+            icache_kind_seen[icache_predecode.inst_kind] = 1'b1;
         end
     endtask
 
@@ -341,7 +338,6 @@ module tb_loongarch_decode_contract;
         logic expected_legal;
         begin
             legal_prefix_count = 0;
-            icache_class_seen = '0;
             $display("[INFO] Exhaustively checking all 131072 inst[31:15] prefixes...");
             for (int unsigned prefix = 0; prefix < 131072; prefix++) begin
                 inst = {prefix[16:0], 15'd0};
@@ -368,19 +364,9 @@ module tb_loongarch_decode_contract;
                            prefix[16:0]);
                 if (expanded_predecode !== predecode)
                     $fatal(1,
-                           "[FAIL] prefix %05x: cached-class expansion mismatch",
+                           "[FAIL] prefix %05x: cached-kind expansion mismatch",
                            prefix[16:0]);
-                if ((icache_predecode.inst_class == ICACHE_CLASS_OTHER)
-                    && (poisoned_expanded_predecode !== poisoned_predecode))
-                    $fatal(1,
-                           "[FAIL] prefix %05x: OTHER fallback mismatch",
-                           prefix[16:0]);
-                if ((icache_predecode.inst_class != ICACHE_CLASS_OTHER)
-                    && (poisoned_expanded_predecode !== predecode))
-                    $fatal(1,
-                           "[FAIL] prefix %05x: ordinary class uses fallback decode",
-                           prefix[16:0]);
-                icache_class_seen[icache_predecode.inst_class] = 1'b1;
+                icache_kind_seen[icache_predecode.inst_kind] = 1'b1;
                 if (!expected_legal
                     && ((uop.exec_unit != EXEC_NONE)
                         || uop.dst_write || (uop.mem_cmd != MEM_NONE)
@@ -393,8 +379,6 @@ module tb_loongarch_decode_contract;
             end
             check(legal_prefix_count == 22807,
                   "independent legal-prefix population");
-            check(&icache_class_seen,
-                  "all eight ICache instruction classes were observed");
             opcode_prefix_count = 131072;
         end
     endtask
@@ -517,6 +501,7 @@ module tb_loongarch_decode_contract;
         alu_src2 = 32'h0f0f_f0f0;
         case_count = 0;
         opcode_prefix_count = 0;
+        icache_kind_seen = '0;
         current_case = "initial";
         #1;
 
@@ -780,6 +765,8 @@ module tb_loongarch_decode_contract;
                                      "unknown encoding containment");
 
         run_exhaustive_opcode_prefix_check();
+        check((icache_kind_seen & 32'h0007_ffff) == 32'h0007_ffff,
+              "all nineteen exact ICache instruction kinds were observed");
 
         $display("[PASS] LoongArch decoded-uop contract directed test (%0d cases, %0d opcode prefixes)",
                  case_count, opcode_prefix_count);

@@ -9,6 +9,8 @@ module tb_dcache_writeback;
     logic [31:0] cpu_addr;
     logic [ 3:0] cpu_wea;
     logic [31:0] cpu_wdata;
+    logic [ 1:0] cpu_load_size;
+    logic        cpu_load_unsigned;
     logic        cpu_uncached;
     logic [31:0] cpu_rdata;
     logic        cpu_ready;
@@ -46,8 +48,11 @@ module tb_dcache_writeback;
         .cpu_req(cpu_req),
         .cpu_wr(cpu_wr),
         .cpu_addr(cpu_addr),
+        .cpu_lookup_addr(cpu_addr[10:2]),
         .cpu_wea(cpu_wea),
         .cpu_wdata(cpu_wdata),
+        .cpu_load_size(cpu_load_size),
+        .cpu_load_unsigned(cpu_load_unsigned),
         .cpu_uncached(cpu_uncached),
         .cpu_rdata(cpu_rdata),
         .cpu_ready(cpu_ready),
@@ -388,6 +393,42 @@ module tb_dcache_writeback;
         end
     endtask
 
+    task automatic load_hit_formatted(
+        input logic [31:0] addr,
+        input logic [ 1:0] size,
+        input logic        load_unsigned,
+        input logic [31:0] expected
+    );
+        begin
+            cpu_load_size = size;
+            cpu_load_unsigned = load_unsigned;
+            load_hit(addr, expected);
+            cpu_load_size = 2'b10;
+            cpu_load_unsigned = 1'b0;
+        end
+    endtask
+
+    task automatic store_then_load_formatted_no_stall(
+        input logic [31:0] store_addr,
+        input logic [ 3:0] store_wea,
+        input logic [31:0] store_data,
+        input logic [31:0] load_addr,
+        input logic [ 1:0] load_size,
+        input logic        load_unsigned,
+        input logic [31:0] expected
+    );
+        begin
+            cpu_load_size = load_size;
+            cpu_load_unsigned = load_unsigned;
+            store_then_load_no_stall(
+                store_addr, store_wea, store_data,
+                load_addr, expected, 1'b1
+            );
+            cpu_load_size = 2'b10;
+            cpu_load_unsigned = 1'b0;
+        end
+    endtask
+
     task automatic store_hit(
         input logic [31:0] addr,
         input logic [ 3:0] wea,
@@ -532,6 +573,8 @@ module tb_dcache_writeback;
         cpu_addr = 32'd0;
         cpu_wea = 4'd0;
         cpu_wdata = 32'd0;
+        cpu_load_size = 2'b10;
+        cpu_load_unsigned = 1'b0;
         cpu_uncached = 1'b0;
         flush = 1'b0;
         mem_req_ready = 1'b0;
@@ -551,14 +594,18 @@ module tb_dcache_writeback;
         repeat (2) @(posedge clk);
 
         $display("[INFO] fill A, dirty it with a partial store, retain locally");
+        cpu_load_size = 2'b01;
+        cpu_load_unsigned = 1'b0;
         load_miss(
-            A + 8,
+            A + 10,
             32'h1111_0000, 32'h2222_0001,
             32'h3333_4444, 32'h4444_0003,
             result
         );
-        check(result == 32'h3333_4444,
-              "initial A refill returned the wrong target word");
+        check(result == 32'h0000_3333,
+              "initial A refill halfword formatting mismatch");
+        cpu_load_size = 2'b10;
+        cpu_load_unsigned = 1'b0;
         writes_before = write_commands;
         store_then_load_no_stall(
             A + 9, 4'b0010, 32'h0000_00aa,
@@ -566,6 +613,9 @@ module tb_dcache_writeback;
         );
         check(write_commands == writes_before,
               "store hit reached memory before eviction");
+        load_hit_formatted(A + 9, 2'b00, 1'b0, 32'hffff_ffaa);
+        load_hit_formatted(A + 9, 2'b00, 1'b1, 32'h0000_00aa);
+        load_hit_formatted(A + 10, 2'b01, 1'b1, 32'h0000_3333);
 
         $display("[INFO] use invalid way for B, then dirty B");
         load_miss(
@@ -582,6 +632,41 @@ module tb_dcache_writeback;
             B, 32'haaaa_0000, 1'b0
         );
         store_hit(B + 4, 4'b1111, 32'hdead_beef);
+
+        $display("[INFO] exhaustive hit formatting across all byte offsets");
+        load_hit_formatted(B + 4, 2'b00, 1'b0, 32'hffff_ffef);
+        load_hit_formatted(B + 5, 2'b00, 1'b0, 32'hffff_ffbe);
+        load_hit_formatted(B + 6, 2'b00, 1'b0, 32'hffff_ffad);
+        load_hit_formatted(B + 7, 2'b00, 1'b0, 32'hffff_ffde);
+        load_hit_formatted(B + 4, 2'b00, 1'b1, 32'h0000_00ef);
+        load_hit_formatted(B + 5, 2'b00, 1'b1, 32'h0000_00be);
+        load_hit_formatted(B + 6, 2'b00, 1'b1, 32'h0000_00ad);
+        load_hit_formatted(B + 7, 2'b00, 1'b1, 32'h0000_00de);
+
+        load_hit_formatted(B + 4, 2'b01, 1'b0, 32'hffff_beef);
+        load_hit_formatted(B + 5, 2'b01, 1'b0, 32'hffff_adbe);
+        load_hit_formatted(B + 6, 2'b01, 1'b0, 32'hffff_dead);
+        load_hit_formatted(B + 7, 2'b01, 1'b0, 32'h0000_00de);
+        load_hit_formatted(B + 4, 2'b01, 1'b1, 32'h0000_beef);
+        load_hit_formatted(B + 5, 2'b01, 1'b1, 32'h0000_adbe);
+        load_hit_formatted(B + 6, 2'b01, 1'b1, 32'h0000_dead);
+        load_hit_formatted(B + 7, 2'b01, 1'b1, 32'h0000_00de);
+
+        load_hit_formatted(B + 4, 2'b10, 1'b0, 32'hdead_beef);
+        load_hit_formatted(B + 5, 2'b10, 1'b0, 32'h00de_adbe);
+        load_hit_formatted(B + 6, 2'b10, 1'b0, 32'h0000_dead);
+        load_hit_formatted(B + 7, 2'b10, 1'b0, 32'h0000_00de);
+        load_hit_formatted(B + 4, 2'b11, 1'b0, 32'h0000_0000);
+
+        $display("[INFO] formatted load consumes registered BRAM RAW bypass");
+        store_then_load_formatted_no_stall(
+            B + 7, 4'b1000, 32'h0000_0080,
+            B + 7, 2'b00, 1'b0, 32'hffff_ff80
+        );
+        store_then_load_formatted_no_stall(
+            B + 6, 4'b1100, 32'h0000_8001,
+            B + 6, 2'b01, 1'b0, 32'hffff_8001
+        );
 
         $display("[INFO] C evicts dirty A as one four-beat write burst");
         load_dirty_miss(

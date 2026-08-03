@@ -27,6 +27,9 @@ module tb_loongarch_privileged;
     logic [5:0] excp_cause;
     logic [31:0] excp_pc;
     logic [31:0] excp_inst;
+    logic cache_req;
+    logic cache_wr;
+    logic [31:0] cache_addr;
     logic cache_ready;
     logic [2:0] cache_phase;
     integer excp_count;
@@ -37,6 +40,9 @@ module tb_loongarch_privileged;
     integer csr_fire_while_cache_wait_count;
     integer trap_fire_while_cache_wait_count;
     integer ertn_fire_while_cache_wait_count;
+    logic load_for_csr_observed;
+    logic load_to_csr_wait_observed;
+    logic csr_after_load_ex_observed;
 
     loongarch_icache_block_predecode u_irom_predecode (
         .block_data     (irom_data),
@@ -49,9 +55,12 @@ module tb_loongarch_privileged;
         .irom_req_kill(),
         .irom_req_ready(1'b0), .irom_resp_valid(1'b0), .irom_data(irom_data),
         .irom_resp_predecode(irom_predecode),
-        .cache_req(), .cache_wr(), .cache_addr(), .cache_wea(),
-        .cache_wdata(), .cache_load_mask(), .cache_uncached(),
-        .cache_rdata(32'd0), .cache_ready(cache_ready), .cache_flush(),
+        .cache_req(cache_req), .cache_wr(cache_wr),
+        .cache_addr(cache_addr), .cache_lookup_addr(), .cache_wea(),
+        .cache_wdata(), .cache_load_mask(), .cache_load_size(),
+        .cache_load_unsigned(), .cache_uncached(),
+        .cache_rdata(RESET_PC + 32'h100),
+        .cache_ready(cache_ready), .cache_flush(),
         .cache_pipeline_stall(), .mmio_addr(), .mmio_wr_addr(),
         .mmio_wea(), .mmio_wdata(), .mmio_rdata(32'd0),
         .timer_irq_pending(1'b0),
@@ -113,12 +122,33 @@ module tb_loongarch_privileged;
             csr_fire_while_cache_wait_count <= 0;
             trap_fire_while_cache_wait_count <= 0;
             ertn_fire_while_cache_wait_count <= 0;
+            load_for_csr_observed <= 1'b0;
+            load_to_csr_wait_observed <= 1'b0;
+            csr_after_load_ex_observed <= 1'b0;
         end else begin
             cache_phase <= cache_phase + 3'd1;
             if (!cache_ready)
                 cache_wait_cycles <= cache_wait_cycles + 1;
             if (u_cpu.id_valid && !u_cpu.id_serializing_ready)
                 serializing_wait_cycles <= serializing_wait_cycles + 1;
+            if (cache_req && !cache_wr
+                && (cache_addr == 32'h8010_0000))
+                load_for_csr_observed <= 1'b1;
+            if (u_cpu.id_valid
+                && (u_cpu.id_pc == RESET_PC + 32'h08)
+                && !u_cpu.id_serializing_ready)
+                load_to_csr_wait_observed <= 1'b1;
+            if (u_cpu.ex_valid
+                && (u_cpu.ex_pc == RESET_PC + 32'h08)
+                && (u_cpu.ex_priv_op == PRIV_REG)) begin
+                csr_after_load_ex_observed <= 1'b1;
+                if (u_cpu.ex_rs1_wb_repair | u_cpu.ex_rs2_wb_repair)
+                    $fatal(1,
+                           "[FAIL] load-dependent CSR entered EX with WB repair");
+                if (u_cpu.ex_rs1_data !== (RESET_PC + 32'h100))
+                    $fatal(1,
+                           "[FAIL] load-dependent CSR captured stale source data");
+            end
             if (u_cpu.u_isa_priv_unit.u_impl.ex_csr_write_fire) begin
                 csr_write_count <= csr_write_count + 1;
                 if (!cache_ready)
@@ -158,6 +188,14 @@ module tb_loongarch_privileged;
         enc_lu12i = {6'h05, 1'b0, imm, rd};
     endfunction
 
+    function automatic logic [31:0] enc_load(
+        input logic [11:0] imm,
+        input logic [4:0]  rj,
+        input logic [4:0]  rd
+    );
+        enc_load = {6'h0a, 4'h2, imm, rj, rd};
+    endfunction
+
     function automatic logic [31:0] enc_csr(
         input logic [13:0] addr,
         input logic [4:0] rj,
@@ -192,11 +230,18 @@ module tb_loongarch_privileged;
         csr_fire_while_cache_wait_count = 0;
         trap_fire_while_cache_wait_count = 0;
         ertn_fire_while_cache_wait_count = 0;
+        load_for_csr_observed = 1'b0;
+        load_to_csr_wait_observed = 1'b0;
+        csr_after_load_ex_observed = 1'b0;
         for (int i = 0; i < 256; i++)
             irom[i] = NOP;
 
-        irom['h00 >> 2] = enc_lu12i(20'h80000, 5'd2);
-        irom['h04 >> 2] = enc_i12(12'h100, 5'd2, 5'd2);
+        // The immediately following CSRWR consumes a cacheable load result.
+        // Because CSR operations serialize, the load must fully leave WB and
+        // update r2 before the CSR token enters EX; generic WB-repair muxes are
+        // therefore neither necessary nor legal on the CSR operand path.
+        irom['h00 >> 2] = enc_lu12i(20'h80100, 5'd2);
+        irom['h04 >> 2] = enc_load(12'h000, 5'd2, 5'd2);
         irom['h08 >> 2] = enc_csr(14'h00c, 5'd1, 5'd2); // EENTRY
         irom['h0c >> 2] = enc_i12(12'd3, 5'd0, 5'd3);
         irom['h10 >> 2] = enc_i12(12'd7, 5'd0, 5'd4);
@@ -245,6 +290,12 @@ module tb_loongarch_privileged;
               "privileged regression did not exercise MEM backpressure");
         check(serializing_wait_cycles > 0,
               "privileged regression did not wait behind an older token");
+        check(load_for_csr_observed,
+              "load-dependent CSR setup never issued its cacheable load");
+        check(load_to_csr_wait_observed,
+              "CSR did not visibly serialize behind the older load");
+        check(csr_after_load_ex_observed,
+              "load-dependent CSR never reached EX with committed data");
         check(csr_fire_while_cache_wait_count == 3,
               "CSR commit still depends on DCache ready or repeated");
         check(trap_fire_while_cache_wait_count == 1,

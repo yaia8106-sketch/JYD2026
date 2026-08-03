@@ -28,6 +28,25 @@ module tb_icache_metadata;
 
     logic [13:0] decoded_response_predecode;
     logic [31:0] class_word [0:7];
+    logic [31:0] kind_word [0:19];
+    icache_inst_kind_t kind_expected [0:19];
+    logic [18:0] kind_roundtrip_seen;
+
+    // Short aliases keep the refill-order scenarios readable; each name now
+    // denotes the exact kind of its representative instruction.
+    localparam icache_inst_kind_t ICACHE_CLASS_ALU_RR =
+        ICACHE_KIND_ALU_RR;
+    localparam icache_inst_kind_t ICACHE_CLASS_ALU_IMM =
+        ICACHE_KIND_ALU_IMM;
+    localparam icache_inst_kind_t ICACHE_CLASS_UPPER_IMM =
+        ICACHE_KIND_UPPER_IMM;
+    localparam icache_inst_kind_t ICACHE_CLASS_LOAD = ICACHE_KIND_LOAD;
+    localparam icache_inst_kind_t ICACHE_CLASS_STORE = ICACHE_KIND_STORE;
+    localparam icache_inst_kind_t ICACHE_CLASS_MULDIV = ICACHE_KIND_MUL;
+    localparam icache_inst_kind_t ICACHE_CLASS_CFI =
+        ICACHE_KIND_CONDITIONAL;
+    localparam icache_inst_kind_t ICACHE_CLASS_OTHER =
+        ICACHE_KIND_PRIV_FLOW;
 
     integer errors;
     integer response_count;
@@ -97,6 +116,13 @@ module tb_icache_metadata;
         input logic [4:0]  rd
     );
         enc_i16 = {op_31_26, immediate, rj, rd};
+    endfunction
+
+    function automatic logic [31:0] enc_i26(
+        input logic [5:0]  op_31_26,
+        input logic [25:0] immediate
+    );
+        enc_i26 = {op_31_26, immediate[15:0], immediate[25:16]};
     endfunction
 
     task automatic check(input logic condition, input string message);
@@ -196,12 +222,14 @@ module tb_icache_metadata;
 
     task automatic expect_response(
         input logic [63:0]         expected_data,
-        input icache_inst_class_t  expected_low_class,
-        input icache_inst_class_t  expected_high_class,
+        input icache_inst_kind_t   expected_low_kind,
+        input icache_inst_kind_t   expected_high_kind,
         input logic [1:0]          expected_resp,
         input string               name
     );
         integer guard;
+        frontend_icache_predecode_t low_metadata;
+        frontend_icache_predecode_t high_metadata;
         begin
             guard = 0;
             while (!irom_resp_valid) begin
@@ -213,10 +241,12 @@ module tb_icache_metadata;
             #1;
             check(irom_resp_data === expected_data,
                   $sformatf("%s data", name));
-            check(irom_resp_predecode[2:0] === expected_low_class,
-                  $sformatf("%s low instruction class", name));
-            check(irom_resp_predecode[9:7] === expected_high_class,
-                  $sformatf("%s high instruction class", name));
+            low_metadata = irom_resp_predecode[6:0];
+            high_metadata = irom_resp_predecode[13:7];
+            check(low_metadata.inst_kind === expected_low_kind,
+                  $sformatf("%s low instruction kind", name));
+            check(high_metadata.inst_kind === expected_high_kind,
+                  $sformatf("%s high instruction kind", name));
             check(irom_resp_resp === expected_resp,
                   $sformatf("%s response code", name));
         end
@@ -225,8 +255,8 @@ module tb_icache_metadata;
     task automatic expect_local_hit(
         input logic [31:0]         addr,
         input logic [63:0]         expected_data,
-        input icache_inst_class_t  expected_low_class,
-        input icache_inst_class_t  expected_high_class,
+        input icache_inst_kind_t   expected_low_kind,
+        input icache_inst_kind_t   expected_high_kind,
         input string               name
     );
         integer guard;
@@ -249,27 +279,81 @@ module tb_icache_metadata;
             check(!mem_req_valid,
                   $sformatf("%s unexpectedly started a refill", name));
             if (irom_resp_valid)
-                expect_response(expected_data, expected_low_class,
-                                expected_high_class, 2'b00, name);
+                expect_response(expected_data, expected_low_kind,
+                                expected_high_kind, 2'b00, name);
         end
     endtask
 
     task automatic expect_tag_entry(
         input logic [7:0]          index,
         input logic [7:0]          tag,
-        input icache_inst_class_t  class0,
-        input icache_inst_class_t  class1,
-        input icache_inst_class_t  class2,
-        input icache_inst_class_t  class3,
+        input icache_inst_kind_t   kind0,
+        input icache_inst_kind_t   kind1,
+        input icache_inst_kind_t   kind2,
+        input icache_inst_kind_t   kind3,
         input string               name
     );
         logic [19:0] expected_payload;
         begin
-            expected_payload = {class3, class2, class1, class0, tag};
+            expected_payload = {
+                kind3[2:0], kind2[2:0], kind1[2:0], kind0[2:0], tag
+            };
             check(dut.line_valid_q[index],
                   $sformatf("%s valid bit", name));
             check(dut.tag_mem[index] === expected_payload,
-                  $sformatf("%s {class,tag} LUTRAM payload", name));
+                  $sformatf("%s {kind-low,tag} LUTRAM payload", name));
+        end
+    endtask
+
+    // The five kind bits are physically split: kind[2:0] shares the shortened
+    // tag LUTRAM while kind[4:3] occupies data-BRAM parity. Exercise every
+    // defined kind through refill, atomic publication, and both local-hit
+    // blocks so a packing/order error on either side cannot hide behind the
+    // combinational predecode equivalence test.
+    task automatic exercise_exact_kind_line(
+        input integer      base_kind,
+        input logic [31:0] line_addr
+    );
+        begin
+            start_refill(line_addr);
+            send_refill_beat(kind_word[base_kind], 2'b00, 1'b0);
+            send_refill_beat(kind_word[base_kind + 1], 2'b00, 1'b0);
+            expect_response(
+                {kind_word[base_kind + 1], kind_word[base_kind]},
+                kind_expected[base_kind], kind_expected[base_kind + 1],
+                2'b00, $sformatf("kind line %0d critical response",
+                                  base_kind / 4)
+            );
+            send_refill_beat(kind_word[base_kind + 2], 2'b00, 1'b0);
+            send_refill_beat(kind_word[base_kind + 3], 2'b00, 1'b1);
+            repeat (2) @(posedge clk);
+
+            expect_tag_entry(
+                line_addr[11:4], line_addr[19:12],
+                kind_expected[base_kind],
+                kind_expected[base_kind + 1],
+                kind_expected[base_kind + 2],
+                kind_expected[base_kind + 3],
+                $sformatf("kind line %0d physical payload", base_kind / 4)
+            );
+            expect_local_hit(
+                line_addr,
+                {kind_word[base_kind + 1], kind_word[base_kind]},
+                kind_expected[base_kind], kind_expected[base_kind + 1],
+                $sformatf("kind line %0d lower local hit", base_kind / 4)
+            );
+            expect_local_hit(
+                line_addr + 32'd8,
+                {kind_word[base_kind + 3], kind_word[base_kind + 2]},
+                kind_expected[base_kind + 2],
+                kind_expected[base_kind + 3],
+                $sformatf("kind line %0d upper local hit", base_kind / 4)
+            );
+
+            for (int offset = 0; offset < 4; offset++) begin
+                if ((base_kind + offset) < 19)
+                    kind_roundtrip_seen[base_kind + offset] = 1'b1;
+            end
         end
     endtask
 
@@ -286,8 +370,9 @@ module tb_icache_metadata;
         mem_rd_resp = 2'b00;
         errors = 0;
         response_count = 0;
+        kind_roundtrip_seen = '0;
 
-        // One representative of every cached class, with nontrivial register
+        // Representative exact kinds with nontrivial register
         // fields so reconstructed source/destination metadata is exercised.
         class_word[0] = enc_rr(2'h1, 5'h00, 5'd18, 5'd17, 5'd15);
         class_word[1] = enc_i12(6'h00, 4'ha, 12'h7f1, 5'd9, 5'd8);
@@ -296,7 +381,51 @@ module tb_icache_metadata;
         class_word[4] = enc_i12(6'h0a, 4'h6, 12'hff8, 5'd4, 5'd3);
         class_word[5] = enc_rr(2'h1, 5'h18, 5'd20, 5'd2, 5'd1);
         class_word[6] = enc_i16(6'h16, 16'h0012, 5'd13, 5'd12);
-        class_word[7] = 32'h0648_3800; // ERTN: cached as OTHER/fallback.
+        class_word[7] = 32'h0648_3800;
+
+        // One representative of every exact kind. Entry 19 pads the fifth
+        // four-word line with a normal ALU-immediate instruction.
+        kind_word[0]  = 32'hffff_ffff;
+        kind_word[1]  = enc_rr(2'h1, 5'h00, 5'd18, 5'd17, 5'd15);
+        kind_word[2]  = enc_i12(6'h00, 4'ha, 12'h7f1, 5'd9, 5'd8);
+        kind_word[3]  = enc_upper(6'h05, 20'habcde, 5'd7);
+        kind_word[4]  = enc_i12(6'h0a, 4'h2, 12'h024, 5'd6, 5'd5);
+        kind_word[5]  = enc_i12(6'h0a, 4'h6, 12'hff8, 5'd4, 5'd3);
+        kind_word[6]  = enc_rr(2'h1, 5'h18, 5'd20, 5'd2, 5'd1);
+        kind_word[7]  = enc_rr(2'h2, 5'h00, 5'd5, 5'd4, 5'd3);
+        kind_word[8]  = enc_i16(6'h16, 16'h0012, 5'd13, 5'd12);
+        kind_word[9]  = enc_i26(6'h14, 26'h000_0002);
+        kind_word[10] = enc_i26(6'h15, 26'h000_0002);
+        kind_word[11] = enc_i16(6'h13, 16'h0002, 5'd6, 5'd1);
+        kind_word[12] = {8'h04, 14'h006, 5'd0, 5'd7};
+        kind_word[13] = {8'h04, 14'h006, 5'd1, 5'd7};
+        kind_word[14] = {8'h04, 14'h005, 5'd9, 5'd7};
+        kind_word[15] = 32'h0000_600d;
+        kind_word[16] = 32'h0000_6180;
+        kind_word[17] = 32'h0000_6d91;
+        kind_word[18] = 32'h0648_3800;
+        kind_word[19] = 32'h0340_0000;
+
+        kind_expected[0]  = ICACHE_KIND_ILLEGAL;
+        kind_expected[1]  = ICACHE_KIND_ALU_RR;
+        kind_expected[2]  = ICACHE_KIND_ALU_IMM;
+        kind_expected[3]  = ICACHE_KIND_UPPER_IMM;
+        kind_expected[4]  = ICACHE_KIND_LOAD;
+        kind_expected[5]  = ICACHE_KIND_STORE;
+        kind_expected[6]  = ICACHE_KIND_MUL;
+        kind_expected[7]  = ICACHE_KIND_DIVMOD;
+        kind_expected[8]  = ICACHE_KIND_CONDITIONAL;
+        kind_expected[9]  = ICACHE_KIND_BRANCH;
+        kind_expected[10] = ICACHE_KIND_BRANCH_LINK;
+        kind_expected[11] = ICACHE_KIND_JIRL;
+        kind_expected[12] = ICACHE_KIND_CSR_READ;
+        kind_expected[13] = ICACHE_KIND_CSR_WRITE;
+        kind_expected[14] = ICACHE_KIND_CSR_EXCHANGE;
+        kind_expected[15] = ICACHE_KIND_COUNTER;
+        kind_expected[16] = ICACHE_KIND_COUNTER_ID;
+        kind_expected[17] = ICACHE_KIND_CPUCFG;
+        kind_expected[18] = ICACHE_KIND_PRIV_FLOW;
+        kind_expected[19] = ICACHE_KIND_ALU_IMM;
 
         repeat (4) @(posedge clk);
         rst_n = 1'b1;
@@ -366,6 +495,16 @@ module tb_icache_metadata;
                          {class_word[7], class_word[6]},
                          ICACHE_CLASS_CFI, ICACHE_CLASS_OTHER,
                          "upper-first completed upper block");
+
+        $display("[INFO] all nineteen exact kinds survive physical metadata split");
+        for (int kind_line = 0; kind_line < 5; kind_line++) begin
+            exercise_exact_kind_line(
+                kind_line * 4,
+                32'h1c00_4000 + (kind_line * 16)
+            );
+        end
+        check(&kind_roundtrip_seen,
+              "not every exact ICache kind completed a physical round trip");
 
         // Same index but a different retained [19:12] tag must replace the
         // line.  Re-requesting the original address must therefore refill.
@@ -525,7 +664,7 @@ module tb_icache_metadata;
                          "post-reset refill");
 
         repeat (3) @(posedge clk);
-        check(response_count >= 20,
+        check(response_count >= 35,
               "too few ICache metadata response paths were exercised");
         if (errors == 0)
             $display("[PASS] NSCSCC ICache shortened-tag/class metadata test responses=%0d",

@@ -13,7 +13,9 @@ module memory_access_unit #(
     input  logic        ex_mem_read_en,
     input  logic        ex_mem_write_en,
     input  logic [31:0] ex_alu_addr,
+    input  logic [10:0] ex_lookup_addr,
     input  logic [ 1:0] ex_mem_size,
+    input  logic        ex_mem_unsigned,
     input  logic [ 3:0] ex_store_wea,
     input  logic [31:0] ex_store_data,
     // Ungated decode intent used only for speculative, side-effect-free
@@ -22,7 +24,9 @@ module memory_access_unit #(
     input  logic        ex_s1_mem_read_en,
     input  logic        ex_s1_mem_write_en,
     input  logic [31:0] ex_s1_alu_addr,
+    input  logic [10:0] ex_s1_lookup_addr,
     input  logic [ 1:0] ex_s1_mem_size,
+    input  logic        ex_s1_mem_unsigned,
     input  logic [ 3:0] ex_s1_store_wea,
     input  logic [31:0] ex_s1_store_data,
 
@@ -54,9 +58,12 @@ module memory_access_unit #(
     output logic        cache_req,
     output logic        cache_wr,
     output logic [31:0] cache_addr,
+    output logic [ 8:0] cache_lookup_addr,
     output logic [ 3:0] cache_wea,
     output logic [31:0] cache_wdata,
     output logic [ 3:0] cache_load_mask,
+    output logic [ 1:0] cache_load_size,
+    output logic        cache_load_unsigned,
     output logic        cache_uncached,
     output logic        cache_flush,
     output logic        cache_pipeline_stall,
@@ -80,9 +87,13 @@ module memory_access_unit #(
     // remains low and only the side-effect-free tag/BRAM address may change.
     wire ex_use_s1_lsu = ex_s1_lsu_select;
     wire [31:0] ex_lsu_addr = ex_use_s1_lsu ? ex_s1_alu_addr : ex_alu_addr;
+    wire [10:0] ex_lsu_lookup_addr = ex_use_s1_lsu
+                                   ? ex_s1_lookup_addr : ex_lookup_addr;
     wire        ex_lsu_read = ex_use_s1_lsu ? ex_s1_mem_read_en : ex_mem_read_en;
     wire        ex_lsu_write = ex_use_s1_lsu ? ex_s1_mem_write_en : ex_mem_write_en;
     wire [ 1:0] ex_lsu_size = ex_use_s1_lsu ? ex_s1_mem_size : ex_mem_size;
+    wire        ex_lsu_unsigned = ex_use_s1_lsu
+                                ? ex_s1_mem_unsigned : ex_mem_unsigned;
     wire [ 3:0] ex_lsu_wea = ex_use_s1_lsu ? ex_s1_store_wea : ex_store_wea;
     // Store data stays unaligned through the EX request and EX/MEM boundary.
     // DCache captures it in its internal EX->MEM register and aligns it there;
@@ -91,8 +102,8 @@ module memory_access_unit #(
     wire        ex_lsu_cacheable = ex_use_s1_lsu ? is_cacheable_s1 : is_cacheable;
     // Precompute load-byte candidates in EX; DCache registers the selected
     // mask with the request for recent-store coverage checks.
-    wire [3:0] ex_load_byte_mask = 4'b0001 << ex_lsu_addr[1:0];
-    wire [3:0] ex_load_half_mask = 4'b0011 << ex_lsu_addr[1:0];
+    wire [3:0] ex_load_byte_mask = 4'b0001 << ex_lsu_lookup_addr[1:0];
+    wire [3:0] ex_load_half_mask = 4'b0011 << ex_lsu_lookup_addr[1:0];
 
     wire mem_s1_load_active = mem_s1_valid & mem_s1_mem_read_en;
     wire [31:0] mem_lsu_addr = mem_s1_load_active ? mem_s1_alu_result : mem_alu_result;
@@ -135,11 +146,14 @@ module memory_access_unit #(
                      & (ex_lsu_cacheable | AXI_UNCACHED_DATA);
     assign cache_wr = ex_lsu_write;
     assign cache_addr = ex_lsu_addr;
+    assign cache_lookup_addr = ex_lsu_lookup_addr[10:2];
     assign cache_wea = ex_lsu_wea;
     assign cache_wdata = ex_lsu_wdata;
     assign cache_load_mask = ({4{ex_lsu_size == 2'b00}} & ex_load_byte_mask)
                            | ({4{ex_lsu_size == 2'b01}} & ex_load_half_mask)
                            | ({4{ex_lsu_size == 2'b10}} & 4'b1111);
+    assign cache_load_size = ex_lsu_size;
+    assign cache_load_unsigned = ex_lsu_unsigned;
     assign cache_uncached = AXI_UNCACHED_DATA & ~ex_lsu_cacheable;
     assign cache_flush = mem_branch_flush;
     assign cache_pipeline_stall = ~mem_allowin;

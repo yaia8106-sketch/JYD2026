@@ -95,9 +95,12 @@ module core_top #(
     wire        cache_req;
     wire        cache_wr;
     wire [31:0] cache_addr;
+    wire [ 8:0] cache_lookup_addr;
     wire [ 3:0] cache_wea;
     wire [31:0] cache_wdata;
     wire [ 3:0] cache_load_mask;
+    wire [ 1:0] cache_load_size;
+    wire        cache_load_unsigned;
     wire        cache_uncached;
     wire [31:0] cache_rdata;
     wire        cache_ready;
@@ -162,7 +165,8 @@ module core_top #(
         .RESET_PC            (32'h1C00_0000),
         .CACHE_ADDR_BASE     (32'h1C08_0000),
         .CACHE_ADDR_MASK     (32'hFFF8_0000),
-        .AXI_UNCACHED_DATA   (1'b1)
+        .AXI_UNCACHED_DATA   (1'b1),
+        .CACHE_RDATA_FORMATTED(1'b1)
     ) u_cpu (
         .clk                 (aclk),
         .rst_n               (core_rst_n),
@@ -177,9 +181,12 @@ module core_top #(
         .cache_req           (cache_req),
         .cache_wr            (cache_wr),
         .cache_addr          (cache_addr),
+        .cache_lookup_addr   (cache_lookup_addr),
         .cache_wea           (cache_wea),
         .cache_wdata         (cache_wdata),
         .cache_load_mask     (cache_load_mask),
+        .cache_load_size     (cache_load_size),
+        .cache_load_unsigned (cache_load_unsigned),
         .cache_uncached      (cache_uncached),
         .cache_rdata         (cache_rdata),
         .cache_ready         (cache_ready),
@@ -234,8 +241,11 @@ module core_top #(
         .cpu_req             (cache_req),
         .cpu_wr              (cache_wr),
         .cpu_addr            (cache_addr),
+        .cpu_lookup_addr     (cache_lookup_addr),
         .cpu_wea             (cache_wea),
         .cpu_wdata           (cache_wdata),
+        .cpu_load_size       (cache_load_size),
+        .cpu_load_unsigned   (cache_load_unsigned),
         .cpu_uncached        (cache_uncached),
         .cpu_rdata           (cache_rdata),
         .cpu_ready           (cache_ready),

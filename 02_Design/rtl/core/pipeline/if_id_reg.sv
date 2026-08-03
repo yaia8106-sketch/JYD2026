@@ -25,8 +25,16 @@ module if_id_reg
 
     // Registered payload
     input  if_id_payload_t if_payload,
-    output if_id_payload_t id_payload
+    output if_id_payload_t id_payload,
+
+    // Dedicated physical copy for the high-fanout Slot-1 register-file read
+    // address. Hazard/ready logic keeps using id_payload's original copy.
+    output logic [4:0]     id_s1_rf_rs1_addr
 );
+
+    (* keep = "true" *) logic [4:0] id_s1_rf_rs1_addr_q;
+
+    assign id_s1_rf_rs1_addr = id_s1_rf_rs1_addr_q;
 
     // Validity owns reset/flush semantics.  The payload is ignored whenever
     // both slot-valid bits are clear, so neither reset nor a late redirect
@@ -47,8 +55,11 @@ module if_id_reg
     // id_allowin is only a clock enable for payload storage.  A simultaneous
     // flush may write speculative data, but the valid block above discards it.
     always_ff @(posedge clk) begin
-        if (id_allowin)
+        if (id_allowin) begin
             id_payload <= if_payload;
+            id_s1_rf_rs1_addr_q <=
+                if_payload.slot1.issue_hint.src0_addr;
+        end
     end
 
 endmodule

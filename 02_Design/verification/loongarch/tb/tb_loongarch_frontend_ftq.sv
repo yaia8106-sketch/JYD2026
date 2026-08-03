@@ -34,6 +34,7 @@ module tb_loongarch_frontend_ftq;
     wire [31:0] if_inst1 = if_payload.slot1.inst;
     wire issue0_is_muldiv = if_payload.slot0.issue_hint.is_muldiv;
     wire issue0_is_mul = if_payload.slot0.issue_hint.is_mul;
+    wire issue0_serializing = if_payload.slot0.issue_hint.serializing;
     wire issue1_is_muldiv = if_payload.slot1.issue_hint.is_muldiv;
     wire issue1_is_mul = if_payload.slot1.issue_hint.is_mul;
 
@@ -286,6 +287,8 @@ module tb_loongarch_frontend_ftq;
                       add_w(5'd6, 5'd7, 5'd8), 1'b1);
         check(issue0_is_muldiv && issue0_is_mul,
               "MUL semantic issue hint was lost in the FTQ");
+        check(!issue0_serializing,
+              "MUL was incorrectly marked serializing in the FTQ");
 
         // rk=5 forces inst[14]=0.  The old shortcut would misclassify this
         // real LoongArch divide as a multiply and permit unsafe pairing.
@@ -297,6 +300,23 @@ module tb_loongarch_frontend_ftq;
                       add_w(5'd6, 5'd7, 5'd8), 1'b0);
         check(issue0_is_muldiv && !issue0_is_mul,
               "DIV semantic issue hint was changed in the FTQ");
+        check(issue0_serializing,
+              "DIV serializing issue hint was lost in the FTQ");
+
+        // Both JIRL and DIV block Slot 1, but only DIV serializes against the
+        // older backend.  This is the boundary used to reconstruct the hint
+        // from the FQ's existing force_single and indirect-control fields.
+        run_pair_case("JIRL stays force-single but nonserializing",
+                      enc_i16(6'h13, 16'd0, 5'd4, 5'd1),
+                      add_w(5'd6, 5'd7, 5'd8), 1'b0);
+        check(!issue0_serializing,
+              "JIRL was incorrectly marked serializing in the FTQ");
+
+        run_pair_case("CSRRD retains serializing hint through FTQ",
+                      32'h0400_0007,
+                      add_w(5'd6, 5'd7, 5'd8), 1'b0);
+        check(issue0_serializing,
+              "CSRRD serializing issue hint was lost in the FTQ");
 
         run_pair_case("MUL result RAW blocks younger ALU",
                       mul_leak_guard,

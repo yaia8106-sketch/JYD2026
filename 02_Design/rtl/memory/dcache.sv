@@ -12,6 +12,7 @@
 //   - WB store miss: save the store, refill, merge its byte lanes, mark dirty
 //   - A one-cycle BRAM RAW-collision bypass handles an immediately following
 //     same-word load without a store queue or a load stall
+//   - Way/refill/uncached load data is formatted in parallel before late select
 // ============================================================
 
 module dcache (
@@ -22,8 +23,11 @@ module dcache (
     input  logic        cpu_req,
     input  logic        cpu_wr,
     input  logic [31:0] cpu_addr,
+    input  logic [ 8:0] cpu_lookup_addr, // addr[10:2] from the short LSU adder
     input  logic [ 3:0] cpu_wea,
     input  logic [31:0] cpu_wdata,       // raw, aligned after the EX->MEM register
+    input  logic [ 1:0] cpu_load_size,
+    input  logic        cpu_load_unsigned,
     input  logic        cpu_uncached,
 
     // --- MEM stage outputs ---
@@ -86,12 +90,42 @@ module dcache (
         end
     endfunction
 
+    function automatic [31:0] format_load_data (
+        input logic [31:0] raw_data,
+        input logic [ 1:0] addr_low,
+        input logic [ 1:0] load_size,
+        input logic        load_unsigned
+    );
+        logic [31:0] shifted;
+        begin
+            // Preserve the shared load formatter's literal logical-shift
+            // behavior even though LA32R traps misaligned half/word accesses.
+            case (addr_low)
+                2'd0: shifted = raw_data;
+                2'd1: shifted = { 8'd0, raw_data[31:8]};
+                2'd2: shifted = {16'd0, raw_data[31:16]};
+                default: shifted = {24'd0, raw_data[31:24]};
+            endcase
+
+            case (load_size)
+                2'b00: format_load_data = {
+                    {24{shifted[7] & ~load_unsigned}}, shifted[7:0]
+                };
+                2'b01: format_load_data = {
+                    {16{shifted[15] & ~load_unsigned}}, shifted[15:0]
+                };
+                2'b10: format_load_data = shifted;
+                default: format_load_data = 32'd0;
+            endcase
+        end
+    endfunction
+
     // ================================================================
     //  EX-stage address decomposition
     // ================================================================
     wire [TAG_W-1:0]   ex_tag   = cpu_addr[31:11];
-    wire [INDEX_W-1:0] ex_index = cpu_addr[10:4];
-    wire [WORD_W-1:0]  ex_word  = cpu_addr[3:2];
+    wire [INDEX_W-1:0] ex_index = cpu_lookup_addr[8:2];
+    wire [WORD_W-1:0]  ex_word  = cpu_lookup_addr[1:0];
 
     // ================================================================
     //  Internal EX->MEM register (synced with cpu_top's ex_mem_reg)
@@ -104,6 +138,8 @@ module dcache (
     logic               mem_wr;
     logic [ 3:0]        mem_wea;
     logic [31:0]        mem_wdata;
+    logic [ 1:0]        mem_load_size;
+    logic               mem_load_unsigned;
     logic               mem_uncached;
 
     // pipeline_advance must match cpu_top's mem_allowin to keep DCache's
@@ -131,6 +167,8 @@ module dcache (
             mem_wr    <= cpu_wr;
             mem_wea   <= cpu_wea;
             mem_wdata <= cpu_wdata;
+            mem_load_size <= cpu_load_size;
+            mem_load_unsigned <= cpu_load_unsigned;
             mem_uncached <= cpu_uncached;
         end
     end
@@ -208,16 +246,27 @@ module dcache (
     // request is looked up again before returning to S_IDLE.
     wire [TAG_W-1:0] tag_rd_data [WAYS-1:0];
     wire             tag_rd_vld  [WAYS-1:0];
-    wire [INDEX_W-1:0] tag_read_index = state_replay
-                                      ? mem_index : ex_index;
+    // Each packed 128-entry distributed Tag RAM expands into many RAM64
+    // primitives.  A single selected index used to drive both ways, giving
+    // every low address bit roughly 150 physical loads.  Keep independent
+    // selected-index cones per way and let synthesis replicate each cone at a
+    // small, explicit fanout boundary.  Both expressions are identical, so
+    // lookup/replay behavior and latency remain unchanged.
+    (* keep = "true", max_fanout = 24 *)
+    wire [INDEX_W-1:0] tag_read_index_w0 = state_replay
+                                         ? mem_index : ex_index;
+    (* keep = "true", max_fanout = 24 *)
+    wire [INDEX_W-1:0] tag_read_index_w1 = state_replay
+                                         ? mem_index : ex_index;
     wire [TAG_W-1:0] tag_lookup_tag = state_replay ? mem_tag : ex_tag;
-    assign tag_rd_data[0] = tag_mem_way0[tag_read_index];
-    assign tag_rd_data[1] = tag_mem_way1[tag_read_index];
-    assign tag_rd_vld[0]  = tag_vld[0][tag_read_index];
-    assign tag_rd_vld[1]  = tag_vld[1][tag_read_index];
+    assign tag_rd_data[0] = tag_mem_way0[tag_read_index_w0];
+    assign tag_rd_data[1] = tag_mem_way1[tag_read_index_w1];
+    assign tag_rd_vld[0]  = tag_vld[0][tag_read_index_w0];
+    assign tag_rd_vld[1]  = tag_vld[1][tag_read_index_w1];
 
-    // Keep the raw tag/valid values only as miss-victim metadata. They no
-    // longer participate in the MEM-stage hit/data-return path.
+    // Keep the raw tag for miss-victim metadata.  Capture valid and the four
+    // tag-compare groups independently across EX->MEM; the final five-input
+    // hit reduction is deliberately moved behind that edge.
     logic [TAG_W-1:0] mem_tag_rd [WAYS-1:0];
     logic             mem_tag_vld [WAYS-1:0];
 
@@ -234,15 +283,26 @@ module dcache (
     wire tag_eq_w1_1 = ~|tag_diff_w1[11:6];
     wire tag_eq_w1_2 = ~|tag_diff_w1[17:12];
     wire tag_eq_w1_3 = ~|tag_diff_w1[20:18];
-    wire lookup_hit_w0 = tag_rd_vld[0]
-                       & tag_eq_w0_0 & tag_eq_w0_1
-                       & tag_eq_w0_2 & tag_eq_w0_3;
-    wire lookup_hit_w1 = tag_rd_vld[1]
-                       & tag_eq_w1_0 & tag_eq_w1_1
-                       & tag_eq_w1_2 & tag_eq_w1_3;
+    wire [3:0] tag_eq_group_w0 = {
+        tag_eq_w0_3, tag_eq_w0_2, tag_eq_w0_1, tag_eq_w0_0
+    };
+    wire [3:0] tag_eq_group_w1 = {
+        tag_eq_w1_3, tag_eq_w1_2, tag_eq_w1_1, tag_eq_w1_0
+    };
 
-    logic mem_hit_w0;
-    logic mem_hit_w1;
+    logic [3:0] mem_tag_eq_w0;
+    logic [3:0] mem_tag_eq_w1;
+
+`ifndef SYNTHESIS
+    // Executable reference for the pre-refactor behavior: combine valid and
+    // all four compare groups before the EX->MEM edge.
+    wire lookup_hit_reference_w0 = tag_rd_vld[0]
+                                 & (&tag_eq_group_w0);
+    wire lookup_hit_reference_w1 = tag_rd_vld[1]
+                                 & (&tag_eq_group_w1);
+    logic mem_hit_reference_w0;
+    logic mem_hit_reference_w1;
+`endif
 
     always_ff @(posedge clk) begin
         if (pipeline_advance | state_replay) begin
@@ -250,16 +310,24 @@ module dcache (
             mem_tag_vld[0] <= tag_rd_vld[0];
             mem_tag_rd[1]  <= tag_rd_data[1];
             mem_tag_vld[1] <= tag_rd_vld[1];
-            mem_hit_w0      <= lookup_hit_w0;
-            mem_hit_w1      <= lookup_hit_w1;
+            mem_tag_eq_w0   <= tag_eq_group_w0;
+            mem_tag_eq_w1   <= tag_eq_group_w1;
+`ifndef SYNTHESIS
+            mem_hit_reference_w0 <= lookup_hit_reference_w0;
+            mem_hit_reference_w1 <= lookup_hit_reference_w1;
+`endif
         end
     end
 
     // ================================================================
-    //  Registered hit result (MEM stage)
+    //  Hit result (MEM stage)
+    //
+    //  The async valid-array selection and the tag comparison now terminate
+    //  at separate registers.  This small reduction consumes the downstream
+    //  MEM-stage margin instead of extending the EX lookup path.
     // ================================================================
-    wire hit_w0 = mem_hit_w0;
-    wire hit_w1 = mem_hit_w1;
+    wire hit_w0 = mem_tag_vld[0] & (&mem_tag_eq_w0);
+    wire hit_w1 = mem_tag_vld[1] & (&mem_tag_eq_w1);
     wire cache_hit = hit_w0 | hit_w1;
     wire hit_way = hit_w1;
 
@@ -786,27 +854,63 @@ module dcache (
     assign mem_wr_ready  = backend_wr_ready;
 
     // ================================================================
-    //  CPU read data MUX (MEM stage)
-    //  Priority: uncached/refill response > cache BRAM plus registered RAW fix
+    //  CPU read data formatting and late source selection (MEM stage)
+    //
+    //  Each BRAM way and the miss/uncached response are formatted in parallel.
+    //  The hit-way/source controls therefore select complete 32-bit results at
+    //  the end instead of sitting in front of byte extraction and extension.
     // ================================================================
-    wire [31:0] cache_bank_data = hit_way ? data_rd[1] : data_rd[0];
     wire raw_bypass_apply = raw_bypass_valid
                           & mem_req & ~mem_wr & ~mem_uncached;
-    wire [31:0] cache_read_data = merge_bytes(
-        cache_bank_data,
+    wire [3:0] raw_bypass_mask = raw_bypass_wea
+                               & {4{raw_bypass_apply}};
+    wire [31:0] cache_read_data_way0 = merge_bytes(
+        data_rd[0],
         raw_bypass_data,
-        raw_bypass_wea & {4{raw_bypass_apply}}
+        raw_bypass_mask
+    );
+    wire [31:0] cache_read_data_way1 = merge_bytes(
+        data_rd[1],
+        raw_bypass_data,
+        raw_bypass_mask
+    );
+
+    wire [31:0] formatted_way0 = format_load_data(
+        cache_read_data_way0, mem_addr[1:0],
+        mem_load_size, mem_load_unsigned
+    );
+    wire [31:0] formatted_way1 = format_load_data(
+        cache_read_data_way1, mem_addr[1:0],
+        mem_load_size, mem_load_unsigned
+    );
+
+    wire special_read_valid = uc_read_fire
+                            | refill_target_fire
+                            | (state_done & refill_cpu_pending & ~mem_wr);
+    logic [31:0] special_read_data;
+    always_comb begin
+        if (uc_read_fire)
+            special_read_data = backend_rd_data;
+        else if (refill_target_fire)
+            special_read_data = refill_write_data;
+        else if (state_done && refill_cpu_pending && ~mem_wr)
+            special_read_data = refill_target_valid
+                              ? refill_target_data : 32'd0;
+        else
+            special_read_data = 32'd0;
+    end
+    wire [31:0] formatted_special = format_load_data(
+        special_read_data, mem_addr[1:0],
+        mem_load_size, mem_load_unsigned
     );
 
     always_comb begin
-        if (uc_read_fire)
-            cpu_rdata = backend_rd_data;
-        else if (refill_target_fire)
-            cpu_rdata = refill_write_data;
-        else if (state_done && refill_cpu_pending && ~mem_wr)
-            cpu_rdata = refill_target_valid ? refill_target_data : 32'd0;
+        if (special_read_valid)
+            cpu_rdata = formatted_special;
+        else if (hit_way)
+            cpu_rdata = formatted_way1;
         else
-            cpu_rdata = cache_read_data;
+            cpu_rdata = formatted_way0;
     end
 
     // ================================================================
@@ -825,6 +929,13 @@ module dcache (
 
 `ifndef SYNTHESIS
     always_ff @(posedge clk) begin
+        if (rst_n && mem_req) begin
+            if (hit_w0 !== mem_hit_reference_w0)
+                $fatal(1, "DCache way-0 split hit pipeline changed behavior");
+            if (hit_w1 !== mem_hit_reference_w1)
+                $fatal(1, "DCache way-1 split hit pipeline changed behavior");
+        end
+
         if (!rst_n)
             raw_bypass_valid_reference_q <= 1'b0;
         else begin

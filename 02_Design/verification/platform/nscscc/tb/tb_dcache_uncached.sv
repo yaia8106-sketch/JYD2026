@@ -8,6 +8,8 @@ module tb_dcache_uncached;
     logic [31:0] cpu_addr;
     logic [ 3:0] cpu_wea;
     logic [31:0] cpu_wdata;
+    logic [ 1:0] cpu_load_size;
+    logic        cpu_load_unsigned;
     logic cpu_uncached;
     logic [31:0] cpu_rdata;
     logic cpu_ready;
@@ -42,8 +44,11 @@ module tb_dcache_uncached;
         .cpu_req(cpu_req),
         .cpu_wr(cpu_wr),
         .cpu_addr(cpu_addr),
+        .cpu_lookup_addr(cpu_addr[10:2]),
         .cpu_wea(cpu_wea),
         .cpu_wdata(cpu_wdata),
+        .cpu_load_size(cpu_load_size),
+        .cpu_load_unsigned(cpu_load_unsigned),
         .cpu_uncached(cpu_uncached),
         .cpu_rdata(cpu_rdata),
         .cpu_ready(cpu_ready),
@@ -116,7 +121,8 @@ module tb_dcache_uncached;
 
     task automatic return_read(
         input logic [31:0] data,
-        input logic        last
+        input logic        last,
+        input logic [31:0] expected_cpu_data
     );
         begin
             wait (mem_rd_ready);
@@ -128,7 +134,8 @@ module tb_dcache_uncached;
             #1;
             if (cpu_uncached || dut.mem_uncached) begin
                 check(cpu_ready, "uncached read response did not release CPU");
-                check(cpu_rdata == data, "uncached read data mismatch");
+                check(cpu_rdata == expected_cpu_data,
+                      "uncached formatted read data mismatch");
             end
             @(posedge clk);
             @(negedge clk);
@@ -145,6 +152,8 @@ module tb_dcache_uncached;
         cpu_addr = 32'd0;
         cpu_wea = 4'd0;
         cpu_wdata = 32'd0;
+        cpu_load_size = 2'b10;
+        cpu_load_unsigned = 1'b0;
         cpu_uncached = 1'b0;
         flush = 1'b0;
         mem_req_ready = 1'b0;
@@ -163,6 +172,8 @@ module tb_dcache_uncached;
 
         // An uncached peripheral read is a single aligned AXI word and must
         // not allocate a DCache line.
+        cpu_load_size = 2'b01;
+        cpu_load_unsigned = 1'b1;
         launch_cpu(1'b0, 1'b1, 32'h1fe0_01e2, 4'd0, 32'd0);
         wait (mem_req_valid);
         #1;
@@ -173,11 +184,36 @@ module tb_dcache_uncached;
         check(mem_req_burst == 2'b01,
               "uncached load did not use an INCR burst");
         accept_command();
-        return_read(32'h89ab_cdef, 1'b1);
+        return_read(32'h89ab_cdef, 1'b1, 32'h0000_89ab);
+        repeat (2) @(posedge clk);
+
+        // Back-to-back uncached accesses prove that size/sign controls are
+        // captured with each request rather than leaking from the previous
+        // transaction into the shared special-response formatter.
+        cpu_load_size = 2'b00;
+        cpu_load_unsigned = 1'b0;
+        launch_cpu(1'b0, 1'b1, 32'h1fe0_01e3, 4'd0, 32'd0);
+        wait (mem_req_valid);
+        check(mem_req_addr == 32'h1fe0_01e0,
+              "uncached signed-byte address was not word-aligned");
+        accept_command();
+        return_read(32'h80ff_7f01, 1'b1, 32'hffff_ff80);
+        repeat (2) @(posedge clk);
+
+        cpu_load_size = 2'b00;
+        cpu_load_unsigned = 1'b1;
+        launch_cpu(1'b0, 1'b1, 32'h1fe0_01e1, 4'd0, 32'd0);
+        wait (mem_req_valid);
+        check(mem_req_addr == 32'h1fe0_01e0,
+              "uncached unsigned-byte address was not word-aligned");
+        accept_command();
+        return_read(32'h80ff_7f01, 1'b1, 32'h0000_007f);
         repeat (2) @(posedge clk);
 
         // The same address marked cacheable must still miss and request a
         // four-beat line, proving the previous uncached read did not allocate.
+        cpu_load_size = 2'b10;
+        cpu_load_unsigned = 1'b0;
         launch_cpu(1'b0, 1'b0, 32'h1fe0_01e0, 4'd0, 32'd0);
         wait (mem_req_valid);
         check(!mem_req_write && mem_req_len == 8'd3,
@@ -185,10 +221,10 @@ module tb_dcache_uncached;
         check(mem_req_burst == 2'b10,
               "cacheable refill did not use a WRAP burst");
         accept_command();
-        return_read(32'h0000_0001, 1'b0);
-        return_read(32'h0000_0002, 1'b0);
-        return_read(32'h0000_0003, 1'b0);
-        return_read(32'h0000_0004, 1'b1);
+        return_read(32'h0000_0001, 1'b0, 32'h0000_0001);
+        return_read(32'h0000_0002, 1'b0, 32'h0000_0002);
+        return_read(32'h0000_0003, 1'b0, 32'h0000_0003);
+        return_read(32'h0000_0004, 1'b1, 32'h0000_0004);
         repeat (3) @(posedge clk);
 
         // Uncached stores retain byte lanes and do not retire until the AXI

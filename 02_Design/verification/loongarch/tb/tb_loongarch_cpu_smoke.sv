@@ -19,9 +19,12 @@ module tb_loongarch_cpu_smoke;
     logic cache_req;
     logic cache_wr;
     logic [31:0] cache_addr;
+    logic [8:0] cache_lookup_addr;
     logic [3:0] cache_wea;
     logic [31:0] cache_wdata;
     logic [3:0] cache_load_mask;
+    logic [1:0] cache_load_size;
+    logic cache_load_unsigned;
     logic [31:0] cache_rdata;
     logic cache_ready;
     logic cache_flush;
@@ -37,8 +40,11 @@ module tb_loongarch_cpu_smoke;
     logic bad_path_committed;
     logic repaired_alu_observed;
     logic repaired_consumer_wait_observed;
+    logic repaired_lsu_load_observed;
+    logic repaired_lsu_store_observed;
     integer cache_store_count;
     integer cache_load_count;
+    integer short_lookup_request_count;
 
     loongarch_icache_block_predecode u_irom_predecode (
         .block_data     (irom_data),
@@ -59,9 +65,12 @@ module tb_loongarch_cpu_smoke;
         .cache_req(cache_req),
         .cache_wr(cache_wr),
         .cache_addr(cache_addr),
+        .cache_lookup_addr(cache_lookup_addr),
         .cache_wea(cache_wea),
         .cache_wdata(cache_wdata),
         .cache_load_mask(cache_load_mask),
+        .cache_load_size(cache_load_size),
+        .cache_load_unsigned(cache_load_unsigned),
         .cache_uncached(),
         .cache_rdata(cache_rdata),
         .cache_ready(cache_ready),
@@ -147,7 +156,14 @@ module tb_loongarch_cpu_smoke;
             cache_addr_q <= 32'd0;
             cache_store_count <= 0;
             cache_load_count <= 0;
+            short_lookup_request_count <= 0;
         end else if (cache_req) begin
+            logic [3:0] expected_load_mask;
+
+            if (cache_lookup_addr !== cache_addr[10:2])
+                $fatal(1,
+                       "[FAIL] short DCache lookup address differs from full address");
+            short_lookup_request_count <= short_lookup_request_count + 1;
             cache_addr_q <= cache_addr;
             if (cache_wr) begin
                 cache_store_count <= cache_store_count + 1;
@@ -158,6 +174,17 @@ module tb_loongarch_cpu_smoke;
                 end
             end else begin
                 cache_load_count <= cache_load_count + 1;
+                case (cache_load_size)
+                    2'b00: expected_load_mask = 4'b0001
+                                                << cache_addr[1:0];
+                    2'b01: expected_load_mask = 4'b0011
+                                                << cache_addr[1:0];
+                    2'b10: expected_load_mask = 4'b1111;
+                    default: expected_load_mask = 4'b0000;
+                endcase
+                if (cache_load_mask !== expected_load_mask)
+                    $fatal(1,
+                           "[FAIL] cache load mask disagrees with size/address");
             end
         end
     end
@@ -348,6 +375,8 @@ module tb_loongarch_cpu_smoke;
             bad_path_committed <= 1'b0;
             repaired_alu_observed <= 1'b0;
             repaired_consumer_wait_observed <= 1'b0;
+            repaired_lsu_load_observed <= 1'b0;
+            repaired_lsu_store_observed <= 1'b0;
         end else begin
             if (u_cpu.wb_valid && u_cpu.wb_reg_write_en
                 && (u_cpu.wb_rd == 5'd31)
@@ -363,6 +392,12 @@ module tb_loongarch_cpu_smoke;
                 repaired_alu_observed <= 1'b1;
             if (u_cpu.u_forwarding.repair_use_hazard)
                 repaired_consumer_wait_observed <= 1'b1;
+            if (u_cpu.ex_valid && u_cpu.ex_mem_read_en
+                && u_cpu.ex_alu_src1_wb_repair)
+                repaired_lsu_load_observed <= 1'b1;
+            if (u_cpu.ex_valid && u_cpu.ex_mem_write_en
+                && u_cpu.ex_alu_src1_wb_repair)
+                repaired_lsu_store_observed <= 1'b1;
         end
     end
 
@@ -375,14 +410,18 @@ module tb_loongarch_cpu_smoke;
         bad_path_committed = 1'b0;
         repaired_alu_observed = 1'b0;
         repaired_consumer_wait_observed = 1'b0;
+        repaired_lsu_load_observed = 1'b0;
+        repaired_lsu_store_observed = 1'b0;
         cache_store_count = 0;
         cache_load_count = 0;
+        short_lookup_request_count = 0;
 
         for (int i = 0; i < IROM_WORDS; i++)
             irom[i] = LOONGARCH_NOP;
         for (int i = 0; i < DATA_WORDS; i++)
             data_mem[i] = 32'd0;
         data_mem[8'h41] = 32'h80ff_7f01;
+        data_mem[8'h43] = 32'h8010_0100;
 
         // Arithmetic and both encoding-leak guards.  MUL uses rk=20 so
         // inst[14]=1; DIV uses rk=5 so inst[14]=0.
@@ -448,8 +487,17 @@ module tb_loongarch_cpu_smoke;
         put_instruction(32'h8c, ld_w(5'd23, 5'd12, 12'd0));
         put_instruction(32'h90, addi_w(5'd24, 5'd23, 12'd5));
         put_instruction(32'h94, addi_w(5'd25, 5'd24, 12'd1));
-        put_instruction(32'h98, addi_w(5'd31, 5'd0, 12'd1));
-        put_instruction(32'h9c, branch_always(26'd0));
+        // A load result is immediately reused as the base of another load and
+        // then of a store. These two consumers must select the WB-repaired
+        // 11-bit address candidate and still match the architectural 32-bit
+        // address, lookup index, byte lanes, and cacheability decision.
+        put_instruction(32'h98, ld_w(5'd26, 5'd12, 12'd12));
+        put_instruction(32'h9c, ld_w(5'd27, 5'd26, 12'd0));
+        put_instruction(32'ha0, ld_w(5'd28, 5'd12, 12'd12));
+        put_instruction(32'ha4, st_w(5'd7, 5'd28, 12'd12));
+        put_instruction(32'ha8, ld_w(5'd29, 5'd12, 12'd12));
+        put_instruction(32'hac, addi_w(5'd31, 5'd0, 12'd1));
+        put_instruction(32'hb0, branch_always(26'd0));
 
         check(irom[32'h08 >> 2][14] == 1'b1,
               "CPU MUL leak guard must set inst[14]");
@@ -520,10 +568,27 @@ module tb_loongarch_cpu_smoke;
               "WB-repaired architectural ALU result");
         check(u_cpu.u_regfile.regs[25] == 32'd14,
               "consumer after repaired ALU result");
+        check(u_cpu.u_regfile.regs[26] == 32'h8010_0100,
+              "WB-repair LSU load-base producer result");
+        check(u_cpu.u_regfile.regs[27] == 32'd8,
+              "load using a WB-repaired base address");
+        check(u_cpu.u_regfile.regs[28] == 32'h8010_0100,
+              "WB-repair LSU store-base producer result");
+        check(u_cpu.u_regfile.regs[29] == 32'd8,
+              "store using a WB-repaired base address");
+        check(data_mem[8'h43] == 32'd8,
+              "WB-repaired store address selected the wrong memory word");
         check(repaired_alu_observed,
               "split-ALU test never exercised a repaired ALU producer");
         check(repaired_consumer_wait_observed,
               "split-ALU test never exercised the repair-use interlock");
+        check(repaired_lsu_load_observed,
+              "test never exercised a WB-repaired load base");
+        check(repaired_lsu_store_observed,
+              "test never exercised a WB-repaired store base");
+        check(short_lookup_request_count ==
+              (cache_store_count + cache_load_count),
+              "not every cache request checked its short lookup address");
         check(u_cpu.u_regfile.regs[31] == 32'd1,
               "completion marker register");
         check((cache_store_count >= 1) && (cache_load_count >= 1),

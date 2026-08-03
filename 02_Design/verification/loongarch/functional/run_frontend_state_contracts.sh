@@ -1,13 +1,13 @@
 #!/bin/bash
-# Standalone VCS gate for the LA32R ordinary-integer decode contract.
+# Standalone VCS gate for FQ state updates and IF/ID timing copies.
 
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOONGARCH_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 VERIFICATION_DIR="$(cd "$LOONGARCH_DIR/.." && pwd)"
 RTL_DIR="$(cd "$VERIFICATION_DIR/../rtl" && pwd)"
-WORK_DIR="$LOONGARCH_DIR/work/decode_contract"
+WORK_DIR="$LOONGARCH_DIR/work/frontend_state_contracts"
 VCS_ENV="${VCS_ENV:-/home/anokyai/synopsys/env.sh}"
 VCS_OPTS="${VCS_OPTS:--full64 -sverilog -timescale=1ns/1ps}"
 VCS_EXTRA_OPTS="${VCS_EXTRA_OPTS:-}"
@@ -29,45 +29,34 @@ if ! command -v vcs >/dev/null 2>&1; then
     exit 1
 fi
 
-echo "[INFO] Compiling LoongArch decoded-uop contract test with VCS..."
+echo "[INFO] Compiling LoongArch frontend state contract test..."
 # shellcheck disable=SC2086
-if ! vcs $VCS_OPTS $VCS_EXTRA_OPTS -top tb_loongarch_decode_contract \
+if ! vcs $VCS_OPTS $VCS_EXTRA_OPTS \
+    -top tb_loongarch_frontend_state_contracts \
     -Mdir="$WORK_DIR/vcs.csrc" \
     -o "$SIM_BIN" \
     "$RTL_DIR/common/cpu_defs.sv" \
-    "$RTL_DIR/isa/loongarch/loongarch_defs.sv" \
-    "$RTL_DIR/isa/loongarch/loongarch_decoder.sv" \
-    "$RTL_DIR/isa/loongarch/loongarch_predecode.sv" \
-    "$RTL_DIR/core/execute/alu.sv" \
-    "$LOONGARCH_DIR/tb/tb_loongarch_decode_contract.sv" \
+    "$RTL_DIR/core/frontend/frontend_fetch_queue.sv" \
+    "$RTL_DIR/core/pipeline/if_id_reg.sv" \
+    "$LOONGARCH_DIR/tb/tb_loongarch_frontend_state_contracts.sv" \
     "$VCS_SHIM" >"$COMPILE_LOG" 2>&1; then
-    echo "ERROR: LoongArch decoded-uop contract compilation failed"
-    head -100 "$COMPILE_LOG"
+    echo "ERROR: LoongArch frontend state contract compilation failed"
+    head -120 "$COMPILE_LOG"
     exit 1
 fi
 if grep -Eq 'Warning-\[(TFIPC|ENUMASSIGN|INCLFDV)\]' "$COMPILE_LOG"; then
-    echo "ERROR: LoongArch decode compilation reported a gated RTL/TB warning"
+    echo "ERROR: frontend state compilation reported a gated RTL/TB warning"
     grep -E 'Warning-\[(TFIPC|ENUMASSIGN|INCLFDV)\]' "$COMPILE_LOG"
     exit 1
 fi
 
-echo "[INFO] Running LoongArch decoded-uop contract test..."
+echo "[INFO] Running LoongArch frontend state contract test..."
 if ! "$SIM_BIN" >"$SIM_LOG" 2>&1; then
     cat "$SIM_LOG"
     exit 1
 fi
 cat "$SIM_LOG"
-if ! grep -qF "[PASS] LoongArch decoded-uop contract directed test" \
-    "$SIM_LOG"; then
-    echo "ERROR: LoongArch decoded-uop contract test did not report PASS"
+if ! grep -qF "[PASS] LoongArch frontend state contracts" "$SIM_LOG"; then
+    echo "ERROR: LoongArch frontend state contract test did not report PASS"
     exit 1
 fi
-
-echo "[INFO] Running LoongArch F0/FTQ semantic metadata gate..."
-bash "$SCRIPT_DIR/run_frontend_ftq.sh"
-
-echo "[INFO] Running LoongArch FQ/IF-ID state contract gate..."
-bash "$SCRIPT_DIR/run_frontend_state_contracts.sh"
-
-echo "[INFO] Running LoongArch cpu_top execution gate..."
-bash "$SCRIPT_DIR/run_cpu_smoke.sh"

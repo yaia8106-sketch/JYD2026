@@ -32,11 +32,13 @@ module loongarch_priv_unit
     input  logic        ex_mem_write_en,
     input  mem_size_t   ex_mem_size,
     input  logic [31:0] ex_mem_addr,
+    input  logic [ 1:0] ex_mem_addr_low,
     input  logic        ex_s1_valid,
     input  logic        ex_s1_mem_read_en,
     input  logic        ex_s1_mem_write_en,
     input  mem_size_t   ex_s1_mem_size,
     input  logic [31:0] ex_s1_mem_addr,
+    input  logic [ 1:0] ex_s1_mem_addr_low,
     input  logic        timer_irq_pending,
     input  logic        timer_irq_take,
     input  logic [31:0] timer_irq_mepc,
@@ -218,15 +220,15 @@ module loongarch_priv_unit
     wire ex_bad_csr = ex_is_csr & ~ex_csr_supported;
     wire ex_fetch_misaligned = |ex_pc[1:0];
     wire ex_data_misaligned = (ex_mem_read_en | ex_mem_write_en)
-                            & (((ex_mem_size == MEM_HALF) & ex_mem_addr[0])
+                            & (((ex_mem_size == MEM_HALF) & ex_mem_addr_low[0])
                                | ((ex_mem_size == MEM_WORD)
-                                  & (|ex_mem_addr[1:0])));
+                                  & (|ex_mem_addr_low)));
     wire ex_s1_data_misaligned = (ex_s1_mem_read_en
                                   | ex_s1_mem_write_en)
                                & (((ex_s1_mem_size == MEM_HALF)
-                                   & ex_s1_mem_addr[0])
+                                   & ex_s1_mem_addr_low[0])
                                   | ((ex_s1_mem_size == MEM_WORD)
-                                     & (|ex_s1_mem_addr[1:0])));
+                                     & (|ex_s1_mem_addr_low)));
     wire ex_has_decode_exception = ex_exception != EXCEPTION_NONE;
     wire ex_sync_trap = ex_is_syscall | ex_has_decode_exception
                       | ex_priv_violation | ex_bad_csr
@@ -535,11 +537,13 @@ module isa_priv_unit
     input  logic        ex_mem_write_en,
     input  mem_size_t   ex_mem_size,
     input  logic [31:0] ex_mem_addr,
+    input  logic [ 1:0] ex_mem_addr_low,
     input  logic        ex_s1_valid,
     input  logic        ex_s1_mem_read_en,
     input  logic        ex_s1_mem_write_en,
     input  mem_size_t   ex_s1_mem_size,
     input  logic [31:0] ex_s1_mem_addr,
+    input  logic [ 1:0] ex_s1_mem_addr_low,
     input  logic        timer_irq_pending,
     input  logic        timer_irq_take,
     input  logic [31:0] timer_irq_mepc,

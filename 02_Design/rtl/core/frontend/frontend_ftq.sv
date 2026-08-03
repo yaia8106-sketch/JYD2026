@@ -490,6 +490,12 @@ module frontend_ftq
     assign if_payload.slot0.issue_hint.mem_write = fq_head0.is_store;
     assign if_payload.slot0.issue_hint.is_muldiv = fq_head0.is_muldiv;
     assign if_payload.slot0.issue_hint.is_mul = fq_head0.is_mul;
+    // block_younger differs from serializing only for JIRL: JIRL must issue
+    // alone but does not wait for the older backend to drain.  Reconstruct
+    // the exact predecode result from fields already stored in the FQ rather
+    // than sending the full instruction decoder into the ready feedback path.
+    assign if_payload.slot0.issue_hint.serializing =
+        fq_head0.force_single & ~fq_head0.is_indirect_jump;
     assign if_payload.slot1.issue_hint.src0_used =
         fq_head1_pair_meta.uses_src0;
     assign if_payload.slot1.issue_hint.src1_used =
@@ -511,6 +517,8 @@ module frontend_ftq
     assign if_payload.slot1.issue_hint.mem_write = fq_head1.is_store;
     assign if_payload.slot1.issue_hint.is_muldiv = fq_head1.is_muldiv;
     assign if_payload.slot1.issue_hint.is_mul = fq_head1.is_mul;
+    assign if_payload.slot1.issue_hint.serializing =
+        fq_head1.force_single & ~fq_head1.is_indirect_jump;
     assign if_payload.slot0.prediction.taken = fq_head0.pred_taken;
     assign if_payload.slot0.prediction.target = fq_head0.pred_target;
     assign if_payload.slot0.prediction.source_abtb = fq_head0.pred_source_abtb;
@@ -582,8 +590,8 @@ module frontend_ftq
         .enq_pair_meta0       (f0_pair_meta0),
         .enq_pair_meta1       (f0_pair_meta1),
         .prev_tail_contiguous (fq_prev_tail_next_contiguous),
-        .deq_single           (if_accept_single),
-        .deq_dual             (if_accept_dual),
+        .deq_fire             (if_accept),
+        .deq_two              (can_dual_issue),
         .head                 (fq_head),
         .head_p1              (fq_head_p1),
         .tail                 (fq_tail),

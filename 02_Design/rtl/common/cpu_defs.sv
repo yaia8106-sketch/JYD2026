@@ -223,6 +223,7 @@ package cpu_defs;
         logic       mem_write;
         logic       is_muldiv;
         logic       is_mul;
+        logic       serializing;
     } issue_hint_t;
 
     typedef struct packed {
@@ -266,30 +267,40 @@ package cpu_defs;
         logic       serializing;
     } frontend_predecode_t;
 
-    // Coarse instruction class generated at ICache-refill time.  The common
-    // frontend may derive ordinary scheduling controls from this small field
-    // while the complete ISA predecoder remains available in parallel for
-    // privileged, illegal and otherwise uncommon instructions.
-    typedef enum logic [2:0] {
-        ICACHE_CLASS_OTHER,
-        ICACHE_CLASS_ALU_RR,
-        ICACHE_CLASS_ALU_IMM,
-        ICACHE_CLASS_UPPER_IMM,
-        ICACHE_CLASS_LOAD,
-        ICACHE_CLASS_STORE,
-        ICACHE_CLASS_MULDIV,
-        ICACHE_CLASS_CFI
-    } icache_inst_class_t;
+    // Exact instruction kind generated at ICache-refill time.  Five bits are
+    // sufficient for every LA32R family implemented by the NSCSCC core.  The
+    // F0 hit path expands this kind directly and never falls back to decoding
+    // the instruction word after the synchronous ICache data RAM.
+    typedef enum logic [4:0] {
+        ICACHE_KIND_ILLEGAL,
+        ICACHE_KIND_ALU_RR,
+        ICACHE_KIND_ALU_IMM,
+        ICACHE_KIND_UPPER_IMM,
+        ICACHE_KIND_LOAD,
+        ICACHE_KIND_STORE,
+        ICACHE_KIND_MUL,
+        ICACHE_KIND_DIVMOD,
+        ICACHE_KIND_CONDITIONAL,
+        ICACHE_KIND_BRANCH,
+        ICACHE_KIND_BRANCH_LINK,
+        ICACHE_KIND_JIRL,
+        ICACHE_KIND_CSR_READ,
+        ICACHE_KIND_CSR_WRITE,
+        ICACHE_KIND_CSR_EXCHANGE,
+        ICACHE_KIND_COUNTER,
+        ICACHE_KIND_COUNTER_ID,
+        ICACHE_KIND_CPUCFG,
+        ICACHE_KIND_PRIV_FLOW
+    } icache_inst_kind_t;
 
-    // Seven timing-critical predecode bits are cached for each instruction.
-    // The original four controls remain in the RAMB36 parity bits.  The three
-    // class bits live beside the shortened NSCSCC ICache tag in LUTRAM.
+    // Exactly seven bits are cached for each instruction.  The two frequently
+    // consumed controls stay explicit while the exact five-bit kind describes
+    // every remaining frontend field.  The physical ICache still splits these
+    // seven packed bits between RAMB36 parity and shortened-tag LUTRAM storage.
     typedef struct packed {
-        logic static_kill_younger;
         logic block_younger;
-        logic slot1_disallowed;
         logic writes_dst;
-        icache_inst_class_t inst_class;
+        icache_inst_kind_t inst_kind;
     } frontend_icache_predecode_t;
 
     typedef struct packed {

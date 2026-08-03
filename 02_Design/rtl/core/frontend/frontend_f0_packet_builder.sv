@@ -55,8 +55,6 @@ module frontend_f0_packet_builder
     wire [31:0] slot0_pc = start_pc;
     wire [31:0] slot1_pc = start_pc + 32'd4;
 
-    frontend_predecode_t slot0_dec;
-    frontend_predecode_t slot1_dec;
     frontend_predecode_t slot0_effective_dec;
     frontend_predecode_t slot1_effective_dec;
     frontend_icache_predecode_t block0_cached_dec;
@@ -74,17 +72,6 @@ module frontend_f0_packet_builder
     logic [7:0] slot0_pht_index;
     logic [1:0] slot0_pht_counter;
 
-    // 两个预译码单元，使用cpu_def中的结构体作为output格式
-    isa_predecode u_predecode_slot0 (
-        .inst    (slot0_inst),
-        .decoded (slot0_dec)
-    );
-
-    isa_predecode u_predecode_slot1 (
-        .inst    (slot1_inst),
-        .decoded (slot1_dec)
-    );
-
     assign block0_cached_dec = irom_predecode[6:0];
     assign block1_cached_dec = irom_predecode[13:7];
     assign slot0_cached_dec = start_pc[2] ? block1_cached_dec
@@ -94,21 +81,19 @@ module frontend_f0_packet_builder
     // entry deterministic.
     assign slot1_cached_dec = start_pc[2] ? '0 : block1_cached_dec;
 
-    // The complete decoders and compact-class expanders run in parallel.  A
-    // small late select inside the ISA-specific expander chooses the complete
-    // result only for ICACHE_CLASS_OTHER.
+    // Refill-time metadata names every supported/illegal instruction family.
+    // F0 therefore expands the cached kind directly and never places a full
+    // opcode decoder after the synchronous ICache data output.
     isa_cached_predecode_expand u_expand_slot0 (
-        .inst         (slot0_inst),
-        .full_decoded (slot0_dec),
-        .cached       (slot0_cached_dec),
-        .expanded     (slot0_effective_dec)
+        .inst     (slot0_inst),
+        .cached   (slot0_cached_dec),
+        .expanded (slot0_effective_dec)
     );
 
     isa_cached_predecode_expand u_expand_slot1 (
-        .inst         (slot1_inst),
-        .full_decoded (slot1_dec),
-        .cached       (slot1_cached_dec),
-        .expanded     (slot1_effective_dec)
+        .inst     (slot1_inst),
+        .cached   (slot1_cached_dec),
+        .expanded (slot1_effective_dec)
     );
 
     // 这个结构体包含了fq entry需要的所有信息。
@@ -221,7 +206,7 @@ module frontend_f0_packet_builder
 
         // 当slot0被预测为跳转/确实是跳转的时候，对slot1的指令进行冲刷。
         kill_after_slot0 =
-            slot0_cached_dec.static_kill_younger
+            slot0_effective_dec.is_jump
             || slot0_pred_taken;
         enq0_payload = accept_base && base_mask[0];
         enq1_payload = accept_base && base_mask[1];
@@ -250,7 +235,7 @@ module frontend_f0_packet_builder
             slot1_inst,
             slot1_effective_dec,
             slot1_cached_dec.writes_dst,
-            slot1_cached_dec.slot1_disallowed,
+            ~slot1_effective_dec.lane_mask[1],
             slot1_pred_taken,
             slot1_pred_target,
             slot1_pred_source_abtb,
@@ -272,7 +257,7 @@ module frontend_f0_packet_builder
             slot1_effective_dec,
             slot1_pred_taken,
             slot1_cached_dec.writes_dst,
-            slot1_cached_dec.slot1_disallowed
+            ~slot1_effective_dec.lane_mask[1]
         );
     end
 

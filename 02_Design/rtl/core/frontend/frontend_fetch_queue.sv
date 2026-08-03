@@ -30,10 +30,11 @@ module frontend_fetch_queue
     // Same-packet entries are consecutive by construction.
     input  logic                       prev_tail_contiguous,
 
-    // These mutually-exclusive controls fully describe dequeue acceptance.
-    // No separate deq_valid is needed; deq_none is their complement.
-    input  logic                       deq_single,
-    input  logic                       deq_dual,
+    // Keep the late acceptance event separate from the already-known packet
+    // width. deq_fire drives register enables; deq_two selects the early
+    // one-entry/two-entry next-state candidates.
+    input  logic                       deq_fire,
+    input  logic                       deq_two,
 
     output logic [FQ_PTR_W-1:0]        head,
     output logic [FQ_PTR_W-1:0]        head_p1, // head plus 1
@@ -79,8 +80,7 @@ module frontend_fetch_queue
 
     // Head/tail/count are computed independently so enqueue and dequeue can
     // occur in the same cycle.
-    wire deq_none = ~(deq_single | deq_dual);
-    wire deq_fire = deq_single | deq_dual;
+    wire deq_none = ~deq_fire;
 
     wire [FQ_PTR_W:0] count_p2 =
         count + {{(FQ_PTR_W-1){1'b0}}, 2'd2};
@@ -107,10 +107,13 @@ module frontend_fetch_queue
         ({(FQ_PTR_W+1){enq_one}}  & count_m1) |
         ({(FQ_PTR_W+1){enq_none}} & count_m2);
 
+    // Packet width is known from the registered queue head before backend
+    // acceptance arrives. Select that candidate first, then let the late fire
+    // bit choose only between dequeue and no-dequeue results.
+    wire [FQ_PTR_W:0] count_if_deq =
+        deq_two ? count_if_deq_dual : count_if_deq_single;
     wire [FQ_PTR_W:0] count_next =
-        ({(FQ_PTR_W+1){deq_dual}}   & count_if_deq_dual) |
-        ({(FQ_PTR_W+1){deq_single}} & count_if_deq_single) |
-        ({(FQ_PTR_W+1){deq_none}}   & count_if_deq_none);
+        deq_fire ? count_if_deq : count_if_deq_none;
 
     wire [31:0] enq_last_next_pc =
         enq_two ? (enq_entry1.pc + 32'd4) : (enq_entry0.pc + 32'd4);
@@ -126,7 +129,7 @@ module frontend_fetch_queue
         end else if (deq_fire)
             // Backend acceptance reaches only CE.  Once enabled, the data
             // input depends solely on the early one-entry/two-entry choice.
-            head <= deq_dual ? head_p2 : head_p1;
+            head <= deq_two ? head_p2 : head_p1;
     end
 
     always_ff @(posedge clk) begin
