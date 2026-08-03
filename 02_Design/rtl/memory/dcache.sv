@@ -6,7 +6,7 @@
 //   - Internal EX->MEM pipeline register (synced with cpu_top's ex_mem_reg)
 //   - Tag: LUTRAM async read and EX-stage compare, hit result latched EX->MEM
 //   - Data: BRAM sync read (addr in EX, data in MEM)
-//   - 16-byte line, four-beat critical-word-first AXI WRAP refill
+//   - 32-byte line, eight-beat critical-word-first AXI WRAP refill
 //   - Load miss: optionally write back a dirty victim, then refill the line
 //   - WB store hit: update the cache and set one dirty bit
 //   - WB store miss: save the store, refill, merge its byte lanes, mark dirty
@@ -71,11 +71,11 @@ module dcache (
     //  Parameters
     // ================================================================
     localparam WAYS       = 2;
-    localparam SETS       = 128;
-    localparam LINE_WORDS = 4;
+    localparam SETS       = 64;
+    localparam LINE_WORDS = 8;
     localparam TAG_W      = 21;
-    localparam INDEX_W    = 7;    // addr[10:4]
-    localparam WORD_W     = 2;    // addr[3:2]
+    localparam INDEX_W    = 6;    // addr[10:5]
+    localparam WORD_W     = 3;    // addr[4:2]
 
     function automatic [31:0] merge_bytes (
         input logic [31:0] base,
@@ -124,8 +124,8 @@ module dcache (
     //  EX-stage address decomposition
     // ================================================================
     wire [TAG_W-1:0]   ex_tag   = cpu_addr[31:11];
-    wire [INDEX_W-1:0] ex_index = cpu_lookup_addr[8:2];
-    wire [WORD_W-1:0]  ex_word  = cpu_lookup_addr[1:0];
+    wire [INDEX_W-1:0] ex_index = cpu_lookup_addr[8:3];
+    wire [WORD_W-1:0]  ex_word  = cpu_lookup_addr[2:0];
 
     // ================================================================
     //  Internal EX->MEM register (synced with cpu_top's ex_mem_reg)
@@ -183,9 +183,9 @@ module dcache (
         S_REFILL_DROP,    // drain an aborted refill after pipeline flush
         S_DONE,
         S_REPLAY,         // re-read a request held while WB miss work used Port B
-        S_WB_CAPTURE,     // read four victim words into the local line buffer
-        S_WB_REQ,         // issue one four-beat writeback command
-        S_WB_DATA,        // stream four writeback words
+        S_WB_CAPTURE,     // read eight victim words into the local line buffer
+        S_WB_REQ,         // issue one eight-beat writeback command
+        S_WB_DATA,        // stream eight writeback words
         S_WB_RESP,        // wait for the write response
         S_UC_REQ,         // issue one uncached read/write command
         S_UC_READ,        // wait for the uncached read beat
@@ -246,7 +246,7 @@ module dcache (
     // request is looked up again before returning to S_IDLE.
     wire [TAG_W-1:0] tag_rd_data [WAYS-1:0];
     wire             tag_rd_vld  [WAYS-1:0];
-    // Each packed 128-entry distributed Tag RAM expands into many RAM64
+    // Each packed 64-entry distributed Tag RAM expands into many RAM64
     // primitives.  A single selected index used to drive both ways, giving
     // every low address bit roughly 150 physical loads.  Keep independent
     // selected-index cones per way and let synthesis replicate each cone at a
@@ -621,13 +621,13 @@ module dcache (
             refill_way          <= victim_way_candidate;
             refill_tag          <= mem_tag;
             refill_index        <= mem_index;
-            refill_fetch_addr   <= {mem_addr[31:4], mem_word, 2'b00};
+            refill_fetch_addr   <= {mem_addr[31:5], mem_word, 2'b00};
             refill_target_word  <= mem_word;
             refill_is_store     <= mem_wr;
             refill_store_data   <= mem_wdata_aligned;
             refill_store_wea    <= mem_wea;
             victim_line_addr    <= {
-                victim_tag_candidate, mem_index, 4'b0000
+                victim_tag_candidate, mem_index, 5'b00000
             };
             refill_cpu_pending  <= ~mem_wr;
             refill_target_valid <= 1'b0;
@@ -648,7 +648,7 @@ module dcache (
 
     assign refill_data_fire = state_refill_data & backend_rd_valid & backend_rd_ready;
 
-    // The same four local words first snapshot a dirty victim and are then
+    // The same eight local words first snapshot a dirty victim and are then
     // reused as the refill shadow. Port B is synchronous, so valid_q aligns
     // each registered RAM result with its capture index.
     always_ff @(posedge clk) begin
@@ -964,7 +964,7 @@ module dcache (
             if (refill_data_fire
                 && (backend_rd_last
                     != (refill_beat == WORD_W'(LINE_WORDS - 1))))
-                $error("DCache four-beat refill RLAST mismatch");
+                $error("DCache eight-beat refill RLAST mismatch");
             if (wb_data_fire
                 && (mem_w_last
                     != (wb_send_beat == WORD_W'(LINE_WORDS - 1))))

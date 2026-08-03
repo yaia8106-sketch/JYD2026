@@ -263,30 +263,38 @@ module tb_nscscc_axi_bridge;
         input logic [31:0] word0,
         input logic [31:0] word1,
         input logic [31:0] word2,
-        input logic [31:0] word3
+        input logic [31:0] word3,
+        input logic [31:0] word4,
+        input logic [31:0] word5,
+        input logic [31:0] word6,
+        input logic [31:0] word7
     );
         logic [31:0] payload;
         begin
             @(negedge clk);
             dmem_req_write = 1'b1;
             dmem_req_addr = addr;
-            dmem_req_len = 8'd3;
+            dmem_req_len = 8'd7;
             dmem_req_burst = 2'b01;
             dmem_req_valid = 1'b1;
             do @(posedge clk); while (!dmem_req_ready);
             @(negedge clk);
             dmem_req_valid = 1'b0;
 
-            for (int beat = 0; beat < 4; beat++) begin
+            for (int beat = 0; beat < 8; beat++) begin
                 case (beat)
                     0: payload = word0;
                     1: payload = word1;
                     2: payload = word2;
-                    default: payload = word3;
+                    3: payload = word3;
+                    4: payload = word4;
+                    5: payload = word5;
+                    6: payload = word6;
+                    default: payload = word7;
                 endcase
                 dmem_w_data = payload;
                 dmem_w_strb = 4'b1111;
-                dmem_w_last = beat == 3;
+                dmem_w_last = beat == 7;
                 dmem_w_valid = 1'b1;
                 do @(posedge clk); while (!dmem_w_ready);
                 @(negedge clk);
@@ -530,23 +538,25 @@ module tb_nscscc_axi_bridge;
         @(negedge clk);
         bvalid = 1'b0;
 
-        // A dirty cache line uses the same command channel but streams four
+        // A dirty cache line uses the same command channel but streams eight
         // independently backpressured W beats. Delay AW while accepting W to
         // prove that the two AXI channels retain independent state.
-        $display("[INFO] DCache four-beat writeback burst");
+        $display("[INFO] DCache eight-beat writeback burst");
         fork
             issue_dmem_write_burst(
                 32'h1c08_0400,
                 32'h1111_0000, 32'h2222_0001,
-                32'h3333_0002, 32'h4444_0003
+                32'h3333_0002, 32'h4444_0003,
+                32'h5555_0004, 32'h6666_0005,
+                32'h7777_0006, 32'h8888_0007
             );
             begin
                 while (!awvalid)
                     @(negedge clk);
                 check(awaddr == 32'h1c08_0400,
                       "writeback AWADDR mismatch");
-                check(awlen == 8'd3,
-                      "writeback AWLEN did not encode four beats");
+                check(awlen == 8'd7,
+                      "writeback AWLEN did not encode eight beats");
                 check(awburst == 2'b01,
                       "writeback AWBURST must be INCR");
                 check(awid == 4'h2 && wid == 4'h2,
@@ -554,7 +564,7 @@ module tb_nscscc_axi_bridge;
 
                 // Accept all W beats before AW. AXI permits this and the
                 // adapter must wait for both channel completions before B.
-                for (int beat = 0; beat < 4; beat++) begin
+                for (int beat = 0; beat < 8; beat++) begin
                     while (!wvalid)
                         @(negedge clk);
                     case (beat)
@@ -566,10 +576,18 @@ module tb_nscscc_axi_bridge;
                                  "writeback beat 2 mismatch");
                         3: check(wdata == 32'h4444_0003,
                                  "writeback beat 3 mismatch");
+                        4: check(wdata == 32'h5555_0004,
+                                 "writeback beat 4 mismatch");
+                        5: check(wdata == 32'h6666_0005,
+                                 "writeback beat 5 mismatch");
+                        6: check(wdata == 32'h7777_0006,
+                                 "writeback beat 6 mismatch");
+                        7: check(wdata == 32'h8888_0007,
+                                 "writeback beat 7 mismatch");
                     endcase
                     check(wstrb == 4'b1111,
                           "writeback strobe mismatch");
-                    check(wlast == (beat == 3),
+                    check(wlast == (beat == 7),
                           "writeback WLAST mismatch");
                     @(negedge clk);
                     wready = 1'b1;

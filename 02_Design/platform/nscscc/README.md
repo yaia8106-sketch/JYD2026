@@ -13,17 +13,17 @@ The chiplab processor contract is implemented by `rtl/mycpu_top.v`:
 - the AXI port is the AXI3-style chiplab shape, including `arid`, `awid`, and
   `wid`.
 
-The NSCSCC DCache is 4 KiB, 2-way set associative, with 128 sets and
-16-byte lines.  It uses write-back plus write-allocate: cacheable stores update
+The NSCSCC DCache is 4 KiB, 2-way set associative, with 64 sets and
+32-byte lines.  It uses write-back plus write-allocate: cacheable stores update
 the local line and set its dirty bit; a dirty replacement is emitted as one
-four-beat AXI write burst before the new line is refilled.  Consecutive
+eight-beat AXI write burst before the new line is refilled.  Consecutive
 store-hit/load-hit accesses to the same word use a one-cycle BRAM
 read-after-write collision bypass; there is no DCache store buffer.
 
 The ICache is 4 KiB, direct mapped, and also uses 16-byte lines.  An ICache
 miss emits one four-beat WRAP read starting at the requested 64-bit block; the
 first two returned words release the frontend while the other half of the line
-continues filling.  DCache line refills likewise use one four-beat WRAP read
+continues filling.  DCache line refills use one eight-beat WRAP read
 starting at the missed 32-bit word.  ICache tag/valid/refill hit decisions are
 made from the BP request address and registered with the synchronous BRAM data,
 so a responding local hit may be replaced by the next BP request at the same

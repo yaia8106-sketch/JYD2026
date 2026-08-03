@@ -30,7 +30,7 @@ The aggregate gate includes:
 ISA pipeline.  It covers four-beat critical-first WRAP refills, simultaneous
 ICache-ID-0 and DCache-ID-1 reads, interleaved RID response routing,
 DCache-priority arbitration, per-client read backpressure, read/write
-serialization, independent AXI AW/W handshakes, four-beat writeback, and ID-2
+serialization, independent AXI AW/W handshakes, eight-beat writeback, and ID-2
 write-response routing.
 It also checks that two completed-line ICache hits respond on consecutive
 cycles, with the second request accepted on the first response edge.
@@ -55,7 +55,7 @@ and never allocate a cache line.
 
 `functional/run_dcache_writeback.sh` checks the NSCSCC write-back/write-allocate
 policy.  It covers store hits remaining local, byte-store merge on allocation,
-invalid-way preference, critical-word-first WRAP refill, ordered four-beat
+invalid-way preference, critical-word-first eight-beat WRAP refill, ordered eight-beat
 dirty eviction, write-data backpressure, a following held request, and
 preservation of an already acknowledged store across a pipeline flush.  A
 directed same-word store-hit/load-hit pair checks the registered BRAM RAW

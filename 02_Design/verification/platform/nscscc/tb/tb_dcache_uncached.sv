@@ -211,20 +211,24 @@ module tb_dcache_uncached;
         repeat (2) @(posedge clk);
 
         // The same address marked cacheable must still miss and request a
-        // four-beat line, proving the previous uncached read did not allocate.
+        // eight-beat line, proving the previous uncached read did not allocate.
         cpu_load_size = 2'b10;
         cpu_load_unsigned = 1'b0;
         launch_cpu(1'b0, 1'b0, 32'h1fe0_01e0, 4'd0, 32'd0);
         wait (mem_req_valid);
-        check(!mem_req_write && mem_req_len == 8'd3,
-              "cacheable load did not request a four-beat refill");
+        check(!mem_req_write && mem_req_len == 8'd7,
+              "cacheable load did not request an eight-beat refill");
         check(mem_req_burst == 2'b10,
               "cacheable refill did not use a WRAP burst");
         accept_command();
         return_read(32'h0000_0001, 1'b0, 32'h0000_0001);
         return_read(32'h0000_0002, 1'b0, 32'h0000_0002);
         return_read(32'h0000_0003, 1'b0, 32'h0000_0003);
-        return_read(32'h0000_0004, 1'b1, 32'h0000_0004);
+        return_read(32'h0000_0004, 1'b0, 32'h0000_0004);
+        return_read(32'h0000_0005, 1'b0, 32'h0000_0005);
+        return_read(32'h0000_0006, 1'b0, 32'h0000_0006);
+        return_read(32'h0000_0007, 1'b0, 32'h0000_0007);
+        return_read(32'h0000_0008, 1'b1, 32'h0000_0008);
         repeat (3) @(posedge clk);
 
         // Uncached stores retain byte lanes and do not retire until the AXI

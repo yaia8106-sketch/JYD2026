@@ -182,7 +182,8 @@ module tb_dcache_writeback;
             check(mem_req_write == expected_write,
                   "backend command direction mismatch");
             check(mem_req_addr == expected_addr,
-                  "backend command address mismatch");
+                  $sformatf("backend command address mismatch: got=%08x expected=%08x",
+                            mem_req_addr, expected_addr));
             check(mem_req_len == expected_len,
                   "backend command burst length mismatch");
             check(mem_req_burst == (expected_write ? 2'b01 : 2'b10),
@@ -217,21 +218,29 @@ module tb_dcache_writeback;
     endtask
 
     task automatic send_read_line(
-        input logic [ 1:0] start_word,
+        input logic [ 2:0] start_word,
         input logic [31:0] word0,
         input logic [31:0] word1,
         input logic [31:0] word2,
-        input logic [31:0] word3
+        input logic [31:0] word3,
+        input logic [31:0] word4,
+        input logic [31:0] word5,
+        input logic [31:0] word6,
+        input logic [31:0] word7
     );
-        logic [1:0] word_index;
+        logic [2:0] word_index;
         begin
-            for (int beat = 0; beat < 4; beat++) begin
+            for (int beat = 0; beat < 8; beat++) begin
                 word_index = start_word + beat;
                 case (word_index)
-                    2'd0: send_read_beat(word0, beat == 3);
-                    2'd1: send_read_beat(word1, beat == 3);
-                    2'd2: send_read_beat(word2, beat == 3);
-                    default: send_read_beat(word3, beat == 3);
+                    3'd0: send_read_beat(word0, beat == 7);
+                    3'd1: send_read_beat(word1, beat == 7);
+                    3'd2: send_read_beat(word2, beat == 7);
+                    3'd3: send_read_beat(word3, beat == 7);
+                    3'd4: send_read_beat(word4, beat == 7);
+                    3'd5: send_read_beat(word5, beat == 7);
+                    3'd6: send_read_beat(word6, beat == 7);
+                    default: send_read_beat(word7, beat == 7);
                 endcase
             end
         end
@@ -241,16 +250,24 @@ module tb_dcache_writeback;
         input logic [31:0] word0,
         input logic [31:0] word1,
         input logic [31:0] word2,
-        input logic [31:0] word3
+        input logic [31:0] word3,
+        input logic [31:0] word4,
+        input logic [31:0] word5,
+        input logic [31:0] word6,
+        input logic [31:0] word7
     );
         logic [31:0] expected;
         begin
-            for (int beat = 0; beat < 4; beat++) begin
+            for (int beat = 0; beat < 8; beat++) begin
                 case (beat)
                     0: expected = word0;
                     1: expected = word1;
                     2: expected = word2;
-                    default: expected = word3;
+                    3: expected = word3;
+                    4: expected = word4;
+                    5: expected = word5;
+                    6: expected = word6;
+                    default: expected = word7;
                 endcase
 
                 while (!mem_w_valid)
@@ -269,7 +286,7 @@ module tb_dcache_writeback;
 
                 check(mem_w_strb == 4'b1111,
                       "writeback beat did not enable all byte lanes");
-                check(mem_w_last == (beat == 3),
+                check(mem_w_last == (beat == 7),
                       "writeback LAST position mismatch");
                 check(mem_w_data == expected,
                       "writeback data payload mismatch");
@@ -299,6 +316,10 @@ module tb_dcache_writeback;
         input logic [31:0] word1,
         input logic [31:0] word2,
         input logic [31:0] word3,
+        input logic [31:0] word4,
+        input logic [31:0] word5,
+        input logic [31:0] word6,
+        input logic [31:0] word7,
         output logic [31:0] result
     );
         logic request_seen;
@@ -322,10 +343,11 @@ module tb_dcache_writeback;
                 end
                 begin
                     accept_command(
-                        1'b0, {addr[31:2], 2'b00}, 8'd3
+                        1'b0, {addr[31:2], 2'b00}, 8'd7
                     );
                     send_read_line(
-                        addr[3:2], word0, word1, word2, word3
+                        addr[4:2], word0, word1, word2, word3,
+                        word4, word5, word6, word7
                     );
                 end
             join
@@ -341,10 +363,18 @@ module tb_dcache_writeback;
         input logic [31:0] victim1,
         input logic [31:0] victim2,
         input logic [31:0] victim3,
+        input logic [31:0] victim4,
+        input logic [31:0] victim5,
+        input logic [31:0] victim6,
+        input logic [31:0] victim7,
         input logic [31:0] refill0,
         input logic [31:0] refill1,
         input logic [31:0] refill2,
         input logic [31:0] refill3,
+        input logic [31:0] refill4,
+        input logic [31:0] refill5,
+        input logic [31:0] refill6,
+        input logic [31:0] refill7,
         output logic [31:0] result
     );
         begin
@@ -360,16 +390,18 @@ module tb_dcache_writeback;
                     @(posedge clk);
                 end
                 begin
-                    accept_command(1'b1, victim_addr, 8'd3);
+                    accept_command(1'b1, victim_addr, 8'd7);
                     receive_write_line(
-                        victim0, victim1, victim2, victim3
+                        victim0, victim1, victim2, victim3,
+                        victim4, victim5, victim6, victim7
                     );
                     return_write_response();
                     accept_command(
-                        1'b0, {addr[31:2], 2'b00}, 8'd3
+                        1'b0, {addr[31:2], 2'b00}, 8'd7
                     );
                     send_read_line(
-                        addr[3:2], refill0, refill1, refill2, refill3
+                        addr[4:2], refill0, refill1, refill2, refill3,
+                        refill4, refill5, refill6, refill7
                     );
                 end
             join
@@ -454,11 +486,19 @@ module tb_dcache_writeback;
         input logic [31:0] store_word1,
         input logic [31:0] store_word2,
         input logic [31:0] store_word3,
+        input logic [31:0] store_word4,
+        input logic [31:0] store_word5,
+        input logic [31:0] store_word6,
+        input logic [31:0] store_word7,
         input logic [31:0] load_addr,
         input logic [31:0] load_word0,
         input logic [31:0] load_word1,
         input logic [31:0] load_word2,
         input logic [31:0] load_word3,
+        input logic [31:0] load_word4,
+        input logic [31:0] load_word5,
+        input logic [31:0] load_word6,
+        input logic [31:0] load_word7,
         output logic [31:0] load_result
     );
         begin
@@ -490,20 +530,24 @@ module tb_dcache_writeback;
                 end
                 begin
                     accept_command(
-                        1'b0, {store_addr[31:2], 2'b00}, 8'd3
+                        1'b0, {store_addr[31:2], 2'b00}, 8'd7
                     );
                     send_read_line(
-                        store_addr[3:2],
+                        store_addr[4:2],
                         store_word0, store_word1,
-                        store_word2, store_word3
+                        store_word2, store_word3,
+                        store_word4, store_word5,
+                        store_word6, store_word7
                     );
                     accept_command(
-                        1'b0, {load_addr[31:2], 2'b00}, 8'd3
+                        1'b0, {load_addr[31:2], 2'b00}, 8'd7
                     );
                     send_read_line(
-                        load_addr[3:2],
+                        load_addr[4:2],
                         load_word0, load_word1,
-                        load_word2, load_word3
+                        load_word2, load_word3,
+                        load_word4, load_word5,
+                        load_word6, load_word7
                     );
                 end
             join
@@ -516,7 +560,11 @@ module tb_dcache_writeback;
         input logic [31:0] word0,
         input logic [31:0] word1,
         input logic [31:0] word2,
-        input logic [31:0] word3
+        input logic [31:0] word3,
+        input logic [31:0] word4,
+        input logic [31:0] word5,
+        input logic [31:0] word6,
+        input logic [31:0] word7
     );
         begin
             fork
@@ -529,11 +577,12 @@ module tb_dcache_writeback;
                 end
                 begin
                     accept_command(
-                        1'b0, {addr[31:2], 2'b00}, 8'd3
+                        1'b0, {addr[31:2], 2'b00}, 8'd7
                     );
                     fork
                         send_read_line(
-                            addr[3:2], word0, word1, word2, word3
+                            addr[4:2], word0, word1, word2, word3,
+                            word4, word5, word6, word7
                         );
                         begin
                             while (!dut.state_refill_data)
@@ -556,14 +605,14 @@ module tb_dcache_writeback;
     integer writes_before;
 
     localparam logic [31:0] A = 32'h1c08_0040;
-    // A/B/C and S/T/U use the same set in the 128-set cache. One way holds
+    // A/B/C and S/T/U use the same set in the 64-set cache. One way holds
     // 2KB, so identical set indices are 0x800 bytes apart.
     localparam logic [31:0] B = 32'h1c08_0840;
     localparam logic [31:0] C = 32'h1c08_1040;
     localparam logic [31:0] S = 32'h1c08_0060;
     localparam logic [31:0] T = 32'h1c08_0860;
     localparam logic [31:0] U = 32'h1c08_1060;
-    localparam logic [31:0] V = 32'h1c08_0070;
+    localparam logic [31:0] V = 32'h1c08_0080;
 
     initial begin
         clk = 1'b0;
@@ -600,6 +649,8 @@ module tb_dcache_writeback;
             A + 10,
             32'h1111_0000, 32'h2222_0001,
             32'h3333_4444, 32'h4444_0003,
+            32'h5555_0004, 32'h6666_0005,
+            32'h7777_0006, 32'h8888_0007,
             result
         );
         check(result == 32'h0000_3333,
@@ -622,6 +673,8 @@ module tb_dcache_writeback;
             B,
             32'haaaa_0000, 32'hbbbb_0001,
             32'hcccc_0002, 32'hdddd_0003,
+            32'heeee_0004, 32'hffff_0005,
+            32'habcd_0006, 32'hdcba_0007,
             result
         );
         check(result == 32'haaaa_0000, "B refill result mismatch");
@@ -668,13 +721,17 @@ module tb_dcache_writeback;
             B + 6, 2'b01, 1'b0, 32'hffff_8001
         );
 
-        $display("[INFO] C evicts dirty A as one four-beat write burst");
+        $display("[INFO] C evicts dirty A as one eight-beat write burst");
         load_dirty_miss(
             C, A,
             32'h1111_0000, 32'h2222_0001,
             32'h3333_aa44, 32'h4444_0003,
+            32'h5555_0004, 32'h6666_0005,
+            32'h7777_0006, 32'h8888_0007,
             32'hc000_0000, 32'hc000_0001,
             32'hc000_0002, 32'hc000_0003,
+            32'hc000_0004, 32'hc000_0005,
+            32'hc000_0006, 32'hc000_0007,
             result
         );
         check(result == 32'hc000_0000, "C refill result mismatch");
@@ -685,9 +742,13 @@ module tb_dcache_writeback;
             S + 5, 4'b0010, 32'h0000_005a,
             32'h0102_0304, 32'h1122_3344,
             32'h5566_7788, 32'h99aa_bbcc,
+            32'h0a0b_0c0d, 32'h1a1b_1c1d,
+            32'h2a2b_2c2d, 32'h3a3b_3c3d,
             T,
             32'h7000_0000, 32'h7000_0001,
             32'h7000_0002, 32'h7000_0003,
+            32'h7000_0004, 32'h7000_0005,
+            32'h7000_0006, 32'h7000_0007,
             result
         );
         check(write_commands == writes_before,
@@ -703,19 +764,25 @@ module tb_dcache_writeback;
             U, S,
             32'h0102_0304, 32'h1122_5a44,
             32'h5566_7788, 32'h99aa_bbcc,
+            32'h0a0b_0c0d, 32'h1a1b_1c1d,
+            32'h2a2b_2c2d, 32'h3a3b_3c3d,
             32'he000_0000, 32'he000_0001,
             32'he000_0002, 32'he000_0003,
+            32'he000_0004, 32'he000_0005,
+            32'he000_0006, 32'he000_0007,
             result
         );
         check(result == 32'he000_0000, "U refill result mismatch");
 
         $display("[INFO] pipeline flush cannot cancel an acknowledged store");
         committed_store_survives_flush(
-            V + 12,
+            V + 28,
             32'h8100_0000, 32'h8100_0001,
-            32'h8100_0002, 32'h8100_0003
+            32'h8100_0002, 32'h8100_0003,
+            32'h8100_0004, 32'h8100_0005,
+            32'h8100_0006, 32'h8100_0007
         );
-        load_hit(V + 12, 32'hcafe_babe);
+        load_hit(V + 28, 32'hcafe_babe);
 
         check(write_commands == 2,
               "unexpected number of dirty writeback commands");
