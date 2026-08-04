@@ -193,13 +193,16 @@ AbtbPrediction AbtbModel::lookup(const std::uint32_t pc,
     apply_due(instruction_ordinal);
     const auto bank = static_cast<std::size_t>((pc >> 2u) & 1u);
     const auto block_pc = pc & ~7u;
-    const auto set = static_cast<std::size_t>((block_pc >> 3u) & 0xfu);
-    const auto tag = static_cast<std::uint8_t>((block_pc >> 7u) & 0x7fu);
+    const auto set = static_cast<std::size_t>(
+        (block_pc >> 3u) & (kAbtbSets - 1u));
+    const auto tag = static_cast<std::uint16_t>(
+        (block_pc >> (3u + kAbtbIndexBits)) &
+        ((1u << kAbtbTagBits) - 1u));
     ++stats_.bank_lookups[bank];
     ++stats_.sets[bank][set].lookups;
 
     AbtbPrediction result;
-    for (std::size_t way = 0; way < 2; ++way) {
+    for (std::size_t way = 0; way < kAbtbWays; ++way) {
         const auto& entry = entries_[bank][set][way];
         if (entry.valid && entry.tag == tag) {
             result.hit = true;
@@ -266,8 +269,11 @@ void AbtbModel::apply_front() {
     pending_.pop_front();
     const auto bank = static_cast<std::size_t>((update.pc >> 2u) & 1u);
     const auto block_pc = update.pc & ~7u;
-    const auto set = static_cast<std::size_t>((block_pc >> 3u) & 0xfu);
-    const auto tag = static_cast<std::uint8_t>((block_pc >> 7u) & 0x7fu);
+    const auto set = static_cast<std::size_t>(
+        (block_pc >> 3u) & (kAbtbSets - 1u));
+    const auto tag = static_cast<std::uint16_t>(
+        (block_pc >> (3u + kAbtbIndexBits)) &
+        ((1u << kAbtbTagBits) - 1u));
 
     std::size_t way = update.prediction_way;
     if (update.prediction_hit) {

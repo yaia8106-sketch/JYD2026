@@ -107,6 +107,7 @@ module myCPU (
         .cache_load_unsigned  (),
         .cache_uncached       (),
         .cache_rdata          (cache_rdata),
+        .cache_rdata_ex       (cache_rdata),
         .cache_ready          (cache_ready),
         .cache_flush          (dcache_flush),
         .cache_pipeline_stall (cache_pipeline_stall),

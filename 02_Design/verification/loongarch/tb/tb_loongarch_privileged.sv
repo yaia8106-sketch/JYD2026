@@ -60,6 +60,7 @@ module tb_loongarch_privileged;
         .cache_wdata(), .cache_load_mask(), .cache_load_size(),
         .cache_load_unsigned(), .cache_uncached(),
         .cache_rdata(RESET_PC + 32'h100),
+        .cache_rdata_ex(RESET_PC + 32'h100),
         .cache_ready(cache_ready), .cache_flush(),
         .cache_pipeline_stall(), .mmio_addr(), .mmio_wr_addr(),
         .mmio_wea(), .mmio_wdata(), .mmio_rdata(32'd0),

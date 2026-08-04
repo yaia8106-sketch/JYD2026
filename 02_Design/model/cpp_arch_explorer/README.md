@@ -64,7 +64,7 @@ ctest --test-dir 02_Design/model/cpp_arch_explorer/build --output-on-failure
 
 `frontend_study` 在同一条实际路径上组合当前前端与候选改动：
 
-- 当前 2-bank × 16-set × 2-way ABTB，7-bit tag、type、target、valid 和伪 LRU；
+- 当前 2-bank × 32-set × 2-way ABTB，9-bit tag、type、target、valid 和伪 LRU；
 - taken B 才分配，JAL/CALL/RET 分配，使用预测时携带的 hit/way；
 - 当前 256-entry、8-bit committed-GHR GShare；
 - F0 对 B/JAL 的轻量译码和 PC+immediate 目标；

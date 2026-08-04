@@ -51,6 +51,7 @@ module cpu_top
     output logic        cache_load_unsigned,
     output logic        cache_uncached,  // platform path: bypass DCache arrays
     input  logic [31:0] cache_rdata,     // MEM stage: read data from DCache
+    input  logic [31:0] cache_rdata_ex,  // independent copy for EX load repair
     input  logic        cache_ready,     // MEM stage: hit or completed miss
     output logic        cache_flush,     // MEM stage: pipeline flush (abort refill)
     output logic        cache_pipeline_stall, // DCache sync: ~mem_allowin
@@ -360,7 +361,9 @@ module cpu_top
     wire [31:0] ex_s1_store_data_raw;
     // Raw on legacy platforms; already formatted by the NSCSCC DCache.
     wire [31:0] mem_load_data;
+    wire [31:0] mem_load_data_ex;
     wire [31:0] mem_load_data_ext;
+    wire [31:0] mem_load_data_ext_ex;
     wire [31:0] mem_load_data_ext_raw;
     wire        mem_load_ready;        // ready S0_MEM load can repair S0 ALU in EX
     wire        is_cacheable;          // EX stage: addr in DRAM range
@@ -396,6 +399,9 @@ module cpu_top
 
     // ---- Slot 1 MEM ----
     wire        mem_s1_valid;
+    wire        mem_s1_hazard_valid;
+    wire        mem_s1_hazard_is_load;
+    wire [ 4:0] mem_s1_hazard_rd;
     wire cpu_defs::ex_mem_slot1_t ex_mem_s1_payload;
     wire cpu_defs::ex_mem_slot1_t mem_s1_payload;
     wire [31:0] mem_s1_pc = mem_s1_payload.pc;
@@ -755,6 +761,7 @@ module cpu_top
         .mem_allowin         (mem_allowin),
         .mem_branch_flush    (mem_branch_flush),
         .cache_rdata         (cache_rdata),
+        .cache_rdata_ex      (cache_rdata_ex),
         .mmio_rdata          (mmio_rdata),
         .dual_issue_count    (dual_issue_count),
         .is_cacheable        (is_cacheable),
@@ -777,6 +784,7 @@ module cpu_top
         .mmio_wea            (mmio_wea),
         .mmio_wdata          (mmio_wdata),
         .mem_load_data       (mem_load_data),
+        .mem_load_data_ex    (mem_load_data_ex),
         .mem_load_ready      (mem_load_ready)
     );
 
@@ -1500,10 +1508,13 @@ module cpu_top
         .mem_pc_plus_4  (mem_pc_plus_4),
         .mem_load_ready (mem_load_ready),
         .mem_wb_sel     (mem_wb_sel),
-        .mem_s1_valid       (mem_s1_valid),
+        // Use the physically local EX/MEM metadata copy for forwarding and
+        // load-hazard comparison.  It is cycle-identical to the canonical
+        // payload fields used by the LSU and commit path.
+        .mem_s1_valid       (mem_s1_hazard_valid),
         .mem_s1_reg_write   (mem_s1_reg_write_en),
-        .mem_s1_is_load     (mem_s1_mem_read_en),
-        .mem_s1_rd          (mem_s1_rd),
+        .mem_s1_is_load     (mem_s1_hazard_is_load),
+        .mem_s1_rd          (mem_s1_hazard_rd),
         .mem_s1_alu_result  (mem_s1_alu_result),
         .mem_s1_pc_plus_4   (mem_s1_pc_plus_4),
         .mem_s1_wb_sel      (mem_s1_wb_sel),
@@ -2033,6 +2044,8 @@ module cpu_top
     // DCache BRAM banks. Other platforms retain the shared raw-data formatter.
     assign mem_load_data_ext = CACHE_RDATA_FORMATTED
                              ? mem_load_data : mem_load_data_ext_raw;
+    assign mem_load_data_ext_ex = CACHE_RDATA_FORMATTED
+                                ? mem_load_data_ex : mem_load_data_ext_raw;
 
     // Same-pair Slot 0 ALU forwarding is younger than every ordinary
     // forwarding/WB-repair source captured for Slot 1, so it has priority.
@@ -2163,7 +2176,10 @@ module cpu_top
         .mem_branch_flush    (mem_branch_flush),
         .mem_s1_valid        (mem_s1_valid),
         .ex_payload          (ex_mem_s1_payload),
-        .mem_payload         (mem_s1_payload)
+        .mem_payload         (mem_s1_payload),
+        .mem_s1_hazard_valid (mem_s1_hazard_valid),
+        .mem_s1_hazard_is_load(mem_s1_hazard_is_load),
+        .mem_s1_hazard_rd    (mem_s1_hazard_rd)
     );
 
     redirect_target_select u_redirect_target_select (
@@ -2263,6 +2279,7 @@ module cpu_top
         .wb_allowin     (wb_allowin),
         .wb_valid       (wb_valid),
         .mem_load_valid (mem_load_valid),
+        .mem_load_data_ex(mem_load_data_ext_ex),
         .mem_payload    (mem_wb_s0_payload),
         .wb_payload     (wb_s0_payload),
         .wb_load_data_ex(wb_load_data_ex)

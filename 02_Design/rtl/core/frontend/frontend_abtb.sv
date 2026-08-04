@@ -67,10 +67,12 @@ module frontend_abtb (
     input  logic [31:0] update_target
 );
 
-    localparam int SETS = 16;
-    localparam int SET_IDX_W = 4;
-    // The implemented IROM is 16 KB(64*2048bits) at one fixed base address, so PC[13:7] uniquely identifies the remaining block address after set selection.
-    localparam int TAG_W = 7;
+    localparam int SETS = 32;
+    localparam int SET_IDX_W = $clog2(SETS);
+    // Competition traces need two more retained address bits than the former
+    // PC[13:7] tag. With 32 sets, PC[7:3] selects the set and PC[16:8] is the
+    // observed alias-free nine-bit tag.
+    localparam int TAG_W = 9;
 
     // Preserve the current predictor type encoding for later integration.
     localparam logic [1:0] TYPE_JAL    = 2'b00;
@@ -78,7 +80,7 @@ module frontend_abtb (
     localparam logic [1:0] TYPE_BRANCH = 2'b10;
     localparam logic [1:0] TYPE_RET    = 2'b11;
 
-    localparam int PAYLOAD_W = TAG_W + 2 + 32; // tag(7) + cfi_type(2) + target(32) = 41 bit
+    localparam int PAYLOAD_W = TAG_W + 2 + 32; // tag(9) + cfi_type(2) + target(32) = 43 bit
     localparam int TYPE_MSB = 33;
     localparam int TYPE_LSB = 32;
 
@@ -107,8 +109,10 @@ module frontend_abtb (
     logic bank1_lru [0:SETS-1];
 
     wire [31:0] pred_lookup_block_pc = {predict_pc[31:3], 3'b000};
-    wire [SET_IDX_W-1:0] pred_lookup_set = pred_lookup_block_pc[6:3];
-    wire [TAG_W-1:0] pred_lookup_tag = pred_lookup_block_pc[13:7];
+    wire [SET_IDX_W-1:0] pred_lookup_set =
+        pred_lookup_block_pc[3 +: SET_IDX_W];
+    wire [TAG_W-1:0] pred_lookup_tag =
+        pred_lookup_block_pc[3 + SET_IDX_W +: TAG_W];
 
     wire [PAYLOAD_W-1:0] bank0_way0_lookup_payload =
         bank0_way0_payload[pred_lookup_set];
@@ -287,8 +291,10 @@ module frontend_abtb (
 
     wire update_bank = update_pc[2];
     wire [31:0] update_block_pc = {update_pc[31:3], 3'b000};
-    wire [SET_IDX_W-1:0] update_set = update_block_pc[6:3];
-    wire [TAG_W-1:0] update_tag = update_block_pc[13:7];
+    wire [SET_IDX_W-1:0] update_set =
+        update_block_pc[3 +: SET_IDX_W];
+    wire [TAG_W-1:0] update_tag =
+        update_block_pc[3 + SET_IDX_W +: TAG_W];
 
     logic bank0_update_alloc_way;
     logic bank1_update_alloc_way;

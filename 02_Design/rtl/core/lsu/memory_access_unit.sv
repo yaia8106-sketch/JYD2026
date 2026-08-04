@@ -48,6 +48,7 @@ module memory_access_unit #(
     input  logic        mem_branch_flush,
 
     input  logic [31:0] cache_rdata,
+    input  logic [31:0] cache_rdata_ex,
     input  logic [31:0] mmio_rdata,
     input  logic [31:0] dual_issue_count,
 
@@ -74,6 +75,7 @@ module memory_access_unit #(
     output logic [31:0] mmio_wdata,
 
     output logic [31:0] mem_load_data,
+    output logic [31:0] mem_load_data_ex,
     output logic        mem_load_ready
 );
 
@@ -167,6 +169,8 @@ module memory_access_unit #(
 
     assign mem_load_data = (mem_lsu_cacheable | AXI_UNCACHED_DATA)
                          ? cache_rdata : mmio_load_data;
+    assign mem_load_data_ex = (mem_lsu_cacheable | AXI_UNCACHED_DATA)
+                            ? cache_rdata_ex : mmio_load_data;
     assign mem_load_ready = mem_ready_go & (mem_mem_read_en | mem_s1_mem_read_en);
 
 endmodule

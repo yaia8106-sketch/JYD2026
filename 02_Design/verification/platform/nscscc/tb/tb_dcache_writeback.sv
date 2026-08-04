@@ -13,12 +13,14 @@ module tb_dcache_writeback;
     logic        cpu_load_unsigned;
     logic        cpu_uncached;
     logic [31:0] cpu_rdata;
+    logic [31:0] cpu_rdata_ex;
     logic        cpu_ready;
     logic        flush;
 
     logic        mem_req_valid;
     logic        mem_req_ready;
     logic        mem_req_write;
+    logic        mem_req_writeback;
     logic [31:0] mem_req_addr;
     logic [ 7:0] mem_req_len;
     logic [ 1:0] mem_req_burst;
@@ -55,12 +57,14 @@ module tb_dcache_writeback;
         .cpu_load_unsigned(cpu_load_unsigned),
         .cpu_uncached(cpu_uncached),
         .cpu_rdata(cpu_rdata),
+        .cpu_rdata_ex(cpu_rdata_ex),
         .cpu_ready(cpu_ready),
         .pipeline_stall(pipeline_stall),
         .flush(flush),
         .mem_req_valid(mem_req_valid),
         .mem_req_ready(mem_req_ready),
         .mem_req_write(mem_req_write),
+        .mem_req_writeback(mem_req_writeback),
         .mem_req_addr(mem_req_addr),
         .mem_req_len(mem_req_len),
         .mem_req_burst(mem_req_burst),
@@ -181,6 +185,8 @@ module tb_dcache_writeback;
                 @(negedge clk);
             check(mem_req_write == expected_write,
                   "backend command direction mismatch");
+            check(mem_req_writeback == expected_write,
+                  "backend writeback command attribute mismatch");
             check(mem_req_addr == expected_addr,
                   $sformatf("backend command address mismatch: got=%08x expected=%08x",
                             mem_req_addr, expected_addr));
@@ -298,11 +304,11 @@ module tb_dcache_writeback;
         end
     endtask
 
-    task automatic return_write_response;
+    task automatic return_write_response(input logic [1:0] response);
         begin
             while (!mem_wr_ready)
                 @(negedge clk);
-            mem_wr_resp = 2'b00;
+            mem_wr_resp = response;
             mem_wr_valid = 1'b1;
             @(posedge clk);
             @(negedge clk);
@@ -375,34 +381,73 @@ module tb_dcache_writeback;
         input logic [31:0] refill5,
         input logic [31:0] refill6,
         input logic [31:0] refill7,
+        input logic        response_before_refill,
+        input logic        retry_once,
         output logic [31:0] result
     );
         begin
             fork
                 begin
                     launch_cpu(1'b0, addr, 4'b0000, 32'd0);
-                    #1;
                     while (!(dut.mem_req && cpu_ready)) begin
-                        @(negedge clk);
-                        #1;
+                        // A delayed B response may make cpu_ready true only
+                        // for the consuming clock edge; sample that architectural
+                        // handshake directly instead of one half-cycle later.
+                        @(posedge clk);
                     end
                     result = cpu_rdata;
                     @(posedge clk);
                 end
                 begin
                     accept_command(1'b1, victim_addr, 8'd7);
-                    receive_write_line(
-                        victim0, victim1, victim2, victim3,
-                        victim4, victim5, victim6, victim7
-                    );
-                    return_write_response();
-                    accept_command(
-                        1'b0, {addr[31:2], 2'b00}, 8'd7
-                    );
-                    send_read_line(
-                        addr[4:2], refill0, refill1, refill2, refill3,
-                        refill4, refill5, refill6, refill7
-                    );
+                    if (response_before_refill) begin
+                        receive_write_line(
+                            victim0, victim1, victim2, victim3,
+                            victim4, victim5, victim6, victim7
+                        );
+                        return_write_response(2'b00);
+                        accept_command(
+                            1'b0, {addr[31:2], 2'b00}, 8'd7
+                        );
+                        send_read_line(
+                            addr[4:2], refill0, refill1, refill2, refill3,
+                            refill4, refill5, refill6, refill7
+                        );
+                    end else begin
+                        // The refill command and all R beats are allowed while
+                        // the old line is still being written.  The W checker
+                        // also proves that refill traffic never overwrites the
+                        // dedicated victim buffer.
+                        fork
+                            receive_write_line(
+                                victim0, victim1, victim2, victim3,
+                                victim4, victim5, victim6, victim7
+                            );
+                            begin
+                                accept_command(
+                                    1'b0, {addr[31:2], 2'b00}, 8'd7
+                                );
+                                send_read_line(
+                                    addr[4:2], refill0, refill1,
+                                    refill2, refill3, refill4,
+                                    refill5, refill6, refill7
+                                );
+                            end
+                        join
+                        #1;
+                        check(!cpu_ready,
+                              "dirty load miss retired before B success");
+
+                        if (retry_once) begin
+                            return_write_response(2'b10);
+                            accept_command(1'b1, victim_addr, 8'd7);
+                            receive_write_line(
+                                victim0, victim1, victim2, victim3,
+                                victim4, victim5, victim6, victim7
+                            );
+                        end
+                        return_write_response(2'b00);
+                    end
                 end
             join
             wait_idle();
@@ -615,6 +660,10 @@ module tb_dcache_writeback;
     localparam logic [31:0] T = 32'h1c08_1060;
     localparam logic [31:0] U = 32'h1c08_2060;
     localparam logic [31:0] V = 32'h1c08_0080;
+    localparam logic [31:0] CACHE_LOWER = 32'h1c08_0000;
+    localparam logic [31:0] CACHE_UPPER = 32'h1c0f_ffe0;
+    localparam logic [31:0] CACHE_UPPER_PEER = 32'h1c08_0fe0;
+    localparam logic [31:0] CACHE_UPPER_REPL = 32'h1c08_1fe0;
 
     initial begin
         clk = 1'b0;
@@ -747,6 +796,7 @@ module tb_dcache_writeback;
             32'hc000_0002, 32'hc000_0003,
             32'hc000_0004, 32'hc000_0005,
             32'hc000_0006, 32'hc000_0007,
+            1'b0, 1'b0,
             result
         );
         check(result == 32'hc000_0000, "C refill result mismatch");
@@ -786,6 +836,7 @@ module tb_dcache_writeback;
             32'he000_0002, 32'he000_0003,
             32'he000_0004, 32'he000_0005,
             32'he000_0006, 32'he000_0007,
+            1'b1, 1'b0,
             result
         );
         check(result == 32'he000_0000, "U refill result mismatch");
@@ -800,9 +851,58 @@ module tb_dcache_writeback;
         );
         load_hit(V + 28, 32'hcafe_babe);
 
-        check(write_commands == 2,
+        $display("[INFO] shortened tag covers the exact lower cache window");
+        load_miss(
+            CACHE_LOWER,
+            32'h1000_0000, 32'h1000_0001,
+            32'h1000_0002, 32'h1000_0003,
+            32'h1000_0004, 32'h1000_0005,
+            32'h1000_0006, 32'h1000_0007,
+            result
+        );
+        check(result == 32'h1000_0000,
+              "lower cache-window boundary refill mismatch");
+        load_hit(CACHE_LOWER + 28, 32'h1000_0007);
+
+        $display("[INFO] upper-bound dirty tag reconstructs full AXI address");
+        load_miss(
+            CACHE_UPPER,
+            32'hf000_0000, 32'hf000_0001,
+            32'hf000_0002, 32'hf000_0003,
+            32'hf000_0004, 32'hf000_0005,
+            32'hf000_0006, 32'hf000_0007,
+            result
+        );
+        check(result == 32'hf000_0000,
+              "upper cache-window boundary refill mismatch");
+        store_hit(CACHE_UPPER + 12, 4'b1111, 32'hface_cafe);
+        load_miss(
+            CACHE_UPPER_PEER,
+            32'h2000_0000, 32'h2000_0001,
+            32'h2000_0002, 32'h2000_0003,
+            32'h2000_0004, 32'h2000_0005,
+            32'h2000_0006, 32'h2000_0007,
+            result
+        );
+        load_dirty_miss(
+            CACHE_UPPER_REPL, CACHE_UPPER,
+            32'hf000_0000, 32'hf000_0001,
+            32'hf000_0002, 32'hface_cafe,
+            32'hf000_0004, 32'hf000_0005,
+            32'hf000_0006, 32'hf000_0007,
+            32'h3000_0000, 32'h3000_0001,
+            32'h3000_0002, 32'h3000_0003,
+            32'h3000_0004, 32'h3000_0005,
+            32'h3000_0006, 32'h3000_0007,
+            1'b0, 1'b1,
+            result
+        );
+        check(result == 32'h3000_0000,
+              "upper-bound replacement refill mismatch");
+
+        check(write_commands == 4,
               "unexpected number of dirty writeback commands");
-        check(read_commands == 8,
+        check(read_commands == 12,
               "unexpected number of cache-line refill commands");
 
         repeat (3) @(posedge clk);
@@ -816,6 +916,13 @@ module tb_dcache_writeback;
 
     initial begin
         #30000;
+        $display("[DEBUG] state=%0d wb_state=%0d req=%b/%b/%b w=%b/%b last=%b r=%b/%b/%b b=%b/%b pending=%b wb_required=%b wb_done=%b",
+                 dut.state, dut.wb_state,
+                 mem_req_valid, mem_req_write, mem_req_ready,
+                 mem_w_valid, mem_w_ready, mem_w_last,
+                 mem_rd_valid, mem_rd_ready, mem_rd_last,
+                 mem_wr_valid, mem_wr_ready,
+                 dut.refill_cpu_pending, dut.wb_required, dut.wb_done);
         $fatal(1, "[FAIL] DCache WB+WA test timeout");
     end
 

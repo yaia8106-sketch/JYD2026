@@ -16,6 +16,7 @@ module tb_nscscc_axi_bridge;
     logic        dmem_req_valid;
     logic        dmem_req_ready;
     logic        dmem_req_write;
+    logic        dmem_req_writeback;
     logic [31:0] dmem_req_addr;
     logic [ 7:0] dmem_req_len;
     logic [ 1:0] dmem_req_burst;
@@ -87,6 +88,7 @@ module tb_nscscc_axi_bridge;
         .dmem_req_valid(dmem_req_valid),
         .dmem_req_ready(dmem_req_ready),
         .dmem_req_write(dmem_req_write),
+        .dmem_req_writeback(dmem_req_writeback),
         .dmem_req_addr(dmem_req_addr),
         .dmem_req_len(dmem_req_len),
         .dmem_req_burst(dmem_req_burst),
@@ -238,6 +240,7 @@ module tb_nscscc_axi_bridge;
         begin
             @(negedge clk);
             dmem_req_write = write;
+            dmem_req_writeback = 1'b0;
             dmem_req_addr = addr;
             dmem_req_len = len;
             dmem_req_burst = burst;
@@ -245,6 +248,7 @@ module tb_nscscc_axi_bridge;
             do @(posedge clk); while (!dmem_req_ready);
             @(negedge clk);
             dmem_req_valid = 1'b0;
+            dmem_req_writeback = 1'b0;
             if (write) begin
                 dmem_w_data = data;
                 dmem_w_strb = strb;
@@ -273,6 +277,7 @@ module tb_nscscc_axi_bridge;
         begin
             @(negedge clk);
             dmem_req_write = 1'b1;
+            dmem_req_writeback = 1'b1;
             dmem_req_addr = addr;
             dmem_req_len = 8'd7;
             dmem_req_burst = 2'b01;
@@ -280,6 +285,7 @@ module tb_nscscc_axi_bridge;
             do @(posedge clk); while (!dmem_req_ready);
             @(negedge clk);
             dmem_req_valid = 1'b0;
+            dmem_req_writeback = 1'b0;
 
             for (int beat = 0; beat < 8; beat++) begin
                 case (beat)
@@ -319,6 +325,7 @@ module tb_nscscc_axi_bridge;
         irom_req_kill = 1'b0;
         dmem_req_valid = 1'b0;
         dmem_req_write = 1'b0;
+        dmem_req_writeback = 1'b0;
         dmem_req_addr = 32'd0;
         dmem_req_len = 8'd0;
         dmem_req_burst = 2'b01;
@@ -538,10 +545,15 @@ module tb_nscscc_axi_bridge;
         @(negedge clk);
         bvalid = 1'b0;
 
-        // A dirty cache line uses the same command channel but streams eight
-        // independently backpressured W beats. Delay AW while accepting W to
-        // prove that the two AXI channels retain independent state.
-        $display("[INFO] DCache eight-beat writeback burst");
+        // A dirty cache line uses the same command channel but is explicitly
+        // marked as a writeback.  Start it while an ICache read is active, then
+        // start a DCache read while the write remains active.  This exercises
+        // all three outstanding slots (I read ID0, D read ID1, D write ID2).
+        $display("[INFO] writeback overlaps I/D reads and keeps AW/W independent");
+        fork
+            issue_irom(32'h1c00_0500);
+            accept_ar(32'h1c00_0500, 8'd3, 2'b10, 4'h0);
+        join
         fork
             issue_dmem_write_burst(
                 32'h1c08_0400,
@@ -561,6 +573,24 @@ module tb_nscscc_axi_bridge;
                       "writeback AWBURST must be INCR");
                 check(awid == 4'h2 && wid == 4'h2,
                       "writeback AXI IDs mismatch");
+
+                // The flagged write command was accepted despite the active
+                // ICache read.  A DCache read must now also acquire ID1 before
+                // either the I read or the write completes.
+                fork
+                    issue_dmem(
+                        1'b0, 32'h1c08_0600, 8'd0, 2'b01,
+                        32'd0, 4'd0
+                    );
+                    accept_ar(32'h1c08_0600, 8'd0, 2'b01, 4'h1);
+                join
+                check(awvalid,
+                      "writeback AW was lost while overlapping reads started");
+                send_r(4'h0, 32'h9100_0000, 1'b0);
+                send_r(4'h1, 32'h9200_0000, 1'b1);
+                send_r(4'h0, 32'h9100_0001, 1'b0);
+                send_r(4'h0, 32'h9100_0002, 1'b0);
+                send_r(4'h0, 32'h9100_0003, 1'b1);
 
                 // Accept all W beats before AW. AXI permits this and the
                 // adapter must wait for both channel completions before B.

@@ -362,15 +362,43 @@ module tb_frontend_abtb;
         check_way_candidates(32'h8000_0008, 1'b0, 1'b0);
 
         train_miss(32'h8000_0010, TYPE_JAL, 32'h8000_3000);
-        train_miss(32'h8000_0090, TYPE_JAL, 32'h8000_3000);
-        check_way_candidates(32'h8000_0090, 1'b0, 1'b1);
+        train_miss(32'h8000_0110, TYPE_JAL, 32'h8000_3000);
+        check_way_candidates(32'h8000_0110, 1'b0, 1'b1);
 
         train_miss(32'h8000_001c, TYPE_JAL, 32'h8000_3000);
         check_way_candidates(32'h8000_001c, 1'b1, 1'b0);
 
         train_miss(32'h8000_0024, TYPE_JAL, 32'h8000_3000);
-        train_miss(32'h8000_00a4, TYPE_JAL, 32'h8000_3000);
-        check_way_candidates(32'h8000_00a4, 1'b1, 1'b1);
+        train_miss(32'h8000_0124, TYPE_JAL, 32'h8000_3000);
+        check_way_candidates(32'h8000_0124, 1'b1, 1'b1);
+
+        // The new fifth set-index bit is PC[7]. These three bank0 entries all
+        // mapped to one set in the former 16-set ABTB, but the middle address
+        // now occupies the upper half of the 32-set table. All three must
+        // remain resident: two ways in set 12 and one way in set 28.
+        train_miss(32'h8000_0060, TYPE_JAL, 32'h8000_3060);
+        train_miss(32'h8000_00e0, TYPE_JAL, 32'h8000_30e0);
+        train_miss(32'h8000_0160, TYPE_JAL, 32'h8000_3160);
+        lookup(32'h8000_0060);
+        check(bank0_hit && bank0_abtb_pred_target == 32'h8000_3060,
+              "lower-half entry was lost across the fifth index bit");
+        lookup(32'h8000_00e0);
+        check(bank0_hit && bank0_abtb_pred_target == 32'h8000_30e0,
+              "upper-half entry did not use the fifth index bit");
+        lookup(32'h8000_0160);
+        check(bank0_hit && bank0_abtb_pred_target == 32'h8000_3160,
+              "second lower-half way was not retained");
+
+        // PC[15] and PC[16] are the two tag bits added by the nine-bit tag.
+        // Neither address may falsely hit the base entry.
+        train_miss(32'h8000_0070, TYPE_JAL, 32'h8000_3070);
+        lookup(32'h8000_8070);
+        check(!bank0_hit, "PC[15] was missing from the ABTB tag");
+        lookup(32'h8001_0070);
+        check(!bank0_hit, "PC[16] was missing from the ABTB tag");
+        lookup(32'h8000_0070);
+        check(bank0_hit && bank0_abtb_pred_target == 32'h8000_3070,
+              "base entry was lost during extended-tag checks");
 
         // Deliberately create duplicate tags using stale hit metadata. Both
         // ways match, but externally visible metadata and prediction use way0.
@@ -385,9 +413,9 @@ module tb_frontend_abtb;
               "duplicate-tag lookup did not preserve way0 priority");
 
         // Two-way collision/replacement test in an otherwise unused bank0 set.
-        // Addresses differ in tag but share set index PC[6:3] = 5.
+        // Addresses differ in tag but share set index PC[7:3] = 5.
         train_miss(32'h8000_0028, TYPE_JAL, 32'h8000_1100);
-        train_miss(32'h8000_00a8, TYPE_JAL, 32'h8000_1200);
+        train_miss(32'h8000_0128, TYPE_JAL, 32'h8000_1200);
 
         // Touch the older entry so the other way becomes LRU.
         lookup(32'h8000_0028);
@@ -395,33 +423,33 @@ module tb_frontend_abtb;
               "first colliding entry was not retained");
         @(posedge clk);
 
-        train_miss(32'h8000_0128, TYPE_JAL, 32'h8000_1300);
+        train_miss(32'h8000_0228, TYPE_JAL, 32'h8000_1300);
 
-        lookup(32'h8000_00a8);
+        lookup(32'h8000_0128);
         check(!bank0_hit, "LRU victim survived a three-tag set collision");
         lookup(32'h8000_0028);
         check(bank0_hit && bank0_abtb_pred_target == 32'h8000_1100,
               "recently used way was incorrectly replaced");
-        lookup(32'h8000_0128);
+        lookup(32'h8000_0228);
         check(bank0_hit && bank0_abtb_pred_target == 32'h8000_1300,
               "replacement entry was not installed");
 
         // Repeat replacement in bank1 to verify that its LRU state is
         // independent from bank0. These slot1 PCs share set index 6.
         train_miss(32'h8000_0034, TYPE_CALL, 32'h8000_2100);
-        train_miss(32'h8000_00b4, TYPE_CALL, 32'h8000_2200);
+        train_miss(32'h8000_0134, TYPE_CALL, 32'h8000_2200);
         lookup(32'h8000_0034);
         check(bank1_hit && bank1_abtb_pred_target == 32'h8000_2100,
               "first colliding bank1 entry was not retained");
         @(posedge clk);
 
-        train_miss(32'h8000_0134, TYPE_CALL, 32'h8000_2300);
-        lookup(32'h8000_00b4);
+        train_miss(32'h8000_0234, TYPE_CALL, 32'h8000_2300);
+        lookup(32'h8000_0134);
         check(!bank1_hit, "bank1 LRU victim survived a three-tag set collision");
         lookup(32'h8000_0034);
         check(bank1_hit && bank1_abtb_pred_target == 32'h8000_2100,
               "recently used bank1 way was incorrectly replaced");
-        lookup(32'h8000_0134);
+        lookup(32'h8000_0234);
         check(bank1_hit && bank1_abtb_pred_target == 32'h8000_2300,
               "bank1 replacement entry was not installed");
 
@@ -454,10 +482,10 @@ module tb_frontend_abtb;
         // when both write LRU. The following miss must evict the lookup way,
         // leaving the explicitly updated way resident.
         train_miss(32'h8000_0040, TYPE_JAL, 32'h8000_4100);
-        train_miss(32'h8000_00c0, TYPE_JAL, 32'h8000_4200);
+        train_miss(32'h8000_0140, TYPE_JAL, 32'h8000_4200);
         lookup(32'h8000_0040);
         conflict_way0 = bank0_way;
-        lookup(32'h8000_00c0);
+        lookup(32'h8000_0140);
         conflict_way1 = bank0_way;
         check(conflict_way0 != conflict_way1,
               "same-set conflict setup did not occupy both ways");
@@ -468,7 +496,7 @@ module tb_frontend_abtb;
         update_valid = 1'b1;
         update_hit = 1'b1;
         update_way = conflict_way1;
-        update_pc = 32'h8000_00c0;
+        update_pc = 32'h8000_0140;
         update_cfi_type = TYPE_CALL;
         update_target = 32'h8000_4300;
         #1;
@@ -479,15 +507,15 @@ module tb_frontend_abtb;
         update_valid = 1'b0;
         lookup_valid = 1'b0;
 
-        train_miss(32'h8000_0140, TYPE_JAL, 32'h8000_4400);
+        train_miss(32'h8000_0240, TYPE_JAL, 32'h8000_4400);
         lookup(32'h8000_0040);
         check(!bank0_hit,
               "lookup LRU write incorrectly overrode same-set update priority");
-        lookup(32'h8000_00c0);
+        lookup(32'h8000_0140);
         check(bank0_hit && bank0_cfi_type == TYPE_CALL
               && bank0_abtb_pred_target == 32'h8000_4300,
               "same-set updated entry was incorrectly replaced");
-        lookup(32'h8000_0140);
+        lookup(32'h8000_0240);
         check(bank0_hit && bank0_abtb_pred_target == 32'h8000_4400,
               "same-set replacement after conflict was not installed");
 
@@ -495,7 +523,7 @@ module tb_frontend_abtb;
         // and therefore must not perturb bank1 replacement state.
         train_miss(32'h8000_0048, TYPE_JAL, 32'h8000_5100);
         train_miss(32'h8000_004c, TYPE_CALL, 32'h8000_5200);
-        train_miss(32'h8000_00cc, TYPE_CALL, 32'h8000_5300);
+        train_miss(32'h8000_014c, TYPE_CALL, 32'h8000_5300);
         lookup(32'h8000_0048);
         check(bank0_pred_taken && bank1_hit,
               "wrong-path bank1 LRU test did not produce dual hits");
@@ -503,14 +531,14 @@ module tb_frontend_abtb;
         @(negedge clk);
         lookup_valid = 1'b0;
 
-        train_miss(32'h8000_014c, TYPE_CALL, 32'h8000_5400);
+        train_miss(32'h8000_024c, TYPE_CALL, 32'h8000_5400);
         lookup(32'h8000_004c);
         check(!bank1_hit,
               "bank1 wrong-path hit incorrectly changed replacement state");
-        lookup(32'h8000_00cc);
+        lookup(32'h8000_014c);
         check(bank1_hit && bank1_abtb_pred_target == 32'h8000_5300,
               "bank1 resident entry was incorrectly replaced");
-        lookup(32'h8000_014c);
+        lookup(32'h8000_024c);
         check(bank1_hit && bank1_abtb_pred_target == 32'h8000_5400,
               "bank1 replacement after wrong-path lookup was not installed");
 
@@ -519,7 +547,7 @@ module tb_frontend_abtb;
         #1;
         check(!bank0_eligible && !bank1_eligible && !pred_taken,
               "lookup_valid did not suppress lookup results");
-        check(pred_next_pc == 32'h8000_0150,
+        check(pred_next_pc == 32'h8000_0250,
               "sequential next PC must remain deterministic while lookup is invalid");
 
         $display("[PASS] frontend_abtb directed test");

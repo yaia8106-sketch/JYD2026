@@ -51,6 +51,7 @@ module tb_loongarch_bl_sequence;
         .cache_load_unsigned(),
         .cache_uncached(),
         .cache_rdata(32'd0),
+        .cache_rdata_ex(32'd0),
         .cache_ready(1'b1),
         .cache_flush(),
         .cache_pipeline_stall(),

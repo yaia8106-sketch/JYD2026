@@ -12,12 +12,14 @@ module tb_dcache_uncached;
     logic        cpu_load_unsigned;
     logic cpu_uncached;
     logic [31:0] cpu_rdata;
+    logic [31:0] cpu_rdata_ex;
     logic cpu_ready;
     logic flush;
 
     logic mem_req_valid;
     logic mem_req_ready;
     logic mem_req_write;
+    logic mem_req_writeback;
     logic [31:0] mem_req_addr;
     logic [ 7:0] mem_req_len;
     logic [ 1:0] mem_req_burst;
@@ -51,12 +53,14 @@ module tb_dcache_uncached;
         .cpu_load_unsigned(cpu_load_unsigned),
         .cpu_uncached(cpu_uncached),
         .cpu_rdata(cpu_rdata),
+        .cpu_rdata_ex(cpu_rdata_ex),
         .cpu_ready(cpu_ready),
         .pipeline_stall(pipeline_stall),
         .flush(flush),
         .mem_req_valid(mem_req_valid),
         .mem_req_ready(mem_req_ready),
         .mem_req_write(mem_req_write),
+        .mem_req_writeback(mem_req_writeback),
         .mem_req_addr(mem_req_addr),
         .mem_req_len(mem_req_len),
         .mem_req_burst(mem_req_burst),
@@ -111,6 +115,8 @@ module tb_dcache_uncached;
     task automatic accept_command;
         begin
             wait (mem_req_valid);
+            check(!mem_req_writeback,
+                  "non-eviction command was marked as cache writeback");
             @(negedge clk);
             mem_req_ready = 1'b1;
             @(posedge clk);
@@ -210,11 +216,12 @@ module tb_dcache_uncached;
         return_read(32'h80ff_7f01, 1'b1, 32'h0000_007f);
         repeat (2) @(posedge clk);
 
-        // The same address marked cacheable must still miss and request a
-        // eight-beat line, proving the previous uncached read did not allocate.
+        // Fill the real cacheable address with the same shortened tag/index as
+        // the peripheral address.  The full-address classifier, not the
+        // shortened tag, remains responsible for separating the two regions.
         cpu_load_size = 2'b10;
         cpu_load_unsigned = 1'b0;
-        launch_cpu(1'b0, 1'b0, 32'h1fe0_01e0, 4'd0, 32'd0);
+        launch_cpu(1'b0, 1'b0, 32'h1c08_01e0, 4'd0, 32'd0);
         wait (mem_req_valid);
         check(!mem_req_write && mem_req_len == 8'd7,
               "cacheable load did not request an eight-beat refill");
@@ -230,6 +237,20 @@ module tb_dcache_uncached;
         return_read(32'h0000_0007, 1'b0, 32'h0000_0007);
         return_read(32'h0000_0008, 1'b1, 32'h0000_0008);
         repeat (3) @(posedge clk);
+
+        // This uncached address aliases every stored tag/index bit of the line
+        // above.  It must still issue a one-beat AXI read and return backend
+        // data rather than the cached value.
+        launch_cpu(1'b0, 1'b1, 32'h1fe0_01e0, 4'd0, 32'd0);
+        wait (mem_req_valid);
+        #1;
+        check(!mem_req_write && (mem_req_len == 8'd0),
+              "uncached shortened-tag alias was mistaken for a cache hit");
+        check(mem_req_addr == 32'h1fe0_01e0,
+              "uncached shortened-tag alias lost its full AXI address");
+        accept_command();
+        return_read(32'hdead_beef, 1'b1, 32'hdead_beef);
+        repeat (2) @(posedge clk);
 
         // Uncached stores retain byte lanes and do not retire until the AXI
         // write response is accepted.

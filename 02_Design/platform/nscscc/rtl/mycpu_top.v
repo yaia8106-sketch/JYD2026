@@ -73,6 +73,11 @@ module core_top #(
 `endif
 );
 
+    // One shared definition owns both the CPU's complete 32-bit cacheability
+    // check and the DCache's shortened internal-tag reconstruction.
+    localparam [31:0] DATA_CACHE_ADDR_BASE = 32'h1C08_0000;
+    localparam [31:0] DATA_CACHE_ADDR_MASK = 32'hFFF8_0000;
+
     reg  [1:0] reset_pipe;
     wire       core_rst_n;
 
@@ -103,6 +108,7 @@ module core_top #(
     wire        cache_load_unsigned;
     wire        cache_uncached;
     wire [31:0] cache_rdata;
+    wire [31:0] cache_rdata_ex;
     wire        cache_ready;
     wire        cache_flush;
     wire        cache_pipeline_stall;
@@ -110,6 +116,7 @@ module core_top #(
     wire        dmem_req_valid;
     wire        dmem_req_ready;
     wire        dmem_req_write;
+    wire        dmem_req_writeback;
     wire [31:0] dmem_req_addr;
     wire [ 7:0] dmem_req_len;
     wire [ 1:0] dmem_req_burst;
@@ -163,8 +170,8 @@ module core_top #(
     cpu_top #(
         .IROM_VARIABLE_LATENCY(1'b1),
         .RESET_PC            (32'h1C00_0000),
-        .CACHE_ADDR_BASE     (32'h1C08_0000),
-        .CACHE_ADDR_MASK     (32'hFFF8_0000),
+        .CACHE_ADDR_BASE     (DATA_CACHE_ADDR_BASE),
+        .CACHE_ADDR_MASK     (DATA_CACHE_ADDR_MASK),
         .AXI_UNCACHED_DATA   (1'b1),
         .CACHE_RDATA_FORMATTED(1'b1)
     ) u_cpu (
@@ -189,6 +196,7 @@ module core_top #(
         .cache_load_unsigned (cache_load_unsigned),
         .cache_uncached      (cache_uncached),
         .cache_rdata         (cache_rdata),
+        .cache_rdata_ex      (cache_rdata_ex),
         .cache_ready         (cache_ready),
         .cache_flush         (cache_flush),
         .cache_pipeline_stall(cache_pipeline_stall),
@@ -235,7 +243,10 @@ module core_top #(
         .debug_exception_inst(debug_exception_inst_i)
     );
 
-    dcache u_dcache (
+    dcache #(
+        .CACHE_ADDR_BASE     (DATA_CACHE_ADDR_BASE),
+        .CACHE_ADDR_MASK     (DATA_CACHE_ADDR_MASK)
+    ) u_dcache (
         .clk                 (aclk),
         .rst_n               (core_rst_n),
         .cpu_req             (cache_req),
@@ -248,12 +259,14 @@ module core_top #(
         .cpu_load_unsigned   (cache_load_unsigned),
         .cpu_uncached        (cache_uncached),
         .cpu_rdata           (cache_rdata),
+        .cpu_rdata_ex        (cache_rdata_ex),
         .cpu_ready           (cache_ready),
         .pipeline_stall      (cache_pipeline_stall),
         .flush               (cache_flush),
         .mem_req_valid       (dmem_req_valid),
         .mem_req_ready       (dmem_req_ready),
         .mem_req_write       (dmem_req_write),
+        .mem_req_writeback   (dmem_req_writeback),
         .mem_req_addr        (dmem_req_addr),
         .mem_req_len         (dmem_req_len),
         .mem_req_burst       (dmem_req_burst),
@@ -286,6 +299,7 @@ module core_top #(
         .dmem_req_valid (dmem_req_valid),
         .dmem_req_ready (dmem_req_ready),
         .dmem_req_write (dmem_req_write),
+        .dmem_req_writeback(dmem_req_writeback),
         .dmem_req_addr  (dmem_req_addr),
         .dmem_req_len   (dmem_req_len),
         .dmem_req_burst (dmem_req_burst),

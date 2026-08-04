@@ -90,6 +90,47 @@ void test_abtb_taken_allocation_and_not_taken_filter() {
     assert(!filtered.lookup(branch_nt.source_pc, 2).hit);
 }
 
+void test_abtb_index_and_tag_geometry() {
+    static_assert(archsim::kAbtbBanks == 2u);
+    static_assert(archsim::kAbtbSets == 32u);
+    static_assert(archsim::kAbtbWays == 2u);
+    static_assert(archsim::kAbtbIndexBits == 5u);
+    static_assert(archsim::kAbtbTagBits == 9u);
+    static_assert(archsim::AbtbModel::logical_storage_bits() == 5696u);
+
+    archsim::AbtbModel index_model(0);
+    std::uint64_t ordinal = 1;
+    const auto train = [&](const std::uint32_t pc,
+                           const std::uint32_t target) {
+        const auto jal = event(archsim::CfiKind::Jal, ordinal, pc,
+                               kJalX0Plus8, target);
+        const auto decoded = archsim::decode_cfi(jal.instruction, pc);
+        const auto prediction = index_model.lookup(pc, ordinal);
+        index_model.resolve(jal, decoded, prediction);
+        ++ordinal;
+    };
+
+    // PC[7] separates the middle entry into the upper 16 sets. The other two
+    // occupy the two ways of the same lower-half set, so all three coexist.
+    train(archsim::kIromBase + 0x60u, archsim::kIromBase + 0x1060u);
+    train(archsim::kIromBase + 0xe0u, archsim::kIromBase + 0x10e0u);
+    train(archsim::kIromBase + 0x160u, archsim::kIromBase + 0x1160u);
+    assert(index_model.lookup(archsim::kIromBase + 0x60u, ordinal++).hit);
+    assert(index_model.lookup(archsim::kIromBase + 0xe0u, ordinal++).hit);
+    assert(index_model.lookup(archsim::kIromBase + 0x160u, ordinal++).hit);
+
+    archsim::AbtbModel tag_model(0);
+    const auto base_pc = archsim::kIromBase + 0x70u;
+    const auto jal = event(archsim::CfiKind::Jal, 1, base_pc,
+                           kJalX0Plus8, archsim::kIromBase + 0x1070u);
+    const auto decoded = archsim::decode_cfi(jal.instruction, base_pc);
+    const auto miss = tag_model.lookup(base_pc, 1);
+    tag_model.resolve(jal, decoded, miss);
+    assert(tag_model.lookup(base_pc, 2).hit);
+    assert(!tag_model.lookup(base_pc + 0x8000u, 3).hit);
+    assert(!tag_model.lookup(base_pc + 0x1'0000u, 4).hit);
+}
+
 void test_pending_ras_covers_delayed_call() {
     const auto call = event(archsim::CfiKind::Jal, 1, archsim::kIromBase,
                             kJalX1Plus8, archsim::kIromBase + 8u);
@@ -251,6 +292,7 @@ int main() {
     test_decode_cfi();
     test_dual_cfi_block_profile();
     test_abtb_taken_allocation_and_not_taken_filter();
+    test_abtb_index_and_tag_geometry();
     test_pending_ras_covers_delayed_call();
     test_f0_direct_repairs_cold_jal();
     test_direction_barrier_policy_bounds_delayed_training();

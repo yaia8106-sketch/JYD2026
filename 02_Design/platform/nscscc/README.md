@@ -15,8 +15,11 @@ The chiplab processor contract is implemented by `rtl/mycpu_top.v`:
 
 The NSCSCC DCache is 8 KiB, 2-way set associative, with 128 sets and
 32-byte lines.  It uses write-back plus write-allocate: cacheable stores update
-the local line and set its dirty bit; a dirty replacement is emitted as one
-eight-beat AXI write burst before the new line is refilled.  Consecutive
+the local line and set its dirty bit.  A dirty victim is first copied into a
+private eight-word buffer; after its write command is accepted, the new-line
+refill may run in parallel with the eight W beats and B response.  The DCache
+still has one miss slot, so it accepts no later data-memory request until both
+transactions finish.  Consecutive
 store-hit/load-hit accesses to the same word use a one-cycle BRAM
 read-after-write collision bypass; there is no DCache store buffer.
 
@@ -30,13 +33,19 @@ made from the BP request address and registered with the synchronous BRAM data,
 so a responding local hit may be replaced by the next BP request at the same
 clock edge.
 
+The frontend ABTB has two instruction-position banks, 32 sets per bank, and
+two ways per set (128 entries total).  `PC[7:3]` selects the set and the
+nine-bit `PC[16:8]` tag suppresses the short-tag aliases observed in the perf
+instruction traces; each entry retains its CFI type and 32-bit target.
+
 `rtl/nscscc_axi_bridge.sv` is intentionally platform-owned.  ICache reads use
 AXI ID 0 and DCache reads use ID 1, so one request from each cache may remain
 outstanding and their R beats are routed by RID.  A same-cycle command tie
-still gives DCache priority.  DCache writes use ID 2, remain
-single-outstanding, and are serialized against both read IDs.  Internal write
-commands and 32-bit write-data beats are separate, so a DCache line writeback
-does not require a 128-bit datapath through the wrapper.
+still gives DCache priority.  DCache writes use ID 2 and remain
+single-outstanding.  Dirty-line writebacks may overlap both read IDs; uncached
+and MMIO writes are explicitly unmarked and remain serialized against reads.
+Internal write commands and 32-bit write-data beats are separate, so a DCache
+line writeback does not require a 256-bit datapath through the wrapper.
 
 ISA and platform selection stay separate:
 

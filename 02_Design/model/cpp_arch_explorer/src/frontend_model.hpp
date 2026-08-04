@@ -81,6 +81,12 @@ enum class AbtbType : std::uint8_t {
     Ret,
 };
 
+inline constexpr std::size_t kAbtbBanks = 2;
+inline constexpr std::size_t kAbtbSets = 32;
+inline constexpr std::size_t kAbtbWays = 2;
+inline constexpr std::uint32_t kAbtbIndexBits = 5;
+inline constexpr std::uint32_t kAbtbTagBits = 9;
+
 struct AbtbPrediction {
     bool hit = false;
     std::uint8_t way = 0;
@@ -103,10 +109,10 @@ struct AbtbStats {
     std::uint64_t target_mismatches = 0;
     std::uint64_t qualified_updates = 0;
     std::uint64_t stale_hit_writes = 0;
-    std::array<std::uint64_t, 2> bank_lookups{};
-    std::array<std::uint64_t, 2> bank_hits{};
-    std::array<std::uint64_t, 2> bank_updates{};
-    std::array<std::array<AbtbSetStats, 16>, 2> sets{};
+    std::array<std::uint64_t, kAbtbBanks> bank_lookups{};
+    std::array<std::uint64_t, kAbtbBanks> bank_hits{};
+    std::array<std::uint64_t, kAbtbBanks> bank_updates{};
+    std::array<std::array<AbtbSetStats, kAbtbSets>, kAbtbBanks> sets{};
 };
 
 class AbtbModel {
@@ -119,13 +125,15 @@ public:
     void resolution_barrier();
     [[nodiscard]] const AbtbStats& stats() const { return stats_; }
     [[nodiscard]] static constexpr std::uint64_t logical_storage_bits() {
-        return 64u * (7u + 2u + 32u + 1u) + 32u;
+        return kAbtbBanks * kAbtbSets * kAbtbWays *
+                   (kAbtbTagBits + 2u + 32u + 1u) +
+               kAbtbBanks * kAbtbSets;
     }
 
 private:
     struct Entry {
         bool valid = false;
-        std::uint8_t tag = 0;
+        std::uint16_t tag = 0;
         AbtbType type = AbtbType::Jal;
         std::uint32_t target = 0;
     };
@@ -145,8 +153,9 @@ private:
     static AbtbType update_type(const DecodedCfi& decoded);
 
     std::uint32_t update_delay_instructions_ = 0;
-    std::array<std::array<std::array<Entry, 2>, 16>, 2> entries_{};
-    std::array<std::array<std::uint8_t, 16>, 2> lru_{};
+    std::array<std::array<std::array<Entry, kAbtbWays>, kAbtbSets>,
+               kAbtbBanks> entries_{};
+    std::array<std::array<std::uint8_t, kAbtbSets>, kAbtbBanks> lru_{};
     std::deque<PendingUpdate> pending_;
     AbtbStats stats_{};
 };

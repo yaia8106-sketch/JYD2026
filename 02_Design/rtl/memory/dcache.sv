@@ -7,7 +7,7 @@
 //   - Tag: LUTRAM async read and EX-stage compare, hit result latched EX->MEM
 //   - Data: BRAM sync read (addr in EX, data in MEM)
 //   - 32-byte line, eight-beat critical-word-first AXI WRAP refill
-//   - Load miss: optionally write back a dirty victim, then refill the line
+//   - Load miss: snapshot a dirty victim, then overlap its writeback with refill
 //   - WB store hit: update the cache and set one dirty bit
 //   - WB store miss: save the store, refill, merge its byte lanes, mark dirty
 //   - A one-cycle BRAM RAW-collision bypass handles an immediately following
@@ -15,7 +15,13 @@
 //   - Way/refill/uncached load data is formatted in parallel before late select
 // ============================================================
 
-module dcache (
+module dcache #(
+    // The full 32-bit address is still carried to AXI and to the CPU's
+    // architectural exception logic.  These parameters describe only the
+    // fixed NSCSCC cacheable window used to shorten internal tag metadata.
+    parameter logic [31:0] CACHE_ADDR_BASE = 32'h1C08_0000,
+    parameter logic [31:0] CACHE_ADDR_MASK = 32'hFFF8_0000
+) (
     input  logic        clk,
     input  logic        rst_n,
 
@@ -32,6 +38,8 @@ module dcache (
 
     // --- MEM stage outputs ---
     output logic [31:0] cpu_rdata,
+    // Physically independent copy for the remote EX load-repair register.
+    output logic [31:0] cpu_rdata_ex,
     output logic        cpu_ready,
 
     // Pipeline synchronization
@@ -45,6 +53,10 @@ module dcache (
     output logic        mem_req_valid,
     input  logic        mem_req_ready,
     output logic        mem_req_write,
+    // Only dirty cache-line eviction commands assert this attribute.  It lets
+    // the NSCSCC arbiter overlap the write with reads while uncached/MMIO
+    // writes retain their strongly serialized behavior.
+    output logic        mem_req_writeback,
     output logic [31:0] mem_req_addr,
     output logic [ 7:0] mem_req_len,
     output logic [ 1:0] mem_req_burst,
@@ -73,9 +85,13 @@ module dcache (
     localparam WAYS       = 2;
     localparam SETS       = 128;
     localparam LINE_WORDS = 8;
-    localparam TAG_W      = 20;
+    // CACHE_ADDR_MASK fixes addr[31:19].  addr[18:12] is therefore the only
+    // tag state required for requests already classified as cacheable using
+    // the complete architectural address.
+    localparam TAG_W      = 7;
     localparam INDEX_W    = 7;    // addr[11:5]
     localparam WORD_W     = 3;    // addr[4:2]
+    localparam logic [12:0] CACHE_ADDR_PREFIX = CACHE_ADDR_BASE[31:19];
 
     function automatic [31:0] merge_bytes (
         input logic [31:0] base,
@@ -123,7 +139,7 @@ module dcache (
     // ================================================================
     //  EX-stage address decomposition
     // ================================================================
-    wire [TAG_W-1:0]   ex_tag   = cpu_addr[31:12];
+    wire [TAG_W-1:0]   ex_tag   = cpu_addr[18:12];
     wire [INDEX_W-1:0] ex_index = cpu_lookup_addr[9:3];
     wire [WORD_W-1:0]  ex_word  = cpu_lookup_addr[2:0];
 
@@ -185,8 +201,8 @@ module dcache (
         S_REPLAY,         // re-read a request held while WB miss work used Port B
         S_WB_CAPTURE,     // read eight victim words into the local line buffer
         S_WB_REQ,         // issue one eight-beat writeback command
-        S_WB_DATA,        // stream eight writeback words
-        S_WB_RESP,        // wait for the write response
+        S_WB_JOIN_DONE,   // refill installed; wait for dirty writeback success
+        S_WB_JOIN_IDLE,   // killed refill; wait for dirty writeback success
         S_UC_REQ,         // issue one uncached read/write command
         S_UC_READ,        // wait for the uncached read beat
         S_UC_WRITE_DATA,  // send the single uncached write beat
@@ -203,8 +219,8 @@ module dcache (
     wire state_replay        = (state == S_REPLAY);
     wire state_wb_capture    = (state == S_WB_CAPTURE);
     wire state_wb_req        = (state == S_WB_REQ);
-    wire state_wb_data       = (state == S_WB_DATA);
-    wire state_wb_resp       = (state == S_WB_RESP);
+    wire state_wb_join_done  = (state == S_WB_JOIN_DONE);
+    wire state_wb_join_idle  = (state == S_WB_JOIN_IDLE);
     wire state_uc_req        = (state == S_UC_REQ);
     wire state_uc_read       = (state == S_UC_READ);
     wire state_uc_write_data = (state == S_UC_WRITE_DATA);
@@ -226,6 +242,24 @@ module dcache (
     wire                refill_cache_write;
     logic               refill_cpu_pending;
     wire                refill_target_fire;
+    wire                refill_cpu_ready;
+
+    // A dirty victim owns line_buffer until its B response succeeds.  Refill
+    // data goes straight to the selected BRAM, so write and read progress can
+    // advance independently without a second cache-line buffer.
+    typedef enum logic [1:0] {
+        WB_IDLE,
+        WB_CMD,
+        WB_DATA,
+        WB_RESP
+    } wb_state_t;
+    wb_state_t wb_state;
+    wire wb_state_cmd  = (wb_state == WB_CMD);
+    wire wb_state_data = (wb_state == WB_DATA);
+    wire wb_state_resp = (wb_state == WB_RESP);
+    logic wb_required;
+    logic wb_done;
+    logic refill_read_accepted;
 
     // ================================================================
     //  Tag RAM (LUTRAM, async read)
@@ -264,38 +298,37 @@ module dcache (
     assign tag_rd_vld[0]  = tag_vld[0][tag_read_index_w0];
     assign tag_rd_vld[1]  = tag_vld[1][tag_read_index_w1];
 
-    // Keep the raw tag for miss-victim metadata.  Capture valid and the four
-    // tag-compare groups independently across EX->MEM; the final five-input
-    // hit reduction is deliberately moved behind that edge.
+    // Keep the shortened tag for miss-victim metadata. Capture valid and the
+    // three tag-compare groups independently across EX->MEM; the final
+    // four-input hit reduction is deliberately moved behind that edge.
     logic [TAG_W-1:0] mem_tag_rd [WAYS-1:0];
     logic             mem_tag_vld [WAYS-1:0];
 
-    // Compare in parallel before the EX->MEM edge. A monolithic 20-bit
-    // equality can become a serial carry chain on 7-series devices; four
-    // independent groups plus one late five-input AND keep the logic shallow.
+    // Compare in parallel before the EX->MEM edge.  Each three-bit equality
+    // consumes exactly six LUT inputs (three stored/request bit pairs); the
+    // remaining bit forms its own group.  One late four-input AND combines
+    // valid plus the three registered groups in MEM.
     wire [TAG_W-1:0] tag_diff_w0 = tag_rd_data[0] ^ tag_lookup_tag;
     wire [TAG_W-1:0] tag_diff_w1 = tag_rd_data[1] ^ tag_lookup_tag;
-    wire tag_eq_w0_0 = ~|tag_diff_w0[5:0];
-    wire tag_eq_w0_1 = ~|tag_diff_w0[11:6];
-    wire tag_eq_w0_2 = ~|tag_diff_w0[17:12];
-    wire tag_eq_w0_3 = ~|tag_diff_w0[19:18];
-    wire tag_eq_w1_0 = ~|tag_diff_w1[5:0];
-    wire tag_eq_w1_1 = ~|tag_diff_w1[11:6];
-    wire tag_eq_w1_2 = ~|tag_diff_w1[17:12];
-    wire tag_eq_w1_3 = ~|tag_diff_w1[19:18];
-    wire [3:0] tag_eq_group_w0 = {
-        tag_eq_w0_3, tag_eq_w0_2, tag_eq_w0_1, tag_eq_w0_0
+    wire tag_eq_w0_0 = ~|tag_diff_w0[2:0];
+    wire tag_eq_w0_1 = ~|tag_diff_w0[5:3];
+    wire tag_eq_w0_2 = ~tag_diff_w0[6];
+    wire tag_eq_w1_0 = ~|tag_diff_w1[2:0];
+    wire tag_eq_w1_1 = ~|tag_diff_w1[5:3];
+    wire tag_eq_w1_2 = ~tag_diff_w1[6];
+    wire [2:0] tag_eq_group_w0 = {
+        tag_eq_w0_2, tag_eq_w0_1, tag_eq_w0_0
     };
-    wire [3:0] tag_eq_group_w1 = {
-        tag_eq_w1_3, tag_eq_w1_2, tag_eq_w1_1, tag_eq_w1_0
+    wire [2:0] tag_eq_group_w1 = {
+        tag_eq_w1_2, tag_eq_w1_1, tag_eq_w1_0
     };
 
-    logic [3:0] mem_tag_eq_w0;
-    logic [3:0] mem_tag_eq_w1;
+    logic [2:0] mem_tag_eq_w0;
+    logic [2:0] mem_tag_eq_w1;
 
 `ifndef SYNTHESIS
     // Executable reference for the pre-refactor behavior: combine valid and
-    // all four compare groups before the EX->MEM edge.
+    // all three compare groups before the EX->MEM edge.
     wire lookup_hit_reference_w0 = tag_rd_vld[0]
                                  & (&tag_eq_group_w0);
     wire lookup_hit_reference_w1 = tag_rd_vld[1]
@@ -328,7 +361,11 @@ module dcache (
     // ================================================================
     wire hit_w0 = mem_tag_vld[0] & (&mem_tag_eq_w0);
     wire hit_w1 = mem_tag_vld[1] & (&mem_tag_eq_w1);
-    wire cache_hit = hit_w0 | hit_w1;
+    // mem_uncached comes from the full 32-bit window comparison in
+    // memory_access_unit.  It is authoritative: an out-of-window address
+    // sharing the shortened tag/index must never hit or perturb replacement
+    // state.
+    wire cache_hit = ~mem_uncached & (hit_w0 | hit_w1);
     wire hit_way = hit_w1;
 
     // ================================================================
@@ -439,7 +476,7 @@ module dcache (
     wire        backend_rd_ready  = state_refill_data | state_refill_drop
                                   | state_uc_read;
     wire        backend_wr_valid  = mem_wr_valid;
-    wire        backend_wr_ready  = state_wb_resp | state_uc_write_resp;
+    wire        backend_wr_ready  = wb_state_resp | state_uc_write_resp;
 
     // Delay byte-lane alignment until after the internal EX->MEM register.
     // This keeps the variable shift off the CPU ALU address path.
@@ -479,7 +516,6 @@ module dcache (
     wire idle_uncached_start = idle_uncached;
     assign refill_start = idle_refill_start;
 
-    wire refill_req_fire = state_refill_req & backend_req_ready;
     // An accepted AXI read cannot be cancelled. A killed load drains the
     // remainder without installing it; a store allocation must always finish.
     wire refill_abort = flush & ~refill_is_store;
@@ -491,13 +527,22 @@ module dcache (
                               & (refill_word == refill_target_word)
                               & ~refill_abort;
     wire refill_drop_done = state_refill_drop & backend_rd_valid & backend_rd_ready & backend_rd_last;
-    wire wb_req_fire = state_wb_req & backend_req_ready;
-    wire wb_data_fire = state_wb_data & mem_w_ready;
+    wire wb_req_fire = wb_state_cmd & backend_req_ready;
+    wire wb_data_fire = wb_state_data & mem_w_ready;
     wire wb_data_last_fire = wb_data_fire
                            & (wb_send_beat == WORD_W'(LINE_WORDS - 1));
-    wire wb_resp_fire = state_wb_resp & backend_wr_valid
+    wire wb_resp_fire = wb_state_resp & backend_wr_valid
                       & backend_wr_ready;
     wire wb_resp_ok = wb_resp_fire & (mem_wr_resp == 2'b00);
+    wire writeback_complete_now = ~wb_required | wb_done | wb_resp_ok;
+    // A retrying writeback command has priority if it happens to coincide with
+    // the still-pending refill command.
+    wire refill_req_fire = state_refill_req & ~wb_state_cmd
+                         & backend_req_ready;
+    // refill_cpu_pending also remembers a one-cycle flush that coincided with
+    // acceptance of the non-cancellable writeback command.
+    wire refill_cancel_before_read = ~refill_is_store
+                                   & (refill_abort | ~refill_cpu_pending);
     wire uc_req_fire = state_uc_req & backend_req_ready;
     wire uc_read_fire = state_uc_read & backend_rd_valid
                      & backend_rd_ready & backend_rd_last;
@@ -526,25 +571,41 @@ module dcache (
                     else
                         state_next = S_REFILL_DATA;
                 end
-                else if (refill_abort)
-                    state_next = S_IDLE;
+                else if (refill_cancel_before_read) begin
+                    if (wb_required & ~writeback_complete_now)
+                        state_next = S_WB_JOIN_IDLE;
+                    else
+                        state_next = S_IDLE;
+                end
             end
 
             S_REFILL_DATA: begin
                 if (refill_abort)
                     // A non-cancellable backend has nothing left to drop when
                     // flush coincides with the accepted final beat.
-                    if (refill_data_last)
-                        state_next = S_IDLE;
+                    if (refill_data_last) begin
+                        if (writeback_complete_now)
+                            state_next = S_IDLE;
+                        else
+                            state_next = S_WB_JOIN_IDLE;
+                    end
                     else
                         state_next = S_REFILL_DROP;
-                else if (refill_data_last)
-                    state_next = S_DONE;
+                else if (refill_data_last) begin
+                    if (writeback_complete_now)
+                        state_next = S_DONE;
+                    else
+                        state_next = S_WB_JOIN_DONE;
+                end
             end
 
             S_REFILL_DROP: begin
-                if (refill_drop_done)
-                    state_next = S_IDLE;
+                if (refill_drop_done) begin
+                    if (writeback_complete_now)
+                        state_next = S_IDLE;
+                    else
+                        state_next = S_WB_JOIN_IDLE;
+                end
             end
 
             S_DONE: begin
@@ -566,29 +627,17 @@ module dcache (
             S_WB_REQ: begin
                 if (wb_req_fire)
                     // Once accepted, the write transaction is never cancelled.
-                    state_next = S_WB_DATA;
+                    state_next = S_REFILL_REQ;
                 else if (refill_abort)
                     state_next = S_IDLE;
             end
-            S_WB_DATA: begin
-                if (wb_data_last_fire)
-                    state_next = S_WB_RESP;
+            S_WB_JOIN_DONE: begin
+                if (writeback_complete_now)
+                    state_next = S_DONE;
             end
-            S_WB_RESP: begin
-                if (wb_resp_fire) begin
-                    if (mem_wr_resp != 2'b00) begin
-                        if (refill_abort)
-                            state_next = S_IDLE;
-                        else
-                            state_next = S_WB_REQ;
-                    end
-                    else if (refill_is_store)
-                        state_next = S_REFILL_REQ;
-                    else if (refill_abort | ~refill_cpu_pending)
-                        state_next = S_IDLE;
-                    else
-                        state_next = S_REFILL_REQ;
-                end
+            S_WB_JOIN_IDLE: begin
+                if (writeback_complete_now)
+                    state_next = S_IDLE;
             end
             S_UC_REQ: begin
                 if (uc_req_fire) begin
@@ -615,6 +664,64 @@ module dcache (
         endcase
     end
 
+    // Dirty writeback is an independent transaction once its command is
+    // accepted.  A failed B response replays the same buffered command/data;
+    // flush may discard a load refill, but it cannot discard accepted memory
+    // side effects or the only surviving copy of the victim line.
+    always_ff @(posedge clk) begin
+        if (!rst_n)
+            wb_state <= WB_IDLE;
+        else if (refill_start)
+            wb_state <= WB_IDLE;
+        else begin
+            case (wb_state)
+                WB_IDLE: begin
+                    if (wb_capture_last & ~refill_abort)
+                        wb_state <= WB_CMD;
+                end
+                WB_CMD: begin
+                    if (wb_req_fire)
+                        wb_state <= WB_DATA;
+                    else if (state_wb_req & refill_abort)
+                        wb_state <= WB_IDLE;
+                end
+                WB_DATA: begin
+                    if (wb_data_last_fire)
+                        wb_state <= WB_RESP;
+                end
+                WB_RESP: begin
+                    if (wb_resp_fire) begin
+                        if (mem_wr_resp == 2'b00)
+                            wb_state <= WB_IDLE;
+                        else
+                            wb_state <= WB_CMD;
+                    end
+                end
+                default:
+                    wb_state <= WB_IDLE;
+            endcase
+        end
+    end
+
+    // These are ownership/progress bits, not payload.  They are the only new
+    // state needed to join the independently completing read and write paths.
+    always_ff @(posedge clk) begin
+        if (!rst_n) begin
+            wb_required <= 1'b0;
+            wb_done <= 1'b0;
+            refill_read_accepted <= 1'b0;
+        end else if (refill_start) begin
+            wb_required <= victim_needs_writeback;
+            wb_done <= 1'b0;
+            refill_read_accepted <= 1'b0;
+        end else begin
+            if (wb_resp_ok)
+                wb_done <= 1'b1;
+            if (refill_req_fire)
+                refill_read_accepted <= 1'b1;
+        end
+    end
+
     always_ff @(posedge clk) begin
         if (refill_start) begin
             refill_beat         <= '0;
@@ -627,30 +734,30 @@ module dcache (
             refill_store_data   <= mem_wdata_aligned;
             refill_store_wea    <= mem_wea;
             victim_line_addr    <= {
-                victim_tag_candidate, mem_index, 5'b00000
+                CACHE_ADDR_PREFIX, victim_tag_candidate,
+                mem_index, 5'b00000
             };
             refill_cpu_pending  <= ~mem_wr;
             refill_target_valid <= 1'b0;
             refill_target_data  <= 32'd0;
-        end else if (refill_data_fire) begin
-            refill_beat <= refill_beat + 1'b1;
-            if (refill_word == refill_target_word) begin
-                refill_target_valid <= 1'b1;
-                refill_target_data  <= refill_write_data;
+        end else begin
+            if (refill_data_fire) begin
+                refill_beat <= refill_beat + 1'b1;
+                if (refill_word == refill_target_word) begin
+                    refill_target_valid <= 1'b1;
+                    refill_target_data  <= refill_write_data;
+                end
             end
-            if (refill_target_fire)
+            if (refill_cpu_ready | refill_abort | refill_drop_done | state_done)
                 refill_cpu_pending <= 1'b0;
-        end else if (refill_abort | refill_drop_done)
-            refill_cpu_pending <= 1'b0;
-        else if (state_done)
-            refill_cpu_pending <= 1'b0;
+        end
     end
 
     assign refill_data_fire = state_refill_data & backend_rd_valid & backend_rd_ready;
 
-    // The same eight local words first snapshot a dirty victim and are then
-    // reused as the refill shadow. Port B is synchronous, so valid_q aligns
-    // each registered RAM result with its capture index.
+    // The eight local words exclusively snapshot the dirty victim until B
+    // succeeds. Port B is synchronous, so valid_q aligns each registered RAM
+    // result with its capture index. Refill beats never overwrite this buffer.
     always_ff @(posedge clk) begin
         if (refill_start) begin
             wb_read_issue_count   <= '0;
@@ -675,8 +782,6 @@ module dcache (
             else if (wb_data_fire & ~wb_data_last_fire)
                 wb_send_beat <= wb_send_beat + 1'b1;
 
-            if (refill_data_fire)
-                line_buffer[refill_word] <= refill_write_data;
         end
     end
 
@@ -792,7 +897,7 @@ module dcache (
 
         // A successful writeback leaves a killed load's original line valid
         // but clean. On the normal path it is invalidated next.
-        if (wb_resp_ok) begin
+        if (wb_resp_ok & ~refill_read_accepted) begin
             if (refill_way)
                 dirty_way1[refill_index] <= 1'b0;
             else
@@ -830,22 +935,24 @@ module dcache (
     // ================================================================
     //  External memory backend request/response
     // ================================================================
-    assign mem_req_valid = state_refill_req | state_wb_req | state_uc_req;
-    assign mem_req_write = state_wb_req | (state_uc_req & mem_wr);
-    assign mem_req_addr  = state_wb_req ? victim_line_addr
+    assign mem_req_valid = wb_state_cmd | state_refill_req | state_uc_req;
+    assign mem_req_write = wb_state_cmd | (state_uc_req & mem_wr);
+    assign mem_req_writeback = wb_state_cmd;
+    assign mem_req_addr  = wb_state_cmd ? victim_line_addr
                          : state_uc_req ? {mem_addr[31:2], 2'b00}
                          : refill_fetch_addr;
-    assign mem_req_len   = state_wb_req ? 8'(LINE_WORDS - 1)
+    assign mem_req_len   = wb_state_cmd ? 8'(LINE_WORDS - 1)
                          : state_uc_req ? 8'd0
                                         : 8'(LINE_WORDS - 1);
-    assign mem_req_burst = state_refill_req ? 2'b10 : 2'b01;
-    assign mem_w_valid   = state_wb_data | state_uc_write_data;
-    assign mem_w_data    = state_wb_data ? line_buffer[wb_send_beat]
+    assign mem_req_burst = (state_refill_req & ~wb_state_cmd)
+                         ? 2'b10 : 2'b01;
+    assign mem_w_valid   = wb_state_data | state_uc_write_data;
+    assign mem_w_data    = wb_state_data ? line_buffer[wb_send_beat]
                          : state_uc_write_data ? mem_wdata_aligned
                                                : 32'd0;
-    assign mem_w_strb    = state_wb_data ? 4'b1111
+    assign mem_w_strb    = wb_state_data ? 4'b1111
                          : state_uc_write_data ? mem_wea : 4'b0000;
-    assign mem_w_last    = state_wb_data
+    assign mem_w_last    = wb_state_data
                          ? (wb_send_beat == WORD_W'(LINE_WORDS - 1))
                          : 1'b1;
 
@@ -884,18 +991,15 @@ module dcache (
         mem_load_size, mem_load_unsigned
     );
 
-    wire special_read_valid = uc_read_fire
-                            | refill_target_fire
-                            | (state_done & refill_cpu_pending & ~mem_wr);
+    wire special_read_valid = uc_read_fire | refill_cpu_ready;
     logic [31:0] special_read_data;
     always_comb begin
         if (uc_read_fire)
             special_read_data = backend_rd_data;
         else if (refill_target_fire)
             special_read_data = refill_write_data;
-        else if (state_done && refill_cpu_pending && ~mem_wr)
-            special_read_data = refill_target_valid
-                              ? refill_target_data : 32'd0;
+        else if (refill_cpu_ready)
+            special_read_data = refill_target_data;
         else
             special_read_data = 32'd0;
     end
@@ -904,20 +1008,34 @@ module dcache (
         mem_load_size, mem_load_unsigned
     );
 
-    always_comb begin
-        if (special_read_valid)
-            cpu_rdata = formatted_special;
-        else if (hit_way)
-            cpu_rdata = formatted_way1;
-        else
-            cpu_rdata = formatted_way0;
-    end
+    // Duplicate only the late source selector.  Formatting and RAW-merge
+    // logic remain shared, while each distant MEM/WB destination receives a
+    // physically independent final LUT cone.
+    dcache_read_result_select u_read_select_wb (
+        .special_valid   (special_read_valid),
+        .way1_hit        (hit_way),
+        .formatted_way0  (formatted_way0),
+        .formatted_way1  (formatted_way1),
+        .formatted_special(formatted_special),
+        .selected_data   (cpu_rdata)
+    );
+
+    dcache_read_result_select u_read_select_ex (
+        .special_valid   (special_read_valid),
+        .way1_hit        (hit_way),
+        .formatted_way0  (formatted_way0),
+        .formatted_way1  (formatted_way1),
+        .formatted_special(formatted_special),
+        .selected_data   (cpu_rdata_ex)
+    );
 
     // ================================================================
     //  CPU ready
     // ================================================================
-    wire refill_cpu_ready = refill_target_fire
-                          | (state_done & refill_cpu_pending);
+    assign refill_cpu_ready = refill_cpu_pending
+                            & writeback_complete_now
+                            & ~refill_abort
+                            & (refill_target_fire | refill_target_valid);
     wire idle_load_ready = idle_load_hit;
     wire idle_cpu_ready = idle_load_ready | idle_store_accept;
 
@@ -928,12 +1046,32 @@ module dcache (
                      | uc_write_fire;
 
 `ifndef SYNTHESIS
+    initial begin
+        if (CACHE_ADDR_MASK != 32'hFFF8_0000)
+            $fatal(1, "DCache seven-bit tag requires addr[31:19] fixed");
+        if ((CACHE_ADDR_BASE & ~CACHE_ADDR_MASK) != 32'd0)
+            $fatal(1, "DCache cacheable window base is not mask-aligned");
+    end
+
     always_ff @(posedge clk) begin
         if (rst_n && mem_req) begin
             if (hit_w0 !== mem_hit_reference_w0)
                 $fatal(1, "DCache way-0 split hit pipeline changed behavior");
             if (hit_w1 !== mem_hit_reference_w1)
                 $fatal(1, "DCache way-1 split hit pipeline changed behavior");
+
+            // Both copies are deliberately identical logically; only their
+            // physical destinations differ.
+            if (cpu_ready && (cpu_rdata_ex !== cpu_rdata))
+                $fatal(1, "DCache duplicated load result changed behavior");
+
+            // The shortened tag is legal only after the complete address was
+            // classified by the platform window.  This assertion guards the
+            // boundary contract without putting a 13-bit comparison onto the
+            // synthesized hit path.
+            if (mem_uncached !== (((mem_addr & CACHE_ADDR_MASK)
+                                  != (CACHE_ADDR_BASE & CACHE_ADDR_MASK))))
+                $fatal(1, "DCache cacheability disagrees with full address window");
         end
 
         if (!rst_n)
@@ -948,19 +1086,24 @@ module dcache (
 
     always_ff @(posedge clk) begin
         if (rst_n) begin
-            if (refill_req_fire
-                && (refill_way ? dirty_way1[refill_index]
-                               : dirty_way0[refill_index]))
-                $error("DCache started overwriting a dirty victim");
-            if (state_wb_req
+            if (refill_req_fire && wb_required
+                && (wb_state == WB_IDLE) && !wb_done && !wb_resp_ok)
+                $error("DCache refill lost ownership of its dirty victim buffer");
+            if (wb_state_cmd
                 && (!mem_req_valid || !mem_req_write
+                    || !mem_req_writeback
                     || (mem_req_len != 8'(LINE_WORDS - 1))
                     || (mem_req_addr != victim_line_addr)
                     || (mem_req_burst != 2'b01)))
                 $error("DCache writeback command shape mismatch");
-            if (state_refill_req
+            if (state_refill_req && ~wb_state_cmd
                 && (mem_req_burst != 2'b10))
                 $error("DCache refill burst type mismatch");
+            if (state_uc_req && mem_req_writeback)
+                $error("DCache uncached command was marked as writeback");
+            if (refill_target_fire && wb_required
+                && !writeback_complete_now && refill_cpu_ready)
+                $error("DCache released dirty-miss data before B success");
             if (refill_data_fire
                 && (backend_rd_last
                     != (refill_beat == WORD_W'(LINE_WORDS - 1))))
@@ -973,4 +1116,26 @@ module dcache (
     end
 `endif
 
+endmodule
+
+// Keep the two instances separate through synthesis.  This module contains
+// only the final source select, so duplication does not replicate byte-lane
+// extraction, sign extension, BRAMs, or state.
+(* keep_hierarchy = "yes" *)
+module dcache_read_result_select (
+    input  logic        special_valid,
+    input  logic        way1_hit,
+    input  logic [31:0] formatted_way0,
+    input  logic [31:0] formatted_way1,
+    input  logic [31:0] formatted_special,
+    (* keep = "true" *) output logic [31:0] selected_data
+);
+    always_comb begin
+        if (special_valid)
+            selected_data = formatted_special;
+        else if (way1_hit)
+            selected_data = formatted_way1;
+        else
+            selected_data = formatted_way0;
+    end
 endmodule

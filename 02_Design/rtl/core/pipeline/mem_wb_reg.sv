@@ -18,6 +18,8 @@ module mem_wb_reg
 
     // Load data is updated only when the shared LSU completes a load.
     input  logic          mem_load_valid,
+    // Independent final DCache select cone for the remote EX repair copy.
+    input  logic [31:0]   mem_load_data_ex,
 
     // Registered payload
     input  mem_wb_slot0_t mem_payload,
@@ -32,7 +34,7 @@ module mem_wb_reg
 
     always_ff @(posedge clk) begin
         if (mem_load_valid && mem_ready_go)
-            wb_load_data_ex <= mem_payload.load_data;
+            wb_load_data_ex <= mem_load_data_ex;
     end
 
     always_ff @(posedge clk) begin

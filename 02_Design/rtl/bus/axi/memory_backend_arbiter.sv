@@ -6,7 +6,8 @@
 //   ICache and DCache reads use different AXI IDs, so one read from each
 //   client may remain outstanding at the same time. Read data is returned by
 //   RID instead of by one global owner bit. DCache writes remain
-//   single-outstanding and are serialized against both read clients.
+//   single-outstanding. Dirty-line writebacks may overlap reads, while
+//   uncached/MMIO writes remain serialized against both read clients.
 //
 //   DCache has command priority so an LSU miss that stalls retirement cannot
 //   be starved by speculative instruction fetches.
@@ -35,6 +36,7 @@ module memory_backend_arbiter #(
     input  logic                    d_req_valid,
     output logic                    d_req_ready,
     input  logic                    d_req_write,
+    input  logic                    d_req_writeback,
     input  logic [31:0]             d_req_addr,
     input  logic [ 7:0]             d_req_len,
     input  logic [ 1:0]             d_req_burst,
@@ -78,18 +80,23 @@ module memory_backend_arbiter #(
     logic i_read_active_q;
     logic d_read_active_q;
     logic d_write_active_q;
+    logic d_write_overlap_ok_q;
 
-    // One DCache command can be active at a time. A DCache read may overlap
-    // the ICache read; a DCache write may not overlap either read.
-    wire d_slot_free = ~d_read_active_q & ~d_write_active_q;
+    // Read slots are independent by AXI ID.  The write slot is independent as
+    // well, but only an explicitly identified cache-line writeback opens the
+    // read/write overlap; an uncached write preserves strong serialization.
+    wire d_read_can_start = ~d_read_active_q
+                          & (~d_write_active_q | d_write_overlap_ok_q);
+    wire d_write_can_start = ~d_write_active_q
+                           & (d_req_writeback
+                              | (~i_read_active_q & ~d_read_active_q));
     wire select_dcache =
         d_req_valid
-        & d_slot_free
-        & (~d_req_write | ~i_read_active_q);
+        & (d_req_write ? d_write_can_start : d_read_can_start);
     wire select_irom =
         i_req_valid
         & ~i_read_active_q
-        & ~d_write_active_q
+        & (~d_write_active_q | d_write_overlap_ok_q)
         & ~select_dcache;
 
     wire command_fire = m_req_valid & m_req_ready;
@@ -144,19 +151,23 @@ module memory_backend_arbiter #(
             i_read_active_q <= 1'b0;
             d_read_active_q <= 1'b0;
             d_write_active_q <= 1'b0;
+            d_write_overlap_ok_q <= 1'b0;
         end else begin
             if (i_read_done)
                 i_read_active_q <= 1'b0;
             if (d_read_done)
                 d_read_active_q <= 1'b0;
-            if (write_done)
+            if (write_done) begin
                 d_write_active_q <= 1'b0;
+                d_write_overlap_ok_q <= 1'b0;
+            end
 
             if (command_fire) begin
                 if (select_dcache) begin
-                    if (d_req_write)
+                    if (d_req_write) begin
                         d_write_active_q <= 1'b1;
-                    else
+                        d_write_overlap_ok_q <= d_req_writeback;
+                    end else
                         d_read_active_q <= 1'b1;
                 end else begin
                     i_read_active_q <= 1'b1;
@@ -185,9 +196,12 @@ module memory_backend_arbiter #(
             $error("Memory backend received DCache data without a D read");
         if (rst_n && !d_write_active_q && d_w_valid)
             $error("DCache supplied write data without an active write");
+        if (rst_n && d_req_valid && d_req_writeback && !d_req_write)
+            $error("DCache marked a read command as writeback");
         if (rst_n && d_write_active_q
+            && !d_write_overlap_ok_q
             && (i_read_active_q || d_read_active_q))
-            $error("DCache AXI write overlapped an outstanding read");
+            $error("Serialized DCache AXI write overlapped an outstanding read");
     end
 `endif
 

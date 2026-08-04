@@ -342,11 +342,11 @@ void add_abtb(AbtbStats& total, const AbtbStats& stats) {
     total.target_mismatches += stats.target_mismatches;
     total.qualified_updates += stats.qualified_updates;
     total.stale_hit_writes += stats.stale_hit_writes;
-    for (std::size_t bank = 0; bank < 2; ++bank) {
+    for (std::size_t bank = 0; bank < kAbtbBanks; ++bank) {
         total.bank_lookups[bank] += stats.bank_lookups[bank];
         total.bank_hits[bank] += stats.bank_hits[bank];
         total.bank_updates[bank] += stats.bank_updates[bank];
-        for (std::size_t set = 0; set < 16; ++set) {
+        for (std::size_t set = 0; set < kAbtbSets; ++set) {
             auto& destination = total.sets[bank][set];
             const auto& source = stats.sets[bank][set];
             destination.lookups += source.lookups;
@@ -650,8 +650,8 @@ void write_abtb_sets(const std::filesystem::path& path,
         AbtbStats total;
         const auto rows = [&](const std::string& program,
                               const AbtbStats& stats) {
-            for (std::size_t bank = 0; bank < 2; ++bank) {
-                for (std::size_t set = 0; set < 16; ++set) {
+            for (std::size_t bank = 0; bank < kAbtbBanks; ++bank) {
+                for (std::size_t set = 0; set < kAbtbSets; ++set) {
                     const auto& item = stats.sets[bank][set];
                     output << program << ',' << configs[index].name << ','
                            << configs[index].fast_direction.update_delay_instructions
