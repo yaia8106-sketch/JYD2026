@@ -20,7 +20,8 @@ eight-beat AXI write burst before the new line is refilled.  Consecutive
 store-hit/load-hit accesses to the same word use a one-cycle BRAM
 read-after-write collision bypass; there is no DCache store buffer.
 
-The ICache is 4 KiB, direct mapped, and also uses 16-byte lines.  An ICache
+The ICache is 8 KiB, direct mapped, and uses 16-byte lines.  Its 512 sets use
+two RAMB36s for the 1024 64-bit instruction/predecode rows.  An ICache
 miss emits one four-beat WRAP read starting at the requested 64-bit block; the
 first two returned words release the frontend while the other half of the line
 continues filling.  DCache line refills use one eight-beat WRAP read

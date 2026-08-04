@@ -144,6 +144,13 @@ module tb_loongarch_frontend_ftq;
         enc_i16 = {op_31_26, immediate, rj, rd};
     endfunction
 
+    function automatic logic [31:0] enc_i26(
+        input logic [5:0]  op_31_26,
+        input logic [25:0] immediate
+    );
+        enc_i26 = {op_31_26, immediate};
+    endfunction
+
     function automatic logic [31:0] add_w(
         input logic [4:0] rd,
         input logic [4:0] rj,
@@ -265,6 +272,39 @@ module tb_loongarch_frontend_ftq;
         end
     endtask
 
+    // Observe the F0 enqueue controls themselves. A later force-single policy
+    // could otherwise hide a broken static-kill encoding by merely refusing
+    // to dual issue a slot 1 that was incorrectly left in the queue.
+    task automatic run_slot1_kill_case(
+        input string       name,
+        input logic [31:0] slot0,
+        input logic        expected_kill
+    );
+        bit found;
+        begin
+            begin_case(name);
+            set_block(RESET_PC, slot0,
+                      add_w(5'd6, 5'd7, 5'd8));
+            release_reset();
+            found = 1'b0;
+            for (int t = 0; t < 40; t++) begin
+                @(negedge clk);
+                if (dut.f0_enq0_payload
+                    && (dut.f0_slot0_pc == RESET_PC)) begin
+                    check(dut.f0_enq1_payload,
+                          "aligned packet did not present slot1 payload");
+                    check(dut.f0_kill_after_slot0 == expected_kill,
+                          "static slot1 kill decision mismatch");
+                    check(dut.f0_enq1_valid == !expected_kill,
+                          "slot1 valid did not follow static kill");
+                    found = 1'b1;
+                    break;
+                end
+            end
+            check(found, "timeout observing reset-PC F0 enqueue controls");
+        end
+    endtask
+
     initial begin
         logic [31:0] mul_leak_guard;
         logic [31:0] div_leak_guard;
@@ -341,6 +381,21 @@ module tb_loongarch_frontend_ftq;
                       mul_w(5'd6, 5'd7, 5'd20), 1'b0);
         check(issue1_is_muldiv && issue1_is_mul,
               "slot1 MUL semantic metadata was not retained");
+
+        run_slot1_kill_case("ordinary ALU preserves slot1",
+                            add_w(5'd3, 5'd4, 5'd5), 1'b0);
+        run_slot1_kill_case("unpredicted conditional preserves slot1",
+                            beq(5'd4, 5'd5), 1'b0);
+        run_slot1_kill_case("B kills slot1",
+                            enc_i26(6'h14, 26'd1), 1'b1);
+        run_slot1_kill_case("BL kills slot1",
+                            enc_i26(6'h15, 26'd1), 1'b1);
+        run_slot1_kill_case("JIRL kills slot1",
+                            enc_i16(6'h13, 16'd0, 5'd4, 5'd1), 1'b1);
+        run_slot1_kill_case("SYSCALL kills slot1",
+                            32'h002b_0000, 1'b1);
+        run_slot1_kill_case("illegal instruction kills slot1",
+                            32'hffff_ffff, 1'b1);
 
         $display("[PASS] LoongArch frontend FTQ semantic/pairing test (%0d cases)",
                  case_count);

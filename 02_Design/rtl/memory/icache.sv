@@ -5,8 +5,9 @@
 //   the shared 32-bit memory backend.
 //
 // Organization:
-//   - 4 KiB, direct-mapped, 16-byte lines
-//   - one 512 x 72 simple-dual-port block RAM for instruction data plus
+//   - 8 KiB, direct-mapped, 16-byte lines
+//   - one 1024 x 72 simple-dual-port memory, implemented by two RAMB36s,
+//     for instruction data plus
 //     refill-time predecode metadata
 //   - distributed shortened-tag/class storage with one valid bit per line
 //   - one four-beat WRAP refill starting at the critical 64-bit block
@@ -55,13 +56,13 @@ module icache #(
     input  logic [ 1:0] mem_rd_resp
 );
 
-    localparam integer SETS = 256;
-    localparam integer INDEX_WIDTH = 8;
-    localparam integer TAG_WIDTH = 8;
+    localparam integer SETS = 512;
+    localparam integer INDEX_WIDTH = 9;
+    localparam integer TAG_WIDTH = 7;
     localparam integer BLOCK_CLASS_WIDTH = 6;
     localparam integer LINE_CLASS_WIDTH = 12;
     localparam integer TAG_RAM_WIDTH = TAG_WIDTH + LINE_CLASS_WIDTH;
-    localparam integer DATA_ROWS = 512;
+    localparam integer DATA_ROWS = 1024;
 
     typedef enum logic [1:0] {
         REFILL_IDLE,
@@ -75,9 +76,9 @@ module icache #(
     // Cache arrays
     // ----------------------------------------------------------------
 
-    // 512 x 72 maps directly to one RAMB36 in simple-dual-port mode. The
-    // upper eight bits occupy the primitive parity storage and hold four
-    // predecode bits for each of the two 32-bit instructions.
+    // 1024 x 72 maps to two RAMB36s in simple-dual-port mode. The upper eight
+    // bits occupy the primitive parity storage and hold four predecode bits
+    // for each of the two 32-bit instructions.
     (* ram_style = "block" *)
     logic [71:0] data_mem [0:DATA_ROWS-1];
     (* ram_style = "distributed" *)
@@ -113,8 +114,8 @@ module icache #(
     logic [ 1:0] refill_line_resp_q;
 
     wire irom_req_fire = irom_req_valid & irom_req_ready;
-    wire [INDEX_WIDTH-1:0] irom_req_index = irom_req_addr[11:4];
-    wire [TAG_WIDTH-1:0] irom_req_tag = irom_req_addr[19:12];
+    wire [INDEX_WIDTH-1:0] irom_req_index = irom_req_addr[12:4];
+    wire [TAG_WIDTH-1:0] irom_req_tag = irom_req_addr[19:13];
     wire irom_req_in_window =
         irom_req_addr[31:20] == ICACHE_ADDR_PREFIX;
     wire irom_req_block = irom_req_addr[3];
@@ -144,7 +145,7 @@ module icache #(
     wire [TAG_WIDTH-1:0] irom_req_tag_diff =
         irom_req_cached_tag ^ irom_req_tag;
     wire irom_req_tag_eq0 = ~|irom_req_tag_diff[3:0];
-    wire irom_req_tag_eq1 = ~|irom_req_tag_diff[7:4];
+    wire irom_req_tag_eq1 = ~|irom_req_tag_diff[6:4];
     wire irom_req_array_hit =
         irom_req_in_window
         & line_valid_q[irom_req_index]
@@ -236,8 +237,8 @@ module icache #(
         & ~refill_drop_q
         & ~irom_req_kill;
 
-    wire [INDEX_WIDTH-1:0] refill_index = refill_line_addr_q[7:0];
-    wire [TAG_WIDTH-1:0] refill_tag = refill_line_addr_q[15:8];
+    wire [INDEX_WIDTH-1:0] refill_index = refill_line_addr_q[8:0];
+    wire [TAG_WIDTH-1:0] refill_tag = refill_line_addr_q[15:9];
     wire refill_in_window =
         refill_line_addr_q[27:16] == ICACHE_ADDR_PREFIX;
     wire [INDEX_WIDTH:0] refill_data_row = {

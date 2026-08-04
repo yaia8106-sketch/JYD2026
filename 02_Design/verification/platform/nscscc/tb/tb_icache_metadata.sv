@@ -285,15 +285,15 @@ module tb_icache_metadata;
     endtask
 
     task automatic expect_tag_entry(
-        input logic [7:0]          index,
-        input logic [7:0]          tag,
+        input logic [8:0]          index,
+        input logic [6:0]          tag,
         input icache_inst_kind_t   kind0,
         input icache_inst_kind_t   kind1,
         input icache_inst_kind_t   kind2,
         input icache_inst_kind_t   kind3,
         input string               name
     );
-        logic [19:0] expected_payload;
+        logic [18:0] expected_payload;
         begin
             expected_payload = {
                 kind3[2:0], kind2[2:0], kind1[2:0], kind0[2:0], tag
@@ -329,7 +329,7 @@ module tb_icache_metadata;
             repeat (2) @(posedge clk);
 
             expect_tag_entry(
-                line_addr[11:4], line_addr[19:12],
+                line_addr[12:4], line_addr[19:13],
                 kind_expected[base_kind],
                 kind_expected[base_kind + 1],
                 kind_expected[base_kind + 2],
@@ -441,7 +441,7 @@ module tb_icache_metadata;
         expect_response({class_word[1], class_word[0]},
                         ICACHE_CLASS_ALU_RR, ICACHE_CLASS_ALU_IMM,
                         2'b00, "lower critical-first response");
-        check(!dut.line_valid_q[8'h00],
+        check(!dut.line_valid_q[9'h000],
               "line became valid before the complete refill");
 
         expect_local_hit(32'h1c00_0000,
@@ -456,7 +456,7 @@ module tb_icache_metadata;
                         ICACHE_CLASS_UPPER_IMM, ICACHE_CLASS_LOAD,
                         2'b00, "pending second-block response");
         repeat (2) @(posedge clk);
-        expect_tag_entry(8'h00, 8'h00,
+        expect_tag_entry(9'h000, 7'h00,
                          ICACHE_CLASS_ALU_RR, ICACHE_CLASS_ALU_IMM,
                          ICACHE_CLASS_UPPER_IMM, ICACHE_CLASS_LOAD,
                          "lower-first line");
@@ -474,7 +474,7 @@ module tb_icache_metadata;
         expect_response({class_word[7], class_word[6]},
                         ICACHE_CLASS_CFI, ICACHE_CLASS_OTHER,
                         2'b00, "upper critical-first response");
-        check(!dut.line_valid_q[8'h01],
+        check(!dut.line_valid_q[9'h001],
               "reverse-refill line became valid after two beats");
         expect_local_hit(32'h1c00_0018,
                          {class_word[7], class_word[6]},
@@ -483,7 +483,7 @@ module tb_icache_metadata;
         send_refill_beat(class_word[4], 2'b00, 1'b0);
         send_refill_beat(class_word[5], 2'b00, 1'b1);
         repeat (2) @(posedge clk);
-        expect_tag_entry(8'h01, 8'h00,
+        expect_tag_entry(9'h001, 7'h00,
                          ICACHE_CLASS_STORE, ICACHE_CLASS_MULDIV,
                          ICACHE_CLASS_CFI, ICACHE_CLASS_OTHER,
                          "upper-first line");
@@ -506,10 +506,50 @@ module tb_icache_metadata;
         check(&kind_roundtrip_seen,
               "not every exact ICache kind completed a physical round trip");
 
-        // Same index but a different retained [19:12] tag must replace the
+        // Address bit 12 is the new ninth index bit. The lower and upper 4 KiB
+        // halves must coexist instead of aliasing as they did in the 4 KiB
+        // organization.
+        $display("[INFO] 8 KiB ninth set-index bit");
+        start_refill(32'h1c00_0000);
+        send_refill_beat(class_word[0], 2'b00, 1'b0);
+        send_refill_beat(class_word[1], 2'b00, 1'b0);
+        expect_response({class_word[1], class_word[0]},
+                        ICACHE_CLASS_ALU_RR, ICACHE_CLASS_ALU_IMM,
+                        2'b00, "lower 4 KiB half response");
+        send_refill_beat(class_word[2], 2'b00, 1'b0);
+        send_refill_beat(class_word[3], 2'b00, 1'b1);
+        repeat (2) @(posedge clk);
+
+        start_refill(32'h1c00_1000);
+        send_refill_beat(class_word[4], 2'b00, 1'b0);
+        send_refill_beat(class_word[5], 2'b00, 1'b0);
+        expect_response({class_word[5], class_word[4]},
+                        ICACHE_CLASS_STORE, ICACHE_CLASS_MULDIV,
+                        2'b00, "upper 4 KiB half response");
+        send_refill_beat(class_word[6], 2'b00, 1'b0);
+        send_refill_beat(class_word[7], 2'b00, 1'b1);
+        repeat (2) @(posedge clk);
+        expect_tag_entry(9'h000, 7'h00,
+                         ICACHE_CLASS_ALU_RR, ICACHE_CLASS_ALU_IMM,
+                         ICACHE_CLASS_UPPER_IMM, ICACHE_CLASS_LOAD,
+                         "lower 4 KiB half resident line");
+        expect_tag_entry(9'h100, 7'h00,
+                         ICACHE_CLASS_STORE, ICACHE_CLASS_MULDIV,
+                         ICACHE_CLASS_CFI, ICACHE_CLASS_OTHER,
+                         "upper 4 KiB half resident line");
+        expect_local_hit(32'h1c00_0000,
+                         {class_word[1], class_word[0]},
+                         ICACHE_CLASS_ALU_RR, ICACHE_CLASS_ALU_IMM,
+                         "lower 4 KiB half preserved");
+        expect_local_hit(32'h1c00_1000,
+                         {class_word[5], class_word[4]},
+                         ICACHE_CLASS_STORE, ICACHE_CLASS_MULDIV,
+                         "upper 4 KiB half preserved");
+
+        // Same index but a different retained [19:13] tag must replace the
         // line.  Re-requesting the original address must therefore refill.
         $display("[INFO] in-window compressed-tag conflict");
-        start_refill(32'h1c00_1000);
+        start_refill(32'h1c00_2000);
         send_refill_beat(class_word[4], 2'b00, 1'b0);
         send_refill_beat(class_word[5], 2'b00, 1'b0);
         expect_response({class_word[5], class_word[4]},
@@ -518,7 +558,7 @@ module tb_icache_metadata;
         send_refill_beat(class_word[6], 2'b00, 1'b0);
         send_refill_beat(class_word[7], 2'b00, 1'b1);
         repeat (2) @(posedge clk);
-        expect_tag_entry(8'h00, 8'h01,
+        expect_tag_entry(9'h000, 7'h01,
                          ICACHE_CLASS_STORE, ICACHE_CLASS_MULDIV,
                          ICACHE_CLASS_CFI, ICACHE_CLASS_OTHER,
                          "conflicting-tag replacement");
@@ -532,7 +572,7 @@ module tb_icache_metadata;
         send_refill_beat(class_word[2], 2'b00, 1'b0);
         send_refill_beat(class_word[3], 2'b00, 1'b1);
         repeat (2) @(posedge clk);
-        expect_tag_entry(8'h00, 8'h00,
+        expect_tag_entry(9'h000, 7'h00,
                          ICACHE_CLASS_ALU_RR, ICACHE_CLASS_ALU_IMM,
                          ICACHE_CLASS_UPPER_IMM, ICACHE_CLASS_LOAD,
                          "restored base line");
@@ -550,7 +590,7 @@ module tb_icache_metadata;
         send_refill_beat(class_word[2], 2'b00, 1'b0);
         send_refill_beat(class_word[3], 2'b00, 1'b1);
         repeat (2) @(posedge clk);
-        expect_tag_entry(8'hff, 8'hff,
+        expect_tag_entry(9'h1ff, 7'h7f,
                          ICACHE_CLASS_ALU_RR, ICACHE_CLASS_ALU_IMM,
                          ICACHE_CLASS_UPPER_IMM, ICACHE_CLASS_LOAD,
                          "last in-window line");
@@ -564,7 +604,7 @@ module tb_icache_metadata;
         send_refill_beat(class_word[4], 2'b00, 1'b0);
         send_refill_beat(class_word[5], 2'b00, 1'b1);
         repeat (2) @(posedge clk);
-        expect_tag_entry(8'hff, 8'hff,
+        expect_tag_entry(9'h1ff, 7'h7f,
                          ICACHE_CLASS_ALU_RR, ICACHE_CLASS_ALU_IMM,
                          ICACHE_CLASS_UPPER_IMM, ICACHE_CLASS_LOAD,
                          "below-window preservation");
@@ -593,7 +633,7 @@ module tb_icache_metadata;
         send_refill_beat(class_word[2], 2'b00, 1'b0);
         send_refill_beat(class_word[3], 2'b00, 1'b1);
         repeat (2) @(posedge clk);
-        expect_tag_entry(8'h00, 8'h00,
+        expect_tag_entry(9'h000, 7'h00,
                          ICACHE_CLASS_ALU_RR, ICACHE_CLASS_ALU_IMM,
                          ICACHE_CLASS_UPPER_IMM, ICACHE_CLASS_LOAD,
                          "above-window preservation");
@@ -616,7 +656,7 @@ module tb_icache_metadata;
         send_refill_beat(class_word[2], 2'b00, 1'b0);
         send_refill_beat(class_word[3], 2'b10, 1'b1);
         repeat (2) @(posedge clk);
-        check(!dut.line_valid_q[8'h02],
+        check(!dut.line_valid_q[9'h002],
               "late refill error incorrectly validated the line");
 
         start_refill(32'h1c00_2020);
@@ -628,7 +668,7 @@ module tb_icache_metadata;
         send_refill_beat(class_word[6], 2'b00, 1'b0);
         send_refill_beat(class_word[7], 2'b00, 1'b1);
         repeat (2) @(posedge clk);
-        expect_tag_entry(8'h02, 8'h02,
+        expect_tag_entry(9'h002, 7'h01,
                          ICACHE_CLASS_STORE, ICACHE_CLASS_MULDIV,
                          ICACHE_CLASS_CFI, ICACHE_CLASS_OTHER,
                          "post-error successful retry");
@@ -658,7 +698,7 @@ module tb_icache_metadata;
         send_refill_beat(class_word[2], 2'b00, 1'b0);
         send_refill_beat(class_word[3], 2'b00, 1'b1);
         repeat (2) @(posedge clk);
-        expect_tag_entry(8'h02, 8'h02,
+        expect_tag_entry(9'h002, 7'h01,
                          ICACHE_CLASS_ALU_RR, ICACHE_CLASS_ALU_IMM,
                          ICACHE_CLASS_UPPER_IMM, ICACHE_CLASS_LOAD,
                          "post-reset refill");

@@ -81,6 +81,12 @@ module frontend_f0_packet_builder
     // entry deterministic.
     assign slot1_cached_dec = start_pc[2] ? '0 : block1_cached_dec;
 
+    // This encoding bit is stored in the LUTRAM/class portion of the ICache
+    // metadata and is registered before the F0 response cycle. Keep it out of
+    // the complete kind-expansion cone that builds the entry payload.
+    wire slot0_static_kill =
+        slot0_cached_dec.inst_kind[ICACHE_KIND_STATIC_KILL_BIT];
+
     // Refill-time metadata names every supported/illegal instruction family.
     // F0 therefore expands the cached kind directly and never places a full
     // opcode decoder after the synchronous ICache data output.
@@ -206,7 +212,7 @@ module frontend_f0_packet_builder
 
         // 当slot0被预测为跳转/确实是跳转的时候，对slot1的指令进行冲刷。
         kill_after_slot0 =
-            slot0_effective_dec.is_jump
+            slot0_static_kill
             || slot0_pred_taken;
         enq0_payload = accept_base && base_mask[0];
         enq1_payload = accept_base && base_mask[1];

@@ -220,7 +220,35 @@ module tb_loongarch_decode_contract;
                 && (icache_predecode.writes_dst
                     == predecode.writes_dst)
                 && (icache_predecode.inst_kind
-                    == expected_icache_kind());
+                    == expected_icache_kind())
+                && (icache_predecode.inst_kind[
+                        ICACHE_KIND_STATIC_KILL_BIT
+                    ] == predecode.is_jump);
+        end
+    endfunction
+
+    function automatic logic all_icache_kinds_seen;
+        begin
+            all_icache_kinds_seen =
+                icache_kind_seen[ICACHE_KIND_ILLEGAL]
+                && icache_kind_seen[ICACHE_KIND_ALU_RR]
+                && icache_kind_seen[ICACHE_KIND_ALU_IMM]
+                && icache_kind_seen[ICACHE_KIND_UPPER_IMM]
+                && icache_kind_seen[ICACHE_KIND_LOAD]
+                && icache_kind_seen[ICACHE_KIND_STORE]
+                && icache_kind_seen[ICACHE_KIND_MUL]
+                && icache_kind_seen[ICACHE_KIND_DIVMOD]
+                && icache_kind_seen[ICACHE_KIND_CONDITIONAL]
+                && icache_kind_seen[ICACHE_KIND_BRANCH]
+                && icache_kind_seen[ICACHE_KIND_BRANCH_LINK]
+                && icache_kind_seen[ICACHE_KIND_JIRL]
+                && icache_kind_seen[ICACHE_KIND_CSR_READ]
+                && icache_kind_seen[ICACHE_KIND_CSR_WRITE]
+                && icache_kind_seen[ICACHE_KIND_CSR_EXCHANGE]
+                && icache_kind_seen[ICACHE_KIND_COUNTER]
+                && icache_kind_seen[ICACHE_KIND_COUNTER_ID]
+                && icache_kind_seen[ICACHE_KIND_CPUCFG]
+                && icache_kind_seen[ICACHE_KIND_PRIV_FLOW];
         end
     endfunction
 
@@ -765,7 +793,7 @@ module tb_loongarch_decode_contract;
                                      "unknown encoding containment");
 
         run_exhaustive_opcode_prefix_check();
-        check((icache_kind_seen & 32'h0007_ffff) == 32'h0007_ffff,
+        check(all_icache_kinds_seen(),
               "all nineteen exact ICache instruction kinds were observed");
 
         $display("[PASS] LoongArch decoded-uop contract directed test (%0d cases, %0d opcode prefixes)",

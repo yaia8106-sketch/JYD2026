@@ -333,10 +333,14 @@ module loongarch_cached_predecode_expand
                                ? inst[4:0] : inst[14:10];
         expanded.dst_addr = kind_branch_link ? 5'd1
                           : kind_counter_id ? inst[9:5] : inst[4:0];
-        expanded.is_jump = kind_direct | kind_jirl
-                         | kind_priv_flow | kind_illegal;
-        expanded.is_control = kind_conditional | kind_direct | kind_jirl
-                            | kind_priv_flow | kind_illegal;
+        // The exact-kind encoding keeps this late F0 control as a direct bit
+        // while the named kind predicates continue to build payload fields.
+        expanded.is_jump =
+            cached.inst_kind[ICACHE_KIND_STATIC_KILL_BIT];
+        expanded.is_control = kind_conditional
+                            | cached.inst_kind[
+                                ICACHE_KIND_STATIC_KILL_BIT
+                              ];
         expanded.is_lsu = kind_load | kind_store;
         expanded.is_cfi = kind_conditional | kind_direct | kind_jirl;
         expanded.lane_mask = {slot1_allowed, 1'b1};

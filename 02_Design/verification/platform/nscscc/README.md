@@ -38,10 +38,13 @@ cycles, with the second request accepted on the first response edge.
 `functional/run_icache_metadata.sh` isolates the ICache shortened-tag and
 refill-predecode design. It covers all eight cached instruction classes,
 lower- and upper-critical WRAP ordering, in-flight refill-buffer hits, pending
-second-block requests, exact `{12-bit class, 8-bit tag}` LUTRAM layout,
-same-index tag replacement, both edges of the `0x1c0xxxxx` allocation window,
+second-block requests, exact `{12-bit class, 7-bit tag}` LUTRAM layout,
+the ninth set-index bit of the 8 KiB organization, same-index tag replacement,
+both edges of the `0x1c0xxxxx` allocation window,
 outside-window nonallocation/preservation, and late refill errors suppressing
-the atomic tag/class commit. It also resets a populated cache and proves that
+the atomic tag/class commit. The decode contract also proves across every
+opcode prefix that exact-kind bit 0 equals the static slot-1 kill decision.
+It resets a populated cache and proves that
 valid-only reset safely contains intentionally unreset data/tag/class payload.
 
 `functional/run_variable_irom.sh` verifies that the shared frontend retains

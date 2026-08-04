@@ -267,31 +267,35 @@ package cpu_defs;
         logic       serializing;
     } frontend_predecode_t;
 
-    // Exact instruction kind generated at ICache-refill time.  Five bits are
-    // sufficient for every LA32R family implemented by the NSCSCC core.  The
-    // F0 hit path expands this kind directly and never falls back to decoding
-    // the instruction word after the synchronous ICache data RAM.
+    // Exact instruction kind generated at ICache-refill time. Five bits are
+    // sufficient for every LA32R family implemented by the NSCSCC core. Bit 0
+    // is deliberately one exactly for the static classes that kill the next
+    // sequential instruction. This low kind bit lives in the shortened-tag
+    // LUTRAM half of ICache metadata, so F0 does not decode a late RAMB36
+    // output before deciding whether slot 1 may enter the fetch queue.
     typedef enum logic [4:0] {
-        ICACHE_KIND_ILLEGAL,
-        ICACHE_KIND_ALU_RR,
-        ICACHE_KIND_ALU_IMM,
-        ICACHE_KIND_UPPER_IMM,
-        ICACHE_KIND_LOAD,
-        ICACHE_KIND_STORE,
-        ICACHE_KIND_MUL,
-        ICACHE_KIND_DIVMOD,
-        ICACHE_KIND_CONDITIONAL,
-        ICACHE_KIND_BRANCH,
-        ICACHE_KIND_BRANCH_LINK,
-        ICACHE_KIND_JIRL,
-        ICACHE_KIND_CSR_READ,
-        ICACHE_KIND_CSR_WRITE,
-        ICACHE_KIND_CSR_EXCHANGE,
-        ICACHE_KIND_COUNTER,
-        ICACHE_KIND_COUNTER_ID,
-        ICACHE_KIND_CPUCFG,
-        ICACHE_KIND_PRIV_FLOW
+        ICACHE_KIND_ALU_RR       = 5'd0,
+        ICACHE_KIND_ILLEGAL      = 5'd1,
+        ICACHE_KIND_ALU_IMM      = 5'd2,
+        ICACHE_KIND_BRANCH       = 5'd3,
+        ICACHE_KIND_UPPER_IMM    = 5'd4,
+        ICACHE_KIND_BRANCH_LINK  = 5'd5,
+        ICACHE_KIND_LOAD         = 5'd6,
+        ICACHE_KIND_JIRL         = 5'd7,
+        ICACHE_KIND_STORE        = 5'd8,
+        ICACHE_KIND_PRIV_FLOW    = 5'd9,
+        ICACHE_KIND_MUL          = 5'd10,
+        ICACHE_KIND_DIVMOD       = 5'd12,
+        ICACHE_KIND_CONDITIONAL  = 5'd14,
+        ICACHE_KIND_CSR_READ     = 5'd16,
+        ICACHE_KIND_CSR_WRITE    = 5'd18,
+        ICACHE_KIND_CSR_EXCHANGE = 5'd20,
+        ICACHE_KIND_COUNTER      = 5'd22,
+        ICACHE_KIND_COUNTER_ID   = 5'd24,
+        ICACHE_KIND_CPUCFG       = 5'd26
     } icache_inst_kind_t;
+
+    localparam integer ICACHE_KIND_STATIC_KILL_BIT = 0;
 
     // Exactly seven bits are cached for each instruction.  The two frequently
     // consumed controls stay explicit while the exact five-bit kind describes
