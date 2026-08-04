@@ -1,6 +1,6 @@
 // ============================================================
 // Module: dcache
-// Description: NSCSCC-only 8KB, 2-way set-associative data cache.
+// Description: NSCSCC-only 16KB, 2-way set-associative data cache.
 //
 // Architecture:
 //   - Internal EX->MEM pipeline register (synced with cpu_top's ex_mem_reg)
@@ -29,7 +29,7 @@ module dcache #(
     input  logic        cpu_req,
     input  logic        cpu_wr,
     input  logic [31:0] cpu_addr,
-    input  logic [ 9:0] cpu_lookup_addr, // addr[11:2] from the short LSU adder
+    input  logic [10:0] cpu_lookup_addr, // addr[12:2] from the short LSU adder
     input  logic [ 3:0] cpu_wea,
     input  logic [31:0] cpu_wdata,       // raw, aligned after the EX->MEM register
     input  logic [ 1:0] cpu_load_size,
@@ -83,13 +83,13 @@ module dcache #(
     //  Parameters
     // ================================================================
     localparam WAYS       = 2;
-    localparam SETS       = 128;
+    localparam SETS       = 256;
     localparam LINE_WORDS = 8;
-    // CACHE_ADDR_MASK fixes addr[31:19].  addr[18:12] is therefore the only
+    // CACHE_ADDR_MASK fixes addr[31:19].  addr[18:13] is therefore the only
     // tag state required for requests already classified as cacheable using
     // the complete architectural address.
-    localparam TAG_W      = 7;
-    localparam INDEX_W    = 7;    // addr[11:5]
+    localparam TAG_W      = 6;
+    localparam INDEX_W    = 8;    // addr[12:5]
     localparam WORD_W     = 3;    // addr[4:2]
     localparam logic [12:0] CACHE_ADDR_PREFIX = CACHE_ADDR_BASE[31:19];
 
@@ -139,8 +139,8 @@ module dcache #(
     // ================================================================
     //  EX-stage address decomposition
     // ================================================================
-    wire [TAG_W-1:0]   ex_tag   = cpu_addr[18:12];
-    wire [INDEX_W-1:0] ex_index = cpu_lookup_addr[9:3];
+    wire [TAG_W-1:0]   ex_tag   = cpu_addr[18:13];
+    wire [INDEX_W-1:0] ex_index = cpu_lookup_addr[10:3];
     wire [WORD_W-1:0]  ex_word  = cpu_lookup_addr[2:0];
 
     // ================================================================
@@ -280,7 +280,7 @@ module dcache #(
     // request is looked up again before returning to S_IDLE.
     wire [TAG_W-1:0] tag_rd_data [WAYS-1:0];
     wire             tag_rd_vld  [WAYS-1:0];
-    // Each packed 128-entry distributed Tag RAM expands into pairs of RAM64
+    // Each packed 256-entry distributed Tag RAM expands into four RAM64
     // primitives.  A single selected index used to drive both ways, giving
     // every low address bit roughly 150 physical loads.  Keep independent
     // selected-index cones per way and let synthesis replicate each cone at a
@@ -299,36 +299,33 @@ module dcache #(
     assign tag_rd_vld[1]  = tag_vld[1][tag_read_index_w1];
 
     // Keep the shortened tag for miss-victim metadata. Capture valid and the
-    // three tag-compare groups independently across EX->MEM; the final
-    // four-input hit reduction is deliberately moved behind that edge.
+    // two tag-compare groups independently across EX->MEM; the final
+    // three-input hit reduction is deliberately moved behind that edge.
     logic [TAG_W-1:0] mem_tag_rd [WAYS-1:0];
     logic             mem_tag_vld [WAYS-1:0];
 
-    // Compare in parallel before the EX->MEM edge.  Each three-bit equality
-    // consumes exactly six LUT inputs (three stored/request bit pairs); the
-    // remaining bit forms its own group.  One late four-input AND combines
-    // valid plus the three registered groups in MEM.
+    // Compare in parallel before the EX->MEM edge. Each three-bit equality
+    // consumes exactly six LUT inputs (three stored/request bit pairs). One
+    // late three-input AND combines valid plus both registered groups in MEM.
     wire [TAG_W-1:0] tag_diff_w0 = tag_rd_data[0] ^ tag_lookup_tag;
     wire [TAG_W-1:0] tag_diff_w1 = tag_rd_data[1] ^ tag_lookup_tag;
     wire tag_eq_w0_0 = ~|tag_diff_w0[2:0];
     wire tag_eq_w0_1 = ~|tag_diff_w0[5:3];
-    wire tag_eq_w0_2 = ~tag_diff_w0[6];
     wire tag_eq_w1_0 = ~|tag_diff_w1[2:0];
     wire tag_eq_w1_1 = ~|tag_diff_w1[5:3];
-    wire tag_eq_w1_2 = ~tag_diff_w1[6];
-    wire [2:0] tag_eq_group_w0 = {
-        tag_eq_w0_2, tag_eq_w0_1, tag_eq_w0_0
+    wire [1:0] tag_eq_group_w0 = {
+        tag_eq_w0_1, tag_eq_w0_0
     };
-    wire [2:0] tag_eq_group_w1 = {
-        tag_eq_w1_2, tag_eq_w1_1, tag_eq_w1_0
+    wire [1:0] tag_eq_group_w1 = {
+        tag_eq_w1_1, tag_eq_w1_0
     };
 
-    logic [2:0] mem_tag_eq_w0;
-    logic [2:0] mem_tag_eq_w1;
+    logic [1:0] mem_tag_eq_w0;
+    logic [1:0] mem_tag_eq_w1;
 
 `ifndef SYNTHESIS
     // Executable reference for the pre-refactor behavior: combine valid and
-    // all three compare groups before the EX->MEM edge.
+    // both compare groups before the EX->MEM edge.
     wire lookup_hit_reference_w0 = tag_rd_vld[0]
                                  & (&tag_eq_group_w0);
     wire lookup_hit_reference_w1 = tag_rd_vld[1]
@@ -1048,7 +1045,7 @@ module dcache #(
 `ifndef SYNTHESIS
     initial begin
         if (CACHE_ADDR_MASK != 32'hFFF8_0000)
-            $fatal(1, "DCache seven-bit tag requires addr[31:19] fixed");
+            $fatal(1, "DCache six-bit tag requires addr[31:19] fixed");
         if ((CACHE_ADDR_BASE & ~CACHE_ADDR_MASK) != 32'd0)
             $fatal(1, "DCache cacheable window base is not mask-aligned");
     end

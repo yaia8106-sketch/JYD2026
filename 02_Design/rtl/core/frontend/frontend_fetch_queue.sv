@@ -31,8 +31,8 @@ module frontend_fetch_queue
     input  logic                       prev_tail_contiguous,
 
     // Keep the late acceptance event separate from the already-known packet
-    // width. deq_fire drives register enables; deq_two selects the early
-    // one-entry/two-entry next-state candidates.
+    // width. deq_two selects the early one-entry/two-entry next-state
+    // candidates; deq_fire is only the final select between those candidates.
     input  logic                       deq_fire,
     input  logic                       deq_two,
 
@@ -40,6 +40,10 @@ module frontend_fetch_queue
     output logic [FQ_PTR_W-1:0]        head_p1, // head plus 1
     output logic [FQ_PTR_W-1:0]        tail,
     output logic [FQ_PTR_W-1:0]        tail_p1,
+    // Keep the late dequeue decision on the count D cone. Without this local
+    // attribute Vivado recognizes the self-hold arm below and recreates the
+    // original backend-to-CE path during synthesis.
+    (* extract_enable = "no" *)
     output logic [FQ_PTR_W:0]          count,
     output logic [31:0]                tail_next_pc,
 
@@ -112,8 +116,15 @@ module frontend_fetch_queue
     // bit choose only between dequeue and no-dequeue results.
     wire [FQ_PTR_W:0] count_if_deq =
         deq_two ? count_if_deq_dual : count_if_deq_single;
+    // Complete the hold case in the D input instead of using the late
+    // backend-derived dequeue event as the count register's clock enable.
+    // The explicit enq_fire arm also preserves the old hold behavior for an
+    // invalid enq1-without-enq0 input combination; legal packets are still
+    // exactly zero, one or two entries wide.
     wire [FQ_PTR_W:0] count_next =
-        deq_fire ? count_if_deq : count_if_deq_none;
+        deq_fire ? count_if_deq
+      : enq_fire ? count_if_deq_none
+                 : count;
 
     wire [31:0] enq_last_next_pc =
         enq_two ? (enq_entry1.pc + 32'd4) : (enq_entry0.pc + 32'd4);
@@ -146,7 +157,7 @@ module frontend_fetch_queue
             count <= '0;
         else if (flush)
             count <= '0;
-        else if (enq_fire | deq_fire)
+        else
             count <= count_next;
     end
 
