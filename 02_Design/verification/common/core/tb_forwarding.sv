@@ -102,6 +102,7 @@ module tb_forwarding;
     logic        id_ready_go;
     logic        id_ready_go_if_mem_ready;
     logic        id_ready_go_if_mem_wait;
+    logic        id_non_load_hazard;
     integer      random_seed;
 
     forwarding dut (
@@ -144,6 +145,12 @@ module tb_forwarding;
         .ex_fast_alu_result(ex_fast_alu_result),
         .ex_pc_plus_4     (ex_pc_plus_4),
         .ex_wb_sel        (ex_wb_sel),
+        .ex_hazard_valid  (ex_valid),
+        .ex_hazard_reg_write(ex_reg_write),
+        .ex_hazard_is_muldiv(ex_is_muldiv),
+        .ex_hazard_mem_read(ex_mem_read),
+        .ex_hazard_result_repair(ex_result_repair),
+        .ex_hazard_rd     (ex_rd),
         .ex_s1_valid      (ex_s1_valid),
         .ex_s1_reg_write  (ex_s1_reg_write),
         .ex_s1_mem_read   (ex_s1_mem_read),
@@ -152,6 +159,11 @@ module tb_forwarding;
         .ex_s1_alu_result (ex_s1_alu_result),
         .ex_s1_pc_plus_4  (ex_s1_pc_plus_4),
         .ex_s1_wb_sel     (ex_s1_wb_sel),
+        .ex_s1_hazard_valid(ex_s1_valid),
+        .ex_s1_hazard_reg_write(ex_s1_reg_write),
+        .ex_s1_hazard_mem_read(ex_s1_mem_read),
+        .ex_s1_hazard_result_repair(ex_s1_result_repair),
+        .ex_s1_hazard_rd  (ex_s1_rd),
         .mem_valid        (mem_valid),
         .mem_reg_write    (mem_reg_write),
         .mem_is_load      (mem_is_load),
@@ -195,7 +207,8 @@ module tb_forwarding;
         .id_s1_rs2_wb_repair_s1(id_s1_rs2_wb_repair_s1),
         .id_ready_go      (id_ready_go),
         .id_ready_go_if_mem_ready(id_ready_go_if_mem_ready),
-        .id_ready_go_if_mem_wait(id_ready_go_if_mem_wait)
+        .id_ready_go_if_mem_wait(id_ready_go_if_mem_wait),
+        .id_non_load_hazard(id_non_load_hazard)
     );
 
     mul_operand_forwarding mul_dut (
@@ -381,6 +394,10 @@ module tb_forwarding;
 
             check(!id_ready_go,
                   "consumer of a repaired EX result must wait one cycle");
+            check(id_non_load_hazard,
+                  "repaired EX dependency must use the common hazard gate");
+            check(id_ready_go_if_mem_ready && id_ready_go_if_mem_wait,
+                  "non-load hazard must not lengthen either load cofactor");
             check_no_wb_repair(
                 "EX repair-use interlock must not invent a MEM repair tag");
             if (consumer_slot1) begin
@@ -1186,9 +1203,9 @@ module tb_forwarding;
                       id_rs2_addr, rf_rs2_data),
                   "random MUL rs2 forwarding mismatch");
 
-            check(id_ready_go === (mem_load_ready
+            check(id_ready_go === ((mem_load_ready
                     ? id_ready_go_if_mem_ready
-                    : id_ready_go_if_mem_wait),
+                    : id_ready_go_if_mem_wait) & ~id_non_load_hazard),
                   "random late MEM-ready cofactor selection mismatch");
             if (!mem_load_ready)
                 check_no_wb_repair(

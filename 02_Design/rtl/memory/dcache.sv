@@ -1,6 +1,6 @@
 // ============================================================
 // Module: dcache
-// Description: NSCSCC-only 16KB, 2-way set-associative data cache.
+// Description: NSCSCC-only 32KB, 2-way set-associative data cache.
 //
 // Architecture:
 //   - Internal EX->MEM pipeline register (synced with cpu_top's ex_mem_reg)
@@ -29,7 +29,7 @@ module dcache #(
     input  logic        cpu_req,
     input  logic        cpu_wr,
     input  logic [31:0] cpu_addr,
-    input  logic [10:0] cpu_lookup_addr, // addr[12:2] from the short LSU adder
+    input  logic [11:0] cpu_lookup_addr, // addr[13:2] from the short LSU adder
     input  logic [ 3:0] cpu_wea,
     input  logic [31:0] cpu_wdata,       // raw, aligned after the EX->MEM register
     input  logic [ 1:0] cpu_load_size,
@@ -83,14 +83,16 @@ module dcache #(
     //  Parameters
     // ================================================================
     localparam WAYS       = 2;
-    localparam SETS       = 256;
+    localparam SETS       = 512;
     localparam LINE_WORDS = 8;
-    // CACHE_ADDR_MASK fixes addr[31:19].  addr[18:13] is therefore the only
+    // CACHE_ADDR_MASK fixes addr[31:19].  addr[18:14] is therefore the only
     // tag state required for requests already classified as cacheable using
     // the complete architectural address.
-    localparam TAG_W      = 6;
-    localparam INDEX_W    = 8;    // addr[12:5]
+    localparam TAG_W      = 5;
+    localparam INDEX_W    = 9;    // addr[13:5]
     localparam WORD_W     = 3;    // addr[4:2]
+    localparam TAG_BANK_INDEX_W = INDEX_W - 1;
+    localparam TAG_BANK_SETS    = SETS / 2;
     localparam logic [12:0] CACHE_ADDR_PREFIX = CACHE_ADDR_BASE[31:19];
 
     function automatic [31:0] merge_bytes (
@@ -139,8 +141,8 @@ module dcache #(
     // ================================================================
     //  EX-stage address decomposition
     // ================================================================
-    wire [TAG_W-1:0]   ex_tag   = cpu_addr[18:13];
-    wire [INDEX_W-1:0] ex_index = cpu_lookup_addr[10:3];
+    wire [TAG_W-1:0]   ex_tag   = cpu_addr[18:14];
+    wire [INDEX_W-1:0] ex_index = cpu_lookup_addr[11:3];
     wire [WORD_W-1:0]  ex_word  = cpu_lookup_addr[2:0];
 
     // ================================================================
@@ -264,84 +266,142 @@ module dcache #(
     // ================================================================
     //  Tag RAM (LUTRAM, async read)
     // ================================================================
-    // Keep each way in a distinct array.  A dynamic first dimension makes
-    // Vivado scalarize every tag bit; explicit way arrays infer compact
-    // single-write/asynchronous-read distributed RAMs for the full AXI tag.
+    // Keep each way/bank in a distinct array. The high index bit selects the
+    // bank only after the EX->MEM edge; both 256-set banks are read in parallel
+    // from the low eight index bits. This removes one address-dependent level
+    // from the 512-set lookup without changing the stored metadata.
     (* ram_style = "distributed" *)
-    logic [TAG_W-1:0] tag_mem_way0 [0:SETS-1];
+    logic [TAG_W-1:0] tag_mem_way0_bank0 [0:TAG_BANK_SETS-1];
     (* ram_style = "distributed" *)
-    logic [TAG_W-1:0] tag_mem_way1 [0:SETS-1];
-    logic             tag_vld [WAYS-1:0][SETS-1:0];
-    logic [SETS-1:0]   dirty_way0;
-    logic [SETS-1:0]   dirty_way1;
+    logic [TAG_W-1:0] tag_mem_way0_bank1 [0:TAG_BANK_SETS-1];
+    (* ram_style = "distributed" *)
+    logic [TAG_W-1:0] tag_mem_way1_bank0 [0:TAG_BANK_SETS-1];
+    (* ram_style = "distributed" *)
+    logic [TAG_W-1:0] tag_mem_way1_bank1 [0:TAG_BANK_SETS-1];
+    // Valid state keeps the original unified organization so reset and write
+    // decoding are not replicated. Constant bank bits below expose two
+    // independent 256-entry read cones from the same architectural bitmap.
+    logic tag_vld [WAYS-1:0][SETS-1:0];
+    // Dirty metadata has one asynchronous lookup and at most one logical
+    // update per cycle.  Keep each way as a distinct single-write LUTRAM;
+    // expressing it as a packed bitmap with several indexed assignments makes
+    // Vivado scalarize all 1024 bits into FFs and place the AXI-ready-dependent
+    // write decoder in front of every bit.
+    (* ram_style = "distributed" *)
+    logic dirty_way0 [0:SETS-1];
+    (* ram_style = "distributed" *)
+    logic dirty_way1 [0:SETS-1];
 
     // The normal lookup uses the EX address. S_REPLAY is the one exception:
     // writeback capture temporarily owns data RAM Port B, so the held MEM
     // request is looked up again before returning to S_IDLE.
-    wire [TAG_W-1:0] tag_rd_data [WAYS-1:0];
-    wire             tag_rd_vld  [WAYS-1:0];
-    // Each packed 256-entry distributed Tag RAM expands into four RAM64
-    // primitives.  A single selected index used to drive both ways, giving
-    // every low address bit roughly 150 physical loads.  Keep independent
-    // selected-index cones per way and let synthesis replicate each cone at a
-    // small, explicit fanout boundary.  Both expressions are identical, so
-    // lookup/replay behavior and latency remain unchanged.
+    // Four explicit, equivalent low-index cones give each physical bank a
+    // local copy instead of recreating one high-fanout address tree.
     (* keep = "true", max_fanout = 24 *)
-    wire [INDEX_W-1:0] tag_read_index_w0 = state_replay
-                                         ? mem_index : ex_index;
+    wire [TAG_BANK_INDEX_W-1:0] tag_read_set_w0_b0 = state_replay
+        ? mem_index[TAG_BANK_INDEX_W-1:0]
+        : ex_index[TAG_BANK_INDEX_W-1:0];
     (* keep = "true", max_fanout = 24 *)
-    wire [INDEX_W-1:0] tag_read_index_w1 = state_replay
-                                         ? mem_index : ex_index;
+    wire [TAG_BANK_INDEX_W-1:0] tag_read_set_w0_b1 = state_replay
+        ? mem_index[TAG_BANK_INDEX_W-1:0]
+        : ex_index[TAG_BANK_INDEX_W-1:0];
+    (* keep = "true", max_fanout = 24 *)
+    wire [TAG_BANK_INDEX_W-1:0] tag_read_set_w1_b0 = state_replay
+        ? mem_index[TAG_BANK_INDEX_W-1:0]
+        : ex_index[TAG_BANK_INDEX_W-1:0];
+    (* keep = "true", max_fanout = 24 *)
+    wire [TAG_BANK_INDEX_W-1:0] tag_read_set_w1_b1 = state_replay
+        ? mem_index[TAG_BANK_INDEX_W-1:0]
+        : ex_index[TAG_BANK_INDEX_W-1:0];
     wire [TAG_W-1:0] tag_lookup_tag = state_replay ? mem_tag : ex_tag;
-    assign tag_rd_data[0] = tag_mem_way0[tag_read_index_w0];
-    assign tag_rd_data[1] = tag_mem_way1[tag_read_index_w1];
-    assign tag_rd_vld[0]  = tag_vld[0][tag_read_index_w0];
-    assign tag_rd_vld[1]  = tag_vld[1][tag_read_index_w1];
+    wire [TAG_W-1:0] tag_rd_data_w0_b0 =
+        tag_mem_way0_bank0[tag_read_set_w0_b0];
+    wire [TAG_W-1:0] tag_rd_data_w0_b1 =
+        tag_mem_way0_bank1[tag_read_set_w0_b1];
+    wire [TAG_W-1:0] tag_rd_data_w1_b0 =
+        tag_mem_way1_bank0[tag_read_set_w1_b0];
+    wire [TAG_W-1:0] tag_rd_data_w1_b1 =
+        tag_mem_way1_bank1[tag_read_set_w1_b1];
+    wire tag_rd_vld_w0_b0 =
+        tag_vld[0][{1'b0, tag_read_set_w0_b0}];
+    wire tag_rd_vld_w0_b1 =
+        tag_vld[0][{1'b1, tag_read_set_w0_b1}];
+    wire tag_rd_vld_w1_b0 =
+        tag_vld[1][{1'b0, tag_read_set_w1_b0}];
+    wire tag_rd_vld_w1_b1 =
+        tag_vld[1][{1'b1, tag_read_set_w1_b1}];
 
-    // Keep the shortened tag for miss-victim metadata. Capture valid and the
-    // two tag-compare groups independently across EX->MEM; the final
-    // three-input hit reduction is deliberately moved behind that edge.
-    logic [TAG_W-1:0] mem_tag_rd [WAYS-1:0];
-    logic             mem_tag_vld [WAYS-1:0];
-
-    // Compare in parallel before the EX->MEM edge. Each three-bit equality
-    // consumes exactly six LUT inputs (three stored/request bit pairs). One
-    // late three-input AND combines valid plus both registered groups in MEM.
-    wire [TAG_W-1:0] tag_diff_w0 = tag_rd_data[0] ^ tag_lookup_tag;
-    wire [TAG_W-1:0] tag_diff_w1 = tag_rd_data[1] ^ tag_lookup_tag;
-    wire tag_eq_w0_0 = ~|tag_diff_w0[2:0];
-    wire tag_eq_w0_1 = ~|tag_diff_w0[5:3];
-    wire tag_eq_w1_0 = ~|tag_diff_w1[2:0];
-    wire tag_eq_w1_1 = ~|tag_diff_w1[5:3];
-    wire [1:0] tag_eq_group_w0 = {
-        tag_eq_w0_1, tag_eq_w0_0
+    // Compare in parallel before the EX->MEM edge. The three-bit equality
+    // consumes six LUT inputs and the remaining two-bit equality consumes
+    // four. Bank candidates remain independent through this edge.
+    wire [TAG_W-1:0] tag_diff_w0_b0 =
+        tag_rd_data_w0_b0 ^ tag_lookup_tag;
+    wire [TAG_W-1:0] tag_diff_w0_b1 =
+        tag_rd_data_w0_b1 ^ tag_lookup_tag;
+    wire [TAG_W-1:0] tag_diff_w1_b0 =
+        tag_rd_data_w1_b0 ^ tag_lookup_tag;
+    wire [TAG_W-1:0] tag_diff_w1_b1 =
+        tag_rd_data_w1_b1 ^ tag_lookup_tag;
+    wire [1:0] tag_eq_group_w0_b0 = {
+        ~|tag_diff_w0_b0[4:3], ~|tag_diff_w0_b0[2:0]
     };
-    wire [1:0] tag_eq_group_w1 = {
-        tag_eq_w1_1, tag_eq_w1_0
+    wire [1:0] tag_eq_group_w0_b1 = {
+        ~|tag_diff_w0_b1[4:3], ~|tag_diff_w0_b1[2:0]
+    };
+    wire [1:0] tag_eq_group_w1_b0 = {
+        ~|tag_diff_w1_b0[4:3], ~|tag_diff_w1_b0[2:0]
+    };
+    wire [1:0] tag_eq_group_w1_b1 = {
+        ~|tag_diff_w1_b1[4:3], ~|tag_diff_w1_b1[2:0]
     };
 
-    logic [1:0] mem_tag_eq_w0;
-    logic [1:0] mem_tag_eq_w1;
+    // Capture both physical banks. The registered high index bit chooses the
+    // architecturally addressed candidate in MEM, so it no longer drives the
+    // deep asynchronous lookup cone.
+    logic [TAG_W-1:0] mem_tag_rd_w0_b0;
+    logic [TAG_W-1:0] mem_tag_rd_w0_b1;
+    logic [TAG_W-1:0] mem_tag_rd_w1_b0;
+    logic [TAG_W-1:0] mem_tag_rd_w1_b1;
+    logic mem_tag_vld_w0_b0;
+    logic mem_tag_vld_w0_b1;
+    logic mem_tag_vld_w1_b0;
+    logic mem_tag_vld_w1_b1;
+    logic [1:0] mem_tag_eq_w0_b0;
+    logic [1:0] mem_tag_eq_w0_b1;
+    logic [1:0] mem_tag_eq_w1_b0;
+    logic [1:0] mem_tag_eq_w1_b1;
 
 `ifndef SYNTHESIS
-    // Executable reference for the pre-refactor behavior: combine valid and
-    // both compare groups before the EX->MEM edge.
-    wire lookup_hit_reference_w0 = tag_rd_vld[0]
-                                 & (&tag_eq_group_w0);
-    wire lookup_hit_reference_w1 = tag_rd_vld[1]
-                                 & (&tag_eq_group_w1);
+    // Executable reference for the original single-table lookup. It selects
+    // the addressed bank before the edge and must agree with the new late
+    // selection after the edge.
+    wire tag_lookup_bank = state_replay
+                         ? mem_index[INDEX_W-1]
+                         : ex_index[INDEX_W-1];
+    wire lookup_hit_reference_w0 = tag_lookup_bank
+        ? (tag_rd_vld_w0_b1 & (&tag_eq_group_w0_b1))
+        : (tag_rd_vld_w0_b0 & (&tag_eq_group_w0_b0));
+    wire lookup_hit_reference_w1 = tag_lookup_bank
+        ? (tag_rd_vld_w1_b1 & (&tag_eq_group_w1_b1))
+        : (tag_rd_vld_w1_b0 & (&tag_eq_group_w1_b0));
     logic mem_hit_reference_w0;
     logic mem_hit_reference_w1;
 `endif
 
     always_ff @(posedge clk) begin
         if (pipeline_advance | state_replay) begin
-            mem_tag_rd[0]  <= tag_rd_data[0];
-            mem_tag_vld[0] <= tag_rd_vld[0];
-            mem_tag_rd[1]  <= tag_rd_data[1];
-            mem_tag_vld[1] <= tag_rd_vld[1];
-            mem_tag_eq_w0   <= tag_eq_group_w0;
-            mem_tag_eq_w1   <= tag_eq_group_w1;
+            mem_tag_rd_w0_b0  <= tag_rd_data_w0_b0;
+            mem_tag_rd_w0_b1  <= tag_rd_data_w0_b1;
+            mem_tag_rd_w1_b0  <= tag_rd_data_w1_b0;
+            mem_tag_rd_w1_b1  <= tag_rd_data_w1_b1;
+            mem_tag_vld_w0_b0 <= tag_rd_vld_w0_b0;
+            mem_tag_vld_w0_b1 <= tag_rd_vld_w0_b1;
+            mem_tag_vld_w1_b0 <= tag_rd_vld_w1_b0;
+            mem_tag_vld_w1_b1 <= tag_rd_vld_w1_b1;
+            mem_tag_eq_w0_b0   <= tag_eq_group_w0_b0;
+            mem_tag_eq_w0_b1   <= tag_eq_group_w0_b1;
+            mem_tag_eq_w1_b0   <= tag_eq_group_w1_b0;
+            mem_tag_eq_w1_b1   <= tag_eq_group_w1_b1;
 `ifndef SYNTHESIS
             mem_hit_reference_w0 <= lookup_hit_reference_w0;
             mem_hit_reference_w1 <= lookup_hit_reference_w1;
@@ -352,12 +412,27 @@ module dcache #(
     // ================================================================
     //  Hit result (MEM stage)
     //
-    //  The async valid-array selection and the tag comparison now terminate
-    //  at separate registers.  This small reduction consumes the downstream
-    //  MEM-stage margin instead of extending the EX lookup path.
+    //  Each bank's valid and comparison terminate at separate registers. The
+    //  registered high index bit performs only the final bank selection here.
     // ================================================================
-    wire hit_w0 = mem_tag_vld[0] & (&mem_tag_eq_w0);
-    wire hit_w1 = mem_tag_vld[1] & (&mem_tag_eq_w1);
+    wire mem_tag_bank = mem_index[INDEX_W-1];
+    wire [TAG_W-1:0] mem_tag_rd [WAYS-1:0];
+    wire mem_tag_vld [WAYS-1:0];
+    assign mem_tag_rd[0] = mem_tag_bank
+                         ? mem_tag_rd_w0_b1 : mem_tag_rd_w0_b0;
+    assign mem_tag_rd[1] = mem_tag_bank
+                         ? mem_tag_rd_w1_b1 : mem_tag_rd_w1_b0;
+    assign mem_tag_vld[0] = mem_tag_bank
+                          ? mem_tag_vld_w0_b1 : mem_tag_vld_w0_b0;
+    assign mem_tag_vld[1] = mem_tag_bank
+                          ? mem_tag_vld_w1_b1 : mem_tag_vld_w1_b0;
+
+    wire hit_w0_b0 = mem_tag_vld_w0_b0 & (&mem_tag_eq_w0_b0);
+    wire hit_w0_b1 = mem_tag_vld_w0_b1 & (&mem_tag_eq_w0_b1);
+    wire hit_w1_b0 = mem_tag_vld_w1_b0 & (&mem_tag_eq_w1_b0);
+    wire hit_w1_b1 = mem_tag_vld_w1_b1 & (&mem_tag_eq_w1_b1);
+    wire hit_w0 = mem_tag_bank ? hit_w0_b1 : hit_w0_b0;
+    wire hit_w1 = mem_tag_bank ? hit_w1_b1 : hit_w1_b0;
     // mem_uncached comes from the full 32-bit window comparison in
     // memory_access_unit.  It is authoritative: an out-of-window address
     // sharing the shortened tag/index must never hit or perturb replacement
@@ -864,6 +939,10 @@ module dcache #(
     // ================================================================
     //  Tag RAM write
     // ================================================================
+    wire refill_tag_bank = refill_index[INDEX_W-1];
+    wire [TAG_BANK_INDEX_W-1:0] refill_tag_set =
+        refill_index[TAG_BANK_INDEX_W-1:0];
+
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             for (int w = 0; w < WAYS; w++)
@@ -884,37 +963,87 @@ module dcache #(
 
     // Dirty/tag payload is masked by tag_vld. Every allocation or store hit
     // initializes it before it can influence victim writeback selection.
-    always_ff @(posedge clk) begin
+    //
+    // The four architectural events below are mutually exclusive except that
+    // writeback completion may coincide with refill request/completion for the
+    // same captured victim. Preserve the old procedural priority exactly:
+    // refill install > store hit > writeback clean > refill invalidation.
+    logic               dirty_write_valid;
+    logic               dirty_write_way;
+    logic [INDEX_W-1:0] dirty_write_index;
+    logic               dirty_write_data;
+
+    always_comb begin
+        dirty_write_valid = 1'b0;
+        dirty_write_way   = refill_way;
+        dirty_write_index = refill_index;
+        dirty_write_data  = 1'b0;
+
         if (refill_req_fire) begin
-            if (refill_way)
-                dirty_way1[refill_index] <= 1'b0;
-            else
-                dirty_way0[refill_index] <= 1'b0;
+            dirty_write_valid = 1'b1;
         end
 
         // A successful writeback leaves a killed load's original line valid
         // but clean. On the normal path it is invalidated next.
         if (wb_resp_ok & ~refill_read_accepted) begin
-            if (refill_way)
-                dirty_way1[refill_index] <= 1'b0;
-            else
-                dirty_way0[refill_index] <= 1'b0;
+            dirty_write_valid = 1'b1;
         end
 
         if (store_cache_write) begin
-            if (store_cache_write_way)
-                dirty_way1[mem_index] <= 1'b1;
-            else
-                dirty_way0[mem_index] <= 1'b1;
+            dirty_write_valid = 1'b1;
+            dirty_write_way   = store_cache_write_way;
+            dirty_write_index = mem_index;
+            dirty_write_data  = 1'b1;
         end
 
         if (refill_complete) begin
+            dirty_write_valid = 1'b1;
+            dirty_write_way   = refill_way;
+            dirty_write_index = refill_index;
+            dirty_write_data  = refill_is_store;
+        end
+    end
+
+    // One indexed assignment per memory is the canonical single-write-port
+    // distributed-RAM template. No reset is required because tag_vld masks every
+    // unallocated entry.
+    always_ff @(posedge clk) begin
+        if (dirty_write_valid) begin
+            if (dirty_write_way)
+                dirty_way1[dirty_write_index] <= dirty_write_data;
+            else
+                dirty_way0[dirty_write_index] <= dirty_write_data;
+        end
+    end
+
+`ifndef SYNTHESIS
+    // The single-write-port representation is cycle-equivalent provided a
+    // normal store hit cannot update a different line while refill/writeback
+    // metadata is being updated.  Same-line overlaps are legal and the
+    // priority above matches the former nonblocking-assignment ordering.
+    wire dirty_refill_metadata_event = refill_req_fire
+        | (wb_resp_ok & ~refill_read_accepted)
+        | refill_complete;
+    always_ff @(posedge clk) begin
+        if (rst_n && store_cache_write && dirty_refill_metadata_event
+                  && ((store_cache_write_way != refill_way)
+                      || (mem_index != refill_index)))
+            $fatal(1, "DCache dirty metadata received two distinct writes in one cycle");
+    end
+`endif
+
+    always_ff @(posedge clk) begin
+        if (refill_complete) begin
             if (refill_way) begin
-                tag_mem_way1[refill_index] <= refill_tag;
-                dirty_way1[refill_index] <= refill_is_store;
+                if (refill_tag_bank)
+                    tag_mem_way1_bank1[refill_tag_set] <= refill_tag;
+                else
+                    tag_mem_way1_bank0[refill_tag_set] <= refill_tag;
             end else begin
-                tag_mem_way0[refill_index] <= refill_tag;
-                dirty_way0[refill_index] <= refill_is_store;
+                if (refill_tag_bank)
+                    tag_mem_way0_bank1[refill_tag_set] <= refill_tag;
+                else
+                    tag_mem_way0_bank0[refill_tag_set] <= refill_tag;
             end
         end
     end
@@ -1045,7 +1174,7 @@ module dcache #(
 `ifndef SYNTHESIS
     initial begin
         if (CACHE_ADDR_MASK != 32'hFFF8_0000)
-            $fatal(1, "DCache six-bit tag requires addr[31:19] fixed");
+            $fatal(1, "DCache five-bit tag requires addr[31:19] fixed");
         if ((CACHE_ADDR_BASE & ~CACHE_ADDR_MASK) != 32'd0)
             $fatal(1, "DCache cacheable window base is not mask-aligned");
     end

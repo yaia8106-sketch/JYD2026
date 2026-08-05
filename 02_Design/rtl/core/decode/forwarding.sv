@@ -55,6 +55,15 @@ module forwarding (
     input  logic [31:0] ex_pc_plus_4,   // pre-computed in EX stage
     input  logic [ 1:0] ex_wb_sel,      // 00=ALU, 01=DRAM, 10=PC+4
 
+    // Physically local Slot 0 EX metadata for backwards hazard readiness.
+    // Operand forwarding above continues to use the canonical EX payload.
+    input  logic        ex_hazard_valid,
+    input  logic        ex_hazard_reg_write,
+    input  logic        ex_hazard_is_muldiv,
+    input  logic        ex_hazard_mem_read,
+    input  logic        ex_hazard_result_repair,
+    input  logic [ 4:0] ex_hazard_rd,
+
     // Slot 1 EX stage
     input  logic        ex_s1_valid,
     input  logic        ex_s1_reg_write,
@@ -64,6 +73,13 @@ module forwarding (
     input  logic [31:0] ex_s1_alu_result,
     input  logic [31:0] ex_s1_pc_plus_4,
     input  logic [ 1:0] ex_s1_wb_sel,
+
+    // Physically local Slot 1 EX metadata for backwards hazard readiness.
+    input  logic        ex_s1_hazard_valid,
+    input  logic        ex_s1_hazard_reg_write,
+    input  logic        ex_s1_hazard_mem_read,
+    input  logic        ex_s1_hazard_result_repair,
+    input  logic [ 4:0] ex_s1_hazard_rd,
 
     // Slot 0 MEM stage
     input  logic        mem_valid,
@@ -117,7 +133,8 @@ module forwarding (
     output logic        id_s1_rs2_wb_repair_s1,
     output logic        id_ready_go,
     output logic        id_ready_go_if_mem_ready,
-    output logic        id_ready_go_if_mem_wait
+    output logic        id_ready_go_if_mem_wait,
+    output logic        id_non_load_hazard
 );
 
     // ================================================================
@@ -173,6 +190,27 @@ module forwarding (
         endcase
     endfunction
 
+    // Slot 1 EX is the youngest producer and therefore has unconditional
+    // priority over every older forwarding source.  Encode the mutually
+    // exclusive immediate / S1-ALU / S1-PC+4 / older-fallback choices before
+    // the 32-bit payload arrives.  Each result bit can then use one LUT-sized
+    // final selector instead of traversing EX-lane, pipeline-stage and
+    // immediate selectors in series.
+    function automatic logic [31:0] select_s1_src2_fast(
+        input logic [ 1:0] select,
+        input logic [31:0] immediate_data,
+        input logic [31:0] s1_alu_data,
+        input logic [31:0] s1_pc4_data,
+        input logic [31:0] older_fallback_data
+    );
+        case (select)
+            2'b00:   select_s1_src2_fast = immediate_data;
+            2'b01:   select_s1_src2_fast = s1_alu_data;
+            2'b10:   select_s1_src2_fast = s1_pc4_data;
+            default: select_s1_src2_fast = older_fallback_data;
+        endcase
+    endfunction
+
     function automatic logic [31:0] preselect_alu_src1(
         input logic [ 1:0] source_select,
         input logic [31:0] rs1_candidate,
@@ -201,8 +239,12 @@ module forwarding (
     wire TAG``_s0_ex_hit  = ex_valid     && ex_reg_write     && !ex_result_repair && (ex_rd != 5'd0) && (ex_rd == SRC_ADDR); \
     wire TAG``_s1_mem_hit = mem_s1_valid && mem_s1_reg_write && !mem_s1_is_load && (mem_s1_rd != 5'd0) && (mem_s1_rd == SRC_ADDR); \
     wire TAG``_s0_mem_hit = mem_valid    && mem_reg_write    && !mem_is_load    && (mem_rd    != 5'd0) && (mem_rd    == SRC_ADDR); \
-    wire TAG``_s1_wb_hit  = wb_s1_valid  && wb_s1_reg_write  && (wb_s1_rd != 5'd0) && (wb_s1_rd == SRC_ADDR); \
-    wire TAG``_s0_wb_hit  = wb_valid     && wb_reg_write     && (wb_rd    != 5'd0) && (wb_rd    == SRC_ADDR); \
+    /* WB match bits feed both raw operands and transformed ALU candidates. */ \
+    /* Bound that one-bit control fanout so synthesis may place local copies */ \
+    /* near the corresponding ID/EX byte lanes instead of routing one global */ \
+    /* select across the complete 32-bit payload. */ \
+    (* max_fanout = 16 *) wire TAG``_s1_wb_hit  = wb_s1_valid  && wb_s1_reg_write  && (wb_s1_rd != 5'd0) && (wb_s1_rd == SRC_ADDR); \
+    (* max_fanout = 16 *) wire TAG``_s0_wb_hit  = wb_valid     && wb_reg_write     && (wb_rd    != 5'd0) && (wb_rd    == SRC_ADDR); \
     wire TAG``_ex_group_hit  = TAG``_s1_ex_hit | TAG``_s0_ex_hit; \
     wire TAG``_s0_mem_nonmul_hit = TAG``_s0_mem_hit \
                                  && (!mem_is_mul || mem_select_pc4); \
@@ -296,18 +338,40 @@ module forwarding (
         preselect_alu_src1(id_s1_alu_src1_sel,
                            s1_rs1_rf_or_mul_data, id_s1_pc);
 
-    (* keep = "true" *) wire [31:0] s1_alu_src2_ex_candidate =
-        preselect_alu_src2(id_s1_alu_src2_sel,
-                           s1_rs2_ex_group_data, id_s1_imm);
-    (* keep = "true" *) wire [31:0] s1_alu_src2_mem_candidate =
-        preselect_alu_src2(id_s1_alu_src2_sel,
-                           s1_rs2_mem_group_data, id_s1_imm);
-    (* keep = "true" *) wire [31:0] s1_alu_src2_wb_candidate =
-        preselect_alu_src2(id_s1_alu_src2_sel,
-                           s1_rs2_wb_group_data, id_s1_imm);
-    (* keep = "true" *) wire [31:0] s1_alu_src2_rf_candidate =
-        preselect_alu_src2(id_s1_alu_src2_sel,
-                           s1_rs2_rf_or_mul_data, id_s1_imm);
+    // Build the complete forwarding result with Slot 1 EX structurally
+    // removed.  This fallback is selected only when s1_rs2_s1_ex_hit is low,
+    // but keeping it independent also removes all static data arcs from the
+    // S1 barrel shifter into the older-source tree.
+    wire s1_rs2_older_ex_hit = s1_rs2_s0_ex_hit;
+    wire s1_rs2_older_mem_mul_select = !s1_rs2_older_ex_hit
+        && !s1_rs2_s1_mem_hit && s1_rs2_s0_mem_hit && mem_is_mul
+        && !mem_select_pc4;
+    wire s1_rs2_older_wb_select_hit = s1_rs2_wb_group_hit
+        && !s1_rs2_older_mem_mul_select;
+    wire [1:0] s1_rs2_older_group_select = {
+        ~s1_rs2_older_ex_hit & ~s1_rs2_mem_group_hit,
+        ~s1_rs2_older_ex_hit
+            & (s1_rs2_mem_group_hit | ~s1_rs2_older_wb_select_hit)
+    };
+    wire [31:0] s1_rs2_s0_ex_data = ex_fast_alu
+        ? ex_fast_alu_result : ex_fwd_val;
+    wire [31:0] s1_rs2_older_rf_or_mul_data =
+        s1_rs2_older_mem_mul_select ? mem_mul_result : rf_s1_rs2_data;
+    wire [31:0] s1_rs2_older_fallback = select_forward_group(
+        s1_rs2_older_group_select,
+        s1_rs2_s0_ex_data,
+        s1_rs2_mem_group_data,
+        s1_rs2_wb_group_data,
+        s1_rs2_older_rf_or_mul_data
+    );
+
+    // Choice encoding is deliberately independent of all 32-bit result data.
+    // 00=immediate, 01=S1 ALU, 10=S1 PC+4, 11=older forwarding fallback.
+    wire [1:0] s1_alu_src2_fast_select = id_s1_alu_src2_sel
+        ? 2'b00
+        : s1_rs2_s1_ex_hit
+            ? ((ex_s1_wb_sel == 2'b10) ? 2'b10 : 2'b01)
+            : 2'b11;
 
     assign id_s0_alu_src1 = select_forward_group(
         s0_rs1_group_select,
@@ -324,10 +388,12 @@ module forwarding (
         s1_alu_src1_ex_candidate, s1_alu_src1_mem_candidate,
         s1_alu_src1_wb_candidate, s1_alu_src1_rf_candidate
     );
-    assign id_s1_alu_src2 = select_forward_group(
-        s1_rs2_group_select,
-        s1_alu_src2_ex_candidate, s1_alu_src2_mem_candidate,
-        s1_alu_src2_wb_candidate, s1_alu_src2_rf_candidate
+    assign id_s1_alu_src2 = select_s1_src2_fast(
+        s1_alu_src2_fast_select,
+        id_s1_imm,
+        ex_s1_alu_result,
+        ex_s1_pc_plus_4,
+        s1_rs2_older_fallback
     );
 
     // ================================================================
@@ -394,12 +460,12 @@ module forwarding (
         .id_s1_rs1_used                 (id_s1_rs1_used),
         .id_s1_rs2_used                 (id_s1_rs2_used),
         .id_s1_repair_ok                (id_s1_repair_ok),
-        .ex_valid                       (ex_valid),
-        .ex_mem_read                    (ex_mem_read),
-        .ex_rd                          (ex_rd),
-        .ex_s1_valid                    (ex_s1_valid),
-        .ex_s1_mem_read                 (ex_s1_mem_read),
-        .ex_s1_rd                       (ex_s1_rd),
+        .ex_valid                       (ex_hazard_valid),
+        .ex_mem_read                    (ex_hazard_mem_read),
+        .ex_rd                          (ex_hazard_rd),
+        .ex_s1_valid                    (ex_s1_hazard_valid),
+        .ex_s1_mem_read                 (ex_s1_hazard_mem_read),
+        .ex_s1_rd                       (ex_s1_hazard_rd),
         .mem_valid                      (mem_valid),
         .mem_reg_write                  (mem_reg_write),
         .mem_is_load                    (mem_is_load),
@@ -446,22 +512,23 @@ module forwarding (
     // one cycle.  Hold only a true consumer of that repaired EX result; one
     // cycle later the producer is available through ordinary MEM forwarding.
     wire id_s0_uses_s0_ex_repair =
-        (id_rs1_used & (ex_rd == id_rs1_addr))
-      | (id_rs2_used & (ex_rd == id_rs2_addr));
+        (id_rs1_used & (ex_hazard_rd == id_rs1_addr))
+      | (id_rs2_used & (ex_hazard_rd == id_rs2_addr));
     wire id_s1_uses_s0_ex_repair = id_s1_valid
-        & ((id_s1_rs1_used & (ex_rd == id_s1_rs1_addr))
-         | (id_s1_rs2_used & (ex_rd == id_s1_rs2_addr)));
+        & ((id_s1_rs1_used & (ex_hazard_rd == id_s1_rs1_addr))
+         | (id_s1_rs2_used & (ex_hazard_rd == id_s1_rs2_addr)));
     wire id_s0_uses_s1_ex_repair =
-        (id_rs1_used & (ex_s1_rd == id_rs1_addr))
-      | (id_rs2_used & (ex_s1_rd == id_rs2_addr));
+        (id_rs1_used & (ex_s1_hazard_rd == id_rs1_addr))
+      | (id_rs2_used & (ex_s1_hazard_rd == id_rs2_addr));
     wire id_s1_uses_s1_ex_repair = id_s1_valid
-        & ((id_s1_rs1_used & (ex_s1_rd == id_s1_rs1_addr))
-         | (id_s1_rs2_used & (ex_s1_rd == id_s1_rs2_addr)));
+        & ((id_s1_rs1_used & (ex_s1_hazard_rd == id_s1_rs1_addr))
+         | (id_s1_rs2_used & (ex_s1_hazard_rd == id_s1_rs2_addr)));
     wire repair_use_hazard =
-        (ex_valid & ex_reg_write & ex_result_repair & (ex_rd != 5'd0)
+        (ex_hazard_valid & ex_hazard_reg_write
+         & ex_hazard_result_repair & (ex_hazard_rd != 5'd0)
          & (id_s0_uses_s0_ex_repair | id_s1_uses_s0_ex_repair))
-      | (ex_s1_valid & ex_s1_reg_write & ex_s1_result_repair
-         & (ex_s1_rd != 5'd0)
+      | (ex_s1_hazard_valid & ex_s1_hazard_reg_write
+         & ex_s1_hazard_result_repair & (ex_s1_hazard_rd != 5'd0)
          & (id_s0_uses_s1_ex_repair | id_s1_uses_s1_ex_repair));
 
     // A multiplier leaves EX before its registered result is visible. Hold
@@ -470,12 +537,13 @@ module forwarding (
     // satisfy this predicate while running, but their EX backpressure remains
     // the primary blocker and preserves the existing serial behavior.
     wire id_s0_uses_ex_muldiv =
-        (id_rs1_used & (ex_rd == id_rs1_addr))
-      | (id_rs2_used & (ex_rd == id_rs2_addr));
+        (id_rs1_used & (ex_hazard_rd == id_rs1_addr))
+      | (id_rs2_used & (ex_hazard_rd == id_rs2_addr));
     wire id_s1_uses_ex_muldiv = id_s1_valid
-        & ((id_s1_rs1_used & (ex_rd == id_s1_rs1_addr))
-         | (id_s1_rs2_used & (ex_rd == id_s1_rs2_addr)));
-    wire muldiv_use_hazard = ex_valid & ex_is_muldiv & (ex_rd != 5'd0)
+        & ((id_s1_rs1_used & (ex_hazard_rd == id_s1_rs1_addr))
+         | (id_s1_rs2_used & (ex_hazard_rd == id_s1_rs2_addr)));
+    wire muldiv_use_hazard = ex_hazard_valid & ex_hazard_is_muldiv
+                           & (ex_hazard_rd != 5'd0)
                            & (id_s0_uses_ex_muldiv
                               | id_s1_uses_ex_muldiv);
 
@@ -486,15 +554,17 @@ module forwarding (
     // normal MEM forwarding priority. Independent MUL and non-MUL traffic keep
     // the existing acceptance behavior.
     wire id_mul_uses_s0_ex_writer =
-        (id_rs1_used & (ex_rd == id_rs1_addr))
-      | (id_rs2_used & (ex_rd == id_rs2_addr));
+        (id_rs1_used & (ex_hazard_rd == id_rs1_addr))
+      | (id_rs2_used & (ex_hazard_rd == id_rs2_addr));
     wire id_mul_uses_s1_ex_writer =
-        (id_rs1_used & (ex_s1_rd == id_rs1_addr))
-      | (id_rs2_used & (ex_s1_rd == id_rs2_addr));
+        (id_rs1_used & (ex_s1_hazard_rd == id_rs1_addr))
+      | (id_rs2_used & (ex_s1_hazard_rd == id_rs2_addr));
     wire mul_launch_ex_raw_hazard = id_s0_is_mul
-        & ((ex_valid & ex_reg_write & (ex_rd != 5'd0)
+        & ((ex_hazard_valid & ex_hazard_reg_write
+            & (ex_hazard_rd != 5'd0)
             & id_mul_uses_s0_ex_writer)
-         | (ex_s1_valid & ex_s1_reg_write & (ex_s1_rd != 5'd0)
+         | (ex_s1_hazard_valid & ex_s1_hazard_reg_write
+            & (ex_s1_hazard_rd != 5'd0)
             & id_mul_uses_s1_ex_writer));
 
     // Kept as named monitor wires. EX-produced control operands now use
@@ -508,17 +578,16 @@ module forwarding (
 
     wire non_load_hazard = repair_use_hazard | muldiv_use_hazard
                          | mul_launch_ex_raw_hazard;
-    wire id_hazard_if_mem_ready = load_use_hazard_if_mem_ready
-                                | non_load_hazard;
-    wire id_hazard_if_mem_wait = load_use_hazard_if_mem_wait
-                               | non_load_hazard;
-
-    // Expose both readiness candidates so the integrated pipeline can keep
-    // DCache ready out of the hazard tree and use it only as a late selector.
-    assign id_ready_go_if_mem_ready = ~id_hazard_if_mem_ready;
-    assign id_ready_go_if_mem_wait = ~id_hazard_if_mem_wait;
-    assign id_ready_go = mem_load_ready ? id_ready_go_if_mem_ready
-                                        : id_ready_go_if_mem_wait;
+    // Expose the two load-readiness cofactors independently from hazards that
+    // do not depend on MEM readiness. cpu_top folds the latter into the final
+    // one-bit issue gate, so an EX destination match no longer traverses both
+    // complete cache-ready candidates and their late selector.
+    assign id_ready_go_if_mem_ready = ~load_use_hazard_if_mem_ready;
+    assign id_ready_go_if_mem_wait = ~load_use_hazard_if_mem_wait;
+    assign id_non_load_hazard = non_load_hazard;
+    assign id_ready_go = (mem_load_ready ? id_ready_go_if_mem_ready
+                                         : id_ready_go_if_mem_wait)
+                       & ~non_load_hazard;
 
 endmodule
 

@@ -135,13 +135,25 @@ module ex_stage_ctrl
                                   | (ex_s1_control_flow == CF_INDIRECT);
     wire ex_s1_actual_taken_w = ex_s1_is_unconditional
                               | (ex_s1_is_conditional & ex_s1_branch_taken);
-    wire ex_s1_direction_wrong =
-        ex_s1_actual_taken_w != ex_s1_predicted_taken;
-    wire ex_s1_target_wrong = ex_s1_actual_taken_w
-                            & ex_s1_predicted_taken
-                            & (ex_s1_control_target
-                               != ex_s1_predicted_target);
-    wire ex_s1_mispredict = ex_s1_direction_wrong | ex_s1_target_wrong;
+    wire ex_s1_target_mismatch = ex_s1_control_target
+                               != ex_s1_predicted_target;
+
+    // Form redirect truth-table candidates directly from the comparator and
+    // prediction.  The old path first constructed the complete actual_taken,
+    // then direction_wrong, target_wrong and finally their OR.  These three
+    // candidates are equivalent but independent, leaving only the CFI-class
+    // selector after the late branch comparison.
+    wire ex_s1_conditional_mispredict = ex_s1_branch_taken
+        ? (~ex_s1_predicted_taken | ex_s1_target_mismatch)
+        : ex_s1_predicted_taken;
+    wire ex_s1_unconditional_mispredict = ~ex_s1_predicted_taken
+                                        | ex_s1_target_mismatch;
+    wire ex_s1_no_control_mispredict = ex_s1_predicted_taken;
+    wire ex_s1_mispredict = ex_s1_is_conditional
+        ? ex_s1_conditional_mispredict
+        : ex_s1_is_unconditional
+            ? ex_s1_unconditional_mispredict
+            : ex_s1_no_control_mispredict;
     assign ex_s1_branch_target = ex_s1_control_target;
     assign ex_s1_actual_taken = ex_s1_actual_taken_w;
     assign ex_s1_branch_redirect = ex_s1_valid

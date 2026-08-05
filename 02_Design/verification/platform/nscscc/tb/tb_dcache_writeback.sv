@@ -50,7 +50,7 @@ module tb_dcache_writeback;
         .cpu_req(cpu_req),
         .cpu_wr(cpu_wr),
         .cpu_addr(cpu_addr),
-        .cpu_lookup_addr(cpu_addr[12:2]),
+        .cpu_lookup_addr(cpu_addr[13:2]),
         .cpu_wea(cpu_wea),
         .cpu_wdata(cpu_wdata),
         .cpu_load_size(cpu_load_size),
@@ -650,20 +650,20 @@ module tb_dcache_writeback;
     integer writes_before;
 
     localparam logic [31:0] A = 32'h1c08_0040;
-    // A/B/C and S/T/U use the same set in the 256-set cache. One way holds
-    // 8KB, so identical set indices are 0x2000 bytes apart. A_INDEX_HI differs
-    // only in index bit addr[12] and must coexist with all three same-set lines.
-    localparam logic [31:0] A_INDEX_HI = 32'h1c08_1040;
-    localparam logic [31:0] B = 32'h1c08_2040;
-    localparam logic [31:0] C = 32'h1c08_4040;
+    // A/B/C and S/T/U use the same set in the 512-set cache. One way holds
+    // 16KB, so identical set indices are 0x4000 bytes apart. A_INDEX_HI differs
+    // only in index bit addr[13] and must coexist with all three same-set lines.
+    localparam logic [31:0] A_INDEX_HI = 32'h1c08_2040;
+    localparam logic [31:0] B = 32'h1c08_4040;
+    localparam logic [31:0] C = 32'h1c08_8040;
     localparam logic [31:0] S = 32'h1c08_0060;
-    localparam logic [31:0] T = 32'h1c08_2060;
-    localparam logic [31:0] U = 32'h1c08_4060;
+    localparam logic [31:0] T = 32'h1c08_4060;
+    localparam logic [31:0] U = 32'h1c08_8060;
     localparam logic [31:0] V = 32'h1c08_0080;
     localparam logic [31:0] CACHE_LOWER = 32'h1c08_0000;
     localparam logic [31:0] CACHE_UPPER = 32'h1c0f_ffe0;
-    localparam logic [31:0] CACHE_UPPER_PEER = 32'h1c08_1fe0;
-    localparam logic [31:0] CACHE_UPPER_REPL = 32'h1c08_3fe0;
+    localparam logic [31:0] CACHE_UPPER_PEER = 32'h1c08_3fe0;
+    localparam logic [31:0] CACHE_UPPER_REPL = 32'h1c08_7fe0;
 
     initial begin
         clk = 1'b0;
@@ -719,7 +719,7 @@ module tb_dcache_writeback;
         load_hit_formatted(A + 9, 2'b00, 1'b1, 32'h0000_00aa);
         load_hit_formatted(A + 10, 2'b01, 1'b1, 32'h0000_3333);
 
-        $display("[INFO] addr[12] selects an independent 8KB way half");
+        $display("[INFO] addr[13] selects an independent 16KB way half");
         load_miss(
             A_INDEX_HI,
             32'h5800_0000, 32'h5800_0001,

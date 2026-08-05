@@ -13,7 +13,7 @@ module memory_access_unit #(
     input  logic        ex_mem_read_en,
     input  logic        ex_mem_write_en,
     input  logic [31:0] ex_alu_addr,
-    input  logic [12:0] ex_lookup_addr,
+    input  logic [13:0] ex_lookup_addr,
     input  logic [ 1:0] ex_mem_size,
     input  logic        ex_mem_unsigned,
     input  logic [ 3:0] ex_store_wea,
@@ -24,7 +24,7 @@ module memory_access_unit #(
     input  logic        ex_s1_mem_read_en,
     input  logic        ex_s1_mem_write_en,
     input  logic [31:0] ex_s1_alu_addr,
-    input  logic [12:0] ex_s1_lookup_addr,
+    input  logic [13:0] ex_s1_lookup_addr,
     input  logic [ 1:0] ex_s1_mem_size,
     input  logic        ex_s1_mem_unsigned,
     input  logic [ 3:0] ex_s1_store_wea,
@@ -59,7 +59,7 @@ module memory_access_unit #(
     output logic        cache_req,
     output logic        cache_wr,
     output logic [31:0] cache_addr,
-    output logic [10:0] cache_lookup_addr,
+    output logic [11:0] cache_lookup_addr,
     output logic [ 3:0] cache_wea,
     output logic [31:0] cache_wdata,
     output logic [ 3:0] cache_load_mask,
@@ -89,7 +89,7 @@ module memory_access_unit #(
     // remains low and only the side-effect-free tag/BRAM address may change.
     wire ex_use_s1_lsu = ex_s1_lsu_select;
     wire [31:0] ex_lsu_addr = ex_use_s1_lsu ? ex_s1_alu_addr : ex_alu_addr;
-    wire [12:0] ex_lsu_lookup_addr = ex_use_s1_lsu
+    wire [13:0] ex_lsu_lookup_addr = ex_use_s1_lsu
                                    ? ex_s1_lookup_addr : ex_lookup_addr;
     wire        ex_lsu_read = ex_use_s1_lsu ? ex_s1_mem_read_en : ex_mem_read_en;
     wire        ex_lsu_write = ex_use_s1_lsu ? ex_s1_mem_write_en : ex_mem_write_en;
@@ -148,7 +148,7 @@ module memory_access_unit #(
                      & (ex_lsu_cacheable | AXI_UNCACHED_DATA);
     assign cache_wr = ex_lsu_write;
     assign cache_addr = ex_lsu_addr;
-    assign cache_lookup_addr = ex_lsu_lookup_addr[12:2];
+    assign cache_lookup_addr = ex_lsu_lookup_addr[13:2];
     assign cache_wea = ex_lsu_wea;
     assign cache_wdata = ex_lsu_wdata;
     assign cache_load_mask = ({4{ex_lsu_size == 2'b00}} & ex_load_byte_mask)

@@ -1,15 +1,15 @@
-// NSCSCC/chiplab build: infer the two 2048x32 DCache data banks instead of
+// NSCSCC/chiplab build: infer the two 4096x32 DCache data banks instead of
 // depending on the JYD Vivado project-specific dcache_data_ram IP.
 module dcache_data_ram (
     input  logic        clka,
     input  logic [ 3:0] wea,
-    input  logic [10:0] addra,
+    input  logic [11:0] addra,
     input  logic [31:0] dina,
     input  logic        clkb,
-    input  logic [10:0] addrb,
+    input  logic [11:0] addrb,
     output logic [31:0] doutb
 );
-    (* ram_style = "block" *) logic [31:0] mem [0:2047];
+    (* ram_style = "block" *) logic [31:0] mem [0:4095];
 
     always_ff @(posedge clka) begin
         if (wea[0]) mem[addra][ 7: 0] <= dina[ 7: 0];

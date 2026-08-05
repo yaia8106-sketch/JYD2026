@@ -43,7 +43,7 @@ module cpu_top
     output logic        cache_req,       // EX stage: memory request valid
     output logic        cache_wr,        // EX stage: 0=load, 1=store
     output logic [31:0] cache_addr,      // EX stage: memory address
-    output logic [10:0] cache_lookup_addr, // EX stage: addr[12:2], short DCache lookup path
+    output logic [11:0] cache_lookup_addr, // EX stage: addr[13:2], short DCache lookup path
     output logic [ 3:0] cache_wea,       // EX stage: byte write enable
     output logic [31:0] cache_wdata,     // EX stage: raw store data
     output logic [ 3:0] cache_load_mask, // EX stage: load byte lanes
@@ -125,6 +125,7 @@ module cpu_top
     wire        id_ready_go_raw;
     wire        id_ready_go_raw_if_mem_ready;
     wire        id_ready_go_raw_if_mem_wait;
+    wire        id_non_load_hazard;
     // Structured payloads keep per-slot prediction metadata adjacent to the
     // instruction as it crosses the pipeline boundary.
     wire cpu_defs::if_id_payload_t if_id_payload;
@@ -205,6 +206,12 @@ module cpu_top
     wire        ex_allowin;
     wire cpu_defs::id_ex_slot0_t id_ex_s0_payload;
     wire cpu_defs::id_ex_slot0_t ex_s0_payload;
+    (* keep = "true", max_fanout = 16 *) logic ex_hazard_valid;
+    (* keep = "true", max_fanout = 16 *) logic ex_hazard_reg_write;
+    (* keep = "true", max_fanout = 16 *) logic ex_hazard_is_muldiv;
+    (* keep = "true", max_fanout = 16 *) logic ex_hazard_mem_read;
+    (* keep = "true", max_fanout = 16 *) logic ex_hazard_result_repair;
+    (* keep = "true", max_fanout = 16 *) logic [4:0] ex_hazard_rd;
     wire [31:0] ex_pc = ex_s0_payload.common.pc;
     wire [31:0] ex_inst = ex_s0_payload.inst;
     wire [31:0] ex_alu_src1 = ex_s0_payload.common.alu_src1;
@@ -253,6 +260,11 @@ module cpu_top
     wire        ex_s1_valid;
     wire cpu_defs::id_ex_slot1_t id_ex_s1_payload;
     wire cpu_defs::id_ex_slot1_t ex_s1_payload;
+    (* keep = "true", max_fanout = 16 *) logic ex_s1_hazard_valid;
+    (* keep = "true", max_fanout = 16 *) logic ex_s1_hazard_reg_write;
+    (* keep = "true", max_fanout = 16 *) logic ex_s1_hazard_mem_read;
+    (* keep = "true", max_fanout = 16 *) logic ex_s1_hazard_result_repair;
+    (* keep = "true", max_fanout = 16 *) logic [4:0] ex_s1_hazard_rd;
     wire [31:0] ex_s1_pc = ex_s1_payload.common.pc;
     wire [31:0] ex_s1_inst = ex_s1_payload.inst;
     wire [ 4:0] ex_s1_rd = ex_s1_payload.common.rd;
@@ -295,6 +307,15 @@ module cpu_top
     wire [31:0] alu_s1_addr;
     wire [31:0] ex_fast_forward_result;
     wire [31:0] ex_s1_fast_forward_result;
+    // The five shift-amount bits otherwise drive both complete Slot-1 ALUs
+    // and every level of the forwarding barrel shifter.  Keep a physically
+    // independent, cycle-identical copy for the EX-to-ID fast result so that
+    // the architectural ALU placement does not load that critical source.
+    (* keep = "true", max_fanout = 24 *) logic [4:0]
+        ex_s1_fast_src2_low;
+    wire [31:0] ex_s1_fast_src2 = {
+        ex_s1_alu_src2[31:5], ex_s1_fast_src2_low
+    };
     wire [31:0] ex_alu_src1_repair;
     wire [31:0] ex_alu_src2_repair;
     wire [31:0] ex_s1_alu_src1_repair;
@@ -303,12 +324,18 @@ module cpu_top
     wire [31:0] ex_rs2_data_repair;
     wire [31:0] ex_s1_rs1_data_repair;
     wire [31:0] ex_s1_rs2_data_repair;
-    wire [12:0] ex_lsu_addr_low_raw;
-    wire [12:0] ex_lsu_addr_low_wb;
-    wire [12:0] ex_lsu_addr_low;
-    wire [12:0] ex_s1_lsu_addr_low_raw;
-    wire [12:0] ex_s1_lsu_addr_low_wb;
-    wire [12:0] ex_s1_lsu_addr_low;
+    wire [13:0] ex_lsu_addr_low_raw;
+    wire [13:0] ex_lsu_addr_low_wb;
+    wire [13:0] ex_lsu_addr_low;
+    wire [13:0] ex_s1_lsu_addr_low_raw;
+    wire [13:0] ex_s1_lsu_addr_low_wb;
+    wire [13:0] ex_s1_lsu_addr_low;
+    wire [ 1:0] ex_lsu_align_low_raw;
+    wire [ 1:0] ex_lsu_align_low_wb;
+    wire [ 1:0] ex_lsu_align_low;
+    wire [ 1:0] ex_s1_lsu_align_low_raw;
+    wire [ 1:0] ex_s1_lsu_align_low_wb;
+    wire [ 1:0] ex_s1_lsu_align_low;
     wire [ 1:0] ex_store_addr_low;
     wire [ 1:0] ex_s1_store_addr_low;
 
@@ -602,10 +629,10 @@ module cpu_top
     wire id_muldiv_owner_ready_if_cache_wait = ~id_issue_is_muldiv
                                              | ~mem_valid | ~mem_is_mul;
 
-    (* keep = "true" *) wire id_ready_go_if_cache_ready =
+    (* keep = "true" *) wire id_ready_no_common_if_cache_ready =
         id_base_ready_if_cache_ready & id_muldiv_unit_ready
                                      & id_muldiv_done_ready_if_cache_ready;
-    (* keep = "true" *) wire id_ready_go_if_cache_wait =
+    (* keep = "true" *) wire id_ready_no_common_if_cache_wait =
         id_base_ready_if_cache_wait & id_muldiv_unit_ready
                                     & id_muldiv_owner_ready_if_cache_wait
                                     & id_muldiv_done_ready_if_cache_wait;
@@ -618,19 +645,25 @@ module cpu_top
     (* keep = "true" *) wire ex_allowin_if_cache_wait =
         ~ex_valid | (ex_ready_go_w & ~mem_valid);
 
-    (* keep = "true" *) wire id_allowin_if_cache_ready =
-        ~id_valid | (id_ready_go_if_cache_ready
-                     & ex_allowin_if_cache_ready);
-    (* keep = "true" *) wire id_allowin_if_cache_wait =
-        ~id_valid | (id_ready_go_if_cache_wait
-                     & ex_allowin_if_cache_wait);
+    // All cache-dependent candidates are complete before the common EX repair/
+    // MulDiv hazard arrives.  The late hazard therefore sees only one selected
+    // readiness bit instead of traversing both candidate trees.
+    (* keep = "true" *) wire id_progress_no_common_if_cache_ready =
+        id_ready_no_common_if_cache_ready & ex_allowin_if_cache_ready;
+    (* keep = "true" *) wire id_progress_no_common_if_cache_wait =
+        id_ready_no_common_if_cache_wait & ex_allowin_if_cache_wait;
+    wire id_ready_no_common =
+        cache_ready ? id_ready_no_common_if_cache_ready
+                    : id_ready_no_common_if_cache_wait;
+    wire id_progress_no_common =
+        cache_ready ? id_progress_no_common_if_cache_ready
+                    : id_progress_no_common_if_cache_wait;
 
-    assign id_ready_go = cache_ready ? id_ready_go_if_cache_ready
-                                     : id_ready_go_if_cache_wait;
+    assign id_ready_go = id_ready_no_common & ~id_non_load_hazard;
     assign ex_allowin = cache_ready ? ex_allowin_if_cache_ready
                                     : ex_allowin_if_cache_wait;
-    assign id_allowin = cache_ready ? id_allowin_if_cache_ready
-                                    : id_allowin_if_cache_wait;
+    assign id_allowin = ~id_valid
+                      | (id_progress_no_common & ~id_non_load_hazard);
 
 `ifndef SYNTHESIS
     // Executable references retain the original serial equations.
@@ -657,16 +690,8 @@ module cpu_top
     // This is the exact ID/EX acceptance edge. A Slot 0 MUL establishes its
     // narrow MulDiv owner here while its forwarded rs payload is duplicated
     // into free-running local DSP input registers.
-    wire id_to_ex_fire_if_cache_ready = id_valid
-                                      & id_ready_go_if_cache_ready
-                                      & ex_allowin_if_cache_ready
-                                      & ~id_flush;
-    wire id_to_ex_fire_if_cache_wait = id_valid
-                                     & id_ready_go_if_cache_wait
-                                     & ex_allowin_if_cache_wait
-                                     & ~id_flush;
-    wire id_to_ex_fire = cache_ready ? id_to_ex_fire_if_cache_ready
-                                     : id_to_ex_fire_if_cache_wait;
+    wire id_to_ex_fire = id_valid & id_progress_no_common
+                        & ~id_non_load_hazard & ~id_flush;
 `ifndef SYNTHESIS
     wire id_to_ex_fire_reference = id_valid & id_ready_go_reference
                                  & ex_allowin_reference & ~id_flush;
@@ -1489,6 +1514,12 @@ module cpu_top
         .ex_fast_alu_result(ex_fast_forward_result),
         .ex_pc_plus_4   (ex_pc_plus_4),
         .ex_wb_sel      (ex_wb_sel),
+        .ex_hazard_valid(ex_hazard_valid),
+        .ex_hazard_reg_write(ex_hazard_reg_write),
+        .ex_hazard_is_muldiv(ex_hazard_is_muldiv),
+        .ex_hazard_mem_read(ex_hazard_mem_read),
+        .ex_hazard_result_repair(ex_hazard_result_repair),
+        .ex_hazard_rd   (ex_hazard_rd),
         .ex_s1_valid       (ex_s1_valid),
         .ex_s1_reg_write   (ex_s1_forward_reg_write),
         .ex_s1_mem_read    (ex_s1_mem_read_en),
@@ -1498,6 +1529,11 @@ module cpu_top
         .ex_s1_alu_result  (ex_s1_fast_forward_result),
         .ex_s1_pc_plus_4   (ex_s1_pc_plus_4),
         .ex_s1_wb_sel      (ex_s1_wb_sel),
+        .ex_s1_hazard_valid(ex_s1_hazard_valid),
+        .ex_s1_hazard_reg_write(ex_s1_hazard_reg_write),
+        .ex_s1_hazard_mem_read(ex_s1_hazard_mem_read),
+        .ex_s1_hazard_result_repair(ex_s1_hazard_result_repair),
+        .ex_s1_hazard_rd   (ex_s1_hazard_rd),
         .mem_valid      (mem_valid),
         .mem_reg_write  (mem_reg_write_en),
         .mem_is_load    (mem_mem_read_en),
@@ -1544,7 +1580,8 @@ module cpu_top
         .id_s1_rs2_wb_repair_s1(),
         .id_ready_go    (id_ready_go_raw),
         .id_ready_go_if_mem_ready(id_ready_go_raw_if_mem_ready),
-        .id_ready_go_if_mem_wait(id_ready_go_raw_if_mem_wait)
+        .id_ready_go_if_mem_wait(id_ready_go_raw_if_mem_wait),
+        .id_non_load_hazard(id_non_load_hazard)
     );
 
     // Keep the DSP operand mux physically independent from the ordinary ID/EX
@@ -1702,6 +1739,66 @@ module cpu_top
         .ex_payload          (ex_s1_payload)
     );
 
+    // Narrow, physically independent copies of the EX producer metadata used
+    // by the backwards ID hazard path.  They follow the exact ID/EX
+    // accept/hold/flush protocol, while the wide architectural payload remains
+    // the sole source for operand data and execution.
+    wire id_ex_s0_hazard_uses_priv_result =
+        (id_ex_s0_payload.priv_op == PRIV_REG)
+      | (id_ex_s0_payload.priv_op == PRIV_COUNTER)
+      | (id_ex_s0_payload.priv_op == PRIV_CPUCFG);
+    wire id_ex_s0_hazard_reg_write =
+        id_ex_s0_payload.common.reg_write_en
+        & ~id_ex_s0_payload.common.mem_read_en
+        & ~id_ex_s0_payload.is_muldiv
+        & ~id_ex_s0_hazard_uses_priv_result;
+    wire id_ex_s0_hazard_result_repair =
+        id_ex_s0_payload.common.alu_src1_wb_repair
+      | id_ex_s0_payload.common.alu_src2_wb_repair;
+    wire id_ex_s1_hazard_reg_write =
+        id_ex_s1_payload.common.reg_write_en
+        & ~id_ex_s1_payload.common.mem_read_en;
+    wire id_ex_s1_hazard_result_repair =
+        id_ex_s1_payload.common.alu_src1_wb_repair
+      | id_ex_s1_payload.common.alu_src2_wb_repair;
+
+    always_ff @(posedge clk) begin
+        if (!rst_n) begin
+            ex_hazard_valid    <= 1'b0;
+            ex_s1_hazard_valid <= 1'b0;
+        end else if (ex_flush) begin
+            ex_hazard_valid    <= 1'b0;
+            ex_s1_hazard_valid <= 1'b0;
+        end else if (ex_allowin) begin
+            ex_hazard_valid    <= id_valid & id_ready_go;
+            ex_s1_hazard_valid <= id_s1_valid & id_ready_go;
+        end
+    end
+
+    // Validity above masks stale metadata, so reset/flush need not touch these
+    // data registers.
+    always_ff @(posedge clk) begin
+        if (ex_allowin) begin
+            ex_hazard_reg_write <= id_ex_s0_hazard_reg_write;
+            ex_hazard_is_muldiv <= id_ex_s0_payload.is_muldiv;
+            ex_hazard_mem_read <= id_ex_s0_payload.common.mem_read_en;
+            ex_hazard_result_repair <= id_ex_s0_hazard_result_repair;
+            ex_hazard_rd <= id_ex_s0_payload.common.rd;
+
+            ex_s1_hazard_reg_write <= id_ex_s1_hazard_reg_write;
+            ex_s1_hazard_mem_read <=
+                id_ex_s1_payload.common.mem_read_en;
+            ex_s1_hazard_result_repair <=
+                id_ex_s1_hazard_result_repair;
+            ex_s1_hazard_rd <= id_ex_s1_payload.common.rd;
+
+            // Payload validity owns this copy as well, so reset and flush do
+            // not need to reach these data-only flops.
+            ex_s1_fast_src2_low <=
+                id_ex_s1_payload.common.alu_src2[4:0];
+        end
+    end
+
     // Keep this timing-sensitive one-bit control separate from the wide Slot 1
     // payload.  It follows exactly the same accept/hold/flush protocol as the
     // ID/EX register without perturbing the packed payload layout and fanout.
@@ -1819,34 +1916,66 @@ module cpu_top
     alu_result_datapath u_ex_s1_fast_forward_alu (
         .alu_op     (ex_s1_alu_op),
         .alu_src1   (ex_s1_alu_src1),
-        .alu_src2   (ex_s1_alu_src2),
+        .alu_src2   (ex_s1_fast_src2),
         .alu_result (ex_s1_fast_forward_result),
         .alu_sum    ()
     );
 
     // An LSU address is base-register + immediate, so only source 1 can carry
     // a late WB-load repair.  Form the raw-base and repaired-base low-address
-    // candidates in parallel, then select after their short 13-bit adders.
+    // candidates in parallel, then select after their short 14-bit adders.
     // The full 32-bit address adder remains the architectural address source;
-    // this independent modulo-2^13 copy feeds only DCache lookup, byte-lane
+    // this independent modulo-2^14 copy feeds only DCache lookup, byte-lane
     // selection, and alignment checks.
-    assign ex_lsu_addr_low_raw = ex_alu_src1[12:0]
-                               + ex_alu_src2[12:0];
-    assign ex_lsu_addr_low_wb = wb_load_data_ex[12:0]
-                              + ex_alu_src2[12:0];
+    assign ex_lsu_addr_low_raw = ex_alu_src1[13:0]
+                               + ex_alu_src2[13:0];
+    assign ex_lsu_addr_low_wb = wb_load_data_ex[13:0]
+                              + ex_alu_src2[13:0];
     assign ex_lsu_addr_low = ex_alu_src1_wb_repair
                            ? ex_lsu_addr_low_wb : ex_lsu_addr_low_raw;
 
-    assign ex_s1_lsu_addr_low_raw = ex_s1_alu_src1[12:0]
-                                  + ex_s1_alu_src2[12:0];
-    assign ex_s1_lsu_addr_low_wb = wb_load_data_ex[12:0]
-                                 + ex_s1_alu_src2[12:0];
+    assign ex_s1_lsu_addr_low_raw = ex_s1_alu_src1[13:0]
+                                  + ex_s1_alu_src2[13:0];
+    assign ex_s1_lsu_addr_low_wb = wb_load_data_ex[13:0]
+                                 + ex_s1_alu_src2[13:0];
     assign ex_s1_lsu_addr_low = ex_s1_alu_src1_wb_repair
                               ? ex_s1_lsu_addr_low_wb
                               : ex_s1_lsu_addr_low_raw;
 
-    assign ex_store_addr_low = ex_lsu_addr_low[1:0];
-    assign ex_s1_store_addr_low = ex_s1_lsu_addr_low[1:0];
+    // Alignment needs only address bits [1:0]. Build this physically
+    // independent two-bit modulo sum without a CARRY4 so a repaired WB operand
+    // cannot drag the 14-bit DCache lookup adder into EX readiness and the
+    // backwards ID/FTQ allow chain.
+    assign ex_lsu_align_low_raw[0] =
+        ex_alu_src1[0] ^ ex_alu_src2[0];
+    assign ex_lsu_align_low_raw[1] =
+        ex_alu_src1[1] ^ ex_alu_src2[1]
+        ^ (ex_alu_src1[0] & ex_alu_src2[0]);
+    assign ex_lsu_align_low_wb[0] =
+        wb_load_data_ex[0] ^ ex_alu_src2[0];
+    assign ex_lsu_align_low_wb[1] =
+        wb_load_data_ex[1] ^ ex_alu_src2[1]
+        ^ (wb_load_data_ex[0] & ex_alu_src2[0]);
+    assign ex_lsu_align_low = ex_alu_src1_wb_repair
+                            ? ex_lsu_align_low_wb
+                            : ex_lsu_align_low_raw;
+
+    assign ex_s1_lsu_align_low_raw[0] =
+        ex_s1_alu_src1[0] ^ ex_s1_alu_src2[0];
+    assign ex_s1_lsu_align_low_raw[1] =
+        ex_s1_alu_src1[1] ^ ex_s1_alu_src2[1]
+        ^ (ex_s1_alu_src1[0] & ex_s1_alu_src2[0]);
+    assign ex_s1_lsu_align_low_wb[0] =
+        wb_load_data_ex[0] ^ ex_s1_alu_src2[0];
+    assign ex_s1_lsu_align_low_wb[1] =
+        wb_load_data_ex[1] ^ ex_s1_alu_src2[1]
+        ^ (wb_load_data_ex[0] & ex_s1_alu_src2[0]);
+    assign ex_s1_lsu_align_low = ex_s1_alu_src1_wb_repair
+                               ? ex_s1_lsu_align_low_wb
+                               : ex_s1_lsu_align_low_raw;
+
+    assign ex_store_addr_low = ex_lsu_align_low;
+    assign ex_s1_store_addr_low = ex_s1_lsu_align_low;
 
     // DIV/REM hold EX until completion; prestarted MUL operations advance to
     // MEM after one EX cycle and rendezvous there with the registered product.
@@ -1884,6 +2013,31 @@ module cpu_top
         if (rst_n && id_s1_valid
                   && (id_s1_rf_rs1_addr !== id_s1_rs1_addr))
             $fatal(1, "Slot-1 register-file address copy disagrees with hazard metadata");
+        if (rst_n && (ex_hazard_valid !== ex_valid))
+            $fatal(1, "Slot-0 EX hazard-valid mirror disagrees with ID/EX");
+        if (rst_n && ex_valid
+                  && ((ex_hazard_reg_write !== ex_forward_reg_write)
+                      || (ex_hazard_is_muldiv !== ex_is_muldiv)
+                      || (ex_hazard_mem_read !== ex_mem_read_en)
+                      || (ex_hazard_result_repair
+                          !== (ex_alu_src1_wb_repair
+                              | ex_alu_src2_wb_repair))
+                      || (ex_hazard_rd !== ex_rd)))
+            $fatal(1, "Slot-0 EX hazard metadata mirror disagrees with ID/EX");
+        if (rst_n && (ex_s1_hazard_valid !== ex_s1_valid))
+            $fatal(1, "Slot-1 EX hazard-valid mirror disagrees with ID/EX");
+        if (rst_n && ex_s1_valid
+                  && ((ex_s1_hazard_reg_write
+                       !== ex_s1_forward_reg_write)
+                      || (ex_s1_hazard_mem_read !== ex_s1_mem_read_en)
+                      || (ex_s1_hazard_result_repair
+                          !== (ex_s1_alu_src1_wb_repair
+                              | ex_s1_alu_src2_wb_repair))
+                      || (ex_s1_hazard_rd !== ex_s1_rd)))
+            $fatal(1, "Slot-1 EX hazard metadata mirror disagrees with ID/EX");
+        if (rst_n && ex_s1_valid
+                  && (ex_s1_fast_src2_low !== ex_s1_alu_src2[4:0]))
+            $fatal(1, "Slot-1 fast-forward shift mirror disagrees with ID/EX");
         // When ID is invalid its payload is intentionally don't-care and the
         // frontend hint may describe an older queue entry.  ready_go is only
         // observable together with id_valid, so compare the two equations at
@@ -1976,13 +2130,13 @@ module cpu_top
         .ex_mem_write_en    (ex_mem_write_en),
         .ex_mem_size        (ex_mem_size),
         .ex_mem_addr        (alu_addr),
-        .ex_mem_addr_low    (ex_lsu_addr_low[1:0]),
+        .ex_mem_addr_low    (ex_lsu_align_low),
         .ex_s1_valid        (ex_s1_valid),
         .ex_s1_mem_read_en  (ex_s1_mem_read_en),
         .ex_s1_mem_write_en (ex_s1_mem_write_en),
         .ex_s1_mem_size     (ex_s1_mem_size),
         .ex_s1_mem_addr     (alu_s1_addr),
-        .ex_s1_mem_addr_low (ex_s1_lsu_addr_low[1:0]),
+        .ex_s1_mem_addr_low (ex_s1_lsu_align_low),
         .timer_irq_pending  (timer_irq_pending),
         .timer_irq_take     (timer_irq_take),
         .timer_irq_mepc     (id_pc),
@@ -2078,15 +2232,19 @@ module cpu_top
         if (rst_n && ex_valid && (ex_mem_read_en | ex_mem_write_en)) begin
             if (ex_alu_src2_wb_repair)
                 $fatal(1, "Slot0 LSU unexpectedly repairs immediate source 2");
-            if (ex_lsu_addr_low !== alu_addr[12:0])
+            if (ex_lsu_addr_low !== alu_addr[13:0])
                 $fatal(1, "Slot0 short LSU address disagrees with full address");
+            if (ex_lsu_align_low !== alu_addr[1:0])
+                $fatal(1, "Slot0 alignment address disagrees with full address");
         end
         if (rst_n && ex_s1_valid
                   && (ex_s1_mem_read_en | ex_s1_mem_write_en)) begin
             if (ex_s1_alu_src2_wb_repair)
                 $fatal(1, "Slot1 LSU unexpectedly repairs immediate source 2");
-            if (ex_s1_lsu_addr_low !== alu_s1_addr[12:0])
+            if (ex_s1_lsu_addr_low !== alu_s1_addr[13:0])
                 $fatal(1, "Slot1 short LSU address disagrees with full address");
+            if (ex_s1_lsu_align_low !== alu_s1_addr[1:0])
+                $fatal(1, "Slot1 alignment address disagrees with full address");
         end
         if (rst_n && ex_s1_valid
                   && ex_s0_alu_store_data_bypass_r) begin
