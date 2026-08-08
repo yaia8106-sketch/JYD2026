@@ -17,6 +17,7 @@ NutShell/
 03_Timing_Analysis/results/
 
 # --- Simulation Artifacts ---
+02_Design/verification/platform/nscscc/konata/
 02_Design/verification/riscv/work/*
 !02_Design/verification/riscv/work/.gitkeep
 !02_Design/verification/riscv/work/.gitignore
