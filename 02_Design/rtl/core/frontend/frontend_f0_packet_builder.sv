@@ -241,7 +241,12 @@ module frontend_f0_packet_builder
             slot1_inst,
             slot1_effective_dec,
             slot1_cached_dec.writes_dst,
-            ~slot1_effective_dec.lane_mask[1],
+            // Whether this instruction may occupy physical issue lane 1 is
+            // a property of its current pairing position, not a persistent
+            // serialization property.  Store block_younger in the queue so
+            // a MUL fetched as packet slot 1 is still non-serializing after
+            // it advances to the queue head.
+            slot1_cached_dec.block_younger,
             slot1_pred_taken,
             slot1_pred_target,
             slot1_pred_source_abtb,
@@ -263,7 +268,7 @@ module frontend_f0_packet_builder
             slot1_effective_dec,
             slot1_pred_taken,
             slot1_cached_dec.writes_dst,
-            ~slot1_effective_dec.lane_mask[1]
+            slot1_cached_dec.block_younger
         );
     end
 
