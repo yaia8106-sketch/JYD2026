@@ -6,7 +6,8 @@ module tb_ex_stage_redirect;
     logic [31:0] ex_pc, ex_s1_pc;
     logic ex_valid;
     logic ex_rs1_wb_repair, ex_rs2_wb_repair;
-    logic [31:0] wb_load_data, ex_alu_src1, ex_alu_src2;
+    logic [31:0] wb_load_data_ex_s0, wb_load_data_ex_s1;
+    logic [31:0] ex_alu_src1, ex_alu_src2;
     logic ex_alu_src1_wb_repair, ex_alu_src2_wb_repair;
     logic [31:0] ex_rs1_data, ex_rs2_data;
     control_flow_t ex_control_flow;
@@ -100,7 +101,8 @@ module tb_ex_stage_redirect;
         ex_valid = 1'b1;
         ex_rs1_wb_repair = 1'b0;
         ex_rs2_wb_repair = 1'b0;
-        wb_load_data = 32'b0;
+        wb_load_data_ex_s0 = 32'h5000_0000;
+        wb_load_data_ex_s1 = 32'h6000_0000;
         ex_alu_src1 = 32'b0;
         ex_alu_src2 = 32'b0;
         ex_alu_src1_wb_repair = 1'b0;
@@ -138,6 +140,54 @@ module tb_ex_stage_redirect;
         ex_priv_redirect = 1'b0;
         ex_priv_flow = 1'b0;
         ex_priv_target = 32'h1c00_3000;
+
+        // Each consumer slot uses its local repair copy. A conditional
+        // branch's compare operands may be repaired, while its PC-relative
+        // target must remain on the raw PC + immediate path.
+        ex_rs1_wb_repair = 1'b1;
+        ex_s1_rs2_wb_repair = 1'b1;
+        ex_alu_src1 = 32'h1c00_1000;
+        ex_alu_src2 = 32'h0000_0040;
+        ex_alu_src1_wb_repair = 1'b1;
+        ex_s1_alu_src1 = 32'h1c00_1004;
+        ex_s1_alu_src2 = 32'h0000_0080;
+        ex_s1_alu_src2_wb_repair = 1'b1;
+        #1;
+        if (ex_rs1_data_repair !== wb_load_data_ex_s0
+            || ex_s1_rs2_data_repair !== wb_load_data_ex_s1)
+            $fatal(1, "Consumer-local WB repair data selected incorrectly");
+        if (ex_control_target !== 32'h1c00_1040
+            || ex_s1_branch_target !== 32'h1c00_1084)
+            $fatal(1, "WB repair leaked into a control target adder");
+
+        ex_rs1_wb_repair = 1'b0;
+        ex_s1_rs2_wb_repair = 1'b0;
+        ex_alu_src1_wb_repair = 1'b0;
+        ex_s1_alu_src2_wb_repair = 1'b0;
+        ex_alu_src1 = 32'b0;
+        ex_alu_src2 = 32'b0;
+        ex_s1_alu_src1 = 32'b0;
+        ex_s1_alu_src2 = 32'b0;
+
+        // The Slot-1 branch comparator must consume its repaired operand in
+        // the same EX cycle. Raw rs1 is deliberately unequal to rs2; only the
+        // registered load repair makes this BEQ taken.
+        ex_s1_control_flow = CF_CONDITIONAL;
+        ex_s1_branch_op = BR_EQ;
+        ex_s1_predicted_taken = 1'b0;
+        ex_s1_rs1_data = 32'hBAD0_0001;
+        ex_s1_rs2_data = wb_load_data_ex_s1;
+        ex_s1_rs1_wb_repair = 1'b1;
+        #1;
+        if (!ex_s1_actual_taken || !ex_s1_branch_redirect)
+            $fatal(1, "S1 conditional branch ignored WB load repair");
+
+        ex_s1_control_flow = CF_NONE;
+        ex_s1_branch_op = BR_NONE;
+        ex_s1_predicted_taken = 1'b1;
+        ex_s1_rs1_wb_repair = 1'b0;
+        ex_s1_rs1_data = 32'b0;
+        ex_s1_rs2_data = 32'b0;
 
         // A false-positive S1 BTB hit is repaired to the instruction after S1.
         expect_target(32'h1c00_1008, REDIRECT_S1_CONTROL,

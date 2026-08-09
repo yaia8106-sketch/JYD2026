@@ -392,7 +392,8 @@ module cpu_top
     wire [31:0] mem_load_data_ext;
     wire [31:0] mem_load_data_ext_ex;
     wire [31:0] mem_load_data_ext_raw;
-    wire        mem_load_ready;        // ready S0_MEM load can repair S0 ALU in EX
+    // A ready load in either MEM slot may repair an eligible EX consumer.
+    wire        mem_load_ready;
     wire        is_cacheable;          // EX stage: addr in DRAM range
     wire        is_cacheable_s1;       // EX stage: Slot1 addr in DRAM range
 
@@ -483,7 +484,8 @@ module cpu_top
     wire        wb_exception = wb_s0_payload.exception;
     wire        wb_csr_rstat = wb_s0_payload.csr_rstat;
     wire [31:0] wb_csr_data = wb_s0_payload.csr_data;
-    wire [31:0] wb_load_data_ex;
+    wire [31:0] wb_load_data_ex_s0;
+    wire [31:0] wb_load_data_ex_s1;
 
     // ---- Slot 1 shadow WB ----
     wire        wb_s1_valid;
@@ -1820,7 +1822,8 @@ module cpu_top
         .ex_valid                   (ex_valid),
         .ex_rs1_wb_repair           (ex_rs1_wb_repair),
         .ex_rs2_wb_repair           (ex_rs2_wb_repair),
-        .wb_load_data               (wb_load_data_ex),
+        .wb_load_data_ex_s0         (wb_load_data_ex_s0),
+        .wb_load_data_ex_s1         (wb_load_data_ex_s1),
         .ex_alu_src1                (ex_alu_src1),
         .ex_alu_src2                (ex_alu_src2),
         .ex_alu_src1_wb_repair      (ex_alu_src1_wb_repair),
@@ -1929,14 +1932,14 @@ module cpu_top
     // selection, and alignment checks.
     assign ex_lsu_addr_low_raw = ex_alu_src1[13:0]
                                + ex_alu_src2[13:0];
-    assign ex_lsu_addr_low_wb = wb_load_data_ex[13:0]
+    assign ex_lsu_addr_low_wb = wb_load_data_ex_s0[13:0]
                               + ex_alu_src2[13:0];
     assign ex_lsu_addr_low = ex_alu_src1_wb_repair
                            ? ex_lsu_addr_low_wb : ex_lsu_addr_low_raw;
 
     assign ex_s1_lsu_addr_low_raw = ex_s1_alu_src1[13:0]
                                   + ex_s1_alu_src2[13:0];
-    assign ex_s1_lsu_addr_low_wb = wb_load_data_ex[13:0]
+    assign ex_s1_lsu_addr_low_wb = wb_load_data_ex_s1[13:0]
                                  + ex_s1_alu_src2[13:0];
     assign ex_s1_lsu_addr_low = ex_s1_alu_src1_wb_repair
                               ? ex_s1_lsu_addr_low_wb
@@ -1952,10 +1955,10 @@ module cpu_top
         ex_alu_src1[1] ^ ex_alu_src2[1]
         ^ (ex_alu_src1[0] & ex_alu_src2[0]);
     assign ex_lsu_align_low_wb[0] =
-        wb_load_data_ex[0] ^ ex_alu_src2[0];
+        wb_load_data_ex_s0[0] ^ ex_alu_src2[0];
     assign ex_lsu_align_low_wb[1] =
-        wb_load_data_ex[1] ^ ex_alu_src2[1]
-        ^ (wb_load_data_ex[0] & ex_alu_src2[0]);
+        wb_load_data_ex_s0[1] ^ ex_alu_src2[1]
+        ^ (wb_load_data_ex_s0[0] & ex_alu_src2[0]);
     assign ex_lsu_align_low = ex_alu_src1_wb_repair
                             ? ex_lsu_align_low_wb
                             : ex_lsu_align_low_raw;
@@ -1966,10 +1969,10 @@ module cpu_top
         ex_s1_alu_src1[1] ^ ex_s1_alu_src2[1]
         ^ (ex_s1_alu_src1[0] & ex_s1_alu_src2[0]);
     assign ex_s1_lsu_align_low_wb[0] =
-        wb_load_data_ex[0] ^ ex_s1_alu_src2[0];
+        wb_load_data_ex_s1[0] ^ ex_s1_alu_src2[0];
     assign ex_s1_lsu_align_low_wb[1] =
-        wb_load_data_ex[1] ^ ex_s1_alu_src2[1]
-        ^ (wb_load_data_ex[0] & ex_s1_alu_src2[0]);
+        wb_load_data_ex_s1[1] ^ ex_s1_alu_src2[1]
+        ^ (wb_load_data_ex_s1[0] & ex_s1_alu_src2[0]);
     assign ex_s1_lsu_align_low = ex_s1_alu_src1_wb_repair
                                ? ex_s1_lsu_align_low_wb
                                : ex_s1_lsu_align_low_raw;
@@ -2069,11 +2072,21 @@ module cpu_top
                   && (ex_s1_fast_forward_result !== alu_s1_result))
             $fatal(1, "Slot-1 fast EX ALU copy changed architectural value");
         if (rst_n && ex_valid && (ex_control_flow != CF_NONE)
+                  && (ex_control_flow != CF_CONDITIONAL)
                   && (ex_rs1_wb_repair | ex_rs2_wb_repair))
-            $fatal(1, "Slot-0 control flow entered EX with WB repair");
+            $fatal(1, "Slot-0 non-conditional control entered EX with WB repair");
         if (rst_n && ex_s1_valid && (ex_s1_control_flow != CF_NONE)
+                  && (ex_s1_control_flow != CF_CONDITIONAL)
                   && (ex_s1_rs1_wb_repair | ex_s1_rs2_wb_repair))
-            $fatal(1, "Slot-1 control flow entered EX with WB repair");
+            $fatal(1, "Slot-1 non-conditional control entered EX with WB repair");
+        if (rst_n && ex_valid && (ex_control_flow == CF_CONDITIONAL)
+                  && (ex_alu_src1_wb_repair | ex_alu_src2_wb_repair))
+            $fatal(1, "Slot-0 conditional repair leaked into target operands");
+        if (rst_n && ex_s1_valid
+                  && (ex_s1_control_flow == CF_CONDITIONAL)
+                  && (ex_s1_alu_src1_wb_repair
+                      | ex_s1_alu_src2_wb_repair))
+            $fatal(1, "Slot-1 conditional repair leaked into target operands");
         if (rst_n && ex_valid && (ex_priv_op != PRIV_NONE)
                   && (ex_rs1_wb_repair | ex_rs2_wb_repair))
             $fatal(1, "Serialized privileged operation entered EX with WB repair");
@@ -2081,6 +2094,9 @@ module cpu_top
                   && (ex_mem_read_en | ex_mem_write_en)
                   && (ex_s1_mem_read_en | ex_s1_mem_write_en))
             $fatal(1, "Dual-issue pair contains two LSU instructions");
+        if (rst_n && mem_valid && mem_s1_valid
+                  && mem_mem_read_en && mem_s1_mem_read_en)
+            $fatal(1, "MEM contains two simultaneous load producers");
         if (rst_n && id_mul_prestart
                   && u_forwarding.mul_launch_ex_raw_hazard)
             $fatal(1, "MUL launched across an EX RAW interlock");
@@ -2440,7 +2456,8 @@ module cpu_top
         .mem_load_data_ex(mem_load_data_ext_ex),
         .mem_payload    (mem_wb_s0_payload),
         .wb_payload     (wb_s0_payload),
-        .wb_load_data_ex(wb_load_data_ex)
+        .wb_load_data_ex_s0(wb_load_data_ex_s0),
+        .wb_load_data_ex_s1(wb_load_data_ex_s1)
     );
 
     mem_wb_reg_s1 u_mem_wb_reg_s1 (

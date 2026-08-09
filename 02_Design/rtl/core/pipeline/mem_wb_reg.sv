@@ -25,16 +25,21 @@ module mem_wb_reg
     input  mem_wb_slot0_t mem_payload,
     output mem_wb_slot0_t wb_payload,
 
-    // Physical copy used only by EX-stage load-data repair.
-    (* keep = "true" *) output logic [31:0] wb_load_data_ex
+    // Consumer-local physical copies used by EX-stage load-data repair. The
+    // current issue policy permits only one LSU per pair, so both copies carry
+    // the same completed load regardless of its producer slot.
+    (* keep = "true" *) output logic [31:0] wb_load_data_ex_s0,
+    (* keep = "true" *) output logic [31:0] wb_load_data_ex_s1
 );
 
     wire wb_ready_go = 1'b1;
     assign wb_allowin = !wb_valid || wb_ready_go;
 
     always_ff @(posedge clk) begin
-        if (mem_load_valid && mem_ready_go)
-            wb_load_data_ex <= mem_load_data_ex;
+        if (mem_load_valid && mem_ready_go) begin
+            wb_load_data_ex_s0 <= mem_load_data_ex;
+            wb_load_data_ex_s1 <= mem_load_data_ex;
+        end
     end
 
     always_ff @(posedge clk) begin

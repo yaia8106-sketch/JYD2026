@@ -63,11 +63,12 @@ module id_stage_derive
     assign id_s1_rs1_used = slot1_hint.src0_used;
     assign id_s1_rs2_used = slot1_hint.src1_used;
 
-    // Ordinary ALU/LSU operations may consume the registered WB repair value
-    // in EX. Control flow deliberately waits for normal WB forwarding so a
-    // repaired load cannot enter the branch compare/redirect cone.
+    // Ordinary ALU/LSU operations and conditional branch comparators may
+    // consume the registered WB repair value in EX. Indirect control remains
+    // excluded because JIRL uses rs1 to form its redirect target.
     assign id_s0_alu_only = slot0_hint.alu_only;
     assign id_s1_repair_ok = slot1_hint.alu_only
+                           | slot1_hint.conditional_control
                            | slot1_hint.mem_read
                            | slot1_hint.mem_write;
 

@@ -13,7 +13,8 @@ module ex_stage_ctrl
 
     input  logic        ex_rs1_wb_repair,
     input  logic        ex_rs2_wb_repair,
-    input  logic [31:0] wb_load_data,
+    input  logic [31:0] wb_load_data_ex_s0,
+    input  logic [31:0] wb_load_data_ex_s1,
     input  logic [31:0] ex_alu_src1,
     input  logic [31:0] ex_alu_src2,
     input  logic        ex_alu_src1_wb_repair,
@@ -82,22 +83,22 @@ module ex_stage_ctrl
 
     // WB repair replaces only operands that originally came from rs1/rs2.
     // PC/zero/immediate operands must remain unchanged.
-    assign ex_alu_src1_repair = ex_alu_src1_wb_repair ? wb_load_data
-                                                       : ex_alu_src1;
-    assign ex_alu_src2_repair = ex_alu_src2_wb_repair ? wb_load_data
-                                                       : ex_alu_src2;
+    assign ex_alu_src1_repair = ex_alu_src1_wb_repair
+                              ? wb_load_data_ex_s0 : ex_alu_src1;
+    assign ex_alu_src2_repair = ex_alu_src2_wb_repair
+                              ? wb_load_data_ex_s0 : ex_alu_src2;
     assign ex_s1_alu_src1_repair = ex_s1_alu_src1_wb_repair
-                                 ? wb_load_data : ex_s1_alu_src1;
+                                 ? wb_load_data_ex_s1 : ex_s1_alu_src1;
     assign ex_s1_alu_src2_repair = ex_s1_alu_src2_wb_repair
-                                 ? wb_load_data : ex_s1_alu_src2;
-    assign ex_rs1_data_repair = ex_rs1_wb_repair ? wb_load_data :
-                                                    ex_rs1_data;
-    assign ex_rs2_data_repair = ex_rs2_wb_repair ? wb_load_data :
-                                                    ex_rs2_data;
-    assign ex_s1_rs1_data_repair = ex_s1_rs1_wb_repair ? wb_load_data :
-                                                           ex_s1_rs1_data;
-    assign ex_s1_rs2_data_repair = ex_s1_rs2_wb_repair ? wb_load_data :
-                                                           ex_s1_rs2_data;
+                                 ? wb_load_data_ex_s1 : ex_s1_alu_src2;
+    assign ex_rs1_data_repair = ex_rs1_wb_repair
+                              ? wb_load_data_ex_s0 : ex_rs1_data;
+    assign ex_rs2_data_repair = ex_rs2_wb_repair
+                              ? wb_load_data_ex_s0 : ex_rs2_data;
+    assign ex_s1_rs1_data_repair = ex_s1_rs1_wb_repair
+                                 ? wb_load_data_ex_s1 : ex_s1_rs1_data;
+    assign ex_s1_rs2_data_repair = ex_s1_rs2_wb_repair
+                                 ? wb_load_data_ex_s1 : ex_s1_rs2_data;
     // Forward the architectural writeback value, not always the ALU output.
     // Compute independent candidates in parallel and keep the late result
     // selection as a shallow AND-OR mux. These instruction classes are
@@ -113,13 +114,16 @@ module ex_stage_ctrl
     // Keep S0 and S1 targets physically separate. The issue rules make their
     // CFI paths mutually exclusive, but STA still times any shared mux output
     // into both redirect checkers.
-    wire [31:0] ex_control_target_sum = ex_alu_src1_repair
-                                      + ex_alu_src2_repair;
+    // Conditional/direct targets are PC + immediate. JIRL is not allowed to
+    // carry a repair tag. Use the raw target operands here so the new
+    // WB-load-to-branch comparator path cannot also enter either 32-bit target
+    // adder and redirect checker.
+    wire [31:0] ex_control_target_sum = ex_alu_src1 + ex_alu_src2;
     assign ex_control_target = ex_control_target_sum
                              & ~{30'd0, ex_target_clear_mask};
 
-    wire [31:0] ex_s1_control_target_sum = ex_s1_alu_src1_repair
-                                         + ex_s1_alu_src2_repair;
+    wire [31:0] ex_s1_control_target_sum = ex_s1_alu_src1
+                                         + ex_s1_alu_src2;
     wire [31:0] ex_s1_control_target = ex_s1_control_target_sum
                                      & ~{30'd0, ex_s1_target_clear_mask};
 

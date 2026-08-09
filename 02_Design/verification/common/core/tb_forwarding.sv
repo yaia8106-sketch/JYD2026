@@ -427,6 +427,8 @@ module tb_forwarding;
             clear_inputs();
             if (consumer_slot1) begin
                 id_s1_valid = 1'b1;
+                // id_stage_derive asserts this policy bit for an S1
+                // conditional branch.
                 id_s1_repair_ok = 1'b1;
                 if (operand2) begin
                     id_s1_rs2_addr = 5'd6;
@@ -436,7 +438,7 @@ module tb_forwarding;
                     id_s1_rs1_used = 1'b1;
                 end
             end else begin
-                id_s0_alu_only = 1'b1;
+                id_s0_conditional_control = 1'b1;
                 if (operand2) begin
                     id_rs2_addr = 5'd6;
                     id_rs2_used = 1'b1;
@@ -469,7 +471,7 @@ module tb_forwarding;
             mem_load_ready = 1'b1;
             #1;
             check(id_ready_go,
-                  "ready MEM load should repair an ALU/LSU consumer");
+                  "ready MEM load should repair a conditional branch");
             check(id_ready_go == id_ready_go_if_mem_ready,
                   "MEM-ready readiness cofactor mismatch");
             if (consumer_slot1) begin
@@ -616,8 +618,8 @@ module tb_forwarding;
         check(id_rs1_data == 32'hFA57_0004,
               "ordinary EX forwarding did not select the fast ALU copy");
 
-        // Sweep both producer slots, both consumer slots, and both operands.
-        // This is the boundary that was previously tied off in this testbench.
+        // Sweep both load producer slots, both conditional-branch consumer
+        // slots, and both compare operands.
         for (int producer_slot = 0; producer_slot < 2; producer_slot++) begin
             for (int consumer_slot = 0; consumer_slot < 2; consumer_slot++) begin
                 for (int operand = 0; operand < 2; operand++) begin
@@ -746,9 +748,12 @@ module tb_forwarding;
         mem_load_ready = 1'b1;
         mem_rd = 5'd6;
         #1;
-        check(!id_ready_go,
-              "ready MEM load must wait before an S0 conditional branch");
-        check_no_wb_repair("S0 conditional branch must not use WB repair");
+        check(id_ready_go,
+              "ready MEM load should repair an S0 conditional branch");
+        check(id_rs1_wb_repair,
+              "S0 conditional branch rs1 repair tag missing");
+        check(!id_rs1_wb_repair_s1,
+              "S0 conditional branch selected wrong producer slot");
 
         clear_inputs();
         id_rs1_addr = 5'd6;
@@ -843,9 +848,12 @@ module tb_forwarding;
         mem_s1_rd = 5'd10;
         mem_load_ready = 1'b1;
         #1;
-        check(!id_ready_go,
-              "ready S1 MEM load must wait before an S0 branch");
-        check_no_wb_repair("S0 branch must not repair from an S1 MEM load");
+        check(id_ready_go,
+              "ready S1 MEM load should repair an S0 branch");
+        check(id_rs1_wb_repair,
+              "S1 MEM load to S0 branch repair tag missing");
+        check(id_rs1_wb_repair_s1,
+              "S1 MEM load to S0 branch producer metadata missing");
 
         clear_inputs();
         id_s1_valid = 1'b1;
@@ -1213,8 +1221,9 @@ module tb_forwarding;
             if (id_rs1_wb_repair) begin
                 check(id_rs1_used && (id_rs1_addr != 5'd0),
                       "random S0 rs1 repair lacks a real source");
-                check(id_s0_alu_only | id_s0_mem_read | id_s0_mem_write,
-                      "random S0 rs1 repair escaped the ALU/LSU policy");
+                check(id_s0_alu_only | id_s0_conditional_control
+                      | id_s0_mem_read | id_s0_mem_write,
+                      "random S0 rs1 repair escaped its issue policy");
                 check(id_rs1_wb_repair_s1
                       ? (mem_s1_valid && mem_s1_reg_write
                          && mem_s1_is_load && mem_s1_rd == id_rs1_addr)
@@ -1225,8 +1234,9 @@ module tb_forwarding;
             if (id_rs2_wb_repair) begin
                 check(id_rs2_used && (id_rs2_addr != 5'd0),
                       "random S0 rs2 repair lacks a real source");
-                check(id_s0_alu_only | id_s0_mem_read | id_s0_mem_write,
-                      "random S0 rs2 repair escaped the ALU/LSU policy");
+                check(id_s0_alu_only | id_s0_conditional_control
+                      | id_s0_mem_read | id_s0_mem_write,
+                      "random S0 rs2 repair escaped its issue policy");
             end
             if (id_s1_rs1_wb_repair | id_s1_rs2_wb_repair)
                 check(id_s1_valid && id_s1_repair_ok,

@@ -42,6 +42,7 @@ module tb_loongarch_cpu_smoke;
     logic repaired_consumer_wait_observed;
     logic repaired_lsu_load_observed;
     logic repaired_lsu_store_observed;
+    logic repaired_branch_observed;
     integer cache_store_count;
     integer cache_load_count;
     integer short_lookup_request_count;
@@ -378,6 +379,7 @@ module tb_loongarch_cpu_smoke;
             repaired_consumer_wait_observed <= 1'b0;
             repaired_lsu_load_observed <= 1'b0;
             repaired_lsu_store_observed <= 1'b0;
+            repaired_branch_observed <= 1'b0;
         end else begin
             if (u_cpu.wb_valid && u_cpu.wb_reg_write_en
                 && (u_cpu.wb_rd == 5'd31)
@@ -399,6 +401,14 @@ module tb_loongarch_cpu_smoke;
             if (u_cpu.ex_valid && u_cpu.ex_mem_write_en
                 && u_cpu.ex_alu_src1_wb_repair)
                 repaired_lsu_store_observed <= 1'b1;
+            if ((u_cpu.ex_valid
+                 && (u_cpu.ex_control_flow == CF_CONDITIONAL)
+                 && (u_cpu.ex_rs1_wb_repair | u_cpu.ex_rs2_wb_repair))
+                || (u_cpu.ex_s1_valid
+                    && (u_cpu.ex_s1_control_flow == CF_CONDITIONAL)
+                    && (u_cpu.ex_s1_rs1_wb_repair
+                        | u_cpu.ex_s1_rs2_wb_repair)))
+                repaired_branch_observed <= 1'b1;
         end
     end
 
@@ -413,6 +423,7 @@ module tb_loongarch_cpu_smoke;
         repaired_consumer_wait_observed = 1'b0;
         repaired_lsu_load_observed = 1'b0;
         repaired_lsu_store_observed = 1'b0;
+        repaired_branch_observed = 1'b0;
         cache_store_count = 0;
         cache_load_count = 0;
         short_lookup_request_count = 0;
@@ -587,6 +598,8 @@ module tb_loongarch_cpu_smoke;
               "test never exercised a WB-repaired load base");
         check(repaired_lsu_store_observed,
               "test never exercised a WB-repaired store base");
+        check(repaired_branch_observed,
+              "load-use branch never exercised WB compare repair");
         check(short_lookup_request_count ==
               (cache_store_count + cache_load_count),
               "not every cache request checked its short lookup address");
