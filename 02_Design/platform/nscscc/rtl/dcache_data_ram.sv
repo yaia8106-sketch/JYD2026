@@ -6,6 +6,7 @@ module dcache_data_ram (
     input  logic [11:0] addra,
     input  logic [31:0] dina,
     input  logic        clkb,
+    input  logic        enb,
     input  logic [11:0] addrb,
     output logic [31:0] doutb
 );
@@ -18,7 +19,9 @@ module dcache_data_ram (
         if (wea[3]) mem[addra][31:24] <= dina[31:24];
     end
 
-    always_ff @(posedge clkb)
-        doutb <= mem[addrb];
+    always_ff @(posedge clkb) begin
+        if (enb)
+            doutb <= mem[addrb];
+    end
 
 endmodule

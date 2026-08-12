@@ -52,6 +52,12 @@ module tb_frontend_ftq_pair;
     logic pred_taken_valid;
     logic [31:0] pred_taken_pc;
     logic [31:0] pred_taken_target;
+    wire pair_bank0_pred_taken = pred_taken_valid
+                               && (current_pc == pred_taken_pc);
+    wire [31:0] abtb_pred_next_pc =
+        (!current_pc[2] && pair_bank0_pred_taken)
+        ? pred_taken_target
+        : current_pc + (current_pc[2] ? 32'd4 : 32'd8);
 
     integer case_count;
     integer fail_count;
@@ -69,12 +75,12 @@ module tb_frontend_ftq_pair;
         .irom_req_ready(1'b0),
         .irom_resp_valid(1'b0),
         .irom_data(irom_data),
-        .abtb_bank0_lookup_hit(pred_taken_valid && (current_pc == pred_taken_pc)),
-        .abtb_bank0_hit(pred_taken_valid && (current_pc == pred_taken_pc)),
+        .abtb_bank0_lookup_hit(pair_bank0_pred_taken),
+        .abtb_bank0_hit(pair_bank0_pred_taken),
         .abtb_bank0_way(1'b0),
         .abtb_bank0_cfi_type(2'd0),
         .abtb_bank0_abtb_pred_target(pred_taken_target),
-        .abtb_bank0_pred_taken(pred_taken_valid && (current_pc == pred_taken_pc)),
+        .abtb_bank0_pred_taken(pair_bank0_pred_taken),
         .abtb_bank0_final_pred_target(pred_taken_target),
         .abtb_bank1_lookup_hit(1'b0),
         .abtb_bank1_hit(1'b0),
@@ -83,6 +89,7 @@ module tb_frontend_ftq_pair;
         .abtb_bank1_abtb_pred_target(32'd0),
         .abtb_bank1_pred_taken(1'b0),
         .abtb_bank1_final_pred_target(32'd0),
+        .abtb_pred_next_pc(abtb_pred_next_pc),
         .stage1_bank0_pht_index(8'd0),
         .stage1_bank0_pht_counter(2'b01),
         .stage1_bank1_pht_index(8'd1),

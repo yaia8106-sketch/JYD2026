@@ -13,18 +13,20 @@ module memory_access_unit #(
     input  logic        ex_mem_read_en,
     input  logic        ex_mem_write_en,
     input  logic [31:0] ex_alu_addr,
-    input  logic [13:0] ex_lookup_addr,
+    input  logic [18:0] ex_lookup_addr,
     input  logic [ 1:0] ex_mem_size,
     input  logic        ex_mem_unsigned,
     input  logic [ 3:0] ex_store_wea,
     input  logic [31:0] ex_store_data,
-    // Ungated decode intent used only for speculative, side-effect-free
-    // address selection. Qualified enables still control real requests.
+    // Ungated decode intent and payload are selected speculatively.  The late
+    // redirect/trap/replay result is applied only to the final request-valid
+    // predicate, so it cannot enter the wide address/data selection cones.
     input  logic        ex_s1_lsu_select,
+    input  logic        ex_s1_side_effect_kill,
     input  logic        ex_s1_mem_read_en,
     input  logic        ex_s1_mem_write_en,
     input  logic [31:0] ex_s1_alu_addr,
-    input  logic [13:0] ex_s1_lookup_addr,
+    input  logic [18:0] ex_s1_lookup_addr,
     input  logic [ 1:0] ex_s1_mem_size,
     input  logic        ex_s1_mem_unsigned,
     input  logic [ 3:0] ex_s1_store_wea,
@@ -59,7 +61,7 @@ module memory_access_unit #(
     output logic        cache_req,
     output logic        cache_wr,
     output logic [31:0] cache_addr,
-    output logic [11:0] cache_lookup_addr,
+    output logic [16:0] cache_lookup_addr,
     output logic [ 3:0] cache_wea,
     output logic [31:0] cache_wdata,
     output logic [ 3:0] cache_load_mask,
@@ -85,14 +87,19 @@ module memory_access_unit #(
     // is the selected-lane bit by itself; repeating the Slot-0 classification
     // here only places another control level in front of the DCache tag RAM.
     // Keep the late redirect/trap kill out of the speculative DCache lookup
-    // address. A killed request has both qualified enables low, so cache_req
-    // remains low and only the side-effect-free tag/BRAM address may change.
+    // payload.  A killed request leaves cache_req low, so the selected address,
+    // type and write data are unobservable side-effect-free payload bits.
     wire ex_use_s1_lsu = ex_s1_lsu_select;
     wire [31:0] ex_lsu_addr = ex_use_s1_lsu ? ex_s1_alu_addr : ex_alu_addr;
-    wire [13:0] ex_lsu_lookup_addr = ex_use_s1_lsu
+    wire [18:0] ex_lsu_lookup_addr = ex_use_s1_lsu
                                    ? ex_s1_lookup_addr : ex_lookup_addr;
     wire        ex_lsu_read = ex_use_s1_lsu ? ex_s1_mem_read_en : ex_mem_read_en;
     wire        ex_lsu_write = ex_use_s1_lsu ? ex_s1_mem_write_en : ex_mem_write_en;
+    wire        ex_s1_request_killed = ex_use_s1_lsu
+                                       & ex_s1_side_effect_kill;
+    wire        ex_lsu_request_valid = (ex_lsu_read | ex_lsu_write)
+                                       & ~ex_s1_request_killed;
+    wire        ex_lsu_read_valid = ex_lsu_read & ~ex_s1_request_killed;
     wire [ 1:0] ex_lsu_size = ex_use_s1_lsu ? ex_s1_mem_size : ex_mem_size;
     wire        ex_lsu_unsigned = ex_use_s1_lsu
                                 ? ex_s1_mem_unsigned : ex_mem_unsigned;
@@ -139,16 +146,16 @@ module memory_access_unit #(
 
     // An uncacheable store in MEM can conflict with a younger load request.
     assign mmio_st_ld_hazard = !AXI_UNCACHED_DATA
-                             & ex_lsu_read
+                             & ex_lsu_read_valid
                              & mem_store_active
                              & mem_store_uncacheable;
 
     assign cache_req = ex_valid & ~mem_branch_flush
-                     & (ex_lsu_read | ex_lsu_write)
+                     & ex_lsu_request_valid
                      & (ex_lsu_cacheable | AXI_UNCACHED_DATA);
     assign cache_wr = ex_lsu_write;
     assign cache_addr = ex_lsu_addr;
-    assign cache_lookup_addr = ex_lsu_lookup_addr[13:2];
+    assign cache_lookup_addr = ex_lsu_lookup_addr[18:2];
     assign cache_wea = ex_lsu_wea;
     assign cache_wdata = ex_lsu_wdata;
     assign cache_load_mask = ({4{ex_lsu_size == 2'b00}} & ex_load_byte_mask)

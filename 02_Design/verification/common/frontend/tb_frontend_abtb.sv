@@ -41,6 +41,7 @@ module tb_frontend_abtb;
     logic [1:0] pred_cfi_type;
     logic [31:0] pred_target;
     logic [31:0] pred_next_pc;
+    logic [31:0] pred_next_pc_early;
 
     logic update_valid;
     logic update_hit;
@@ -54,6 +55,8 @@ module tb_frontend_abtb;
     frontend_abtb u_dut (
         .clk                  (clk),
         .rst_n                (rst_n),
+        .redirect_valid       (1'b0),
+        .redirect_target      (32'd0),
         .lookup_valid         (lookup_valid),
         .predict_pc           (predict_pc),
         .bank0_branch_taken   (bank0_branch_taken),
@@ -81,6 +84,7 @@ module tb_frontend_abtb;
         .pred_cfi_type        (pred_cfi_type),
         .pred_target          (pred_target),
         .pred_next_pc         (pred_next_pc),
+        .pred_next_pc_early   (pred_next_pc_early),
         .update_valid         (update_valid),
         .update_hit           (update_hit),
         .update_way           (update_way),
@@ -149,6 +153,8 @@ module tb_frontend_abtb;
             predict_pc = pc;
             lookup_valid = 1'b1;
             #1;
+            check(pred_next_pc_early == pred_next_pc,
+                  "early next PC differs on an accepted lookup");
         end
     endtask
 
@@ -277,6 +283,10 @@ module tb_frontend_abtb;
         repeat (3) @(posedge clk);
         @(negedge clk);
         rst_n = 1'b1;
+
+        // Lookup stays sequential while the packed LUTRAM valid bits are
+        // cleared in the background after reset.
+        wait (!u_dut.clear_active);
 
         // Cold lookup: both banks miss and the sequential block is selected.
         lookup(32'h8000_0000);

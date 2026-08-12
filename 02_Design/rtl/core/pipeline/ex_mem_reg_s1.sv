@@ -24,11 +24,11 @@ module ex_mem_reg_s1
     // Keeping these fields out of the ordinary MEM payload lets placement put
     // their registers next to the forwarding comparators without moving the
     // LSU/commit copy of the same metadata.
-    (* keep = "true", dont_touch = "true" *)
+    (* keep = "true" *)
     output logic          mem_s1_hazard_valid,
-    (* keep = "true", dont_touch = "true" *)
+    (* keep = "true" *)
     output logic          mem_s1_hazard_is_load,
-    (* keep = "true", dont_touch = "true" *)
+    (* keep = "true" *)
     output logic [4:0]    mem_s1_hazard_rd
 );
 

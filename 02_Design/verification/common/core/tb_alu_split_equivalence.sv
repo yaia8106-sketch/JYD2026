@@ -13,6 +13,8 @@ module tb_alu_split_equivalence;
     logic [31:0] architectural_addr;
     logic [31:0] fast_result;
     logic [31:0] fast_sum;
+    logic [ 4:0] independent_shift_amount;
+    logic [31:0] independent_shift_result;
 
     logic [3:0]  valid_ops [0:10];
     logic [31:0] edge_values [0:15];
@@ -34,8 +36,20 @@ module tb_alu_split_equivalence;
         .alu_op    (alu_op),
         .alu_src1  (result_src1),
         .alu_src2  (result_src2),
+        .shift_amount(result_src2[4:0]),
         .alu_result(fast_result),
         .alu_sum   (fast_sum)
+    );
+
+    // Mirrors the Slot-1 forwarding ALU: arithmetic consumes the complete
+    // canonical source while shifts consume an independently placed shamt.
+    alu_result_datapath u_independent_shamt_alu (
+        .alu_op      (alu_op),
+        .alu_src1    (result_src1),
+        .alu_src2    (result_src2),
+        .shift_amount(independent_shift_amount),
+        .alu_result  (independent_shift_result),
+        .alu_sum     ()
     );
 
     function automatic logic [31:0] reference_result(
@@ -73,6 +87,7 @@ module tb_alu_split_equivalence;
             alu_op = op;
             result_src1 = lhs;
             result_src2 = rhs;
+            independent_shift_amount = rhs[4:0];
             addr_src1 = address_lhs;
             addr_src2 = address_rhs;
             #1;
@@ -88,6 +103,8 @@ module tb_alu_split_equivalence;
                        op, lhs, rhs, fast_result, expected);
             if (fast_result !== architectural_result)
                 $fatal(1, "[FAIL] fast/full ALU copies disagree");
+            if (independent_shift_result !== expected)
+                $fatal(1, "[FAIL] independent-shamt ALU disagrees");
             if (fast_sum !== architectural_sum)
                 $fatal(1, "[FAIL] fast/full shared sums disagree");
             if (architectural_addr !== (address_lhs + address_rhs))
@@ -102,6 +119,40 @@ module tb_alu_split_equivalence;
                 && (architectural_sum !== lhs - rhs))
                 $fatal(1, "[FAIL] subtract/compare shared sum mismatch");
             case_count = case_count + 1;
+        end
+    endtask
+
+    task automatic check_independent_shamt_partition;
+        logic [31:0] arithmetic_reference;
+        begin
+            result_src1 = 32'h8421_1001;
+            result_src2 = 32'h1357_0003;
+            independent_shift_amount = 5'd11;
+
+            // A different shamt must have no influence on arithmetic/logic.
+            alu_op = ALU_ADD;
+            arithmetic_reference = result_src1 + result_src2;
+            #1;
+            if (independent_shift_result !== arithmetic_reference)
+                $fatal(1, "[FAIL] shamt leaked into ADD datapath");
+            alu_op = ALU_XOR;
+            arithmetic_reference = result_src1 ^ result_src2;
+            #1;
+            if (independent_shift_result !== arithmetic_reference)
+                $fatal(1, "[FAIL] shamt leaked into logic datapath");
+
+            // Shift operations must use the independent five-bit input.
+            alu_op = ALU_SLL;
+            #1;
+            if (independent_shift_result !== (result_src1 << 5'd11))
+                $fatal(1, "[FAIL] SLL ignored independent shamt");
+            alu_op = ALU_SRA;
+            arithmetic_reference = $signed(result_src1) >>> 5'd11;
+            #1;
+            if (independent_shift_result !== arithmetic_reference)
+                $fatal(1,
+                       "[FAIL] SRA ignored independent shamt got=%h expected=%h",
+                       independent_shift_result, arithmetic_reference);
         end
     endtask
 
@@ -139,6 +190,8 @@ module tb_alu_split_equivalence;
         edge_values[13] = 32'h7fff_0001;
         edge_values[14] = 32'h8000_ffff;
         edge_values[15] = 32'hdead_beef;
+
+        check_independent_shamt_partition();
 
         for (int op_index = 0; op_index < 11; op_index++) begin
             for (int lhs_index = 0; lhs_index < 16; lhs_index++) begin

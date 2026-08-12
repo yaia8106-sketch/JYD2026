@@ -51,6 +51,15 @@ module tb_frontend_ftq_canonical;
     logic [1:0] stage1_steer_cfi_type;
     logic [31:0] stage1_steer_target;
     logic [31:0] stage1_steer_next_pc;
+    wire canonical_bank0_selected = !current_pc[2]
+                                  && abtb_bank0_pred_taken;
+    wire canonical_bank1_selected = !canonical_bank0_selected
+                                  && abtb_bank1_pred_taken;
+    wire [31:0] abtb_pred_next_pc = canonical_bank0_selected
+        ? abtb_bank0_abtb_pred_target
+        : canonical_bank1_selected
+            ? abtb_bank1_abtb_pred_target
+            : current_pc + (current_pc[2] ? 32'd4 : 32'd8);
     integer case_count;
 
     frontend_ftq dut (
@@ -79,6 +88,7 @@ module tb_frontend_ftq_canonical;
         .abtb_bank1_abtb_pred_target           (abtb_bank1_abtb_pred_target),
         .abtb_bank1_pred_taken       (abtb_bank1_pred_taken),
         .abtb_bank1_final_pred_target      (abtb_bank1_final_pred_target),
+        .abtb_pred_next_pc           (abtb_pred_next_pc),
         .stage1_bank0_pht_index      (8'h10),
         .stage1_bank0_pht_counter    (2'b01),
         .stage1_bank1_pht_index      (8'h11),

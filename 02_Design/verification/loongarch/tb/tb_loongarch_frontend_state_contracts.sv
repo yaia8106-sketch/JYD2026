@@ -10,8 +10,6 @@ module tb_loongarch_frontend_state_contracts;
 
     logic fq_rst_n;
     logic fq_flush;
-    logic fq_enq0_payload;
-    logic fq_enq1_payload;
     logic fq_enq0_valid;
     logic fq_enq1_valid;
     frontend_fq_entry_t fq_enq_entry0;
@@ -43,9 +41,13 @@ module tb_loongarch_frontend_state_contracts;
     logic id_s1_valid;
     if_id_payload_t if_payload;
     if_id_payload_t id_payload;
+    logic [4:0] id_s0_rf_rs1_addr;
+    logic [4:0] id_s0_rf_rs2_addr;
     logic [4:0] id_s1_rf_rs1_addr;
+    logic [4:0] id_s1_rf_rs2_addr;
 
     frontend_fq_entry_t fq_model_entry [0:FQ_DEPTH-1];
+    frontend_pair_meta_t fq_model_pair_meta [0:FQ_DEPTH-1];
     integer fq_model_head;
     integer fq_model_tail;
     integer fq_model_count;
@@ -54,7 +56,10 @@ module tb_loongarch_frontend_state_contracts;
     logic [31:0] fq_next_pc;
 
     if_id_payload_t ifid_model_payload;
-    logic [4:0] ifid_model_rf_addr;
+    logic [4:0] ifid_model_s0_rf_rs1_addr;
+    logic [4:0] ifid_model_s0_rf_rs2_addr;
+    logic [4:0] ifid_model_s1_rf_rs1_addr;
+    logic [4:0] ifid_model_s1_rf_rs2_addr;
     logic ifid_model_payload_valid;
     logic ifid_model_valid;
     logic ifid_model_s1_valid;
@@ -69,8 +74,6 @@ module tb_loongarch_frontend_state_contracts;
         .clk                  (clk),
         .rst_n                (fq_rst_n),
         .flush                (fq_flush),
-        .enq0_payload         (fq_enq0_payload),
-        .enq1_payload         (fq_enq1_payload),
         .enq0_valid           (fq_enq0_valid),
         .enq1_valid           (fq_enq1_valid),
         .enq_entry0           (fq_enq_entry0),
@@ -105,7 +108,10 @@ module tb_loongarch_frontend_state_contracts;
         .id_s1_valid        (id_s1_valid),
         .if_payload         (if_payload),
         .id_payload         (id_payload),
-        .id_s1_rf_rs1_addr  (id_s1_rf_rs1_addr)
+        .id_s0_rf_rs1_addr  (id_s0_rf_rs1_addr),
+        .id_s0_rf_rs2_addr  (id_s0_rf_rs2_addr),
+        .id_s1_rf_rs1_addr  (id_s1_rf_rs1_addr),
+        .id_s1_rf_rs2_addr  (id_s1_rf_rs2_addr)
     );
 
     initial begin
@@ -120,11 +126,69 @@ module tb_loongarch_frontend_state_contracts;
         end
     endtask
 
+    function automatic frontend_pair_meta_t make_fq_pair_meta(
+        input logic [31:0] pc
+    );
+        begin
+            make_fq_pair_meta = '0;
+            make_fq_pair_meta.pred_taken = pc[2];
+            make_fq_pair_meta.force_single = pc[3];
+            make_fq_pair_meta.is_muldiv = pc[4];
+            make_fq_pair_meta.is_alu_type = pc[5];
+            make_fq_pair_meta.is_lsu = pc[6];
+            make_fq_pair_meta.is_cfi = pc[7];
+            make_fq_pair_meta.writes_dst = pc[8];
+            make_fq_pair_meta.uses_src0 = pc[9];
+            make_fq_pair_meta.uses_src1 = pc[10];
+            make_fq_pair_meta.dst_addr = pc[6:2];
+            make_fq_pair_meta.src0_addr = pc[11:7];
+            make_fq_pair_meta.src1_addr = pc[16:12];
+        end
+    endfunction
+
+    function automatic frontend_fq_entry_t make_fq_entry(
+        input logic [31:0]          pc,
+        input frontend_pair_meta_t pair_meta
+    );
+        logic is_conditional;
+        logic is_indirect;
+        logic is_direct;
+        begin
+            is_conditional = pair_meta.is_cfi & ~pc[3] & ~pc[4];
+            is_indirect = pair_meta.is_cfi & pc[3] & ~pc[4];
+            is_direct = pair_meta.is_cfi
+                      & ~is_conditional & ~is_indirect;
+            make_fq_entry = '0;
+            make_fq_entry.valid = 1'b1;
+            make_fq_entry.pc = pc;
+            make_fq_entry.inst = pc ^ 32'ha5c3_6d7e;
+            make_fq_entry.pred_taken = pair_meta.pred_taken;
+            make_fq_entry.pred_target = pc ^ 32'h1357_2468;
+            make_fq_entry.pred_source_abtb = pc[11];
+            make_fq_entry.stage1_branch_owned = pc[12];
+            make_fq_entry.stage1_pht_index = pc[10:3];
+            make_fq_entry.stage1_pht_counter = pc[4:3];
+            make_fq_entry.is_conditional_branch = is_conditional;
+            make_fq_entry.is_direct_jump = is_direct;
+            make_fq_entry.is_indirect_jump = is_indirect;
+            make_fq_entry.is_muldiv = pair_meta.is_muldiv;
+            make_fq_entry.is_mul = pair_meta.is_muldiv & pc[13];
+            make_fq_entry.is_load = pair_meta.is_lsu & ~pc[14];
+            make_fq_entry.is_store = pair_meta.is_lsu & pc[14];
+            make_fq_entry.is_alu_type = pair_meta.is_alu_type;
+            make_fq_entry.writes_dst = pair_meta.writes_dst;
+            make_fq_entry.uses_src0 = pair_meta.uses_src0;
+            make_fq_entry.uses_src1 = pair_meta.uses_src1;
+            make_fq_entry.is_jump = is_direct | is_indirect;
+            make_fq_entry.is_control = pair_meta.is_cfi;
+            make_fq_entry.is_lsu = pair_meta.is_lsu;
+            make_fq_entry.force_single = pair_meta.force_single;
+        end
+    endfunction
+
     task automatic clear_fq_controls;
         begin
             fq_flush = 1'b0;
-            fq_enq0_payload = 1'b0;
-            fq_enq1_payload = 1'b0;
             fq_enq0_valid = 1'b0;
             fq_enq1_valid = 1'b0;
             fq_enq_entry0 = '0;
@@ -172,14 +236,24 @@ module tb_loongarch_frontend_state_contracts;
             if (fq_model_tail_next_pc_valid)
                 check(fq_tail_next_pc == fq_model_tail_next_pc,
                       {name, ": tail next-PC mismatch"});
-            if (fq_model_count > 0)
-                check(fq_head0_entry.pc
-                      == fq_model_entry[fq_model_head].pc,
+            if (fq_model_count > 0) begin
+                check(fq_head0_entry
+                      === fq_model_entry[fq_model_head],
                       {name, ": head entry mismatch"});
-            if (fq_model_count > 1)
-                check(fq_head1_entry.pc
-                      == fq_model_entry[(fq_model_head + 1) % FQ_DEPTH].pc,
+                check(fq_head0_pair_meta
+                      === fq_model_pair_meta[fq_model_head],
+                      {name, ": head pair metadata mismatch"});
+            end
+            if (fq_model_count > 1) begin
+                check(fq_head1_entry
+                      === fq_model_entry[(fq_model_head + 1) % FQ_DEPTH],
                       {name, ": head+1 entry mismatch"});
+                check(fq_head1_pair_meta
+                      === fq_model_pair_meta[
+                          (fq_model_head + 1) % FQ_DEPTH
+                      ],
+                      {name, ": head+1 pair metadata mismatch"});
+            end
         end
     endtask
 
@@ -210,9 +284,7 @@ module tb_loongarch_frontend_state_contracts;
             @(negedge clk);
             clear_fq_controls();
             fq_flush = do_flush;
-            fq_enq0_payload = enq_count >= 1;
             fq_enq0_valid = enq_count >= 1;
-            fq_enq1_payload = enq_count == 2;
             fq_enq1_valid = enq_count == 2;
             fq_deq_fire = deq_count != 0;
             fq_deq_two = (deq_count == 2)
@@ -220,21 +292,22 @@ module tb_loongarch_frontend_state_contracts;
 
             enq_pc0 = fq_next_pc;
             enq_pc1 = fq_next_pc + 32'd4;
-            fq_enq_entry0 = '0;
-            fq_enq_entry1 = '0;
-            fq_enq_entry0.pc = enq_pc0;
-            fq_enq_entry1.pc = enq_pc1;
-            fq_enq_pair_meta0 = '0;
-            fq_enq_pair_meta1 = '0;
-            fq_enq_pair_meta0.src0_addr = enq_pc0[6:2];
-            fq_enq_pair_meta1.src0_addr = enq_pc1[6:2];
+            fq_enq_pair_meta0 = make_fq_pair_meta(enq_pc0);
+            fq_enq_pair_meta1 = make_fq_pair_meta(enq_pc1);
+            fq_enq_entry0 = make_fq_entry(enq_pc0, fq_enq_pair_meta0);
+            fq_enq_entry1 = make_fq_entry(enq_pc1, fq_enq_pair_meta1);
             fq_prev_tail_contiguous = 1'b1;
 
             old_tail = fq_model_tail;
-            if (enq_count >= 1)
+            if (enq_count >= 1) begin
                 fq_model_entry[old_tail] = fq_enq_entry0;
-            if (enq_count == 2)
+                fq_model_pair_meta[old_tail] = fq_enq_pair_meta0;
+            end
+            if (enq_count == 2) begin
                 fq_model_entry[(old_tail + 1) % FQ_DEPTH] = fq_enq_entry1;
+                fq_model_pair_meta[(old_tail + 1) % FQ_DEPTH] =
+                    fq_enq_pair_meta1;
+            end
 
             @(posedge clk);
             if (do_flush) begin
@@ -318,12 +391,17 @@ module tb_loongarch_frontend_state_contracts;
             if_payload.pc = marker;
             if_payload.slot0.inst = marker ^ 32'h1357_9bdf;
             if_payload.slot1.inst = marker ^ 32'h2468_ace0;
+            if_payload.slot0.issue_hint.src0_addr = marker[4:0];
+            if_payload.slot0.issue_hint.src1_addr = marker[9:5];
             if_payload.slot1.issue_hint.src0_addr = slot1_rs1;
             if_payload.slot1.issue_hint.src1_addr = ~slot1_rs1;
 
             if (allowin) begin
                 ifid_model_payload = if_payload;
-                ifid_model_rf_addr = slot1_rs1;
+                ifid_model_s0_rf_rs1_addr = marker[4:0];
+                ifid_model_s0_rf_rs2_addr = marker[9:5];
+                ifid_model_s1_rf_rs1_addr = slot1_rs1;
+                ifid_model_s1_rf_rs2_addr = ~slot1_rs1;
                 ifid_model_payload_valid = 1'b1;
             end
             if (flush) begin
@@ -346,11 +424,25 @@ module tb_loongarch_frontend_state_contracts;
             if (ifid_model_payload_valid) begin
                 check(id_payload === ifid_model_payload,
                       {name, ": payload CE/hold mismatch"});
-                check(id_s1_rf_rs1_addr === ifid_model_rf_addr,
-                      {name, ": RF address copy CE/hold mismatch"});
+                check(id_s0_rf_rs1_addr
+                      === ifid_model_s0_rf_rs1_addr,
+                      {name, ": Slot0 rs1 RF copy CE/hold mismatch"});
+                check(id_s0_rf_rs2_addr
+                      === ifid_model_s0_rf_rs2_addr,
+                      {name, ": Slot0 rs2 RF copy CE/hold mismatch"});
                 check(id_s1_rf_rs1_addr
-                      === id_payload.slot1.issue_hint.src0_addr,
-                      {name, ": RF address copy diverged from payload"});
+                      === ifid_model_s1_rf_rs1_addr,
+                      {name, ": Slot1 rs1 RF copy CE/hold mismatch"});
+                check(id_s1_rf_rs2_addr
+                      === ifid_model_s1_rf_rs2_addr,
+                      {name, ": Slot1 rs2 RF copy CE/hold mismatch"});
+                check(({id_s1_rf_rs2_addr, id_s1_rf_rs1_addr,
+                        id_s0_rf_rs2_addr, id_s0_rf_rs1_addr}
+                       === {id_payload.slot1.issue_hint.src1_addr,
+                            id_payload.slot1.issue_hint.src0_addr,
+                            id_payload.slot0.issue_hint.src1_addr,
+                            id_payload.slot0.issue_hint.src0_addr}),
+                      {name, ": RF address copies diverged from payload"});
             end
             clear_ifid_controls();
         end

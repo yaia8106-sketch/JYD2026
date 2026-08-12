@@ -261,6 +261,11 @@ module loongarch_priv_unit
 
     wire [63:0] compensated_counter = stable_counter
                                     + {{32{csr_cntc[31]}}, csr_cntc};
+    // A decoded CSR operation and a counter read are mutually exclusive.
+    // Keep the ordinary CSR read candidate independent so the 64-bit counter
+    // compensation carry chain cannot be synthesized in front of every CSR
+    // write-data register merely through the shared architectural read mux.
+    wire [31:0] ex_csr_old_data = csr_read(csr_addr);
     assign ex_priv_rdata = ex_is_cpucfg
                          ? cpucfg_read(ex_src0_data)
                          : ex_is_counter
@@ -268,16 +273,16 @@ module loongarch_priv_unit
                          : (ex_priv_addr == 16'hfffe)
                              ? compensated_counter[63:32]
                              : compensated_counter[31:0]
-                         : csr_read(csr_addr);
+                         : ex_csr_old_data;
     wire [31:0] ex_csr_src = ex_priv_uses_imm
                            ? {27'd0, ex_priv_imm} : ex_src0_data;
     wire [31:0] ex_csr_wdata =
         (ex_priv_cmd == PRIV_CMD_WRITE) ? ex_csr_src :
-        (ex_priv_cmd == PRIV_CMD_SET) ? (ex_priv_rdata | ex_csr_src) :
-        (ex_priv_cmd == PRIV_CMD_CLEAR) ? (ex_priv_rdata & ~ex_csr_src) :
+        (ex_priv_cmd == PRIV_CMD_SET) ? (ex_csr_old_data | ex_csr_src) :
+        (ex_priv_cmd == PRIV_CMD_CLEAR) ? (ex_csr_old_data & ~ex_csr_src) :
         (ex_priv_cmd == PRIV_CMD_EXCHANGE)
-            ? ((ex_priv_rdata & ~ex_src1_data)
-               | (ex_csr_src & ex_src1_data)) : ex_priv_rdata;
+            ? ((ex_csr_old_data & ~ex_src1_data)
+               | (ex_csr_src & ex_src1_data)) : ex_csr_old_data;
     wire ex_csr_write_req = (ex_priv_cmd == PRIV_CMD_WRITE)
                           | (ex_priv_cmd == PRIV_CMD_EXCHANGE)
                           | (((ex_priv_cmd == PRIV_CMD_SET)
@@ -309,6 +314,9 @@ module loongarch_priv_unit
         if (rst_n
             && (ex_csr_write_fire !== ex_csr_write_fire_reference))
             $fatal(1, "Class-specific CSR write readiness changed commit timing");
+        if (rst_n && ex_is_csr
+            && (ex_csr_old_data !== ex_priv_rdata))
+            $fatal(1, "CSR-local old-data candidate disagrees with architectural read");
         if (rst_n
             && ((ex_sync_trap_fire !== ex_sync_trap_fire_reference)
                 || (ex_return_fire !== ex_return_fire_reference)))

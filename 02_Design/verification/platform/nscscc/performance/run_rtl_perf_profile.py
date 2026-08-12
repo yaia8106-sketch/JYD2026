@@ -219,12 +219,39 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--delay-mode",
-        choices=("random", "none"),
+        choices=("fixed", "random", "none"),
         default="random",
         help=(
-            "random uses Chiplab's deterministic AXI delay injector; none "
-            "is faster but is not a timing-performance result"
+            "fixed delays the first R beat from each accepted AR by a fixed "
+            "number of CPU cycles; random uses Chiplab's deterministic AXI "
+            "delay injector; none is functional-only"
         ),
+    )
+    parser.add_argument(
+        "--read-latency",
+        type=int,
+        default=170,
+        help="fixed-mode cycles from AR acceptance to first eligible R beat",
+    )
+    parser.add_argument(
+        "--write-latency",
+        type=int,
+        default=60,
+        help="fixed-mode cycles from AW acceptance to eligible B response",
+    )
+    parser.add_argument(
+        "--icache-bytes",
+        type=int,
+        choices=(8192, 16384, 32768),
+        default=16384,
+        help="compile-time ICache capacity for this profile",
+    )
+    parser.add_argument(
+        "--icache-ways",
+        type=int,
+        choices=(1, 2),
+        default=1,
+        help="compile-time ICache associativity for this profile",
     )
     parser.add_argument("--seed", type=lambda value: int(value, 0), default=5570815)
     parser.add_argument("--jobs", type=int, default=min(4, os.cpu_count() or 1))
@@ -242,6 +269,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-sim-cycles", type=int, default=100_000_000)
     parser.add_argument("--force-rebuild", action="store_true")
     parser.add_argument("--build-only", action="store_true")
+    parser.add_argument(
+        "--dump-icache-trace",
+        action="store_true",
+        help="write compact lookup-line traces for the software cache model",
+    )
     return parser.parse_args()
 
 
@@ -299,6 +331,11 @@ def build_signature(args: argparse.Namespace, monitor: Path) -> dict:
     workspace = args.workspace.resolve()
     chiplab = workspace / "chiplab"
     core = workspace / "core"
+    delay_source = (
+        monitor.parent / "soc_axi_delay_fixed.v"
+        if args.delay_mode == "fixed"
+        else chiplab / "IP/AXI_DELAY_RAND"
+    )
     source_hash = source_fingerprint(
         [
             core / "02_Design/rtl",
@@ -306,7 +343,7 @@ def build_signature(args: argparse.Namespace, monitor: Path) -> dict:
             monitor,
             chiplab / "sims/verilator/testbench",
             chiplab / "chip/soc_demo/sim",
-            chiplab / "IP/AXI_DELAY_RAND",
+            delay_source,
             chiplab / "IP/AXI_SRAM_BRIDGE",
             chiplab / "IP/AMBA",
             chiplab / "IP/CONFREG",
@@ -328,6 +365,9 @@ def build_signature(args: argparse.Namespace, monitor: Path) -> dict:
         "run_c": False,
         "monitor": str(monitor.resolve()),
         "verilator_threads": args.model_threads,
+        "delay_backend": args.delay_mode,
+        "icache_bytes": args.icache_bytes,
+        "icache_ways": args.icache_ways,
     }
 
 
@@ -340,7 +380,11 @@ def ensure_build(args: argparse.Namespace, monitor: Path) -> tuple[Path, dict, b
     # entry and can therefore overwrite it with a different bound monitor.
     # Keep a private copy plus manifest so an apparently matching performance
     # cache can never execute another tool's model.
-    cache_dir = Path("/tmp/nscscc-rtl-perf-build")
+    cache_dir = Path(
+        "/tmp/"
+        f"nscscc-rtl-perf-build-ic{args.icache_bytes}-w{args.icache_ways}"
+        f"-{args.delay_mode}"
+    )
     output = cache_dir / "output"
     manifest_path = cache_dir / "manifest.json"
     signature = build_signature(args, monitor)
@@ -362,6 +406,10 @@ def ensure_build(args: argparse.Namespace, monitor: Path) -> tuple[Path, dict, b
     # Makefile appends its normal sources to it. A command-line make variable
     # would override those appends and silently drop the SoC sources.
     env["VERILATOR_SRC"] = str(monitor.resolve())
+    env["VFLAGS"] = (
+        f"-DNSCSCC_ICACHE_BYTES={args.icache_bytes} "
+        f"-DNSCSCC_ICACHE_WAYS={args.icache_ways}"
+    )
     make_options = [
         # The bundled NEMU rejects CPUCFG and compares uncached virtual
         # addresses as physical store addresses, so it cannot validate the
@@ -386,6 +434,8 @@ def ensure_build(args: argparse.Namespace, monitor: Path) -> tuple[Path, dict, b
         # larger hosts/workloads can select more with --model-threads.
         f"THREAD={args.model_threads}",
     ]
+    if args.delay_mode == "fixed":
+        make_options.append(f"AXI_RAND_SRC={monitor.parent.resolve()}")
     print("Building one current-RTL Verilator executable ...", flush=True)
     # Do not use the Makefile's recursive `compile` target here. Because the
     # monitor is supplied through an environment-origin VERILATOR_SRC, a
@@ -531,7 +581,7 @@ def run_benchmark(
     command = [
         str(output.resolve()),
         "--simu-bus-delay",
-        "1" if args.delay_mode == "random" else "0",
+        "1" if args.delay_mode in {"fixed", "random"} else "0",
         "--simu-bus-delay-random-seed",
         str(args.seed),
         "--time-limit",
@@ -542,6 +592,15 @@ def run_benchmark(
         f"+perf_uart_putchar_pc={uart_putchar_pc:08x}",
         f"+perf_max_cycles={args.max_sim_cycles}",
     ]
+    if args.delay_mode == "fixed":
+        command.extend(
+            [
+                f"+perf_read_latency={args.read_latency}",
+                f"+perf_write_latency={args.write_latency}",
+            ]
+        )
+    if args.dump_icache_trace:
+        command.append(f"+perf_icache_trace={run_dir / 'icache.trace'}")
     env = os.environ.copy()
     env["CHIPLAB_HOME"] = str((args.workspace / "chiplab").resolve())
     started = time.monotonic()
@@ -977,6 +1036,10 @@ def run_benchmark(
             "elf_sha256": sha256_file(elf),
             "bin_sha256": sha256_file(binary),
             "log": str(log_path.resolve()),
+            "icache_trace": (
+                str((run_dir / "icache.trace").resolve())
+                if args.dump_icache_trace else ""
+            ),
         }
     )
     return metrics
@@ -1483,11 +1546,20 @@ def write_outputs(
         ["其他消费者", f"{int(aggregate.get('early_raw_role_other', 0)):,}"],
     ]
 
+    delay_description = (
+        f"首拍固定 {args.read_latency} cycle、B 固定 "
+        f"{args.write_latency} cycle"
+        if args.delay_mode == "fixed"
+        else f"随机延迟种子 {args.seed}"
+    )
+    associativity = "direct-mapped" if args.icache_ways == 1 else "2-way"
+
     report = f"""# NSCSCC RTL 性能归因
 
 生成时间：{datetime.now().astimezone().isoformat(timespec='seconds')}
 
-- 模式：`{args.delay_mode}`；随机延迟种子：`{args.seed}`。
+- 模式：`{args.delay_mode}`（{delay_description}）。
+- ICache：{args.icache_bytes // 1024} KiB、{associativity}、16 B line。
 - 覆盖 {len(rows)} 个程序；benchmark 并行度 `{args.jobs}`，每个 Verilated
   模型 `{args.model_threads}` 个线程；仿真合计墙钟时间 {suite_seconds:.2f} s。
 - Verilator 构建本次{'重新生成' if build_rebuilt else '通过源码指纹复用'}；检查赛方程序自身 PASS 结果和 RTL 仿真断言，关闭波形和逐指令文本 trace。
@@ -1652,7 +1724,8 @@ RAW 外已满足其他 issue 条件、且消费者属于 ALU/Load/Store 时，�
 
 ## ICache 3C miss 与冲突消除直接收益
 
-当前 ICache 是 8 KiB、direct-mapped、16 B line，共 512 行。仿真监控器用同容量
+当前 ICache 是 {args.icache_bytes // 1024} KiB、{associativity}、16 B line，共
+{args.icache_bytes // 16} 行。仿真监控器用同容量
 全相连 LRU 影子 Cache 处理完全相同的取指 line 序列：第一次见到的 line 是
 Compulsory；真实 Cache miss 但全相连影子命中的是 Conflict；两个 Cache 都 miss
 且不是第一次访问的是 Capacity。影子状态从复位后持续预热，计数仍只覆盖正式
@@ -1705,9 +1778,10 @@ miss 数量不能体现随机 AXI 延迟差异，因此下表还让 3C 类别随
 
 ## 数据边界
 
-- `random` 是 Chiplab Verilator 的确定性 AXI 随机延迟模型，不是 MIG+DDR3 的精确
-  周期模型；它适合快速做 RTL A/B 和找主要空泡来源。`none` 只适合验证事件计数
-  与理论上限。真实总周期仍以 CI/板上计数为准。
+- `fixed` 在每次 AR 握手后等待指定 CPU 周期才释放首个 R beat，Burst 剩余 beat
+  连续传输，并允许已经接收的 I/D 请求并行等待；它用于复现赛方 perf 包装器的长
+  首拍延迟量级。`random` 是 Chiplab 的确定性随机反压，`none` 只适合功能检查。
+  三者都不是 MIG+DDR3 的电气/刷新级精确模型，最终总周期仍以 CI/板上计数为准。
 - 计数窗口由赛方程序成对提交的 `RDCNTVL.W` 自动开关；多段计时程序会全部累计，
   启动、打印和结果上报不混入统计。
 - 临时 RAM 镜像把 `UART_BASE` 数据初值指向仿真 scratch，并把其 LSR 字节置为
@@ -1738,6 +1812,10 @@ miss 数量不能体现随机 AXI 延迟差异，因此下表还让 3C 类别随
             ),
         },
         "delay_mode": args.delay_mode,
+        "read_latency": args.read_latency,
+        "write_latency": args.write_latency,
+        "icache_bytes": args.icache_bytes,
+        "icache_ways": args.icache_ways,
         "seed": args.seed,
         "jobs": args.jobs,
         "model_threads": args.model_threads,

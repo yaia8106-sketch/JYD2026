@@ -8,6 +8,7 @@ module tb_loongarch_decode_contract;
     frontend_predecode_t predecode;
     frontend_icache_predecode_t icache_predecode;
     frontend_predecode_t expanded_predecode;
+    frontend_pair_meta_t cached_pair_metadata;
     logic [31:0] icache_kind_seen;
 
     logic [31:0] alu_src1;
@@ -36,9 +37,11 @@ module tb_loongarch_decode_contract;
     );
 
     loongarch_cached_predecode_expand u_cached_expand (
-        .inst     (inst),
-        .cached   (icache_predecode),
-        .expanded (expanded_predecode)
+        .inst          (inst),
+        .cached        (icache_predecode),
+        .pred_taken    (1'b0),
+        .expanded      (expanded_predecode),
+        .pair_metadata (cached_pair_metadata)
     );
 
     alu u_alu (

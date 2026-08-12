@@ -15,6 +15,7 @@ module alu_result_datapath
     input  logic [ 3:0] alu_op,
     input  logic [31:0] alu_src1,
     input  logic [31:0] alu_src2,
+    input  logic [ 4:0] shift_amount,
     output logic [31:0] alu_result,
     output logic [31:0] alu_sum
 );
@@ -33,15 +34,18 @@ module alu_result_datapath
 
     // ---- 3.3 Bit-reversal shifter ----
     // A right shifter plus bit reversal implements both left and right shifts.
-    wire [4:0]  shamt  = alu_src2[4:0];
     wire [31:0] shin   = alu_op[2] ? alu_src1 : bit_reverse(alu_src1);
     wire [32:0] shift  = {alu_op[3] & shin[31], shin};
-    wire [32:0] shiftt = $signed(shift) >>> shamt;
+    wire [32:0] shiftt = $signed(shift) >>> shift_amount;
     wire [31:0] shiftr = shiftt[31:0];
     wire [31:0] shiftl = bit_reverse(shiftr);
 
-    // ---- 3.4 Output selection (parallel AND-OR) ----
-    // Decode by funct3 (alu_op[2:0]), using bit-level grouping
+    // ---- 3.4 Output selection ----
+    // Decode by funct3 (alu_op[2:0]), using bit-level grouping.  The adder is
+    // the late candidate on the EX-to-ID bypass path, so do not feed it into
+    // the complete logical/shift AND-OR tree.  All non-arithmetic candidates
+    // are formed in parallel and one final three-way selector chooses SUM,
+    // CMP, or the already-complete logical/shift result.
     wire sel_add = (alu_op[2:0] == 3'b000);  // ADD / SUB
     wire sel_sll = (alu_op[2:0] == 3'b001);  // SLL
     wire sel_cmp = (alu_op[1]  & ~alu_op[2]); // SLT(010) / SLTU(011)
@@ -51,14 +55,34 @@ module alu_result_datapath
     wire sel_nor = (alu_op == ALU_NOR);      // NOR
     wire sel_and = (alu_op[2:0] == 3'b111);  // AND
 
-    assign alu_result = ({32{sel_add}} & sum)
-                      | ({32{sel_sll}} & shiftl)
-                      | ({32{sel_cmp}} & {31'b0, cmp})
+    wire [31:0] logical_shift_result =
+                        ({32{sel_sll}} & shiftl)
                       | ({32{sel_xor}} & (alu_src1 ^ alu_src2))
                       | ({32{sel_shr}} & shiftr)
                       | ({32{sel_or}}  & (alu_src1 | alu_src2))
                       | ({32{sel_nor}} & ~(alu_src1 | alu_src2))
                       | ({32{sel_and}} & (alu_src1 & alu_src2));
+
+    wire [1:0] result_select = sel_add ? 2'b00
+                             : sel_cmp ? 2'b01
+                                       : 2'b10;
+
+    function automatic logic [31:0] select_result(
+        input logic [ 1:0] select,
+        input logic [31:0] sum_candidate,
+        input logic        cmp_candidate,
+        input logic [31:0] logical_shift_candidate
+    );
+        case (select)
+            2'b00:   select_result = sum_candidate;
+            2'b01:   select_result = {31'b0, cmp_candidate};
+            default: select_result = logical_shift_candidate;
+        endcase
+    endfunction
+
+    assign alu_result = select_result(
+        result_select, sum, cmp, logical_shift_result
+    );
 
     // ---- Bit-reverse function ----
     function automatic logic [31:0] bit_reverse(input logic [31:0] in);
@@ -94,6 +118,7 @@ module alu
         .alu_op     (alu_op),
         .alu_src1   (alu_src1),
         .alu_src2   (alu_src2),
+        .shift_amount(alu_src2[4:0]),
         .alu_result (alu_result),
         .alu_sum    (alu_sum)
     );

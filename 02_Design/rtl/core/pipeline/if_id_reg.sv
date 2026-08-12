@@ -27,14 +27,25 @@ module if_id_reg
     input  if_id_payload_t if_payload,
     output if_id_payload_t id_payload,
 
-    // Dedicated physical copy for the high-fanout Slot-1 register-file read
-    // address. Hazard/ready logic keeps using id_payload's original copy.
-    output logic [4:0]     id_s1_rf_rs1_addr
+    // Dedicated physical copies for the four high-fanout register-file read
+    // addresses. Hazard/ready logic keeps using id_payload's original copy,
+    // so the 32x32 read muxes cannot pull that backwards-control cluster
+    // toward the register file.
+    output logic [4:0]     id_s0_rf_rs1_addr,
+    output logic [4:0]     id_s0_rf_rs2_addr,
+    output logic [4:0]     id_s1_rf_rs1_addr,
+    output logic [4:0]     id_s1_rf_rs2_addr
 );
 
+    (* keep = "true" *) logic [4:0] id_s0_rf_rs1_addr_q;
+    (* keep = "true" *) logic [4:0] id_s0_rf_rs2_addr_q;
     (* keep = "true" *) logic [4:0] id_s1_rf_rs1_addr_q;
+    (* keep = "true" *) logic [4:0] id_s1_rf_rs2_addr_q;
 
+    assign id_s0_rf_rs1_addr = id_s0_rf_rs1_addr_q;
+    assign id_s0_rf_rs2_addr = id_s0_rf_rs2_addr_q;
     assign id_s1_rf_rs1_addr = id_s1_rf_rs1_addr_q;
+    assign id_s1_rf_rs2_addr = id_s1_rf_rs2_addr_q;
 
     // Validity owns reset/flush semantics.  The payload is ignored whenever
     // both slot-valid bits are clear, so neither reset nor a late redirect
@@ -57,8 +68,14 @@ module if_id_reg
     always_ff @(posedge clk) begin
         if (id_allowin) begin
             id_payload <= if_payload;
+            id_s0_rf_rs1_addr_q <=
+                if_payload.slot0.issue_hint.src0_addr;
+            id_s0_rf_rs2_addr_q <=
+                if_payload.slot0.issue_hint.src1_addr;
             id_s1_rf_rs1_addr_q <=
                 if_payload.slot1.issue_hint.src0_addr;
+            id_s1_rf_rs2_addr_q <=
+                if_payload.slot1.issue_hint.src1_addr;
         end
     end
 

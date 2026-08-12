@@ -60,6 +60,9 @@ module frontend_ftq
     input  logic [31:0] abtb_bank1_abtb_pred_target,
     input  logic        abtb_bank1_pred_taken,
     input  logic [31:0] abtb_bank1_final_pred_target,
+    // Canonical wide next-PC result selected locally inside the ABTB.  FTQ
+    // retains its metadata arbitration, but does not rebuild this data path.
+    input  logic [31:0] abtb_pred_next_pc,
 
     // Stage-1 direction metadata is queried in parallel with ABTB and captured
     // with the accepted prediction block. ABTB/PHT branch steering is the
@@ -166,6 +169,7 @@ module frontend_ftq
     wire [1:0]  bp0_base_mask = current_pc[2] ? 2'b01 : 2'b11;
     wire frontend_steer_bank_t bp0_steer_bank0;
     wire frontend_steer_bank_t bp0_steer_bank1;
+    wire frontend_steer_result_t bp0_steer_metadata_result;
     wire frontend_steer_result_t bp0_steer_result;
     wire abtb_bank0_branch_owned;
     wire abtb_bank1_branch_owned;
@@ -202,6 +206,21 @@ module frontend_ftq
     assign bp0_abtb_bank1_meta.pred_taken = abtb_bank1_pred_taken;
     assign bp0_abtb_bank1_meta.pred_target = abtb_bank1_final_pred_target;
 
+    // Preserve every metadata bit produced by the existing canonical control,
+    // while taking the 32-bit next-PC payload from the earlier ABTB-local mux.
+    assign bp0_steer_result.valid = bp0_steer_metadata_result.valid;
+    assign bp0_steer_result.source_abtb =
+        bp0_steer_metadata_result.source_abtb;
+    assign bp0_steer_result.branch_owned =
+        bp0_steer_metadata_result.branch_owned;
+    assign bp0_steer_result.branch_owned_nt =
+        bp0_steer_metadata_result.branch_owned_nt;
+    assign bp0_steer_result.taken = bp0_steer_metadata_result.taken;
+    assign bp0_steer_result.bank = bp0_steer_metadata_result.bank;
+    assign bp0_steer_result.cfi_type = bp0_steer_metadata_result.cfi_type;
+    assign bp0_steer_result.target = bp0_steer_metadata_result.target;
+    assign bp0_steer_result.next_pc = abtb_pred_next_pc;
+
     assign stage1_steer_valid = bp0_steer_result.valid;
     assign stage1_steer_source_abtb = bp0_steer_result.source_abtb;
     assign stage1_steer_branch_owned = bp0_steer_result.branch_owned;
@@ -219,8 +238,19 @@ module frontend_ftq
         .bank1              (bp0_steer_bank1),
         .bank0_branch_owned (abtb_bank0_branch_owned),
         .bank1_branch_owned (abtb_bank1_branch_owned),
-        .steer              (bp0_steer_result)
+        .steer              (bp0_steer_metadata_result)
     );
+
+`ifndef SYNTHESIS
+    // The old FTQ-local wide selector remains as a simulation-only reference.
+    // At an accepted lookup, the ABTB-local result must be cycle-identical.
+    always_ff @(posedge clk) begin
+        if (rst_n && bp0_fire
+                  && (abtb_pred_next_pc
+                      !== bp0_steer_metadata_result.next_pc))
+            $fatal(1, "ABTB-local next PC disagrees with FTQ steering");
+    end
+`endif
 
     frontend_fetch_state #(
         .FTQ_PTR_W      (FTQ_PTR_W),
@@ -581,8 +611,6 @@ module frontend_ftq
         .clk                  (clk),
         .rst_n                (rst_n),
         .flush                (ex_redirect_valid),
-        .enq0_payload         (f0_enq0_payload),
-        .enq1_payload         (f0_enq1_payload),
         .enq0_valid           (f0_enq0_valid),
         .enq1_valid           (f0_enq1_valid),
         .enq_entry0           (f0_entry0),

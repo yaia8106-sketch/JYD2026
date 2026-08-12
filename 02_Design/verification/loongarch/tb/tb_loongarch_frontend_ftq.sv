@@ -28,6 +28,8 @@ module tb_loongarch_frontend_ftq;
     logic predict_dual;
     logic irom_held_valid;
     logic if_skip_out;
+    wire [31:0] abtb_pred_next_pc =
+        current_pc + (current_pc[2] ? 32'd4 : 32'd8);
 
     wire [31:0] if_pc = if_payload.pc;
     wire [31:0] if_inst0 = if_payload.slot0.inst;
@@ -73,6 +75,7 @@ module tb_loongarch_frontend_ftq;
         .abtb_bank1_abtb_pred_target(32'd0),
         .abtb_bank1_pred_taken(1'b0),
         .abtb_bank1_final_pred_target(32'd0),
+        .abtb_pred_next_pc(abtb_pred_next_pc),
         .stage1_bank0_pht_index(8'd0),
         .stage1_bank0_pht_counter(2'b01),
         .stage1_bank1_pht_index(8'd1),

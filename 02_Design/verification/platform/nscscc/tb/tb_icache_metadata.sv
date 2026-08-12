@@ -27,6 +27,12 @@ module tb_icache_metadata;
     logic [ 1:0] mem_rd_resp;
 
     logic [13:0] decoded_response_predecode;
+    frontend_icache_predecode_t response_low_cached;
+    frontend_icache_predecode_t response_high_cached;
+    frontend_predecode_t response_low_expanded;
+    frontend_predecode_t response_high_expanded;
+    frontend_pair_meta_t response_low_pair_direct;
+    frontend_pair_meta_t response_high_pair_direct;
     logic [31:0] class_word [0:7];
     logic [31:0] kind_word [0:19];
     icache_inst_kind_t kind_expected [0:19];
@@ -51,7 +57,13 @@ module tb_icache_metadata;
     integer errors;
     integer response_count;
 
-    icache dut (
+    // This test intentionally preserves the 8 KiB organization because its
+    // white-box tag/index checks exercise the ninth index bit and 7-bit tag.
+    // The configuration-matrix test separately covers the 16 KiB default.
+    icache #(
+        .CACHE_BYTES(8192),
+        .WAYS       (1)
+    ) dut (
         .clk                (clk),
         .rst_n              (rst_n),
         .irom_req_valid     (irom_req_valid),
@@ -77,6 +89,25 @@ module tb_icache_metadata;
     loongarch_icache_block_predecode u_response_reference (
         .block_data     (irom_resp_data),
         .block_metadata (decoded_response_predecode)
+    );
+
+    assign response_low_cached = irom_resp_predecode[6:0];
+    assign response_high_cached = irom_resp_predecode[13:7];
+
+    isa_cached_predecode_expand u_response_low_expand (
+        .inst          (irom_resp_data[31:0]),
+        .cached        (response_low_cached),
+        .pred_taken    (1'b1),
+        .expanded      (response_low_expanded),
+        .pair_metadata (response_low_pair_direct)
+    );
+
+    isa_cached_predecode_expand u_response_high_expand (
+        .inst          (irom_resp_data[63:32]),
+        .cached        (response_high_cached),
+        .pred_taken    (1'b0),
+        .expanded      (response_high_expanded),
+        .pair_metadata (response_high_pair_direct)
     );
 
     always #5 clk = ~clk;
@@ -134,6 +165,29 @@ module tb_icache_metadata;
         end
     endtask
 
+    function automatic frontend_pair_meta_t pair_meta_reference(
+        input frontend_predecode_t decoded,
+        input logic                pred_taken,
+        input logic                writes_dst,
+        input logic                force_single
+    );
+        begin
+            pair_meta_reference = '0;
+            pair_meta_reference.pred_taken = pred_taken;
+            pair_meta_reference.force_single = force_single;
+            pair_meta_reference.is_muldiv = decoded.is_muldiv;
+            pair_meta_reference.is_alu_type = decoded.is_alu_type;
+            pair_meta_reference.is_lsu = decoded.is_lsu;
+            pair_meta_reference.is_cfi = decoded.is_cfi;
+            pair_meta_reference.writes_dst = writes_dst;
+            pair_meta_reference.uses_src0 = decoded.uses_src0;
+            pair_meta_reference.uses_src1 = decoded.uses_src1;
+            pair_meta_reference.dst_addr = decoded.dst_addr;
+            pair_meta_reference.src0_addr = decoded.src0_addr;
+            pair_meta_reference.src1_addr = decoded.src1_addr;
+        end
+    endfunction
+
     // Every response, including critical-first and refill-buffer responses,
     // must carry exactly the metadata that direct decoding of its data gives.
     always @(negedge clk) begin
@@ -141,6 +195,18 @@ module tb_icache_metadata;
             response_count = response_count + 1;
             check(irom_resp_predecode === decoded_response_predecode,
                   "ICache response metadata/data mismatch");
+            check(response_low_pair_direct === pair_meta_reference(
+                      response_low_expanded,
+                      1'b1,
+                      response_low_cached.writes_dst,
+                      response_low_cached.block_younger),
+                  "low direct pair metadata disagrees with full expansion");
+            check(response_high_pair_direct === pair_meta_reference(
+                      response_high_expanded,
+                      1'b0,
+                      response_high_cached.writes_dst,
+                      response_high_cached.block_younger),
+                  "high direct pair metadata disagrees with full expansion");
         end
     end
 
@@ -284,6 +350,53 @@ module tb_icache_metadata;
         end
     endtask
 
+    // The timing-oriented implementation publishes tag/valid one edge after
+    // the final refill beat.  A request arriving in that single-cycle window
+    // must be satisfied by the completed refill buffer; otherwise it would
+    // observe the intentionally stale valid bit and launch a duplicate miss.
+    task automatic expect_commit_window_hit(
+        input logic [31:0]         addr,
+        input logic [63:0]         expected_data,
+        input icache_inst_kind_t   expected_low_kind,
+        input icache_inst_kind_t   expected_high_kind,
+        input string               name
+    );
+        integer guard;
+        begin
+            // The caller has just returned from the final refill-beat task at
+            // a falling edge, so inspect and drive this window without first
+            // waiting for another edge.
+            #1;
+            check(dut.tag_commit_pending_q,
+                  $sformatf("%s did not expose delayed commit window", name));
+            check(!dut.line_valid_q[addr[12:4]],
+                  $sformatf("%s published valid before commit edge", name));
+
+            irom_req_addr = addr;
+            irom_req_valid = 1'b1;
+            guard = 0;
+            do begin
+                @(posedge clk);
+                guard = guard + 1;
+                if (guard > 20)
+                    $fatal(1,
+                           "[FAIL] commit-window request timeout: %s",
+                           name);
+            end while (!irom_req_ready);
+
+            @(negedge clk);
+            irom_req_valid = 1'b0;
+            #1;
+            check(irom_resp_valid,
+                  $sformatf("%s was not served by refill buffer", name));
+            check(!mem_req_valid,
+                  $sformatf("%s launched a duplicate refill", name));
+            if (irom_resp_valid)
+                expect_response(expected_data, expected_low_kind,
+                                expected_high_kind, 2'b00, name);
+        end
+    endtask
+
     task automatic expect_tag_entry(
         input logic [8:0]          index,
         input logic [6:0]          tag,
@@ -326,7 +439,13 @@ module tb_icache_metadata;
             );
             send_refill_beat(kind_word[base_kind + 2], 2'b00, 1'b0);
             send_refill_beat(kind_word[base_kind + 3], 2'b00, 1'b1);
-            repeat (2) @(posedge clk);
+            expect_commit_window_hit(
+                line_addr,
+                {kind_word[base_kind + 1], kind_word[base_kind]},
+                kind_expected[base_kind], kind_expected[base_kind + 1],
+                $sformatf("kind line %0d delayed-commit hit", base_kind / 4)
+            );
+            repeat (1) @(posedge clk);
 
             expect_tag_entry(
                 line_addr[12:4], line_addr[19:13],

@@ -24,7 +24,24 @@ module ex_mem_reg
 
     // Registered payload
     input  ex_mem_slot0_t ex_payload,
-    output ex_mem_slot0_t mem_payload
+    output ex_mem_slot0_t mem_payload,
+
+    // Physically independent, narrow producer metadata for the backwards
+    // forwarding/hazard network.  The architectural payload remains the sole
+    // data source; these bits only keep its remote rd/control fields from
+    // pulling the complete EX/MEM bank towards decode.
+    (* keep = "true" *)
+    output logic          mem_hazard_valid,
+    (* keep = "true" *)
+    output logic          mem_hazard_reg_write,
+    (* keep = "true" *)
+    output logic          mem_hazard_is_load,
+    (* keep = "true" *)
+    output logic          mem_hazard_is_mul,
+    (* keep = "true" *)
+    output logic [4:0]    mem_hazard_rd,
+    (* keep = "true" *)
+    output wb_src_t       mem_hazard_wb_sel
 );
 
     // Standard valid/allow pipeline rule: MEM can accept a new payload when it
@@ -34,16 +51,26 @@ module ex_mem_reg
     // A registered redirect invalidates the younger EX instruction only when
     // MEM can advance. A stalled miss must remain valid until completion.
     always_ff @(posedge clk) begin
-        if (!rst_n)
+        if (!rst_n) begin
             mem_valid <= 1'b0;
-        else if (mem_allowin)
+            mem_hazard_valid <= 1'b0;
+        end else if (mem_allowin) begin
             mem_valid <= ex_valid & ex_ready_go & ~mem_redirect.valid;
+            mem_hazard_valid <= ex_valid & ex_ready_go
+                              & ~mem_redirect.valid;
+        end
     end
 
     // The payload has no independent lifetime; mem_valid is its sole owner.
     always_ff @(posedge clk) begin
-        if (mem_allowin)
+        if (mem_allowin) begin
             mem_payload <= ex_payload;
+            mem_hazard_reg_write <= ex_payload.reg_write_en;
+            mem_hazard_is_load <= ex_payload.mem_read_en;
+            mem_hazard_is_mul <= ex_payload.is_mul;
+            mem_hazard_rd <= ex_payload.rd;
+            mem_hazard_wb_sel <= ex_payload.wb_sel;
+        end
     end
 
     // Redirect propagation must not be blocked by MEM backpressure.
@@ -62,5 +89,23 @@ module ex_mem_reg
         mem_redirect.source <= ex_redirect.source;
         mem_redirect.actual_taken <= ex_redirect.actual_taken;
     end
+
+`ifndef SYNTHESIS
+    // The narrow copy is a placement aid only.  Prove continuously that it
+    // observes exactly the same accept/hold/flush contract as EX/MEM.
+    always_ff @(posedge clk) begin
+        if (rst_n) begin
+            if (mem_hazard_valid !== mem_valid)
+                $fatal(1, "Slot 0 MEM hazard-valid mirror diverged from EX/MEM valid");
+            if (mem_valid
+                && ((mem_hazard_reg_write !== mem_payload.reg_write_en)
+                    || (mem_hazard_is_load !== mem_payload.mem_read_en)
+                    || (mem_hazard_is_mul !== mem_payload.is_mul)
+                    || (mem_hazard_rd !== mem_payload.rd)
+                    || (mem_hazard_wb_sel !== mem_payload.wb_sel)))
+                $fatal(1, "Slot 0 MEM hazard metadata mirror diverged from EX/MEM payload");
+        end
+    end
+`endif
 
 endmodule

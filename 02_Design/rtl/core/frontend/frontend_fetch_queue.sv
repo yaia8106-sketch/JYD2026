@@ -18,8 +18,6 @@ module frontend_fetch_queue
     input  logic                       rst_n,
     input  logic                       flush, // redirect信号，由于当前没有二级预测，因此flush会对fq内的所有指令进行冲刷
 
-    input  logic                       enq0_payload, // enq0_payload = accept_base(本质是个valid信号) && base_mask[0](看取指块的这条指令能不能用，比如当取指的PC[2]=1的时候enq1就不为valid)，和enq0_valid本质是一个信号
-    input  logic                       enq1_payload,
     input  logic                       enq0_valid,
     input  logic                       enq1_valid,
     input  frontend_fq_entry_t         enq_entry0, // 这个结构体包含了fq entry需要的所有信息。
@@ -40,10 +38,6 @@ module frontend_fetch_queue
     output logic [FQ_PTR_W-1:0]        head_p1, // head plus 1
     output logic [FQ_PTR_W-1:0]        tail,
     output logic [FQ_PTR_W-1:0]        tail_p1,
-    // Keep the late dequeue decision on the count D cone. Without this local
-    // attribute Vivado recognizes the self-hold arm below and recreates the
-    // original backend-to-CE path during synthesis.
-    (* extract_enable = "no" *)
     output logic [FQ_PTR_W:0]          count,
     output logic [31:0]                tail_next_pc,
 
@@ -54,12 +48,123 @@ module frontend_fetch_queue
     output logic                       head_pair_contiguous
 );
 
-    // Circular queue storage. pair_contiguous_mem[i] describes only whether
-    // entry i and entry i+1 are consecutive in the instruction stream. It is
-    // deliberately independent of instruction bits and pairing policy.
-    frontend_fq_entry_t entry_mem [0:FQ_DEPTH-1];
-    frontend_pair_meta_t pair_meta_mem [0:FQ_DEPTH-1];
+    localparam int FQ_BANK_DEPTH = FQ_DEPTH / 2;
+    localparam int FQ_BANK_ROW_W = FQ_PTR_W - 1;
+
+    // Producer and consumer state are physically independent.  In particular,
+    // the backend-derived dequeue event only enables head_q/deq_total_q; it
+    // never selects a value on the enqueue-side D cone.
+    (* extract_enable = "yes" *) logic [FQ_PTR_W-1:0] head_q;
+    (* extract_enable = "yes" *) logic [FQ_PTR_W:0] enq_total_q;
+    (* extract_enable = "yes" *) logic [FQ_PTR_W:0] deq_total_q;
+
+    assign head = head_q;
+    // The queue never contains more than FQ_DEPTH entries, so the modulo
+    // (2 * FQ_DEPTH) producer-consumer difference is the exact occupancy.
+    assign count = enq_total_q - deq_total_q;
+
+    // Only fields consumed after the queue are stored.  Pair-policy metadata
+    // already contains pred_taken, force_single, is_muldiv, is_alu_type,
+    // writes/uses-register and is_lsu/is_cfi, so keeping a second copy of those
+    // bits in the wide entry array merely creates more flops and routing.
+    // Fields used only by the F0 compatibility/debug aliases (privileged,
+    // fence, illegal and exact CFI type) never cross the queue boundary.
+    typedef struct packed {
+        logic [31:0]          pc;
+        logic [31:0]          inst;
+        logic [31:0]          pred_target;
+        logic                 pred_source_abtb;
+        logic                 stage1_branch_owned;
+        logic [7:0]           stage1_pht_index;
+        logic [1:0]           stage1_pht_counter;
+        logic                 is_conditional_branch;
+        logic                 is_indirect_jump;
+        logic                 is_mul;
+        logic                 is_load;
+        logic                 is_store;
+        frontend_pair_meta_t  pair_meta;
+    } fq_storage_t;
+    localparam int FQ_STORAGE_W = $bits(fq_storage_t);
+
+    // The queue always reads two adjacent entries and writes at most two
+    // adjacent entries.  Adjacent pointers have opposite parity, therefore an
+    // even/odd split turns the old logical 2R2W array into two compact 1R1W
+    // banks.  This is both a better RAM inference shape and removes the large
+    // read/write mux fabric that previously occupied the left-side hotspot.
+    (* ram_style = "distributed" *)
+    logic [FQ_STORAGE_W-1:0] even_bank [0:FQ_BANK_DEPTH-1];
+    (* ram_style = "distributed" *)
+    logic [FQ_STORAGE_W-1:0] odd_bank [0:FQ_BANK_DEPTH-1];
+
+    // pair_contiguous_mem[i] is updated both at the current tail and at the
+    // preceding packet boundary.  Keeping these eight one-bit flags separate
+    // avoids turning either payload bank back into a two-write-port memory.
     logic pair_contiguous_mem [0:FQ_DEPTH-1];
+
+    function automatic fq_storage_t compress_entry(
+        input frontend_fq_entry_t  entry,
+        input frontend_pair_meta_t pair_meta
+    );
+        begin
+            compress_entry = '0;
+            compress_entry.pc = entry.pc;
+            compress_entry.inst = entry.inst;
+            compress_entry.pred_target = entry.pred_target;
+            compress_entry.pred_source_abtb = entry.pred_source_abtb;
+            compress_entry.stage1_branch_owned =
+                entry.stage1_branch_owned;
+            compress_entry.stage1_pht_index = entry.stage1_pht_index;
+            compress_entry.stage1_pht_counter = entry.stage1_pht_counter;
+            compress_entry.is_conditional_branch =
+                entry.is_conditional_branch;
+            compress_entry.is_indirect_jump = entry.is_indirect_jump;
+            compress_entry.is_mul = entry.is_mul;
+            compress_entry.is_load = entry.is_load;
+            compress_entry.is_store = entry.is_store;
+            compress_entry.pair_meta = pair_meta;
+        end
+    endfunction
+
+    function automatic frontend_fq_entry_t expand_entry(
+        input fq_storage_t stored
+    );
+        logic reconstructed_direct_jump;
+        begin
+            // count is the validity owner, so an exposed queue entry is valid
+            // by construction.  Stale RAM contents are ignored while empty.
+            reconstructed_direct_jump = stored.pair_meta.is_cfi
+                                      & ~stored.is_conditional_branch
+                                      & ~stored.is_indirect_jump;
+            expand_entry = '0;
+            expand_entry.valid = 1'b1;
+            expand_entry.pc = stored.pc;
+            expand_entry.inst = stored.inst;
+            expand_entry.pred_taken = stored.pair_meta.pred_taken;
+            expand_entry.pred_target = stored.pred_target;
+            expand_entry.pred_source_abtb = stored.pred_source_abtb;
+            expand_entry.stage1_branch_owned =
+                stored.stage1_branch_owned;
+            expand_entry.stage1_pht_index = stored.stage1_pht_index;
+            expand_entry.stage1_pht_counter = stored.stage1_pht_counter;
+            expand_entry.is_conditional_branch =
+                stored.is_conditional_branch;
+            expand_entry.is_direct_jump = reconstructed_direct_jump;
+            expand_entry.is_indirect_jump = stored.is_indirect_jump;
+            expand_entry.is_muldiv = stored.pair_meta.is_muldiv;
+            expand_entry.is_mul = stored.is_mul;
+            expand_entry.is_load = stored.is_load;
+            expand_entry.is_store = stored.is_store;
+            expand_entry.is_alu_type = stored.pair_meta.is_alu_type;
+            expand_entry.writes_dst = stored.pair_meta.writes_dst;
+            expand_entry.uses_src0 = stored.pair_meta.uses_src0;
+            expand_entry.uses_src1 = stored.pair_meta.uses_src1;
+            expand_entry.is_jump = reconstructed_direct_jump
+                                 | stored.is_indirect_jump;
+            expand_entry.is_control = stored.pair_meta.is_cfi;
+            expand_entry.is_lsu = stored.pair_meta.is_lsu;
+            expand_entry.force_single = stored.pair_meta.force_single;
+        end
+    endfunction
 
     wire [FQ_PTR_W-1:0] head_p2 =
         head + {{(FQ_PTR_W-2){1'b0}}, 2'd2};
@@ -71,60 +176,34 @@ module frontend_fetch_queue
     assign head_p1 = head + {{(FQ_PTR_W-1){1'b0}}, 1'b1};
     assign tail_p1 = tail + {{(FQ_PTR_W-1){1'b0}}, 1'b1};
 
-    assign head0_entry = entry_mem[head];
-    assign head1_entry = entry_mem[head_p1];
-    assign head0_pair_meta = pair_meta_mem[head];
-    assign head1_pair_meta = pair_meta_mem[head_p1];
+    wire [FQ_BANK_ROW_W-1:0] even_read_row =
+        head[0] ? head_p1[FQ_PTR_W-1:1] : head[FQ_PTR_W-1:1];
+    wire [FQ_BANK_ROW_W-1:0] odd_read_row = head[FQ_PTR_W-1:1];
+    wire fq_storage_t even_read_data =
+        fq_storage_t'(even_bank[even_read_row]);
+    wire fq_storage_t odd_read_data =
+        fq_storage_t'(odd_bank[odd_read_row]);
+    wire fq_storage_t head0_stored = head[0]
+                                          ? odd_read_data
+                                          : even_read_data;
+    wire fq_storage_t head1_stored = head[0]
+                                          ? even_read_data
+                                          : odd_read_data;
+
+    assign head0_entry = expand_entry(head0_stored);
+    assign head1_entry = expand_entry(head1_stored);
+    assign head0_pair_meta = head0_stored.pair_meta;
+    assign head1_pair_meta = head1_stored.pair_meta;
     assign head_pair_contiguous = pair_contiguous_mem[head];
 
     wire enq_two = enq1_valid;
-    wire enq_one = enq0_valid && !enq1_valid;
-    wire enq_none = !enq0_valid;
     wire enq_fire = enq0_valid;
-
-    // Head/tail/count are computed independently so enqueue and dequeue can
-    // occur in the same cycle.
-    wire deq_none = ~deq_fire;
-
-    wire [FQ_PTR_W:0] count_p2 =
-        count + {{(FQ_PTR_W-1){1'b0}}, 2'd2};
-    wire [FQ_PTR_W:0] count_p1 =
-        count + {{FQ_PTR_W{1'b0}}, 1'b1};
-    wire [FQ_PTR_W:0] count_m1 =
-        count - {{FQ_PTR_W{1'b0}}, 1'b1};
-    wire [FQ_PTR_W:0] count_m2 =
-        count - {{(FQ_PTR_W-1){1'b0}}, 2'd2};
-
-    // Enqueue-dependent candidates are built in parallel.  The late dequeue
-    // decision then selects only once, keeping backend id_allowin out of the
-    // old inc/dec predicate tree.
-    wire [FQ_PTR_W:0] count_if_deq_none =
-        ({(FQ_PTR_W+1){enq_two}}  & count_p2) |
-        ({(FQ_PTR_W+1){enq_one}}  & count_p1) |
-        ({(FQ_PTR_W+1){enq_none}} & count);
-    wire [FQ_PTR_W:0] count_if_deq_single =
-        ({(FQ_PTR_W+1){enq_two}}  & count_p1) |
-        ({(FQ_PTR_W+1){enq_one}}  & count) |
-        ({(FQ_PTR_W+1){enq_none}} & count_m1);
-    wire [FQ_PTR_W:0] count_if_deq_dual =
-        ({(FQ_PTR_W+1){enq_two}}  & count) |
-        ({(FQ_PTR_W+1){enq_one}}  & count_m1) |
-        ({(FQ_PTR_W+1){enq_none}} & count_m2);
-
-    // Packet width is known from the registered queue head before backend
-    // acceptance arrives. Select that candidate first, then let the late fire
-    // bit choose only between dequeue and no-dequeue results.
-    wire [FQ_PTR_W:0] count_if_deq =
-        deq_two ? count_if_deq_dual : count_if_deq_single;
-    // Complete the hold case in the D input instead of using the late
-    // backend-derived dequeue event as the count register's clock enable.
-    // The explicit enq_fire arm also preserves the old hold behavior for an
-    // invalid enq1-without-enq0 input combination; legal packets are still
-    // exactly zero, one or two entries wide.
-    wire [FQ_PTR_W:0] count_next =
-        deq_fire ? count_if_deq
-      : enq_fire ? count_if_deq_none
-                 : count;
+    wire [FQ_PTR_W:0] enq_total_next = enq_total_q
+        + (enq_two ? {{(FQ_PTR_W-1){1'b0}}, 2'd2}
+                   : {{FQ_PTR_W{1'b0}}, 1'b1});
+    wire [FQ_PTR_W:0] deq_total_next = deq_total_q
+        + (deq_two ? {{(FQ_PTR_W-1){1'b0}}, 2'd2}
+                   : {{FQ_PTR_W{1'b0}}, 1'b1});
 
     wire [31:0] enq_last_next_pc =
         enq_two ? (enq_entry1.pc + 32'd4) : (enq_entry0.pc + 32'd4);
@@ -134,13 +213,13 @@ module frontend_fetch_queue
     // before count exposes it.
     always_ff @(posedge clk) begin
         if (!rst_n) begin
-            head <= '0;
+            head_q <= '0;
         end else if (flush) begin
-            head <= '0;
+            head_q <= '0;
         end else if (deq_fire)
             // Backend acceptance reaches only CE.  Once enabled, the data
             // input depends solely on the early one-entry/two-entry choice.
-            head <= deq_two ? head_p2 : head_p1;
+            head_q <= deq_two ? head_p2 : head_p1;
     end
 
     always_ff @(posedge clk) begin
@@ -154,11 +233,20 @@ module frontend_fetch_queue
 
     always_ff @(posedge clk) begin
         if (!rst_n)
-            count <= '0;
+            enq_total_q <= '0;
         else if (flush)
-            count <= '0;
-        else
-            count <= count_next;
+            enq_total_q <= '0;
+        else if (enq_fire)
+            enq_total_q <= enq_total_next;
+    end
+
+    always_ff @(posedge clk) begin
+        if (!rst_n)
+            deq_total_q <= '0;
+        else if (flush)
+            deq_total_q <= '0;
+        else if (deq_fire)
+            deq_total_q <= deq_total_next;
     end
 
     // count==0 masks this continuity payload after reset/flush.  The next
@@ -176,8 +264,8 @@ module frontend_fetch_queue
     generate
         for (genvar pair_idx = 0; pair_idx < FQ_DEPTH; pair_idx++) begin : g_pair_contiguous_write
             localparam logic [FQ_PTR_W-1:0] PAIR_INDEX = pair_idx;
-            wire pair_write_current = enq0_payload & (tail == PAIR_INDEX);
-            wire pair_write_previous = enq0_payload & (count != 0)
+            wire pair_write_current = enq0_valid & (tail == PAIR_INDEX);
+            wire pair_write_previous = enq0_valid & (count != 0)
                                      & (tail_m1 == PAIR_INDEX);
             wire pair_write_enable = pair_write_current
                                    | pair_write_previous;
@@ -192,21 +280,96 @@ module frontend_fetch_queue
         end
     endgenerate
 
-    // Keep payload arrays off the reset/flush fanout. The boundary bit belonging
-    // to packet slot 1 is not initialized: it is ignored while that entry has
-    // no successor, then overwritten through the per-entry block above when
-    // the next packet arrives.
+    wire even_write_entry0 = enq0_valid & ~tail[0];
+    wire even_write_entry1 = enq1_valid & tail[0];
+    wire odd_write_entry0 = enq0_valid & tail[0];
+    wire odd_write_entry1 = enq1_valid & ~tail[0];
+    wire even_write = even_write_entry0 | even_write_entry1;
+    wire odd_write = odd_write_entry0 | odd_write_entry1;
+    wire [FQ_BANK_ROW_W-1:0] even_write_row = even_write_entry0
+        ? tail[FQ_PTR_W-1:1] : tail_p1[FQ_PTR_W-1:1];
+    wire [FQ_BANK_ROW_W-1:0] odd_write_row = odd_write_entry0
+        ? tail[FQ_PTR_W-1:1] : tail_p1[FQ_PTR_W-1:1];
+    wire fq_storage_t even_write_data = even_write_entry0
+        ? compress_entry(enq_entry0, enq_pair_meta0)
+        : compress_entry(enq_entry1, enq_pair_meta1);
+    wire fq_storage_t odd_write_data = odd_write_entry0
+        ? compress_entry(enq_entry0, enq_pair_meta0)
+        : compress_entry(enq_entry1, enq_pair_meta1);
+
+    // Keep payload banks off reset/flush fanout.  A flush-coincident write is
+    // harmless because count is cleared, and a later allocation overwrites the
+    // selected row before exposing it.
     always_ff @(posedge clk) begin
-        // A speculative reset/flush-coincident write is harmless until count
-        // exposes it; a later allocation overwrites the selected slot.
-        if (enq0_payload) begin
-            entry_mem[tail] <= enq_entry0;
-            pair_meta_mem[tail] <= enq_pair_meta0;
+        if (even_write)
+            even_bank[even_write_row] <= even_write_data;
+        if (odd_write)
+            odd_bank[odd_write_row] <= odd_write_data;
+    end
+
+`ifndef SYNTHESIS
+    logic [FQ_PTR_W:0] count_reference_q;
+
+    // Retain the former monolithic occupancy equation as an executable model.
+    // This proves simultaneous enqueue/dequeue, wrap, reset and flush behavior
+    // remain cycle-identical after separating producer and consumer state.
+    always_ff @(posedge clk) begin
+        if (!rst_n)
+            count_reference_q <= '0;
+        else if (flush)
+            count_reference_q <= '0;
+        else begin
+            count_reference_q <= count_reference_q
+                + (enq_fire
+                    ? (enq_two
+                        ? {{(FQ_PTR_W-1){1'b0}}, 2'd2}
+                        : {{FQ_PTR_W{1'b0}}, 1'b1})
+                    : '0)
+                - (deq_fire
+                    ? (deq_two
+                        ? {{(FQ_PTR_W-1){1'b0}}, 2'd2}
+                        : {{FQ_PTR_W{1'b0}}, 1'b1})
+                    : '0);
         end
-        if (enq1_payload) begin
-            entry_mem[tail_p1] <= enq_entry1;
-            pair_meta_mem[tail_p1] <= enq_pair_meta1;
+
+        if (rst_n && !flush && (count !== count_reference_q))
+            $fatal(1, "FQ split producer/consumer count changed occupancy");
+        if (rst_n && (count > FQ_DEPTH))
+            $fatal(1, "FQ occupancy exceeded configured depth");
+    end
+
+    // Compression deliberately relies on metadata equality that the packet
+    // builder guarantees.  Keep that contract executable so future frontend
+    // edits cannot silently make a removed duplicate field architecturally
+    // observable. entry.is_control is intentionally excluded: static-kill
+    // illegal/privileged entries may set it without being a CFI, and no
+    // post-FQ consumer observes that retired compatibility field.
+    always_ff @(posedge clk) begin
+        if (rst_n && enq0_valid) begin
+            if ((enq_entry0.pred_taken !== enq_pair_meta0.pred_taken)
+                || (enq_entry0.force_single
+                    !== enq_pair_meta0.force_single)
+                || (enq_entry0.is_muldiv !== enq_pair_meta0.is_muldiv)
+                || (enq_entry0.is_alu_type !== enq_pair_meta0.is_alu_type)
+                || (enq_entry0.is_lsu !== enq_pair_meta0.is_lsu)
+                || (enq_entry0.writes_dst !== enq_pair_meta0.writes_dst)
+                || (enq_entry0.uses_src0 !== enq_pair_meta0.uses_src0)
+                || (enq_entry0.uses_src1 !== enq_pair_meta0.uses_src1))
+                $fatal(1, "FQ slot 0 duplicate metadata disagrees");
+        end
+        if (rst_n && enq1_valid) begin
+            if ((enq_entry1.pred_taken !== enq_pair_meta1.pred_taken)
+                || (enq_entry1.force_single
+                    !== enq_pair_meta1.force_single)
+                || (enq_entry1.is_muldiv !== enq_pair_meta1.is_muldiv)
+                || (enq_entry1.is_alu_type !== enq_pair_meta1.is_alu_type)
+                || (enq_entry1.is_lsu !== enq_pair_meta1.is_lsu)
+                || (enq_entry1.writes_dst !== enq_pair_meta1.writes_dst)
+                || (enq_entry1.uses_src0 !== enq_pair_meta1.uses_src0)
+                || (enq_entry1.uses_src1 !== enq_pair_meta1.uses_src1))
+                $fatal(1, "FQ slot 1 duplicate metadata disagrees");
         end
     end
+`endif
 
 endmodule

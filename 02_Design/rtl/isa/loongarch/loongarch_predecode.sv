@@ -249,7 +249,9 @@ module loongarch_cached_predecode_expand
 (
     input  logic [31:0]                 inst,
     input  frontend_icache_predecode_t  cached,
-    output frontend_predecode_t         expanded
+    input  logic                        pred_taken,
+    output frontend_predecode_t         expanded,
+    output frontend_pair_meta_t         pair_metadata
 );
     logic kind_alu_rr;
     logic kind_alu_imm;
@@ -346,6 +348,31 @@ module loongarch_cached_predecode_expand
         expanded.lane_mask = {slot1_allowed, 1'b1};
         expanded.block_younger = cached.block_younger;
         expanded.serializing = ~(younger_allowed | kind_jirl);
+
+        // Pairing and the complete FQ entry consume the same exact-kind
+        // predicates. Build both views here so synthesis shares each 5-bit
+        // kind comparison instead of retaining a second timing-only decoder.
+        pair_metadata = '0;
+        pair_metadata.pred_taken = pred_taken;
+        pair_metadata.force_single = cached.block_younger;
+        pair_metadata.is_muldiv = kind_muldiv;
+        pair_metadata.is_alu_type = kind_alu_rr
+                                  | kind_alu_imm | kind_upper_imm;
+        pair_metadata.is_lsu = kind_load | kind_store;
+        pair_metadata.is_cfi = kind_conditional | kind_direct | kind_jirl;
+        pair_metadata.writes_dst = cached.writes_dst;
+        pair_metadata.uses_src0 = kind_alu_rr | kind_alu_imm | kind_muldiv
+                                | kind_load | kind_store | kind_conditional
+                                | kind_jirl | kind_csr_write
+                                | kind_csr_exchange | kind_cpucfg;
+        pair_metadata.uses_src1 = kind_alu_rr | kind_muldiv | kind_store
+                                | kind_conditional | kind_csr_exchange;
+        pair_metadata.src0_addr = kind_csr ? inst[4:0] : inst[9:5];
+        pair_metadata.src1_addr = kind_csr ? inst[9:5]
+                                : (kind_store | kind_conditional)
+                                    ? inst[4:0] : inst[14:10];
+        pair_metadata.dst_addr = kind_branch_link ? 5'd1
+                               : kind_counter_id ? inst[9:5] : inst[4:0];
     end
 endmodule
 
@@ -388,11 +415,15 @@ module isa_cached_predecode_expand
 (
     input  logic [31:0]                 inst,
     input  frontend_icache_predecode_t  cached,
-    output frontend_predecode_t         expanded
+    input  logic                        pred_taken,
+    output frontend_predecode_t         expanded,
+    output frontend_pair_meta_t         pair_metadata
 );
     loongarch_cached_predecode_expand u_impl (
-        .inst         (inst),
-        .cached       (cached),
-        .expanded     (expanded)
+        .inst          (inst),
+        .cached        (cached),
+        .pred_taken    (pred_taken),
+        .expanded      (expanded),
+        .pair_metadata (pair_metadata)
     );
 endmodule

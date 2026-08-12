@@ -235,16 +235,16 @@ module forwarding (
 `define FWD_MUX(TAG, SRC_ADDR, RF_DATA, OUT_DATA) \
     /* Build match bits for one ID operand. Younger pipeline stages have */ \
     /* priority over older ones; within a stage Slot 1 is younger than Slot 0. */ \
-    wire TAG``_s1_ex_hit  = ex_s1_valid  && ex_s1_reg_write  && !ex_s1_result_repair && (ex_s1_rd != 5'd0) && (ex_s1_rd == SRC_ADDR); \
-    wire TAG``_s0_ex_hit  = ex_valid     && ex_reg_write     && !ex_result_repair && (ex_rd != 5'd0) && (ex_rd == SRC_ADDR); \
+    wire TAG``_s1_ex_hit  = ex_s1_hazard_valid && ex_s1_hazard_reg_write && !ex_s1_hazard_result_repair && (ex_s1_hazard_rd != 5'd0) && (ex_s1_hazard_rd == SRC_ADDR); \
+    wire TAG``_s0_ex_hit  = ex_hazard_valid && ex_hazard_reg_write && !ex_hazard_result_repair && (ex_hazard_rd != 5'd0) && (ex_hazard_rd == SRC_ADDR); \
     wire TAG``_s1_mem_hit = mem_s1_valid && mem_s1_reg_write && !mem_s1_is_load && (mem_s1_rd != 5'd0) && (mem_s1_rd == SRC_ADDR); \
     wire TAG``_s0_mem_hit = mem_valid    && mem_reg_write    && !mem_is_load    && (mem_rd    != 5'd0) && (mem_rd    == SRC_ADDR); \
     /* WB match bits feed both raw operands and transformed ALU candidates. */ \
-    /* Bound that one-bit control fanout so synthesis may place local copies */ \
-    /* near the corresponding ID/EX byte lanes instead of routing one global */ \
-    /* select across the complete 32-bit payload. */ \
-    (* max_fanout = 16 *) wire TAG``_s1_wb_hit  = wb_s1_valid  && wb_s1_reg_write  && (wb_s1_rd != 5'd0) && (wb_s1_rd == SRC_ADDR); \
-    (* max_fanout = 16 *) wire TAG``_s0_wb_hit  = wb_valid     && wb_reg_write     && (wb_rd    != 5'd0) && (wb_rd    == SRC_ADDR); \
+    /* They are already local to one operand cluster; MAX_FANOUT on these */ \
+    /* one- or two-load nets only propagates attributes into unrelated mux */ \
+    /* logic and creates tool-controlled replicas. */ \
+    wire TAG``_s1_wb_hit  = wb_s1_valid  && wb_s1_reg_write  && (wb_s1_rd != 5'd0) && (wb_s1_rd == SRC_ADDR); \
+    wire TAG``_s0_wb_hit  = wb_valid     && wb_reg_write     && (wb_rd    != 5'd0) && (wb_rd    == SRC_ADDR); \
     wire TAG``_ex_group_hit  = TAG``_s1_ex_hit | TAG``_s0_ex_hit; \
     wire TAG``_s0_mem_nonmul_hit = TAG``_s0_mem_hit \
                                  && (!mem_is_mul || mem_select_pc4); \

@@ -61,6 +61,8 @@ module frontend_f0_packet_builder
     frontend_icache_predecode_t block1_cached_dec;
     frontend_icache_predecode_t slot0_cached_dec;
     frontend_icache_predecode_t slot1_cached_dec;
+    frontend_pair_meta_t slot0_pair_metadata;
+    frontend_pair_meta_t slot1_pair_metadata;
     logic slot0_branch_owned;
     logic slot1_branch_owned;
     logic slot0_pred_taken;
@@ -91,15 +93,19 @@ module frontend_f0_packet_builder
     // F0 therefore expands the cached kind directly and never places a full
     // opcode decoder after the synchronous ICache data output.
     isa_cached_predecode_expand u_expand_slot0 (
-        .inst     (slot0_inst),
-        .cached   (slot0_cached_dec),
-        .expanded (slot0_effective_dec)
+        .inst          (slot0_inst),
+        .cached        (slot0_cached_dec),
+        .pred_taken    (slot0_pred_taken),
+        .expanded      (slot0_effective_dec),
+        .pair_metadata (slot0_pair_metadata)
     );
 
     isa_cached_predecode_expand u_expand_slot1 (
-        .inst     (slot1_inst),
-        .cached   (slot1_cached_dec),
-        .expanded (slot1_effective_dec)
+        .inst          (slot1_inst),
+        .cached        (slot1_cached_dec),
+        .pred_taken    (slot1_pred_taken),
+        .expanded      (slot1_effective_dec),
+        .pair_metadata (slot1_pair_metadata)
     );
 
     // 这个结构体包含了fq entry需要的所有信息。
@@ -156,30 +162,6 @@ module frontend_f0_packet_builder
             make_entry.is_control = decoded.is_control;
             make_entry.is_lsu = decoded.is_lsu;
             make_entry.force_single = force_single;
-        end
-    endfunction
-
-    // 预译码信息。
-    function automatic frontend_pair_meta_t make_pair_meta(
-        input frontend_predecode_t decoded, // 包含了指令的类型信息和寄存器使用信息，以及指令是否需要单独发射的信息。
-        input logic                pred_taken,
-        input logic                writes_dst,
-        input logic                force_single
-    );
-        begin
-            make_pair_meta = '0;
-            make_pair_meta.pred_taken = pred_taken;
-            make_pair_meta.force_single = force_single;
-            make_pair_meta.is_muldiv = decoded.is_muldiv;
-            make_pair_meta.is_alu_type = decoded.is_alu_type;
-            make_pair_meta.is_lsu = decoded.is_lsu;
-            make_pair_meta.is_cfi = decoded.is_cfi;
-            make_pair_meta.writes_dst = writes_dst;
-            make_pair_meta.uses_src0 = decoded.uses_src0;
-            make_pair_meta.uses_src1 = decoded.uses_src1;
-            make_pair_meta.dst_addr = decoded.dst_addr;
-            make_pair_meta.src0_addr = decoded.src0_addr;
-            make_pair_meta.src1_addr = decoded.src1_addr;
         end
     endfunction
 
@@ -257,19 +239,8 @@ module frontend_f0_packet_builder
             bank1_meta.pht_counter
         );
 
-        // 预译码信息。
-        pair_meta0 = make_pair_meta(
-            slot0_effective_dec, // frontend_predecode_t decoded
-            slot0_pred_taken, // pred_taken
-            slot0_cached_dec.writes_dst,
-            slot0_cached_dec.block_younger // force_single
-        );
-        pair_meta1 = make_pair_meta(
-            slot1_effective_dec,
-            slot1_pred_taken,
-            slot1_cached_dec.writes_dst,
-            slot1_cached_dec.block_younger
-        );
+        pair_meta0 = slot0_pair_metadata;
+        pair_meta1 = slot1_pair_metadata;
     end
 
 endmodule

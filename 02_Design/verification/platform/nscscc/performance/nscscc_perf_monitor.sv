@@ -103,6 +103,7 @@ module nscscc_perf_monitor (
     input logic        id_s0_store,
     input logic        id_s0_alu_only,
     input logic        id_s0_conditional,
+    input logic [ 2:0] id_s0_branch_op,
     input logic        id_s0_indirect,
     input logic        id_s0_rs1_used,
     input logic        id_s0_rs2_used,
@@ -114,6 +115,7 @@ module nscscc_perf_monitor (
     input logic        id_s1_store,
     input logic        id_s1_alu_only,
     input logic        id_s1_conditional,
+    input logic [ 2:0] id_s1_branch_op,
     input logic        id_s1_indirect,
     input logic        id_s1_rs1_used,
     input logic        id_s1_rs2_used,
@@ -124,8 +126,10 @@ module nscscc_perf_monitor (
     input logic        id_ex_load_hazard,
     input logic        id_mem_load_hazard,
     input logic        ex_s0_load,
+    input logic [ 1:0] ex_s0_load_size,
     input logic [ 4:0] ex_s0_rd,
     input logic        ex_s1_load,
+    input logic [ 1:0] ex_s1_load_size,
     input logic [ 4:0] ex_s1_rd,
     input logic        ex_store_load_overlap,
     input logic        ex_store_load_same_word,
@@ -197,6 +201,8 @@ module nscscc_perf_monitor (
     longint unsigned max_sim_cycles;
     longint unsigned simulation_cycles;
     logic measurement_active;
+    integer icache_trace_fd;
+    string icache_trace_path;
 
     longint unsigned boundaries;
     longint unsigned intervals;
@@ -269,7 +275,7 @@ module nscscc_perf_monitor (
         BUBBLE_MEM_OTHER
     } bubble_cause_t;
 
-    // Standard 3C classification for the current 8 KiB, direct-mapped,
+    // Standard 3C classification for the configured direct-mapped/2-way,
     // 16-byte-line ICache.  A same-capacity fully-associative LRU shadow
     // separates conflict misses from capacity misses without changing DUT
     // behavior.  OUTSIDE covers the deliberately uncacheable PC window.
@@ -484,7 +490,13 @@ module nscscc_perf_monitor (
     longint unsigned icache_outside_refill_slots;
     longint unsigned icache_3c_unclassified_refill_slots;
 
-    localparam integer ICACHE_SHADOW_LINES = 512;
+    localparam integer ICACHE_PROFILE_BYTES =
+`ifdef NSCSCC_ICACHE_BYTES
+        `NSCSCC_ICACHE_BYTES;
+`else
+        16384;
+`endif
+    localparam integer ICACHE_SHADOW_LINES = ICACHE_PROFILE_BYTES / 16;
     localparam integer ICACHE_WINDOW_LINES = 65536;
     logic [ICACHE_WINDOW_LINES-1:0] icache_shadow_seen_q;
     logic [ICACHE_WINDOW_LINES-1:0] icache_shadow_valid_q;
@@ -492,7 +504,7 @@ module nscscc_perf_monitor (
     logic [15:0] icache_shadow_next_q [0:ICACHE_WINDOW_LINES-1];
     logic [15:0] icache_shadow_head_q;
     logic [15:0] icache_shadow_tail_q;
-    logic [ 9:0] icache_shadow_count_q;
+    logic [$clog2(ICACHE_SHADOW_LINES+1)-1:0] icache_shadow_count_q;
     icache_3c_class_t active_icache_3c_class_q;
 
     longint unsigned dcache_load_hits;
@@ -536,6 +548,22 @@ module nscscc_perf_monitor (
     longint unsigned early_raw_role_branch;
     longint unsigned early_raw_role_jirl;
     longint unsigned early_raw_role_other;
+    longint unsigned early_raw_branch_load_byte;
+    longint unsigned early_raw_branch_load_half;
+    longint unsigned early_raw_branch_load_word;
+    longint unsigned early_raw_branch_op_eq;
+    longint unsigned early_raw_branch_op_ne;
+    longint unsigned early_raw_branch_op_lt;
+    longint unsigned early_raw_branch_op_ge;
+    longint unsigned early_raw_branch_op_ltu;
+    longint unsigned early_raw_branch_op_geu;
+    longint unsigned early_raw_branch_byte_eqne;
+    longint unsigned early_raw_branch_half_eqne;
+    longint unsigned early_raw_branch_word_eqne;
+    longint unsigned early_raw_branch_hit;
+    longint unsigned early_raw_branch_byte_eqne_hit;
+    longint unsigned early_raw_branch_half_eqne_hit;
+    longint unsigned early_raw_branch_word_eqne_hit;
     longint unsigned early_raw_hit_safe_all;
     longint unsigned early_raw_hit_aggressive_all;
     longint unsigned early_raw_hit_safe_all_no_store;
@@ -559,6 +587,10 @@ module nscscc_perf_monitor (
     logic mem_raw_event;
     logic mem_raw_repairable;
     logic mem_raw_measured;
+    logic mem_raw_branch;
+    logic mem_raw_branch_byte_eqne;
+    logic mem_raw_branch_half_eqne;
+    logic mem_raw_branch_word_eqne;
     logic mem_store_same_word;
 
     longint unsigned axi_read_requests_i;
@@ -683,6 +715,44 @@ module nscscc_perf_monitor (
     wire id_raw_role_branch = id_raw_ex_event
         & ((id_s0_ex_load_dep & id_s0_conditional)
          | (id_s1_ex_load_dep & id_s1_conditional));
+    wire id_raw_branch_s0 = id_raw_ex_event
+                          & id_s0_ex_load_dep & id_s0_conditional;
+    wire id_raw_branch_s1 = id_raw_ex_event
+                          & id_s1_ex_load_dep & id_s1_conditional;
+    wire id_raw_branch_op_eq =
+        (id_raw_branch_s0 & (id_s0_branch_op == cpu_defs::BR_EQ))
+      | (id_raw_branch_s1 & (id_s1_branch_op == cpu_defs::BR_EQ));
+    wire id_raw_branch_op_ne =
+        (id_raw_branch_s0 & (id_s0_branch_op == cpu_defs::BR_NE))
+      | (id_raw_branch_s1 & (id_s1_branch_op == cpu_defs::BR_NE));
+    wire id_raw_branch_op_lt =
+        (id_raw_branch_s0 & (id_s0_branch_op == cpu_defs::BR_LT))
+      | (id_raw_branch_s1 & (id_s1_branch_op == cpu_defs::BR_LT));
+    wire id_raw_branch_op_ge =
+        (id_raw_branch_s0 & (id_s0_branch_op == cpu_defs::BR_GE))
+      | (id_raw_branch_s1 & (id_s1_branch_op == cpu_defs::BR_GE));
+    wire id_raw_branch_op_ltu =
+        (id_raw_branch_s0 & (id_s0_branch_op == cpu_defs::BR_LTU))
+      | (id_raw_branch_s1 & (id_s1_branch_op == cpu_defs::BR_LTU));
+    wire id_raw_branch_op_geu =
+        (id_raw_branch_s0 & (id_s0_branch_op == cpu_defs::BR_GEU))
+      | (id_raw_branch_s1 & (id_s1_branch_op == cpu_defs::BR_GEU));
+    wire ex_raw_load_byte =
+        (ex_s0_load_producer & (ex_s0_load_size == cpu_defs::MEM_BYTE))
+      | (ex_s1_load_producer & (ex_s1_load_size == cpu_defs::MEM_BYTE));
+    wire ex_raw_load_half =
+        (ex_s0_load_producer & (ex_s0_load_size == cpu_defs::MEM_HALF))
+      | (ex_s1_load_producer & (ex_s1_load_size == cpu_defs::MEM_HALF));
+    wire ex_raw_load_word =
+        (ex_s0_load_producer & (ex_s0_load_size == cpu_defs::MEM_WORD))
+      | (ex_s1_load_producer & (ex_s1_load_size == cpu_defs::MEM_WORD));
+    wire id_raw_branch_eqne = id_raw_branch_op_eq | id_raw_branch_op_ne;
+    wire id_raw_branch_byte_eqne = id_raw_role_branch
+                                  & ex_raw_load_byte & id_raw_branch_eqne;
+    wire id_raw_branch_half_eqne = id_raw_role_branch
+                                  & ex_raw_load_half & id_raw_branch_eqne;
+    wire id_raw_branch_word_eqne = id_raw_role_branch
+                                  & ex_raw_load_word & id_raw_branch_eqne;
     wire id_raw_role_jirl = id_raw_ex_event
         & ((id_s0_ex_load_dep & id_s0_indirect)
          | (id_s1_ex_load_dep & id_s1_indirect));
@@ -1250,6 +1320,21 @@ module nscscc_perf_monitor (
         if (!$value$plusargs("perf_stop_pc=%h", stop_pc)) begin end
         if (!$value$plusargs("perf_uart_putchar_pc=%h", uart_putchar_pc)) begin end
         if (!$value$plusargs("perf_max_cycles=%d", max_sim_cycles)) begin end
+        icache_trace_fd = 0;
+        if ($value$plusargs("perf_icache_trace=%s", icache_trace_path)) begin
+            icache_trace_fd = $fopen(icache_trace_path, "w");
+            if (icache_trace_fd == 0)
+                $fatal(1, "cannot open ICache trace %s", icache_trace_path);
+        end
+    end
+
+    // Optional compact trace for the explanatory software cache model. The
+    // first column marks the exact performance counter window; the second is
+    // the 16-byte line address observed by the real lookup pipeline.
+    always_ff @(posedge clk) begin
+        if (icache_trace_fd != 0 && icache_lookup_valid)
+            $fdisplay(icache_trace_fd, "%0d %07x",
+                      measurement_active, icache_lookup_line_addr);
     end
 
     task automatic emit_results;
@@ -1393,6 +1478,23 @@ module nscscc_perf_monitor (
                 early_store_load_diff_word,
                 early_store_same_word_hit_safe,
                 early_store_same_word_hit_aggressive);
+            $display("NSCSCC_PERF_RESULT,raw_branch_detail,early_raw_branch_load_byte=%0d,early_raw_branch_load_half=%0d,early_raw_branch_load_word=%0d,early_raw_branch_op_eq=%0d,early_raw_branch_op_ne=%0d,early_raw_branch_op_lt=%0d,early_raw_branch_op_ge=%0d,early_raw_branch_op_ltu=%0d,early_raw_branch_op_geu=%0d,early_raw_branch_byte_eqne=%0d,early_raw_branch_half_eqne=%0d,early_raw_branch_word_eqne=%0d,early_raw_branch_hit=%0d,early_raw_branch_byte_eqne_hit=%0d,early_raw_branch_half_eqne_hit=%0d,early_raw_branch_word_eqne_hit=%0d",
+                early_raw_branch_load_byte,
+                early_raw_branch_load_half,
+                early_raw_branch_load_word,
+                early_raw_branch_op_eq,
+                early_raw_branch_op_ne,
+                early_raw_branch_op_lt,
+                early_raw_branch_op_ge,
+                early_raw_branch_op_ltu,
+                early_raw_branch_op_geu,
+                early_raw_branch_byte_eqne,
+                early_raw_branch_half_eqne,
+                early_raw_branch_word_eqne,
+                early_raw_branch_hit,
+                early_raw_branch_byte_eqne_hit,
+                early_raw_branch_half_eqne_hit,
+                early_raw_branch_word_eqne_hit);
             $display("NSCSCC_PERF_RESULT,axi,axi_read_requests_i=%0d,axi_read_requests_d=%0d,axi_read_requests_other=%0d,axi_read_beats_i=%0d,axi_read_beats_d=%0d,axi_ar_stall_cycles=%0d,axi_r_gap_cycles=%0d,axi_both_read_outstanding_cycles=%0d,axi_write_requests=%0d,axi_write_beats=%0d,axi_write_responses=%0d,axi_i_first_latency_sum=%0d,axi_i_first_latency_max=%0d,axi_i_first_latency_samples=%0d,axi_d_first_latency_sum=%0d,axi_d_first_latency_max=%0d,axi_d_first_latency_samples=%0d,axi_pending_at_interval_end=%0d",
                 axi_read_requests_i, axi_read_requests_d,
                 axi_read_requests_other, axi_read_beats_i, axi_read_beats_d,
@@ -1424,6 +1526,10 @@ module nscscc_perf_monitor (
             mem_raw_event <= 1'b0;
             mem_raw_repairable <= 1'b0;
             mem_raw_measured <= 1'b0;
+            mem_raw_branch <= 1'b0;
+            mem_raw_branch_byte_eqne <= 1'b0;
+            mem_raw_branch_half_eqne <= 1'b0;
+            mem_raw_branch_word_eqne <= 1'b0;
             mem_store_same_word <= 1'b0;
         end else begin
             if (ex_allowin) begin
@@ -1442,6 +1548,10 @@ module nscscc_perf_monitor (
                 mem_raw_event <= id_raw_ex_event;
                 mem_raw_repairable <= id_raw_repairable_event;
                 mem_raw_measured <= measurement_active & id_raw_ex_event;
+                mem_raw_branch <= id_raw_role_branch;
+                mem_raw_branch_byte_eqne <= id_raw_branch_byte_eqne;
+                mem_raw_branch_half_eqne <= id_raw_branch_half_eqne;
+                mem_raw_branch_word_eqne <= id_raw_branch_word_eqne;
                 mem_store_same_word <= ex_store_load_same_word;
             end
         end
@@ -1647,6 +1757,22 @@ module nscscc_perf_monitor (
             early_raw_role_branch <= 0;
             early_raw_role_jirl <= 0;
             early_raw_role_other <= 0;
+            early_raw_branch_load_byte <= 0;
+            early_raw_branch_load_half <= 0;
+            early_raw_branch_load_word <= 0;
+            early_raw_branch_op_eq <= 0;
+            early_raw_branch_op_ne <= 0;
+            early_raw_branch_op_lt <= 0;
+            early_raw_branch_op_ge <= 0;
+            early_raw_branch_op_ltu <= 0;
+            early_raw_branch_op_geu <= 0;
+            early_raw_branch_byte_eqne <= 0;
+            early_raw_branch_half_eqne <= 0;
+            early_raw_branch_word_eqne <= 0;
+            early_raw_branch_hit <= 0;
+            early_raw_branch_byte_eqne_hit <= 0;
+            early_raw_branch_half_eqne_hit <= 0;
+            early_raw_branch_word_eqne_hit <= 0;
             early_raw_hit_safe_all <= 0;
             early_raw_hit_aggressive_all <= 0;
             early_raw_hit_safe_all_no_store <= 0;
@@ -2533,6 +2659,42 @@ module nscscc_perf_monitor (
                             early_raw_role_store_data + 1;
                     if (id_raw_role_branch)
                         early_raw_role_branch <= early_raw_role_branch + 1;
+                    if (id_raw_role_branch & ex_raw_load_byte)
+                        early_raw_branch_load_byte <=
+                            early_raw_branch_load_byte + 1;
+                    if (id_raw_role_branch & ex_raw_load_half)
+                        early_raw_branch_load_half <=
+                            early_raw_branch_load_half + 1;
+                    if (id_raw_role_branch & ex_raw_load_word)
+                        early_raw_branch_load_word <=
+                            early_raw_branch_load_word + 1;
+                    if (id_raw_branch_op_eq)
+                        early_raw_branch_op_eq <=
+                            early_raw_branch_op_eq + 1;
+                    if (id_raw_branch_op_ne)
+                        early_raw_branch_op_ne <=
+                            early_raw_branch_op_ne + 1;
+                    if (id_raw_branch_op_lt)
+                        early_raw_branch_op_lt <=
+                            early_raw_branch_op_lt + 1;
+                    if (id_raw_branch_op_ge)
+                        early_raw_branch_op_ge <=
+                            early_raw_branch_op_ge + 1;
+                    if (id_raw_branch_op_ltu)
+                        early_raw_branch_op_ltu <=
+                            early_raw_branch_op_ltu + 1;
+                    if (id_raw_branch_op_geu)
+                        early_raw_branch_op_geu <=
+                            early_raw_branch_op_geu + 1;
+                    if (id_raw_branch_byte_eqne)
+                        early_raw_branch_byte_eqne <=
+                            early_raw_branch_byte_eqne + 1;
+                    if (id_raw_branch_half_eqne)
+                        early_raw_branch_half_eqne <=
+                            early_raw_branch_half_eqne + 1;
+                    if (id_raw_branch_word_eqne)
+                        early_raw_branch_word_eqne <=
+                            early_raw_branch_word_eqne + 1;
                     if (id_raw_role_jirl)
                         early_raw_role_jirl <= early_raw_role_jirl + 1;
                     if (id_raw_role_other)
@@ -2571,6 +2733,18 @@ module nscscc_perf_monitor (
                 end
                 if (dcache_load_hit && mem_raw_measured
                     && mem_raw_event) begin
+                    if (mem_raw_branch)
+                        early_raw_branch_hit <=
+                            early_raw_branch_hit + 1;
+                    if (mem_raw_branch_byte_eqne)
+                        early_raw_branch_byte_eqne_hit <=
+                            early_raw_branch_byte_eqne_hit + 1;
+                    if (mem_raw_branch_half_eqne)
+                        early_raw_branch_half_eqne_hit <=
+                            early_raw_branch_half_eqne_hit + 1;
+                    if (mem_raw_branch_word_eqne)
+                        early_raw_branch_word_eqne_hit <=
+                            early_raw_branch_word_eqne_hit + 1;
                     if (mem_prelookup_safe) begin
                         early_raw_hit_safe_all <=
                             early_raw_hit_safe_all + 1;
@@ -2695,6 +2869,8 @@ module nscscc_perf_monitor (
             if ((commit0_valid && (commit0_pc == stop_pc))
                 || (commit1_valid && (commit1_pc == stop_pc))) begin
                 emit_results();
+                if (icache_trace_fd != 0)
+                    $fclose(icache_trace_fd);
                 $finish;
             end
         end
@@ -3005,6 +3181,7 @@ bind simu_top nscscc_perf_monitor u_nscscc_perf_monitor (
     .id_s0_alu_only              (soc.cpu.u_cpu.id_s0_alu_only),
     .id_s0_conditional           (
         soc.cpu.u_cpu.id_issue_hint.conditional_control),
+    .id_s0_branch_op             (soc.cpu.u_cpu.dec_uop.branch_op),
     .id_s0_indirect              (
         soc.cpu.u_cpu.id_issue_hint.indirect_control),
     .id_s0_rs1_used              (soc.cpu.u_cpu.id_rs1_used),
@@ -3020,6 +3197,7 @@ bind simu_top nscscc_perf_monitor u_nscscc_perf_monitor (
     .id_s1_alu_only              (soc.cpu.u_cpu.id_s1_issue_hint.alu_only),
     .id_s1_conditional           (
         soc.cpu.u_cpu.id_s1_issue_hint.conditional_control),
+    .id_s1_branch_op             (soc.cpu.u_cpu.dec1_uop.branch_op),
     .id_s1_indirect              (
         soc.cpu.u_cpu.id_s1_issue_hint.indirect_control),
     .id_s1_rs1_used              (soc.cpu.u_cpu.id_s1_rs1_used),
@@ -3037,8 +3215,10 @@ bind simu_top nscscc_perf_monitor u_nscscc_perf_monitor (
         soc.cpu.u_cpu.u_forwarding.load_in_mem
         | soc.cpu.u_cpu.u_forwarding.load_in_s1_mem),
     .ex_s0_load                  (soc.cpu.u_cpu.ex_mem_read_en),
+    .ex_s0_load_size             (soc.cpu.u_cpu.ex_mem_size),
     .ex_s0_rd                    (soc.cpu.u_cpu.ex_rd),
     .ex_s1_load                  (soc.cpu.u_cpu.ex_s1_mem_read_en),
+    .ex_s1_load_size             (soc.cpu.u_cpu.ex_s1_mem_size),
     .ex_s1_rd                    (soc.cpu.u_cpu.ex_s1_rd),
     .ex_store_load_overlap       (
         soc.cpu.u_dcache.store_cache_write
@@ -3070,7 +3250,10 @@ bind simu_top nscscc_perf_monitor u_nscscc_perf_monitor (
     .icache_lookup_valid         (soc.cpu.u_nscscc_axi_bridge.u_icache.lookup_valid_q),
     .icache_lookup_line_addr     (soc.cpu.u_nscscc_axi_bridge.u_icache.lookup_block_addr_q[28:1]),
     .icache_lookup_hit           (soc.cpu.u_nscscc_axi_bridge.u_icache.lookup_hit),
-    .icache_lookup_refill_hit    (soc.cpu.u_nscscc_axi_bridge.u_icache.lookup_refill_hit_q),
+    .icache_lookup_refill_hit    (
+        soc.cpu.u_nscscc_axi_bridge.u_icache.lookup_refill_hit_q
+        | soc.cpu.u_nscscc_axi_bridge.u_icache.lookup_commit_hit
+    ),
     .icache_lookup_miss          (soc.cpu.u_nscscc_axi_bridge.u_icache.lookup_miss),
     .icache_refill_req_fire      (soc.cpu.u_nscscc_axi_bridge.u_icache.mem_req_fire),
     .icache_refill_data_fire     (soc.cpu.u_nscscc_axi_bridge.u_icache.mem_rd_fire),
