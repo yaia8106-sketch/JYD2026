@@ -1,6 +1,6 @@
 // ============================================================
 // Module: dcache
-// Description: NSCSCC-only 32KB, 2-way set-associative data cache.
+// Description: NSCSCC-only 64KB direct-mapped data cache.
 //
 // Architecture:
 //   - Internal EX->MEM pipeline register (synced with cpu_top's ex_mem_reg)
@@ -12,7 +12,7 @@
 //   - WB store miss: save the store, refill, merge its byte lanes, mark dirty
 //   - A one-cycle BRAM RAW-collision bypass handles an immediately following
 //     same-word load without a store queue or a load stall
-//   - Way/refill/uncached load data is formatted in parallel before late select
+//   - Hit/refill/uncached load data is formatted before a late source select
 // ============================================================
 
 module dcache #(
@@ -82,18 +82,17 @@ module dcache #(
     // ================================================================
     //  Parameters
     // ================================================================
-    localparam WAYS       = 2;
-    localparam SETS       = 512;
+    localparam SETS       = 2048;
     localparam LINE_WORDS = 8;
-    // CACHE_ADDR_MASK fixes addr[31:19].  addr[18:14] is therefore the only
+    // CACHE_ADDR_MASK fixes addr[31:19].  addr[18:16] is therefore the only
     // tag state required for requests already classified as cacheable using
     // the complete architectural address.
-    localparam TAG_W      = 5;
-    localparam INDEX_W    = 9;    // addr[13:5]
+    localparam TAG_W      = 3;
+    localparam INDEX_W    = 11;   // addr[15:5]
     localparam WORD_W     = 3;    // addr[4:2]
-    // Four physical tag banks are read in parallel from seven low index bits.
-    // The two high index bits select a registered candidate in MEM.
-    localparam TAG_BANK_BITS    = 2;
+    // Eight tag banks balance the asynchronous LUTRAM depth against the late
+    // registered bank selector.  Each bank contains 256 direct-mapped sets.
+    localparam TAG_BANK_BITS    = 3;
     localparam TAG_BANKS        = 1 << TAG_BANK_BITS;
     localparam TAG_BANK_INDEX_W = INDEX_W - TAG_BANK_BITS;
     localparam TAG_BANK_SETS    = SETS / TAG_BANKS;
@@ -191,8 +190,8 @@ module dcache #(
     // ================================================================
     //  EX-stage address decomposition
     // ================================================================
-    wire [TAG_W-1:0]   ex_tag   = cpu_lookup_addr[16:12];
-    wire [INDEX_W-1:0] ex_index = cpu_lookup_addr[11:3];
+    wire [TAG_W-1:0]   ex_tag   = cpu_lookup_addr[16:14];
+    wire [INDEX_W-1:0] ex_index = cpu_lookup_addr[13:3];
     wire [WORD_W-1:0]  ex_word  = cpu_lookup_addr[2:0];
 
     // ================================================================
@@ -280,7 +279,6 @@ module dcache #(
     wire refill_start;
     logic [WORD_W-1:0]  refill_beat;  // counts data beats received (0..LINE_WORDS-1)
     wire                refill_data_fire; // current cycle has accepted backend data
-    logic               refill_way;
     logic [TAG_W-1:0]   refill_tag;
     logic [INDEX_W-1:0] refill_index;
     logic [31:0]        refill_fetch_addr;
@@ -318,27 +316,22 @@ module dcache #(
     // ================================================================
     //  Tag RAM (LUTRAM, async read)
     // ================================================================
-    // Each way is split into four 128-set physical banks. All banks use a
-    // local copy of the low seven index bits and are read in parallel; the two
-    // high index bits are registered with the request and select only after
-    // the EX->MEM edge. This preserves the exact 512-set mapping while
-    // removing one asynchronous MUXF level from both tag and valid lookup.
+    // The direct-mapped tag array is split into eight 256-set physical banks.
+    // All banks read from local copies of the low index bits in parallel; the
+    // three high index bits are registered with the request and perform only
+    // the final selection in MEM.
     wire [TAG_BANK_BITS-1:0] refill_tag_bank =
         refill_index[INDEX_W-1 -: TAG_BANK_BITS];
     wire [TAG_BANK_INDEX_W-1:0] refill_tag_set =
         refill_index[TAG_BANK_INDEX_W-1:0];
 
-    wire [TAG_W:0] tag_rd_entry
-        [WAYS-1:0][TAG_BANKS-1:0];
-    wire [TAG_W-1:0] tag_rd_data
-        [WAYS-1:0][TAG_BANKS-1:0];
-    wire tag_rd_vld [WAYS-1:0][TAG_BANKS-1:0];
-    wire [1:0] tag_eq_group [WAYS-1:0][TAG_BANKS-1:0];
+    wire [TAG_W:0] tag_rd_entry [TAG_BANKS-1:0];
+    wire [TAG_W-1:0] tag_rd_data [TAG_BANKS-1:0];
+    wire tag_rd_vld [TAG_BANKS-1:0];
+    wire tag_rd_match [TAG_BANKS-1:0];
 
-    // A resettable 1024-bit valid bitmap is implemented as FFs and a deep
-    // asynchronous mux.  It was the launch-to-DCache WNS path.  Store valid
-    // beside tag in LUTRAM instead and clear all eight physical banks in
-    // parallel during the first 128 cycles after reset.  Non-memory pipeline
+    // Store valid beside tag in LUTRAM and clear all physical banks in
+    // parallel during the first 256 cycles after reset. Non-memory pipeline
     // traffic may continue; the first memory request is held until the clear
     // and one replay read have completed.
     logic [TAG_BANK_INDEX_W-1:0] tag_init_set;
@@ -377,102 +370,76 @@ module dcache #(
         ? mem_tag : ex_tag;
 
     generate
-        for (genvar tag_way = 0; tag_way < WAYS; tag_way++) begin : g_tag_way
-            for (genvar tag_bank = 0;
-                 tag_bank < TAG_BANKS;
-                 tag_bank++) begin : g_tag_bank
-                (* ram_style = "distributed" *)
-                logic [TAG_W:0] tag_mem [0:TAG_BANK_SETS-1];
+        for (genvar tag_bank = 0;
+             tag_bank < TAG_BANKS;
+             tag_bank++) begin : g_tag_bank
+            (* ram_style = "distributed" *)
+            logic [TAG_W:0] tag_mem [0:TAG_BANK_SETS-1];
 
-                wire [TAG_BANK_INDEX_W-1:0] tag_read_set =
-                    tag_read_set_source;
-                assign tag_rd_entry[tag_way][tag_bank] =
-                    tag_mem[tag_read_set];
-                assign tag_rd_data[tag_way][tag_bank] =
-                    tag_rd_entry[tag_way][tag_bank][TAG_W-1:0];
-                assign tag_rd_vld[tag_way][tag_bank] =
-                    tag_rd_entry[tag_way][tag_bank][TAG_W];
+            wire [TAG_BANK_INDEX_W-1:0] tag_read_set =
+                tag_read_set_source;
+            assign tag_rd_entry[tag_bank] = tag_mem[tag_read_set];
+            assign tag_rd_data[tag_bank] =
+                tag_rd_entry[tag_bank][TAG_W-1:0];
+            assign tag_rd_vld[tag_bank] = tag_rd_entry[tag_bank][TAG_W];
+            assign tag_rd_match[tag_bank] =
+                tag_rd_data[tag_bank] == tag_lookup_tag;
 
-                wire [TAG_W-1:0] tag_diff =
-                    tag_rd_data[tag_way][tag_bank] ^ tag_lookup_tag;
-                assign tag_eq_group[tag_way][tag_bank] = {
-                    ~|tag_diff[4:3], ~|tag_diff[2:0]
-                };
-
-                // One indexed write per physical memory retains the canonical
-                // single-write-port LUTRAM template.  Refill completion keeps
-                // the old priority over invalidation.
-                always_ff @(posedge clk) begin
-                    if (rst_n) begin
-                        if (!tag_init_done)
-                            tag_mem[tag_init_set] <= '0;
-                        else if (refill_complete
-                            && (refill_way == 1'(tag_way))
-                            && (refill_tag_bank
-                                == TAG_BANK_BITS'(tag_bank)))
-                            tag_mem[refill_tag_set]
-                                <= {1'b1, refill_tag};
-                        else if (refill_req_fire
-                            && (refill_way == 1'(tag_way))
-                            && (refill_tag_bank
-                                == TAG_BANK_BITS'(tag_bank)))
-                            tag_mem[refill_tag_set] <= '0;
-                    end
+            // One indexed write per physical memory retains the canonical
+            // single-write-port LUTRAM template. Refill completion keeps the
+            // old priority over invalidation.
+            always_ff @(posedge clk) begin
+                if (rst_n) begin
+                    if (!tag_init_done)
+                        tag_mem[tag_init_set] <= '0;
+                    else if (refill_complete
+                        && (refill_tag_bank
+                            == TAG_BANK_BITS'(tag_bank)))
+                        tag_mem[refill_tag_set] <= {1'b1, refill_tag};
+                    else if (refill_req_fire
+                        && (refill_tag_bank
+                            == TAG_BANK_BITS'(tag_bank)))
+                        tag_mem[refill_tag_set] <= '0;
                 end
             end
         end
     endgenerate
 
     // Dirty metadata has one asynchronous lookup and at most one logical
-    // update per cycle.  Keep each way as a distinct single-write LUTRAM;
-    // expressing it as a packed bitmap with several indexed assignments makes
-    // Vivado scalarize all 1024 bits into FFs and place the AXI-ready-dependent
-    // write decoder in front of every bit.
+    // update per cycle. It needs no reset because tag valid masks every entry.
     (* ram_style = "distributed" *)
-    logic dirty_way0 [0:SETS-1];
-    (* ram_style = "distributed" *)
-    logic dirty_way1 [0:SETS-1];
+    logic dirty [0:SETS-1];
 
     // Capture every physical bank. The registered high index bits choose the
     // architecturally addressed candidate in MEM.
-    logic [TAG_W-1:0] mem_tag_rd_bank
-        [WAYS-1:0][TAG_BANKS-1:0];
-    logic mem_tag_vld_bank [WAYS-1:0][TAG_BANKS-1:0];
-    logic [1:0] mem_tag_eq_bank [WAYS-1:0][TAG_BANKS-1:0];
+    logic [TAG_W-1:0] mem_tag_rd_bank [TAG_BANKS-1:0];
+    logic mem_tag_vld_bank [TAG_BANKS-1:0];
+    logic mem_tag_match_bank [TAG_BANKS-1:0];
 
 `ifndef SYNTHESIS
     // Executable reference for the original single-table lookup. It selects
     // the addressed bank before the edge and must agree with the new late
     // selection after the edge.
-    wire lookup_hit_reference_w0 =
-        tag_rd_vld[0][tag_lookup_bank]
-        & (&tag_eq_group[0][tag_lookup_bank]);
-    wire lookup_hit_reference_w1 =
-        tag_rd_vld[1][tag_lookup_bank]
-        & (&tag_eq_group[1][tag_lookup_bank]);
-    logic mem_hit_reference_w0;
-    logic mem_hit_reference_w1;
+    wire lookup_hit_reference =
+        tag_rd_vld[tag_lookup_bank]
+        & tag_rd_match[tag_lookup_bank];
+    logic mem_hit_reference;
 `endif
 
     always_ff @(posedge clk) begin
         if (pipeline_advance | state_replay | tag_init_replay) begin
-            for (int capture_way = 0;
-                 capture_way < WAYS;
-                 capture_way++) begin
-                for (int capture_bank = 0;
-                     capture_bank < TAG_BANKS;
-                     capture_bank++) begin
-                    mem_tag_rd_bank[capture_way][capture_bank]
-                        <= tag_rd_data[capture_way][capture_bank];
-                    mem_tag_vld_bank[capture_way][capture_bank]
-                        <= tag_rd_vld[capture_way][capture_bank];
-                    mem_tag_eq_bank[capture_way][capture_bank]
-                        <= tag_eq_group[capture_way][capture_bank];
-                end
+            for (int capture_bank = 0;
+                 capture_bank < TAG_BANKS;
+                 capture_bank++) begin
+                mem_tag_rd_bank[capture_bank]
+                    <= tag_rd_data[capture_bank];
+                mem_tag_vld_bank[capture_bank]
+                    <= tag_rd_vld[capture_bank];
+                mem_tag_match_bank[capture_bank]
+                    <= tag_rd_match[capture_bank];
             end
 `ifndef SYNTHESIS
-            mem_hit_reference_w0 <= lookup_hit_reference_w0;
-            mem_hit_reference_w1 <= lookup_hit_reference_w1;
+            mem_hit_reference <= lookup_hit_reference;
 `endif
         end
     end
@@ -485,29 +452,20 @@ module dcache #(
     // ================================================================
     wire [TAG_BANK_BITS-1:0] mem_tag_bank =
         mem_index[INDEX_W-1 -: TAG_BANK_BITS];
-    wire [TAG_W-1:0] mem_tag_rd [WAYS-1:0];
-    wire mem_tag_vld [WAYS-1:0];
-    wire [1:0] mem_tag_eq [WAYS-1:0];
-    assign mem_tag_rd[0] = mem_tag_rd_bank[0][mem_tag_bank];
-    assign mem_tag_rd[1] = mem_tag_rd_bank[1][mem_tag_bank];
-    assign mem_tag_vld[0] = mem_tag_vld_bank[0][mem_tag_bank];
-    assign mem_tag_vld[1] = mem_tag_vld_bank[1][mem_tag_bank];
-    assign mem_tag_eq[0] = mem_tag_eq_bank[0][mem_tag_bank];
-    assign mem_tag_eq[1] = mem_tag_eq_bank[1][mem_tag_bank];
-
-    wire hit_w0 = mem_tag_vld[0] & (&mem_tag_eq[0]);
-    wire hit_w1 = mem_tag_vld[1] & (&mem_tag_eq[1]);
+    wire [TAG_W-1:0] mem_tag_rd = mem_tag_rd_bank[mem_tag_bank];
+    wire mem_tag_vld = mem_tag_vld_bank[mem_tag_bank];
+    wire mem_tag_match = mem_tag_match_bank[mem_tag_bank];
+    wire tag_hit = mem_tag_vld & mem_tag_match;
     // mem_uncached comes from the full 32-bit window comparison in
     // memory_access_unit.  It is authoritative: an out-of-window address
     // sharing the shortened tag/index must never hit or perturb replacement
     // state.
-    wire cache_hit = ~mem_uncached & (hit_w0 | hit_w1);
-    wire hit_way = hit_w1;
+    wire cache_hit = ~mem_uncached & tag_hit;
 
     // ================================================================
-    //  Data RAM - BRAM IP instances (one per way)
+    //  Data RAM - one 16384x32 logical BRAM bank
     // ================================================================
-    logic [31:0] data_rd [WAYS-1:0];
+    logic [31:0] data_rd;
     logic [31:0] line_buffer [0:LINE_WORDS-1];
     logic [WORD_W:0] wb_read_issue_count;
     logic [WORD_W-1:0] wb_read_capture_count;
@@ -524,7 +482,7 @@ module dcache #(
     wire [INDEX_W+WORD_W-1:0] wb_read_addr = {
         refill_index, wb_read_issue_count[WORD_W-1:0]
     };
-    wire [31:0] wb_selected_data = refill_way ? data_rd[1] : data_rd[0];
+    wire [31:0] wb_selected_data = data_rd;
 
     wire [INDEX_W+WORD_W-1:0] data_rd_addr = {ex_index, ex_word};
     wire [INDEX_W+WORD_W-1:0] replay_read_addr = {mem_index, mem_word};
@@ -534,9 +492,9 @@ module dcache #(
                       : data_rd_addr;
 
     // BRAM write port signals (unified MUX, defined later)
-    wire  [ 3:0] data_bram_wea  [WAYS-1:0];
-    wire  [INDEX_W+WORD_W-1:0] data_bram_waddr [WAYS-1:0];
-    wire  [31:0] data_bram_wdata [WAYS-1:0];
+    wire  [ 3:0] data_bram_wea;
+    wire  [INDEX_W+WORD_W-1:0] data_bram_waddr;
+    wire  [31:0] data_bram_wdata;
 
     // Victim capture and replay are registered miss-only address candidates.
     // Normal load-hit timing still sees only the original pipeline address.
@@ -546,31 +504,20 @@ module dcache #(
     // Hold the BRAM output with its native ENB instead of muxing the late
     // pipeline-ready response into every address bit.  The same address is
     // sampled on exactly the same edge as before, but AXI write completion now
-    // terminates at two one-bit enable pins rather than both 12-bit ports.
+    // terminates at a local enable instead of the 14-bit address path.
 
     // Raw BRAM output - directly used as data_rd
     // BRAM has inherent 1-cycle read latency, matching original FF behavior
 
-    dcache_data_ram u_data_way0 (
+    dcache_data_ram u_data (
         .clka  (clk),
-        .wea   (data_bram_wea[0]),
-        .addra (data_bram_waddr[0]),
-        .dina  (data_bram_wdata[0]),
+        .wea   (data_bram_wea),
+        .addra (data_bram_waddr),
+        .dina  (data_bram_wdata),
         .clkb  (clk),
         .enb   (data_bram_rd_en),
         .addrb (data_bram_rd_addr),
-        .doutb (data_rd[0])
-    );
-
-    dcache_data_ram u_data_way1 (
-        .clka  (clk),
-        .wea   (data_bram_wea[1]),
-        .addra (data_bram_waddr[1]),
-        .dina  (data_bram_wdata[1]),
-        .clkb  (clk),
-        .enb   (data_bram_rd_en),
-        .addrb (data_bram_rd_addr),
-        .doutb (data_rd[1])
+        .doutb (data_rd)
     );
 
     wire  [31:0] refill_write_data;
@@ -580,26 +527,11 @@ module dcache #(
     logic [31:0] raw_bypass_data;
     logic [ 3:0] raw_bypass_wea;
 
-    // ================================================================
-    //  LRU (1-bit per set)
-    // ================================================================
-    logic [SETS-1:0] lru;
-    wire lru_victim = lru[mem_index];
-
-    // Invalid ways are always cheaper victims than a valid LRU way. Prepare
-    // both candidates in parallel and register the final selection at miss
-    // acceptance; dirty metadata is deliberately absent from the hit path.
-    wire victim_way_candidate = ~mem_tag_vld[0] ? 1'b0
-                              : ~mem_tag_vld[1] ? 1'b1
-                              : lru_victim;
-    wire victim_valid_candidate = victim_way_candidate
-                                ? mem_tag_vld[1] : mem_tag_vld[0];
-    wire victim_dirty_candidate = victim_way_candidate
-                                ? dirty_way1[mem_index]
-                                : dirty_way0[mem_index];
-    wire [TAG_W-1:0] victim_tag_candidate = victim_way_candidate
-                                          ? mem_tag_rd[1]
-                                          : mem_tag_rd[0];
+    // Direct mapping makes the addressed entry the sole victim candidate.
+    // Dirty metadata remains absent from the normal hit-result cone.
+    wire victim_valid_candidate = mem_tag_vld;
+    wire victim_dirty_candidate = dirty[mem_index];
+    wire [TAG_W-1:0] victim_tag_candidate = mem_tag_rd;
     wire victim_needs_writeback = victim_valid_candidate
                                 & victim_dirty_candidate;
 
@@ -863,7 +795,6 @@ module dcache #(
     always_ff @(posedge clk) begin
         if (refill_start) begin
             refill_beat         <= '0;
-            refill_way          <= victim_way_candidate;
             refill_tag          <= mem_tag;
             refill_index        <= mem_index;
             refill_fetch_addr   <= {mem_addr[31:5], mem_word, 2'b00};
@@ -933,7 +864,6 @@ module dcache #(
     // A store hit updates the selected cache word. A store miss is merged into
     // the critical word during its write-allocate refill.
     wire        store_cache_write = store_hit_accept;
-    wire        store_cache_write_way = hit_way;
     wire [INDEX_W+WORD_W-1:0] store_cache_write_addr = store_data_addr;
     wire [31:0] store_cache_write_data = mem_wdata_aligned;
     wire [ 3:0] store_cache_write_wea = mem_wea;
@@ -941,22 +871,17 @@ module dcache #(
     // Refill write: one cache data RAM write per accepted backend read beat.
     assign refill_cache_write = refill_data_fire;
 
-    // Unified BRAM write port MUX per way (unrolled, no for-loop w[0])
+    // Unified BRAM write port MUX.
     // Priority: refill > store (they are mutually exclusive by FSM design)
-
-    // Way 0
-    wire refill_w0 = refill_cache_write & ~refill_way;
-    wire store_w0  = store_cache_write & ~store_cache_write_way;
-    assign data_bram_wea[0]   = refill_w0 ? 4'b1111          : store_w0 ? store_cache_write_wea  : 4'b0000;
-    assign data_bram_waddr[0] = refill_w0 ? refill_write_addr   : store_w0 ? store_cache_write_addr : '0;
-    assign data_bram_wdata[0] = refill_w0 ? refill_write_data  : store_w0 ? store_cache_write_data : 32'd0;
-
-    // Way 1
-    wire refill_w1 = refill_cache_write &  refill_way;
-    wire store_w1  = store_cache_write &  store_cache_write_way;
-    assign data_bram_wea[1]   = refill_w1 ? 4'b1111          : store_w1 ? store_cache_write_wea  : 4'b0000;
-    assign data_bram_waddr[1] = refill_w1 ? refill_write_addr   : store_w1 ? store_cache_write_addr : '0;
-    assign data_bram_wdata[1] = refill_w1 ? refill_write_data  : store_w1 ? store_cache_write_data : 32'd0;
+    assign data_bram_wea = refill_cache_write ? 4'b1111
+                         : store_cache_write ? store_cache_write_wea
+                                             : 4'b0000;
+    assign data_bram_waddr = refill_cache_write ? refill_write_addr
+                           : store_cache_write ? store_cache_write_addr
+                                               : '0;
+    assign data_bram_wdata = refill_cache_write ? refill_write_data
+                           : store_cache_write ? store_cache_write_data
+                                               : 32'd0;
 
     // ================================================================
     //  One-cycle BRAM read-after-write collision bypass
@@ -1014,13 +939,11 @@ module dcache #(
     // same captured victim. Preserve the old procedural priority exactly:
     // refill install > store hit > writeback clean > refill invalidation.
     logic               dirty_write_valid;
-    logic               dirty_write_way;
     logic [INDEX_W-1:0] dirty_write_index;
     logic               dirty_write_data;
 
     always_comb begin
         dirty_write_valid = 1'b0;
-        dirty_write_way   = refill_way;
         dirty_write_index = refill_index;
         dirty_write_data  = 1'b0;
 
@@ -1036,14 +959,12 @@ module dcache #(
 
         if (store_cache_write) begin
             dirty_write_valid = 1'b1;
-            dirty_write_way   = store_cache_write_way;
             dirty_write_index = mem_index;
             dirty_write_data  = 1'b1;
         end
 
         if (refill_complete) begin
             dirty_write_valid = 1'b1;
-            dirty_write_way   = refill_way;
             dirty_write_index = refill_index;
             dirty_write_data  = refill_is_store;
         end
@@ -1053,12 +974,8 @@ module dcache #(
     // distributed-RAM template. No reset is required because tag_vld masks every
     // unallocated entry.
     always_ff @(posedge clk) begin
-        if (dirty_write_valid) begin
-            if (dirty_write_way)
-                dirty_way1[dirty_write_index] <= dirty_write_data;
-            else
-                dirty_way0[dirty_write_index] <= dirty_write_data;
-        end
+        if (dirty_write_valid)
+            dirty[dirty_write_index] <= dirty_write_data;
     end
 
 `ifndef SYNTHESIS
@@ -1071,21 +988,10 @@ module dcache #(
         | refill_complete;
     always_ff @(posedge clk) begin
         if (rst_n && store_cache_write && dirty_refill_metadata_event
-                  && ((store_cache_write_way != refill_way)
-                      || (mem_index != refill_index)))
+                  && (mem_index != refill_index))
             $fatal(1, "DCache dirty metadata received two distinct writes in one cycle");
     end
 `endif
-
-    // ================================================================
-    //  LRU update
-    // ================================================================
-    always_ff @(posedge clk) begin
-        if (state_idle && mem_req && cache_hit)
-            lru[mem_index] <= ~hit_way;
-        if (state_done)
-            lru[refill_index] <= ~refill_way;
-    end
 
     // ================================================================
     //  External memory backend request/response
@@ -1118,31 +1024,22 @@ module dcache #(
     // ================================================================
     //  CPU read data formatting and late source selection (MEM stage)
     //
-    //  Each BRAM way and the miss/uncached response are formatted in parallel.
-    //  The hit-way/source controls therefore select complete 32-bit results at
-    //  the end instead of sitting in front of byte extraction and extension.
+    //  The BRAM hit and miss/uncached responses are formatted in parallel.
+    //  The late source control selects complete 32-bit results instead of
+    //  sitting in front of byte extraction and extension.
     // ================================================================
     wire raw_bypass_apply = raw_bypass_valid
                           & mem_req & ~mem_wr & ~mem_uncached;
     wire [3:0] raw_bypass_mask = raw_bypass_wea
                                & {4{raw_bypass_apply}};
-    wire [31:0] cache_read_data_way0 = merge_bytes(
-        data_rd[0],
-        raw_bypass_data,
-        raw_bypass_mask
-    );
-    wire [31:0] cache_read_data_way1 = merge_bytes(
-        data_rd[1],
+    wire [31:0] cache_read_data = merge_bytes(
+        data_rd,
         raw_bypass_data,
         raw_bypass_mask
     );
 
-    wire [31:0] formatted_way0 = format_load_data(
-        cache_read_data_way0, mem_addr[1:0],
-        mem_load_size, mem_load_unsigned
-    );
-    wire [31:0] formatted_way1 = format_load_data(
-        cache_read_data_way1, mem_addr[1:0],
+    wire [31:0] formatted_hit = format_load_data(
+        cache_read_data, mem_addr[1:0],
         mem_load_size, mem_load_unsigned
     );
 
@@ -1164,12 +1061,8 @@ module dcache #(
     );
 
 `ifndef SYNTHESIS
-    wire [31:0] formatted_way0_reference = format_load_data_reference(
-        cache_read_data_way0, mem_addr[1:0],
-        mem_load_size, mem_load_unsigned
-    );
-    wire [31:0] formatted_way1_reference = format_load_data_reference(
-        cache_read_data_way1, mem_addr[1:0],
+    wire [31:0] formatted_hit_reference = format_load_data_reference(
+        cache_read_data, mem_addr[1:0],
         mem_load_size, mem_load_unsigned
     );
     wire [31:0] formatted_special_reference = format_load_data_reference(
@@ -1183,18 +1076,14 @@ module dcache #(
     // physically independent final LUT cone.
     dcache_read_result_select u_read_select_wb (
         .special_valid   (special_read_valid),
-        .way1_hit        (hit_way),
-        .formatted_way0  (formatted_way0),
-        .formatted_way1  (formatted_way1),
+        .formatted_hit   (formatted_hit),
         .formatted_special(formatted_special),
         .selected_data   (cpu_rdata)
     );
 
     dcache_read_result_select u_read_select_ex (
         .special_valid   (special_read_valid),
-        .way1_hit        (hit_way),
-        .formatted_way0  (formatted_way0),
-        .formatted_way1  (formatted_way1),
+        .formatted_hit   (formatted_hit),
         .formatted_special(formatted_special),
         .selected_data   (cpu_rdata_ex)
     );
@@ -1219,21 +1108,18 @@ module dcache #(
 `ifndef SYNTHESIS
     initial begin
         if (CACHE_ADDR_MASK != 32'hFFF8_0000)
-            $fatal(1, "DCache five-bit tag requires addr[31:19] fixed");
+            $fatal(1, "DCache three-bit tag requires addr[31:19] fixed");
         if ((CACHE_ADDR_BASE & ~CACHE_ADDR_MASK) != 32'd0)
             $fatal(1, "DCache cacheable window base is not mask-aligned");
     end
 
     always_ff @(posedge clk) begin
         if (rst_n && mem_req) begin
-            if ((formatted_way0 !== formatted_way0_reference)
-                || (formatted_way1 !== formatted_way1_reference)
+            if ((formatted_hit !== formatted_hit_reference)
                 || (formatted_special !== formatted_special_reference))
                 $fatal(1, "DCache parallel load formatter changed behavior");
-            if (hit_w0 !== mem_hit_reference_w0)
-                $fatal(1, "DCache way-0 split hit pipeline changed behavior");
-            if (hit_w1 !== mem_hit_reference_w1)
-                $fatal(1, "DCache way-1 split hit pipeline changed behavior");
+            if (tag_hit !== mem_hit_reference)
+                $fatal(1, "DCache split tag-hit pipeline changed behavior");
 
             // Both copies are deliberately identical logically; only their
             // physical destinations differ.
@@ -1299,18 +1185,14 @@ endmodule
 (* keep_hierarchy = "yes" *)
 module dcache_read_result_select (
     input  logic        special_valid,
-    input  logic        way1_hit,
-    input  logic [31:0] formatted_way0,
-    input  logic [31:0] formatted_way1,
+    input  logic [31:0] formatted_hit,
     input  logic [31:0] formatted_special,
     (* keep = "true" *) output logic [31:0] selected_data
 );
     always_comb begin
         if (special_valid)
             selected_data = formatted_special;
-        else if (way1_hit)
-            selected_data = formatted_way1;
         else
-            selected_data = formatted_way0;
+            selected_data = formatted_hit;
     end
 endmodule

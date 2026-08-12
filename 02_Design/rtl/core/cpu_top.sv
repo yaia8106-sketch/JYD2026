@@ -546,12 +546,11 @@ module cpu_top
     wire        ex_div_consume = ex_valid & ex_is_muldiv & ex_muldiv_op[2]
                                & muldiv_done & mem_allowin_lsu
                                & ~mem_branch_flush;
-    // A MEM multiplier token never owns a DCache request: its EX/MEM payload
-    // has both memory enables clear, so the synchronized DCache mem_req bit is
-    // clear and cpu_ready is unconditionally true.  Express that invariant
-    // directly instead of routing the remote tag/hit-ready cone into the
-    // MulDiv owner state.
-    wire        mem_mul_consume = mem_valid & mem_is_mul & wb_allowin;
+    // Keep the result owner until the aligned MEM token can really advance.
+    // cache_ready may still be low while the shared DCache interface retires
+    // an older request, even though the MUL token itself is not a memory op.
+    wire        mem_mul_consume = mem_valid & mem_is_mul
+                                & cache_ready & wb_allowin;
     wire        muldiv_consume = ex_div_consume | mem_mul_consume;
     wire        muldiv_flush = frontend_branch_flush | mem_branch_flush;
 
@@ -746,10 +745,9 @@ module cpu_top
     wire id_to_ex_fire_reference = id_valid & id_ready_go_reference
                                  & ex_allowin_reference & ~id_flush;
 `endif
-    // Slot-0 MulDiv is force-single in the frontend pair policy.  Make that
-    // existing invariant explicit at the ownership boundary so an impossible
-    // Slot-1-valid hazard cone cannot become a path into the MulDiv FSM.
-    wire id_mul_prestart = id_to_ex_fire & id_is_mul & ~id_s1_valid;
+    // A Slot-0 multiply may pair with an independent Slot-1 instruction, so
+    // every accepted multiply must establish the MulDiv owner here.
+    wire id_mul_prestart = id_to_ex_fire & id_is_mul;
 
     always_ff @(posedge clk) begin
         if (!rst_n)
@@ -2221,8 +2219,6 @@ module cpu_top
                   && ((id_alu_src1 !== id_alu_src1_reference)
                       || (id_alu_src2 !== id_alu_src2_reference)))
             $fatal(1, "Slot-0 parallel ALU source selection changed value");
-        if (rst_n && id_valid && id_is_mul && id_s1_valid)
-            $fatal(1, "Slot-0 MUL violated the frontend force-single contract");
         if (rst_n && id_to_ex_fire && id_s1_valid
                   && ((id_s1_alu_src1 !== id_s1_alu_src1_reference)
                       || (id_s1_alu_src2 !== id_s1_alu_src2_reference)))
@@ -2274,8 +2270,6 @@ module cpu_top
             $fatal(1, "MUL entered EX with an unsupported WB-repair tag");
         if (rst_n && mem_valid && mem_is_mul && !muldiv_done)
             $fatal(1, "MEM MUL token is not aligned with registered result");
-        if (rst_n && mem_valid && mem_is_mul && !cache_ready)
-            $fatal(1, "MEM MUL unexpectedly owns a pending DCache request");
         // A completed MUL may remain owned by EX while an older MEM token
         // blocks the EX-to-MEM transfer.  DIV is also EX-owned until its
         // completion handshake, so both EX MulDiv forms are legal owners.

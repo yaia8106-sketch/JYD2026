@@ -650,20 +650,19 @@ module tb_dcache_writeback;
     integer writes_before;
 
     localparam logic [31:0] A = 32'h1c08_0040;
-    // A/B/C and S/T/U use the same set in the 512-set cache. One way holds
-    // 16KB, so identical set indices are 0x4000 bytes apart. A_INDEX_HI differs
-    // only in index bit addr[13] and must coexist with all three same-set lines.
+    // A/B/C use the same direct-mapped set and are 64KB apart. A_INDEX_HI
+    // differs in an index bit and must coexist with all three lines.
     localparam logic [31:0] A_INDEX_HI = 32'h1c08_2040;
-    localparam logic [31:0] B = 32'h1c08_4040;
-    localparam logic [31:0] C = 32'h1c08_8040;
+    localparam logic [31:0] B = 32'h1c09_0040;
+    localparam logic [31:0] C = 32'h1c0a_0040;
     localparam logic [31:0] S = 32'h1c08_0060;
-    localparam logic [31:0] T = 32'h1c08_4060;
-    localparam logic [31:0] U = 32'h1c08_8060;
+    localparam logic [31:0] T = 32'h1c08_00a0;
+    localparam logic [31:0] U = 32'h1c09_0060;
     localparam logic [31:0] V = 32'h1c08_0080;
     localparam logic [31:0] CACHE_LOWER = 32'h1c08_0000;
     localparam logic [31:0] CACHE_UPPER = 32'h1c0f_ffe0;
-    localparam logic [31:0] CACHE_UPPER_PEER = 32'h1c08_3fe0;
-    localparam logic [31:0] CACHE_UPPER_REPL = 32'h1c08_7fe0;
+    localparam logic [31:0] CACHE_UPPER_PEER = 32'h1c08_ffe0;
+    localparam logic [31:0] CACHE_UPPER_REPL = 32'h1c09_ffe0;
 
     initial begin
         clk = 1'b0;
@@ -719,7 +718,7 @@ module tb_dcache_writeback;
         load_hit_formatted(A + 9, 2'b00, 1'b1, 32'h0000_00aa);
         load_hit_formatted(A + 10, 2'b01, 1'b1, 32'h0000_3333);
 
-        $display("[INFO] addr[13] selects an independent 16KB way half");
+        $display("[INFO] addr[13] selects an independent direct-mapped set");
         load_miss(
             A_INDEX_HI,
             32'h5800_0000, 32'h5800_0001,
@@ -732,20 +731,25 @@ module tb_dcache_writeback;
               "upper-index-half refill result mismatch");
         load_hit(A + 8, 32'h3333_aa44);
 
-        $display("[INFO] use invalid way for B, then dirty B");
-        load_miss(
-            B,
+        $display("[INFO] B replaces dirty A in the same direct-mapped set");
+        load_dirty_miss(
+            B, A,
+            32'h1111_0000, 32'h2222_0001,
+            32'h3333_aa44, 32'h4444_0003,
+            32'h5555_0004, 32'h6666_0005,
+            32'h7777_0006, 32'h8888_0007,
             32'haaaa_0000, 32'hbbbb_0001,
             32'hcccc_0002, 32'hdddd_0003,
             32'heeee_0004, 32'hffff_0005,
             32'habcd_0006, 32'hdcba_0007,
+            1'b0, 1'b0,
             result
         );
         check(result == 32'haaaa_0000, "B refill result mismatch");
-        // A and B share the same set and word offset but have different tags.
-        // The younger B load must use its BRAM result, not A's store payload.
+        // A_INDEX_HI and B are independent cached lines. The younger B load
+        // must use its BRAM result, not the older store payload.
         store_then_load_no_stall(
-            A, 4'b0001, 32'h0000_0000,
+            A_INDEX_HI, 4'b0001, 32'h0000_0000,
             B, 32'haaaa_0000, 1'b0
         );
         store_hit(B + 4, 4'b1111, 32'hdead_beef);
@@ -785,13 +789,13 @@ module tb_dcache_writeback;
             B + 6, 2'b01, 1'b0, 32'hffff_8001
         );
 
-        $display("[INFO] C evicts dirty A as one eight-beat write burst");
+        $display("[INFO] C evicts dirty B as one eight-beat write burst");
         load_dirty_miss(
-            C, A,
-            32'h1111_0000, 32'h2222_0001,
-            32'h3333_aa44, 32'h4444_0003,
-            32'h5555_0004, 32'h6666_0005,
-            32'h7777_0006, 32'h8888_0007,
+            C, B,
+            32'haaaa_0000, 32'h8001_beef,
+            32'hcccc_0002, 32'hdddd_0003,
+            32'heeee_0004, 32'hffff_0005,
+            32'habcd_0006, 32'hdcba_0007,
             32'hc000_0000, 32'hc000_0001,
             32'hc000_0002, 32'hc000_0003,
             32'hc000_0004, 32'hc000_0005,
@@ -824,7 +828,7 @@ module tb_dcache_writeback;
         load_hit(S + 4, 32'h1122_5a44);
 
         $display("[INFO] dirty line allocated by a store is written back");
-        // Make S the LRU victim again after checking its merged store data.
+        // T uses another set; U then directly replaces dirty S.
         load_hit(T, 32'h7000_0000);
         load_dirty_miss(
             U, S,
@@ -876,31 +880,34 @@ module tb_dcache_writeback;
         check(result == 32'hf000_0000,
               "upper cache-window boundary refill mismatch");
         store_hit(CACHE_UPPER + 12, 4'b1111, 32'hface_cafe);
-        load_miss(
-            CACHE_UPPER_PEER,
-            32'h2000_0000, 32'h2000_0001,
-            32'h2000_0002, 32'h2000_0003,
-            32'h2000_0004, 32'h2000_0005,
-            32'h2000_0006, 32'h2000_0007,
-            result
-        );
         load_dirty_miss(
-            CACHE_UPPER_REPL, CACHE_UPPER,
+            CACHE_UPPER_PEER, CACHE_UPPER,
             32'hf000_0000, 32'hf000_0001,
             32'hf000_0002, 32'hface_cafe,
             32'hf000_0004, 32'hf000_0005,
             32'hf000_0006, 32'hf000_0007,
+            32'h2000_0000, 32'h2000_0001,
+            32'h2000_0002, 32'h2000_0003,
+            32'h2000_0004, 32'h2000_0005,
+            32'h2000_0006, 32'h2000_0007,
+            1'b0, 1'b1,
+            result
+        );
+        check(result == 32'h2000_0000,
+              "upper-bound dirty replacement refill mismatch");
+        load_miss(
+            CACHE_UPPER_REPL,
             32'h3000_0000, 32'h3000_0001,
             32'h3000_0002, 32'h3000_0003,
             32'h3000_0004, 32'h3000_0005,
             32'h3000_0006, 32'h3000_0007,
-            1'b0, 1'b1,
             result
         );
         check(result == 32'h3000_0000,
               "upper-bound replacement refill mismatch");
 
-        check(write_commands == 4,
+        // Four dirty evictions plus one retried writeback command.
+        check(write_commands == 5,
               "unexpected number of dirty writeback commands");
         check(read_commands == 12,
               "unexpected number of cache-line refill commands");

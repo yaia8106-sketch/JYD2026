@@ -35,6 +35,7 @@ module tb_icache_configurations;
     logic [1:0] mem_rd_resp;
 
     integer errors;
+    logic expect_fast_refill_request;
 
     icache #(
         .CACHE_BYTES(CACHE_BYTES),
@@ -63,6 +64,24 @@ module tb_icache_configurations;
     );
 
     always #5 clk = ~clk;
+
+    // An idle-cache lookup miss must expose its refill request in the very
+    // next cycle.  This guards against accidentally restoring the old
+    // lookup_miss -> pending_miss -> REFILL_REQ bubble.
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            expect_fast_refill_request <= 1'b0;
+        end else begin
+            if (expect_fast_refill_request)
+                check(mem_req_valid,
+                      "idle lookup miss did not start refill next cycle");
+            expect_fast_refill_request <=
+                !irom_req_kill
+                && (dut.refill_state_q == 2'd0)
+                && !dut.pending_miss_valid_q
+                && dut.lookup_miss;
+        end
+    end
 
     task automatic check(input logic condition, input string message);
         if (condition !== 1'b1) begin

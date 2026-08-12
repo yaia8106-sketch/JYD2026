@@ -133,6 +133,9 @@ module icache #(
     logic        lookup_refill_line_match_q;
     logic        lookup_commit_hit;
     logic [28:0] lookup_block_addr_q;
+    wire         lookup_hit =
+        lookup_valid_q & (lookup_hit_q | lookup_commit_hit);
+    wire         lookup_miss = lookup_valid_q & ~lookup_hit;
 
     logic        pending_miss_valid_q;
     logic [28:0] pending_miss_block_addr_q;
@@ -332,23 +335,40 @@ module icache #(
         & ~refill_drop_q
         & ~irom_req_kill;
 
-    wire [INDEX_WIDTH-1:0] pending_miss_index =
-        pending_miss_block_addr_q[1 +: INDEX_WIDTH];
+    // In the common idle case, launch a newly detected lookup miss directly
+    // instead of first copying it through pending_miss and spending an extra
+    // cycle in REFILL_IDLE.  The pending slot remains the fallback for a miss
+    // detected while an older refill transaction is still being drained.
+    wire launch_lookup_miss =
+        (refill_state_q == REFILL_IDLE)
+        & ~pending_miss_valid_q
+        & lookup_miss
+        & ~irom_req_kill;
+    wire launch_pending_miss =
+        (refill_state_q == REFILL_IDLE)
+        & pending_miss_valid_q
+        & ~irom_req_kill;
+    wire launch_refill = launch_pending_miss | launch_lookup_miss;
+    wire [28:0] launch_miss_block_addr =
+        launch_pending_miss ? pending_miss_block_addr_q
+                            : lookup_block_addr_q;
+    wire [INDEX_WIDTH-1:0] launch_miss_index =
+        launch_miss_block_addr[1 +: INDEX_WIDTH];
     wire [WAY_WIDTH-1:0] miss_replacement_way;
     generate
         if (WAYS == 1) begin : g_replace_one_way
             assign miss_replacement_way = '0;
         end else begin : g_replace_two_ways
             wire [LINE_SLOT_WIDTH-1:0] way0_slot =
-                {1'b0, pending_miss_index};
+                {1'b0, launch_miss_index};
             wire [LINE_SLOT_WIDTH-1:0] way1_slot =
-                {1'b1, pending_miss_index};
+                {1'b1, launch_miss_index};
             wire way0_valid = line_valid_q[way0_slot];
             wire way1_valid = line_valid_q[way1_slot];
             assign miss_replacement_way =
                 !way0_valid ? 0
                 : !way1_valid ? 1
-                : replacement_way_q[pending_miss_index];
+                : replacement_way_q[launch_miss_index];
         end
     endgenerate
 
@@ -521,8 +541,6 @@ module icache #(
                    ? refill_buffer_filled_q[1]
                    : refill_buffer_filled_q[0]);
     end
-    wire lookup_hit = lookup_valid_q & (lookup_hit_q | lookup_commit_hit);
-    wire lookup_miss = lookup_valid_q & ~lookup_hit;
     wire [71:0] lookup_refill_payload =
         lookup_block
             ? refill_buffer_block1_q
@@ -566,7 +584,8 @@ module icache #(
                 pending_miss_valid_q <= 1'b0;
             if (refill_matches_pending)
                 pending_miss_valid_q <= 1'b0;
-            if (lookup_miss & ~refill_matches_lookup) begin
+            if (lookup_miss & ~refill_matches_lookup
+                            & ~launch_lookup_miss) begin
                 pending_miss_valid_q <= 1'b1;
             end
         end
@@ -630,7 +649,7 @@ module icache #(
         end else begin
             case (refill_state_q)
                 REFILL_IDLE:
-                    if (pending_miss_valid_q)
+                    if (launch_refill)
                         refill_state_q <= REFILL_REQ;
                 REFILL_REQ:
                     if (mem_req_fire)
@@ -674,10 +693,10 @@ module icache #(
             case (refill_state_q)
                 REFILL_IDLE: begin
                     refill_drop_q <= 1'b0;
-                    if (pending_miss_valid_q) begin
+                    if (launch_refill) begin
                         refill_line_addr_q <=
-                            pending_miss_block_addr_q[28:1];
-                        refill_block_q <= pending_miss_block_addr_q[0];
+                            launch_miss_block_addr[28:1];
+                        refill_block_q <= launch_miss_block_addr[0];
                         refill_way_q <= miss_replacement_way;
                         refill_second_block_q <= 1'b0;
                         refill_response_needed_q <= 1'b1;

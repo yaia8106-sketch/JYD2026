@@ -274,6 +274,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="write compact lookup-line traces for the software cache model",
     )
+    parser.add_argument(
+        "--dump-dcache-trace",
+        action="store_true",
+        help="write compact cached load/store traces for the software model",
+    )
     return parser.parse_args()
 
 
@@ -458,11 +463,16 @@ def ensure_build(args: argparse.Namespace, monitor: Path) -> tuple[Path, dict, b
                 stdout=stream,
                 stderr=subprocess.STDOUT,
             )
-            if completed.returncode != 0:
-                tail = build_log.read_text(errors="replace").splitlines()[-60:]
+            log_lines = build_log.read_text(errors="replace").splitlines()
+            verilator_error = any(
+                line.lstrip().startswith("%Error") for line in log_lines
+            )
+            if completed.returncode != 0 or verilator_error:
+                tail = log_lines[-60:]
                 print("\n".join(tail), file=sys.stderr)
                 raise RuntimeError(
-                    f"build command failed ({completed.returncode}); "
+                    f"build command failed ({completed.returncode}, "
+                    f"verilator_error={verilator_error}); "
                     f"see {build_log}"
                 )
     print(f"Build log: {build_log}")
@@ -601,6 +611,8 @@ def run_benchmark(
         )
     if args.dump_icache_trace:
         command.append(f"+perf_icache_trace={run_dir / 'icache.trace'}")
+    if args.dump_dcache_trace:
+        command.append(f"+perf_dcache_trace={run_dir / 'dcache.trace'}")
     env = os.environ.copy()
     env["CHIPLAB_HOME"] = str((args.workspace / "chiplab").resolve())
     started = time.monotonic()
@@ -1039,6 +1051,10 @@ def run_benchmark(
             "icache_trace": (
                 str((run_dir / "icache.trace").resolve())
                 if args.dump_icache_trace else ""
+            ),
+            "dcache_trace": (
+                str((run_dir / "dcache.trace").resolve())
+                if args.dump_dcache_trace else ""
             ),
         }
     )

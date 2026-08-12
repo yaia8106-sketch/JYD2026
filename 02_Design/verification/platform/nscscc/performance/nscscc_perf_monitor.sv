@@ -163,6 +163,7 @@ module nscscc_perf_monitor (
     input logic        dcache_load_miss,
     input logic        dcache_store_hit,
     input logic        dcache_store_miss,
+    input logic [31:0] dcache_lookup_addr,
     input logic        dcache_uncached_start,
     input logic        dcache_dirty_victim,
     input logic        dcache_refill_req_fire,
@@ -203,6 +204,8 @@ module nscscc_perf_monitor (
     logic measurement_active;
     integer icache_trace_fd;
     string icache_trace_path;
+    integer dcache_trace_fd;
+    string dcache_trace_path;
 
     longint unsigned boundaries;
     longint unsigned intervals;
@@ -1326,6 +1329,12 @@ module nscscc_perf_monitor (
             if (icache_trace_fd == 0)
                 $fatal(1, "cannot open ICache trace %s", icache_trace_path);
         end
+        dcache_trace_fd = 0;
+        if ($value$plusargs("perf_dcache_trace=%s", dcache_trace_path)) begin
+            dcache_trace_fd = $fopen(dcache_trace_path, "w");
+            if (dcache_trace_fd == 0)
+                $fatal(1, "cannot open DCache trace %s", dcache_trace_path);
+        end
     end
 
     // Optional compact trace for the explanatory software cache model. The
@@ -1335,6 +1344,20 @@ module nscscc_perf_monitor (
         if (icache_trace_fd != 0 && icache_lookup_valid)
             $fdisplay(icache_trace_fd, "%0d %07x",
                       measurement_active, icache_lookup_line_addr);
+    end
+
+    // Cached loads and stores generate exactly one of the four lookup result
+    // pulses.  Record the full byte address and access kind so the software
+    // model can vary capacity, associativity and line size without changing
+    // the production DCache RTL.
+    always_ff @(posedge clk) begin
+        if (dcache_trace_fd != 0
+            && (dcache_load_hit | dcache_load_miss
+                | dcache_store_hit | dcache_store_miss))
+            $fdisplay(dcache_trace_fd, "%0d %0d %08x",
+                      measurement_active,
+                      dcache_store_hit | dcache_store_miss,
+                      dcache_lookup_addr);
     end
 
     task automatic emit_results;
@@ -2871,6 +2894,8 @@ module nscscc_perf_monitor (
                 emit_results();
                 if (icache_trace_fd != 0)
                     $fclose(icache_trace_fd);
+                if (dcache_trace_fd != 0)
+                    $fclose(dcache_trace_fd);
                 $finish;
             end
         end
@@ -3264,6 +3289,7 @@ bind simu_top nscscc_perf_monitor u_nscscc_perf_monitor (
     .dcache_load_miss            (soc.cpu.u_dcache.idle_load_miss),
     .dcache_store_hit            (soc.cpu.u_dcache.idle_store_hit),
     .dcache_store_miss           (soc.cpu.u_dcache.idle_store_miss),
+    .dcache_lookup_addr          (soc.cpu.u_dcache.mem_addr),
     .dcache_uncached_start       (soc.cpu.u_dcache.idle_uncached_start),
     .dcache_dirty_victim         (soc.cpu.u_dcache.refill_start
                                   & soc.cpu.u_dcache.victim_needs_writeback),
