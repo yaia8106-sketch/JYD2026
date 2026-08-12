@@ -41,7 +41,10 @@ module muldiv_unit
         S_DONE
     } state_t;
 
-    state_t state;
+    // Keep local FSM feedback on the D input.  Extracting a shared CE makes
+    // the remote EX/MEM consume condition drive all six one-hot state flops;
+    // the D form is functionally identical and avoids the slower CE setup arc.
+    (* extract_enable = "no" *) state_t state;
 
     muldiv_op_t op_r;
     logic signed [32:0] mul_a_pipe;

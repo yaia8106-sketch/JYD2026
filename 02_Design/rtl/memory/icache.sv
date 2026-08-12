@@ -99,18 +99,28 @@ module icache #(
     // ----------------------------------------------------------------
 
     // The selected way is folded into the synchronous BRAM row address after
-    // the distributed-tag lookup. Therefore 8 KiB remains one 1024 x 72 data
-    // memory for both 1-way and 2-way configurations. The upper eight bits
-    // occupy the primitive parity storage and hold four predecode bits for
-    // each of the two 32-bit instructions.
+    // the distributed-tag lookup.  Keep the two instruction lanes in separate
+    // 36-bit memories: each lane carries one 32-bit instruction plus its four
+    // parity-bit predecode fields.  At 16 KiB this still consumes four RAMB36
+    // in total, but each response lane only selects between two depth banks
+    // instead of passing through the four-bank mux of one 72-bit memory.
     (* ram_style = "block" *)
-    logic [71:0] data_mem [0:DATA_ROWS-1];
+    logic [35:0] data_mem_slot0 [0:DATA_ROWS-1];
+    (* ram_style = "block" *)
+    logic [35:0] data_mem_slot1 [0:DATA_ROWS-1];
     (* ram_style = "distributed" *)
     logic [TAG_RAM_WIDTH-1:0] tag_mem [0:LINES-1];
     logic [LINES-1:0] line_valid_q;
     logic [SETS-1:0] replacement_way_q;
 
-    logic [71:0] lookup_payload_q;
+    logic [35:0] lookup_slot0_q;
+    logic [35:0] lookup_slot1_q;
+    wire  [71:0] lookup_payload_q = {
+        lookup_slot1_q[35:32],
+        lookup_slot0_q[35:32],
+        lookup_slot1_q[31:0],
+        lookup_slot0_q[31:0]
+    };
     logic [BLOCK_CLASS_WIDTH-1:0] lookup_class_q;
 
     // ----------------------------------------------------------------
@@ -120,6 +130,7 @@ module icache #(
     logic        lookup_valid_q;
     logic        lookup_hit_q;
     logic        lookup_refill_hit_q;
+    logic        lookup_refill_line_match_q;
     logic        lookup_commit_hit;
     logic [28:0] lookup_block_addr_q;
 
@@ -270,6 +281,13 @@ module icache #(
         if (irom_req_fire) begin
             lookup_hit_q <= irom_req_hit;
             lookup_refill_hit_q <= irom_req_refill_hit;
+            // Precompute this wide comparison while the request is accepted.
+            // A final-beat refill commit may become visible in the following
+            // cycle, but the request and refill line addresses are unchanged.
+            lookup_refill_line_match_q <=
+                irom_req_refill_eq0 & irom_req_refill_eq1
+                & irom_req_refill_eq2 & irom_req_refill_eq3
+                & irom_req_refill_eq4;
             lookup_block_addr_q <= irom_req_addr[31:3];
             lookup_class_q <= irom_req_block
                             ? irom_req_line_class[11:6]
@@ -382,14 +400,27 @@ module icache #(
         .block_metadata (refill_block_predecode)
     );
 
-    // Keep the data read and refill write as two independent BRAM ports.
-    // A same-row collision is harmless: that row has no valid line yet, and
-    // the partial-line buffer supplies matching refill data instead.
+    wire [35:0] refill_block_slot0 = {
+        refill_block_payload[67:64],
+        refill_block_payload[31:0]
+    };
+    wire [35:0] refill_block_slot1 = {
+        refill_block_payload[71:68],
+        refill_block_payload[63:32]
+    };
+
+    // Keep each lane's data read and refill write as two independent BRAM
+    // ports.  A same-row collision is harmless: that row has no valid line
+    // yet, and the partial-line buffer supplies matching refill data instead.
     always_ff @(posedge clk) begin
-        if (irom_req_fire)
-            lookup_payload_q <= data_mem[irom_req_data_row];
-        if (refill_cache_block_commit)
-            data_mem[refill_data_row] <= refill_block_payload;
+        if (irom_req_fire) begin
+            lookup_slot0_q <= data_mem_slot0[irom_req_data_row];
+            lookup_slot1_q <= data_mem_slot1[irom_req_data_row];
+        end
+        if (refill_cache_block_commit) begin
+            data_mem_slot0[refill_data_row] <= refill_block_slot0;
+            data_mem_slot1[refill_data_row] <= refill_block_slot1;
+        end
     end
 
     always_ff @(posedge clk) begin
@@ -485,7 +516,7 @@ module icache #(
         lookup_commit_hit =
             lookup_valid_q
             & tag_commit_pending_q
-            & (lookup_block_addr_q[28:1] == refill_buffer_line_addr_q)
+            & lookup_refill_line_match_q
             & (lookup_block
                    ? refill_buffer_filled_q[1]
                    : refill_buffer_filled_q[0]);

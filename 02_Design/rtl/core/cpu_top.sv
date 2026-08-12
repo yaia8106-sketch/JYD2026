@@ -317,7 +317,8 @@ module cpu_top
     // and every level of the forwarding barrel shifter.  Keep a physically
     // independent, cycle-identical copy for the EX-to-ID fast result so that
     // the architectural ALU placement does not load that critical source.
-    (* keep = "true" *) logic [4:0] ex_s1_fast_src2_low;
+    (* keep = "true", extract_enable = "yes", extract_reset = "no" *)
+    logic [4:0] ex_s1_fast_src2_low;
     wire [31:0] ex_alu_src1_repair;
     wire [31:0] ex_alu_src2_repair;
     wire [31:0] ex_s1_alu_src1_repair;
@@ -420,6 +421,8 @@ module cpu_top
     wire        mem_hazard_is_load;
     wire        mem_hazard_is_mul;
     wire [ 4:0] mem_hazard_rd;
+    wire [ 4:0] mem_fwd_s0_rd;
+    wire [ 4:0] mem_fwd_s1_rd;
     wire wb_src_t mem_hazard_wb_sel;
     wire [31:0] mem_alu_result = mem_s0_payload.alu_result;
     wire [31:0] mem_pc = mem_s0_payload.pc;
@@ -543,8 +546,12 @@ module cpu_top
     wire        ex_div_consume = ex_valid & ex_is_muldiv & ex_muldiv_op[2]
                                & muldiv_done & mem_allowin_lsu
                                & ~mem_branch_flush;
-    wire        mem_mul_consume = mem_valid & mem_is_mul
-                                & cache_ready & wb_allowin;
+    // A MEM multiplier token never owns a DCache request: its EX/MEM payload
+    // has both memory enables clear, so the synchronized DCache mem_req bit is
+    // clear and cpu_ready is unconditionally true.  Express that invariant
+    // directly instead of routing the remote tag/hit-ready cone into the
+    // MulDiv owner state.
+    wire        mem_mul_consume = mem_valid & mem_is_mul & wb_allowin;
     wire        muldiv_consume = ex_div_consume | mem_mul_consume;
     wire        muldiv_flush = frontend_branch_flush | mem_branch_flush;
 
@@ -739,7 +746,10 @@ module cpu_top
     wire id_to_ex_fire_reference = id_valid & id_ready_go_reference
                                  & ex_allowin_reference & ~id_flush;
 `endif
-    wire id_mul_prestart = id_to_ex_fire & id_is_mul;
+    // Slot-0 MulDiv is force-single in the frontend pair policy.  Make that
+    // existing invariant explicit at the ownership boundary so an impossible
+    // Slot-1-valid hazard cone cannot become a path into the MulDiv FSM.
+    wire id_mul_prestart = id_to_ex_fire & id_is_mul & ~id_s1_valid;
 
     always_ff @(posedge clk) begin
         if (!rst_n)
@@ -1622,6 +1632,8 @@ module cpu_top
         .mem_is_load    (mem_hazard_is_load),
         .mem_is_mul     (mem_hazard_is_mul),
         .mem_rd         (mem_hazard_rd),
+        .mem_fwd_s0_rd  (mem_fwd_s0_rd),
+        .mem_fwd_s1_rd  (mem_fwd_s1_rd),
         .mem_alu_result (mem_alu_result),
         .mem_mul_result (muldiv_result),
         .mem_pc_plus_4  (mem_pc_plus_4),
@@ -2209,6 +2221,8 @@ module cpu_top
                   && ((id_alu_src1 !== id_alu_src1_reference)
                       || (id_alu_src2 !== id_alu_src2_reference)))
             $fatal(1, "Slot-0 parallel ALU source selection changed value");
+        if (rst_n && id_valid && id_is_mul && id_s1_valid)
+            $fatal(1, "Slot-0 MUL violated the frontend force-single contract");
         if (rst_n && id_to_ex_fire && id_s1_valid
                   && ((id_s1_alu_src1 !== id_s1_alu_src1_reference)
                       || (id_s1_alu_src2 !== id_s1_alu_src2_reference)))
@@ -2260,6 +2274,8 @@ module cpu_top
             $fatal(1, "MUL entered EX with an unsupported WB-repair tag");
         if (rst_n && mem_valid && mem_is_mul && !muldiv_done)
             $fatal(1, "MEM MUL token is not aligned with registered result");
+        if (rst_n && mem_valid && mem_is_mul && !cache_ready)
+            $fatal(1, "MEM MUL unexpectedly owns a pending DCache request");
         // A completed MUL may remain owned by EX while an older MEM token
         // blocks the EX-to-MEM transfer.  DIV is also EX-owned until its
         // completion handshake, so both EX MulDiv forms are legal owners.
@@ -2493,6 +2509,8 @@ module cpu_top
         .mem_hazard_is_load(mem_hazard_is_load),
         .mem_hazard_is_mul(mem_hazard_is_mul),
         .mem_hazard_rd    (mem_hazard_rd),
+        .mem_fwd_s0_rd    (mem_fwd_s0_rd),
+        .mem_fwd_s1_rd    (mem_fwd_s1_rd),
         .mem_hazard_wb_sel(mem_hazard_wb_sel)
     );
 

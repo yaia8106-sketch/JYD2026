@@ -18,6 +18,7 @@ module ex_mem_reg_s1
 
     input  ex_mem_slot1_t ex_payload,
     output logic          mem_s1_valid,
+    (* extract_enable = "yes", extract_reset = "no" *)
     output ex_mem_slot1_t mem_payload,
 
     // Physically independent narrow copy for the backwards ID hazard path.
@@ -26,9 +27,9 @@ module ex_mem_reg_s1
     // LSU/commit copy of the same metadata.
     (* keep = "true" *)
     output logic          mem_s1_hazard_valid,
-    (* keep = "true" *)
+    (* keep = "true", extract_enable = "yes", extract_reset = "no" *)
     output logic          mem_s1_hazard_is_load,
-    (* keep = "true" *)
+    (* keep = "true", extract_enable = "yes", extract_reset = "no" *)
     output logic [4:0]    mem_s1_hazard_rd
 );
 

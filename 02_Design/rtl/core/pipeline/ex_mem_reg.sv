@@ -24,6 +24,7 @@ module ex_mem_reg
 
     // Registered payload
     input  ex_mem_slot0_t ex_payload,
+    (* extract_enable = "yes", extract_reset = "no" *)
     output ex_mem_slot0_t mem_payload,
 
     // Physically independent, narrow producer metadata for the backwards
@@ -32,15 +33,22 @@ module ex_mem_reg
     // pulling the complete EX/MEM bank towards decode.
     (* keep = "true" *)
     output logic          mem_hazard_valid,
-    (* keep = "true" *)
+    (* keep = "true", extract_enable = "yes", extract_reset = "no" *)
     output logic          mem_hazard_reg_write,
-    (* keep = "true" *)
+    (* keep = "true", extract_enable = "yes", extract_reset = "no" *)
     output logic          mem_hazard_is_load,
-    (* keep = "true" *)
+    (* keep = "true", extract_enable = "yes", extract_reset = "no" *)
     output logic          mem_hazard_is_mul,
-    (* keep = "true" *)
+    (* keep = "true", extract_enable = "yes", extract_reset = "no" *)
     output logic [4:0]    mem_hazard_rd,
-    (* keep = "true" *)
+    // Deterministic source-register replicas divide the four ID operand
+    // comparison cones into two placement/fanout clusters.  They contain no
+    // architectural state and are checked against the canonical mirror below.
+    (* keep = "true", extract_enable = "yes", extract_reset = "no" *)
+    output logic [4:0]    mem_fwd_s0_rd,
+    (* keep = "true", extract_enable = "yes", extract_reset = "no" *)
+    output logic [4:0]    mem_fwd_s1_rd,
+    (* keep = "true", extract_enable = "yes", extract_reset = "no" *)
     output wb_src_t       mem_hazard_wb_sel
 );
 
@@ -69,6 +77,8 @@ module ex_mem_reg
             mem_hazard_is_load <= ex_payload.mem_read_en;
             mem_hazard_is_mul <= ex_payload.is_mul;
             mem_hazard_rd <= ex_payload.rd;
+            mem_fwd_s0_rd <= ex_payload.rd;
+            mem_fwd_s1_rd <= ex_payload.rd;
             mem_hazard_wb_sel <= ex_payload.wb_sel;
         end
     end
@@ -102,6 +112,8 @@ module ex_mem_reg
                     || (mem_hazard_is_load !== mem_payload.mem_read_en)
                     || (mem_hazard_is_mul !== mem_payload.is_mul)
                     || (mem_hazard_rd !== mem_payload.rd)
+                    || (mem_fwd_s0_rd !== mem_payload.rd)
+                    || (mem_fwd_s1_rd !== mem_payload.rd)
                     || (mem_hazard_wb_sel !== mem_payload.wb_sel)))
                 $fatal(1, "Slot 0 MEM hazard metadata mirror diverged from EX/MEM payload");
         end

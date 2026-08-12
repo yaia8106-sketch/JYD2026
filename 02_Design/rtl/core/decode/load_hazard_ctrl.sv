@@ -226,19 +226,23 @@ module load_hazard_ctrl (
                                 & (id_s0_uses_s1_mem_load
                                    | id_s1_uses_s1_mem_load);
 
-    assign load_use_hazard_if_mem_ready = load_in_ex | load_in_s1_ex
-                                        | load_in_mem_if_ready
+    // EX-load dependencies are common to both MEM-readiness cofactors.  Keep
+    // only the genuinely readiness-dependent MEM hazards here; forwarding
+    // folds the common EX term into its single late hazard gate.  This avoids
+    // duplicating the same ID address comparisons through both cache-ready
+    // trees before selecting one of them again.
+    assign load_use_hazard_if_mem_ready = load_in_mem_if_ready
                                         | load_in_s1_mem_if_ready;
-    assign load_use_hazard_if_mem_wait = load_in_ex | load_in_s1_ex
-                                       | load_in_mem_if_wait
+    assign load_use_hazard_if_mem_wait = load_in_mem_if_wait
                                        | load_in_s1_mem_if_wait;
 
     assign load_in_mem = mem_load_ready ? load_in_mem_if_ready
                                         : load_in_mem_if_wait;
     assign load_in_s1_mem = mem_load_ready ? load_in_s1_mem_if_ready
                                            : load_in_s1_mem_if_wait;
-    assign load_use_hazard = mem_load_ready
-                           ? load_use_hazard_if_mem_ready
-                           : load_use_hazard_if_mem_wait;
+    assign load_use_hazard = load_in_ex | load_in_s1_ex
+                           | (mem_load_ready
+                              ? load_use_hazard_if_mem_ready
+                              : load_use_hazard_if_mem_wait);
 
 endmodule

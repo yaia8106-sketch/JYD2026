@@ -87,6 +87,10 @@ module forwarding (
     input  logic        mem_is_load,
     input  logic        mem_is_mul,
     input  logic [ 4:0] mem_rd,
+    // Two cycle-identical rd copies terminate in the corresponding ID-lane
+    // operand clusters.  mem_rd remains local to load-hazard classification.
+    input  logic [ 4:0] mem_fwd_s0_rd,
+    input  logic [ 4:0] mem_fwd_s1_rd,
     input  logic [31:0] mem_alu_result,
     input  logic [31:0] mem_mul_result,
     input  logic [31:0] mem_pc_plus_4,  // pre-computed, registered in EX/MEM
@@ -232,13 +236,13 @@ module forwarding (
                                            : rs2_candidate;
     endfunction
 
-`define FWD_MUX(TAG, SRC_ADDR, RF_DATA, OUT_DATA) \
+`define FWD_MUX(TAG, SRC_ADDR, MEM_FWD_RD, RF_DATA, OUT_DATA) \
     /* Build match bits for one ID operand. Younger pipeline stages have */ \
     /* priority over older ones; within a stage Slot 1 is younger than Slot 0. */ \
     wire TAG``_s1_ex_hit  = ex_s1_hazard_valid && ex_s1_hazard_reg_write && !ex_s1_hazard_result_repair && (ex_s1_hazard_rd != 5'd0) && (ex_s1_hazard_rd == SRC_ADDR); \
     wire TAG``_s0_ex_hit  = ex_hazard_valid && ex_hazard_reg_write && !ex_hazard_result_repair && (ex_hazard_rd != 5'd0) && (ex_hazard_rd == SRC_ADDR); \
     wire TAG``_s1_mem_hit = mem_s1_valid && mem_s1_reg_write && !mem_s1_is_load && (mem_s1_rd != 5'd0) && (mem_s1_rd == SRC_ADDR); \
-    wire TAG``_s0_mem_hit = mem_valid    && mem_reg_write    && !mem_is_load    && (mem_rd    != 5'd0) && (mem_rd    == SRC_ADDR); \
+    wire TAG``_s0_mem_hit = mem_valid    && mem_reg_write    && !mem_is_load    && (MEM_FWD_RD != 5'd0) && (MEM_FWD_RD == SRC_ADDR); \
     /* WB match bits feed both raw operands and transformed ALU candidates. */ \
     /* They are already local to one operand cluster; MAX_FANOUT on these */ \
     /* one- or two-load nets only propagates attributes into unrelated mux */ \
@@ -285,10 +289,14 @@ module forwarding (
         TAG``_rf_or_mul_data \
     )
 
-    `FWD_MUX(s0_rs1, id_rs1_addr,    rf_rs1_data,    id_rs1_data);
-    `FWD_MUX(s0_rs2, id_rs2_addr,    rf_rs2_data,    id_rs2_data);
-    `FWD_MUX(s1_rs1, id_s1_rs1_addr, rf_s1_rs1_data, id_s1_rs1_data);
-    `FWD_MUX(s1_rs2, id_s1_rs2_addr, rf_s1_rs2_data, id_s1_rs2_data);
+    `FWD_MUX(s0_rs1, id_rs1_addr,    mem_fwd_s0_rd,
+             rf_rs1_data,    id_rs1_data);
+    `FWD_MUX(s0_rs2, id_rs2_addr,    mem_fwd_s0_rd,
+             rf_rs2_data,    id_rs2_data);
+    `FWD_MUX(s1_rs1, id_s1_rs1_addr, mem_fwd_s1_rd,
+             rf_s1_rs1_data, id_s1_rs1_data);
+    `FWD_MUX(s1_rs2, id_s1_rs2_addr, mem_fwd_s1_rd,
+             rf_s1_rs2_data, id_s1_rs2_data);
 
 `undef FWD_MUX
 
@@ -577,8 +585,12 @@ module forwarding (
     // it now reports actual wait cycles, which should be zero for S1_WB hits.
     wire s1_wb_wait_hazard = 1'b0;
 
+    // EX-load RAW is independent of MEM/DCache readiness.  Treat it as a
+    // common late hazard instead of sending its address comparisons through
+    // both complete cache-ready cofactors in load_hazard_ctrl.
     wire non_load_hazard = repair_use_hazard | muldiv_use_hazard
-                         | mul_launch_ex_raw_hazard;
+                         | mul_launch_ex_raw_hazard
+                         | load_in_ex | load_in_s1_ex;
     // Expose the two load-readiness cofactors independently from hazards that
     // do not depend on MEM readiness. cpu_top folds the latter into the final
     // one-bit issue gate, so an EX destination match no longer traverses both

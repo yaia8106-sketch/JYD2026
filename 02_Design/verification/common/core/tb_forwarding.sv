@@ -169,6 +169,8 @@ module tb_forwarding;
         .mem_is_load      (mem_is_load),
         .mem_is_mul       (mem_is_mul),
         .mem_rd           (mem_rd),
+        .mem_fwd_s0_rd    (mem_rd),
+        .mem_fwd_s1_rd    (mem_rd),
         .mem_alu_result   (mem_alu_result),
         .mem_mul_result   (mem_mul_result),
         .mem_pc_plus_4    (mem_pc_plus_4),
