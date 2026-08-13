@@ -87,12 +87,6 @@ module frontend_abtb #(
     // observed alias-free nine-bit tag.
     localparam int TAG_W = 9;
 
-    // Preserve the current predictor type encoding for later integration.
-    localparam logic [1:0] TYPE_JAL    = 2'b00;
-    localparam logic [1:0] TYPE_CALL   = 2'b01;
-    localparam logic [1:0] TYPE_BRANCH = 2'b10;
-    localparam logic [1:0] TYPE_RET    = 2'b11;
-
     localparam int PAYLOAD_W = TAG_W + 2 + 32;
     localparam int TYPE_MSB = 33;
     localparam int TYPE_LSB = 32;
@@ -258,193 +252,49 @@ module frontend_abtb #(
     wire bank1_way1_match = abtb_ready & bank1_way1_lookup_valid
                           && (bank1_way1_lookup_tag == pred_lookup_tag);
 
-    wire bank0_way0_is_direct = !bank0_way0_lookup_type[1];
-    wire bank0_way1_is_direct = !bank0_way1_lookup_type[1];
-    wire bank1_way0_is_direct = !bank1_way0_lookup_type[1];
-    wire bank1_way1_is_direct = !bank1_way1_lookup_type[1];
-
-    wire bank0_way0_is_branch = bank0_way0_lookup_type == TYPE_BRANCH;
-    wire bank0_way1_is_branch = bank0_way1_lookup_type == TYPE_BRANCH;
-    wire bank1_way0_is_branch = bank1_way0_lookup_type == TYPE_BRANCH;
-    wire bank1_way1_is_branch = bank1_way1_lookup_type == TYPE_BRANCH;
-
-    wire bank0_way0_is_ret = bank0_way0_lookup_type == TYPE_RET;
-    wire bank0_way1_is_ret = bank0_way1_lookup_type == TYPE_RET;
-    wire bank1_way0_is_ret = bank1_way0_lookup_type == TYPE_RET;
-    wire bank1_way1_is_ret = bank1_way1_lookup_type == TYPE_RET;
-
-    wire bank0_way0_taken_candidate =
-        bank0_way0_is_direct
-        || (bank0_way0_is_branch && bank0_branch_taken)
-        || (bank0_way0_is_ret && bank0_ret_valid);
-    wire bank0_way1_taken_candidate =
-        bank0_way1_is_direct
-        || (bank0_way1_is_branch && bank0_branch_taken)
-        || (bank0_way1_is_ret && bank0_ret_valid);
-    wire bank1_way0_taken_candidate =
-        bank1_way0_is_direct
-        || (bank1_way0_is_branch && bank1_branch_taken)
-        || (bank1_way0_is_ret && bank1_ret_valid);
-    wire bank1_way1_taken_candidate =
-        bank1_way1_is_direct
-        || (bank1_way1_is_branch && bank1_branch_taken)
-        || (bank1_way1_is_ret && bank1_ret_valid);
-
-    // if the stored CFI is a RET, the predicted target is replaced by the RAS result.
-    // else the predicted target is the stored target in the ABTB RAM.
-    wire [31:0] bank0_way0_pred_target_candidate =
-        bank0_way0_is_ret ? bank0_ret_target : bank0_way0_stored_target;
-    wire [31:0] bank0_way1_pred_target_candidate =
-        bank0_way1_is_ret ? bank0_ret_target : bank0_way1_stored_target;
-    wire [31:0] bank1_way0_pred_target_candidate =
-        bank1_way0_is_ret ? bank1_ret_target : bank1_way0_stored_target;
-    wire [31:0] bank1_way1_pred_target_candidate =
-        bank1_way1_is_ret ? bank1_ret_target : bank1_way1_stored_target;
-
-    // way0 has priority if corrupted or stale training leaves duplicate tags.
-    wire bank0_way1_selected = !bank0_way0_match && bank0_way1_match;
-    wire bank1_way1_selected = !bank1_way0_match && bank1_way1_match;
-
-    wire bank0_any_match = bank0_way0_match || bank0_way1_match;
-    wire bank1_any_match = bank1_way0_match || bank1_way1_match;
-
-    wire bank0_selected_taken_candidate =
-        (bank0_way0_match && bank0_way0_taken_candidate)
-        || (bank0_way1_selected && bank0_way1_taken_candidate);
-    wire bank1_selected_taken_candidate =
-        (bank1_way0_match && bank1_way0_taken_candidate)
-        || (bank1_way1_selected && bank1_way1_taken_candidate);
-
-    wire [31:0] bank0_selected_pred_target_candidate =
-        bank0_way0_match ? bank0_way0_pred_target_candidate
-                         : bank0_way1_pred_target_candidate;
-    wire [31:0] bank1_selected_pred_target_candidate =
-        bank1_way0_match ? bank1_way0_pred_target_candidate
-                         : bank1_way1_pred_target_candidate;
-
-    wire [31:0] sequential_next_pc =
-        predict_pc + (predict_pc[2] ? 32'd4 : 32'd8);
-
-    // Tag matches and direction candidates do not semantically depend on
-    // lookup_valid. Compute the recursive PC choice from those raw candidates;
-    // lookup_valid continues to qualify every externally visible hit/training
-    // event below.
-    wire bank0_pred_taken_early = !predict_pc[2]
-                                & bank0_selected_taken_candidate;
-    wire bank1_pred_taken_early = bank1_selected_taken_candidate;
-    wire bank0_prediction_selected_early = bank0_pred_taken_early;
-    wire bank1_prediction_selected_early = bank1_pred_taken_early
-                                         & ~bank0_pred_taken_early;
-    wire [1:0] prediction_select_early = {
-        bank0_prediction_selected_early,
-        bank1_prediction_selected_early
-    };
-
-    // Encode the mutually exclusive global steering decision before the
-    // 32-bit targets arrive.  The wide next-PC path is then one final 3-way
-    // selector local to the ABTB instead of being reconstructed in the FTQ.
-    wire bank0_prediction_selected = bank0_pred_taken;
-    wire bank1_prediction_selected = bank1_pred_taken
-                                   & ~bank0_pred_taken;
-    wire [1:0] prediction_select = {
-        bank0_prediction_selected, bank1_prediction_selected
-    };
-
-    function automatic logic [31:0] select_pred_target(
-        input logic [1:0] select,
-        input logic [31:0] bank0_target,
-        input logic [31:0] bank1_target
-    );
-        case (select)
-            2'b10: select_pred_target = bank0_target;
-            2'b01: select_pred_target = bank1_target;
-            default: select_pred_target = 32'd0;
-        endcase
-    endfunction
-
-    function automatic logic [31:0] select_pred_next_pc(
-        input logic [1:0] select,
-        input logic [31:0] bank0_target,
-        input logic [31:0] bank1_target,
-        input logic [31:0] sequential_pc
-    );
-        case (select)
-            2'b10: select_pred_next_pc = bank0_target;
-            2'b01: select_pred_next_pc = bank1_target;
-            default: select_pred_next_pc = sequential_pc;
-        endcase
-    endfunction
-
-    // Combine tag-hit, CFI type, PHT direction, and optional ras return targets
-    // into per-bank predictions, then choose the earliest taken bank.
-    always_comb begin
-        bank0_eligible = lookup_valid && !predict_pc[2];
-        bank0_lookup_hit = !predict_pc[2] && bank0_any_match;
-        bank0_hit = lookup_valid && bank0_lookup_hit;
-        bank0_way = bank0_way1_selected;
-        bank0_cfi_type = 2'd0;
-        bank0_abtb_pred_target = 32'd0;
-
-        if (bank0_way0_match) begin
-            bank0_cfi_type = bank0_way0_lookup_type;
-            bank0_abtb_pred_target = bank0_way0_stored_target;
-        end else if (bank0_way1_selected) begin
-            bank0_cfi_type = bank0_way1_lookup_type;
-            bank0_abtb_pred_target = bank0_way1_stored_target;
-        end
-
-        bank1_eligible = lookup_valid;
-        bank1_lookup_hit = bank1_any_match;
-        bank1_hit = lookup_valid && bank1_lookup_hit;
-        bank1_way = bank1_way1_selected;
-        bank1_cfi_type = 2'd0;
-        bank1_abtb_pred_target = 32'd0;
-
-        if (bank1_way0_match) begin
-            bank1_cfi_type = bank1_way0_lookup_type;
-            bank1_abtb_pred_target = bank1_way0_stored_target;
-        end else if (bank1_way1_selected) begin
-            bank1_cfi_type = bank1_way1_lookup_type;
-            bank1_abtb_pred_target = bank1_way1_stored_target;
-        end
-
-        bank0_pred_taken =
-            bank0_eligible && bank0_selected_taken_candidate;
-        bank0_final_pred_target = bank0_abtb_pred_target;
-        if (bank0_hit) begin
-            bank0_final_pred_target = bank0_selected_pred_target_candidate;
-        end
-
-        bank1_pred_taken =
-            bank1_eligible && bank1_selected_taken_candidate;
-        bank1_final_pred_target = bank1_abtb_pred_target;
-        if (bank1_hit) begin
-            bank1_final_pred_target = bank1_selected_pred_target_candidate;
-        end
-
-    end
-
-    assign pred_taken = |prediction_select;
-    assign pred_bank = bank1_prediction_selected;
-    assign pred_cfi_type = bank0_prediction_selected ? bank0_cfi_type
-                         : bank1_prediction_selected ? bank1_cfi_type
-                                                     : 2'd0;
-    assign pred_target = select_pred_target(
-        prediction_select,
-        bank0_selected_pred_target_candidate,
-        bank1_selected_pred_target_candidate
-    );
-    assign pred_next_pc = select_pred_next_pc(
-        prediction_select,
-        bank0_selected_pred_target_candidate,
-        bank1_selected_pred_target_candidate,
-        sequential_next_pc
-    );
-    assign pred_next_pc_early = select_pred_next_pc(
-        prediction_select_early,
-        bank0_selected_pred_target_candidate,
-        bank1_selected_pred_target_candidate,
-        sequential_next_pc
+    frontend_abtb_predict_select u_predict_select (
+        .lookup_valid              (lookup_valid),
+        .predict_pc                (predict_pc),
+        .bank0_way0_match          (bank0_way0_match),
+        .bank0_way1_match          (bank0_way1_match),
+        .bank0_way0_type           (bank0_way0_lookup_type),
+        .bank0_way1_type           (bank0_way1_lookup_type),
+        .bank0_way0_target         (bank0_way0_stored_target),
+        .bank0_way1_target         (bank0_way1_stored_target),
+        .bank0_branch_taken        (bank0_branch_taken),
+        .bank0_ret_valid           (bank0_ret_valid),
+        .bank0_ret_target          (bank0_ret_target),
+        .bank1_way0_match          (bank1_way0_match),
+        .bank1_way1_match          (bank1_way1_match),
+        .bank1_way0_type           (bank1_way0_lookup_type),
+        .bank1_way1_type           (bank1_way1_lookup_type),
+        .bank1_way0_target         (bank1_way0_stored_target),
+        .bank1_way1_target         (bank1_way1_stored_target),
+        .bank1_branch_taken        (bank1_branch_taken),
+        .bank1_ret_valid           (bank1_ret_valid),
+        .bank1_ret_target          (bank1_ret_target),
+        .bank0_eligible            (bank0_eligible),
+        .bank0_lookup_hit          (bank0_lookup_hit),
+        .bank0_hit                 (bank0_hit),
+        .bank0_way                 (bank0_way),
+        .bank0_cfi_type            (bank0_cfi_type),
+        .bank0_abtb_pred_target    (bank0_abtb_pred_target),
+        .bank0_pred_taken          (bank0_pred_taken),
+        .bank0_final_pred_target   (bank0_final_pred_target),
+        .bank1_eligible            (bank1_eligible),
+        .bank1_lookup_hit          (bank1_lookup_hit),
+        .bank1_hit                 (bank1_hit),
+        .bank1_way                 (bank1_way),
+        .bank1_cfi_type            (bank1_cfi_type),
+        .bank1_abtb_pred_target    (bank1_abtb_pred_target),
+        .bank1_pred_taken          (bank1_pred_taken),
+        .bank1_final_pred_target   (bank1_final_pred_target),
+        .pred_taken                (pred_taken),
+        .pred_bank                 (pred_bank),
+        .pred_cfi_type             (pred_cfi_type),
+        .pred_target               (pred_target),
+        .pred_next_pc              (pred_next_pc),
+        .pred_next_pc_early        (pred_next_pc_early)
     );
 
 `ifndef SYNTHESIS

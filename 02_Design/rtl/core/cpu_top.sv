@@ -122,10 +122,11 @@ module cpu_top
     wire        id_valid;
     wire        id_allowin;
     wire        id_ready_go;
-    wire        id_ready_go_raw;
-    wire        id_ready_go_raw_if_mem_ready;
-    wire        id_ready_go_raw_if_mem_wait;
+    wire        id_dependency_ready;
+    wire        id_dependency_ready_if_mem_ready;
+    wire        id_dependency_ready_if_mem_wait;
     wire        id_non_load_hazard;
+    wire        id_mul_launch_ex_raw_hazard;
     // Structured payloads keep per-slot prediction metadata adjacent to the
     // instruction as it crosses the pipeline boundary.
     wire cpu_defs::if_id_payload_t if_id_payload;
@@ -332,7 +333,6 @@ module cpu_top
     wire        actual_taken;          // for predictor update
     wire [31:0] actual_target;         // for predictor update
     wire [31:0] ex_control_target;     // EX-computed target for Slot 0 CFI
-    wire        ex_branch_registered_flush;
     wire        ex_s1_branch_redirect; // Slot1 branch delayed frontend redirect
     wire [31:0] ex_s1_branch_target;
     wire        ex_s1_actual_taken;
@@ -356,11 +356,6 @@ module cpu_top
     wire cpu_defs::redirect_source_t ex_registered_redirect_source;
     wire        ex_registered_redirect_actual_taken;
 
-    // Ordinary Slot 0 branch misses are registered through EX/MEM. System and
-    // timer redirects use the fast frontend redirect path instead.
-    assign ex_branch_registered_flush = branch_flush & ex_redirect_fire
-                                      & ~ex_priv_flow;
-
     // ---- Registered branch flush (MEM stage, for 250MHz timing) ----
     wire cpu_defs::redirect_t ex_mem_redirect;
     wire cpu_defs::redirect_t mem_redirect;
@@ -379,7 +374,6 @@ module cpu_top
     wire [31:0] mem_load_data_ex;
     wire [31:0] mem_load_data_ext;
     wire [31:0] mem_load_data_ext_ex;
-    wire [31:0] mem_load_data_ext_raw;
     // A ready load in either MEM slot may repair an eligible EX consumer.
     wire        mem_load_ready;
     wire        is_cacheable;          // EX stage: addr in DRAM range
@@ -504,29 +498,8 @@ module cpu_top
     wire        muldiv_busy;
     wire        muldiv_done;
     wire [31:0] muldiv_result;
-    wire        ex_muldiv_req = ex_valid & ex_is_muldiv & ~mem_branch_flush;
-    // DIV/REM retain the original EX completion handshake. Multipliers leave
-    // EX one cycle earlier, so their owner is released only when the aligned
-    // MEM token advances. This keeps the registered product stable across MEM
-    // backpressure.
-    wire        ex_div_consume = ex_valid & ex_is_muldiv & ex_muldiv_op[2]
-                               & muldiv_done & mem_allowin_lsu
-                               & ~mem_branch_flush;
-    // Keep the result owner until the aligned MEM token can really advance.
-    // cache_ready may still be low while the shared DCache interface retires
-    // an older request, even though the MUL token itself is not a memory op.
-    wire        mem_mul_consume = mem_valid & mem_is_mul
-                                & cache_ready & wb_allowin;
-    wire        muldiv_consume = ex_div_consume | mem_mul_consume;
-    wire        muldiv_flush = frontend_branch_flush | mem_branch_flush;
-
-    // The MEM/WB payload must carry the architectural multiplier result because
-    // the early EX/MEM ALU field was sampled before that product was ready.
-    // Forwarding receives the raw candidates separately and folds MUL/PC+4/ALU
-    // selection into its existing one-level MEM value selector.
-    wire [31:0] mem_wb_alu_result =
-        ({32{mem_is_mul}}  & muldiv_result)
-      | ({32{~mem_is_mul}} & mem_alu_result);
+    wire        muldiv_consume;
+    wire [31:0] mem_wb_alu_result;
 
     // Only values that are physically present on the fast EX bypass network
     // advertise an EX forwarding hit. Loads, MulDiv, and privileged results
@@ -541,13 +514,13 @@ module cpu_top
     wire [31:0] dual_issue_count;
 
     // ---- Backend flow control ----
-    wire if_ready_go_w;             // driven by frontend_ftq
+    wire if_ready_go;               // driven by frontend_ftq
     wire mmio_st_ld_hazard;
     wire ex_muldiv_ready;
     wire ex_priv_ready;
     wire ex_priv_commit_ready;
-    wire ex_ready_go_w;
-    wire mem_ready_go_w;
+    wire ex_ready_go;
+    wire mem_ready_go;
     (* keep = "true" *) wire ex_allowin_if_cache_ready;
     (* keep = "true" *) wire ex_allowin_if_cache_wait;
     wire serializing_inflight;
@@ -563,73 +536,9 @@ module cpu_top
     wire id_flush = frontend_branch_flush;
     wire ex_flush = frontend_branch_flush;
 
-    backend_flow_ctrl u_backend_flow_ctrl (
-        .clk                         (clk),
-        .rst_n                       (rst_n),
-        .cache_ready                 (cache_ready),
-        .wb_allowin                  (wb_allowin),
-        .id_valid                    (id_valid),
-        .id_issue_is_muldiv          (id_issue_is_muldiv),
-        .id_issue_serializing        (id_issue_hint.serializing),
-        .id_decoded_serializing      (dec_uop.serializing),
-        .id_ready_go_raw             (id_ready_go_raw),
-        .id_ready_go_raw_if_mem_ready(id_ready_go_raw_if_mem_ready),
-        .id_ready_go_raw_if_mem_wait (id_ready_go_raw_if_mem_wait),
-        .id_non_load_hazard          (id_non_load_hazard),
-        .id_flush                    (id_flush),
-        .ex_valid                    (ex_valid),
-        .ex_slot1_valid              (ex_s1_valid),
-        .ex_is_muldiv                (ex_is_muldiv),
-        .ex_is_divrem                (ex_muldiv_op[2]),
-        .ex_priv_wait_older          (ex_priv_wait_older),
-        .mmio_store_load_hazard      (mmio_st_ld_hazard),
-        .mem_valid                   (mem_valid),
-        .mem_slot1_valid             (mem_s1_valid),
-        .mem_is_mul                  (mem_is_mul),
-        .mem_branch_flush            (mem_branch_flush),
-        .wb_valid                    (wb_valid),
-        .wb_slot1_valid              (wb_s1_valid),
-        .muldiv_busy                 (muldiv_busy),
-        .muldiv_done                 (muldiv_done),
-        .muldiv_consume              (muldiv_consume),
-        .serializing_inflight        (serializing_inflight),
-        .timer_irq_request           (timer_irq_request),
-        .timer_irq_hold              (timer_irq_hold),
-        .ex_muldiv_ready             (ex_muldiv_ready),
-        .ex_priv_ready               (ex_priv_ready),
-        .ex_priv_commit_ready        (ex_priv_commit_ready),
-        .ex_ready_go                 (ex_ready_go_w),
-        .mem_ready_go                (mem_ready_go_w),
-        .mem_allowin_lsu             (mem_allowin_lsu),
-        .mem_allowin_control         (mem_allowin_control),
-        .mem_allowin_pipe            (mem_allowin_pipe),
-        .timer_irq_block             (timer_irq_block),
-        .id_serializing_ready        (id_serializing_ready),
-        .id_barrier_ready            (id_barrier_ready),
-        .id_muldiv_unit_ready        (id_muldiv_unit_ready),
-        .id_ready_go                 (id_ready_go),
-        .ex_allowin_if_cache_ready   (ex_allowin_if_cache_ready),
-        .ex_allowin_if_cache_wait    (ex_allowin_if_cache_wait),
-        .ex_allowin                  (ex_allowin),
-        .ex_allowin_timing_copy      (ex_allowin_ex_local),
-        .id_allowin                  (id_allowin),
-        .id_allowin_pipe             (id_allowin_pipe),
-        .id_allowin_frontend         (id_allowin_frontend),
-        .id_to_ex_fire               (id_to_ex_fire)
-    );
-
     // A Slot-0 multiply may pair with an independent Slot-1 instruction, so
     // every accepted multiply must establish the MulDiv owner here.
     wire id_mul_prestart = id_to_ex_fire & id_is_mul;
-
-    serialization_ctrl u_serialization_ctrl (
-        .clk                  (clk),
-        .rst_n                (rst_n),
-        .id_issue_fire        (id_to_ex_fire),
-        .id_issue_serializing (id_issue_hint.serializing),
-        .wb_slot0_valid       (wb_valid),
-        .serializing_inflight (serializing_inflight)
-    );
 
     // ---- Register addresses from the selected ISA decoder ----
     wire [4:0] id_rs1_addr;
@@ -650,158 +559,9 @@ module cpu_top
     wire        id_s1_rs2_used;
     wire        id_s0_alu_only;
     wire        id_s1_repair_ok;
-    // Qualify the same-pair bypass in ID and carry one registered bit into EX.
-    // This keeps the rd/rs comparisons off the ALU-to-store-data timing path.
-    wire id_s0_alu_store_data_bypass = id_s1_valid
-                                     & id_s0_alu_only
-                                     & dec1_mem_write_en
-                                     & dec_reg_write_en
-                                     & (id_rd_addr != 5'd0)
-                                     & (id_s1_rs2_addr == id_rd_addr)
-                                     & (id_s1_rs1_addr != id_rd_addr);
-    // Slot 1 is younger than Slot 0.  Suppress its LSU side effects when an
-    // older Slot-0 redirect/trap wins, or while an ISA-specific address fault
-    // is being replayed from Slot 1 as a precise Slot-0 exception.
-    wire ex_s1_side_effect_kill = branch_flush | ex_priv_trap
-                                | ex_s1_addr_replay;
-    wire ex_s1_lsu_select_raw = ex_s1_valid
-                               & (ex_s1_mem_read_en
-                                  | ex_s1_mem_write_en);
-    // The LSU bridge arbitrates Slot 0/Slot 1 memory requests, routes them to
-    // cache or MMIO, and returns the raw load word to the MEM load formatter.
-    memory_access_unit #(
-        .CACHE_ADDR_BASE  (CACHE_ADDR_BASE),
-        .CACHE_ADDR_MASK  (CACHE_ADDR_MASK),
-        .AXI_UNCACHED_DATA(AXI_UNCACHED_DATA)
-    ) u_memory_access_unit (
-        .ex_valid            (ex_valid),
-        .ex_mem_read_en      (ex_mem_read_en & ~ex_priv_trap),
-        .ex_mem_write_en     (ex_mem_write_en & ~ex_priv_trap),
-        .ex_alu_addr         (alu_addr),
-        .ex_lookup_addr      (ex_lsu_addr_low),
-        .ex_mem_size         (ex_mem_size),
-        .ex_mem_unsigned     (ex_mem_unsigned),
-        .ex_store_wea        (dram_wea),
-        .ex_store_data       (ex_rs2_data_repair),
-        .ex_s1_lsu_select    (ex_s1_lsu_select_raw),
-        .ex_s1_side_effect_kill(ex_s1_side_effect_kill),
-        .ex_s1_mem_read_en   (ex_s1_mem_read_en),
-        .ex_s1_mem_write_en  (ex_s1_mem_write_en),
-        .ex_s1_alu_addr      (alu_s1_addr),
-        .ex_s1_lookup_addr   (ex_s1_lsu_addr_low),
-        .ex_s1_mem_size      (ex_s1_mem_size),
-        .ex_s1_mem_unsigned  (ex_s1_mem_unsigned),
-        .ex_s1_store_wea     (dram_wea_s1),
-        .ex_s1_store_data    (ex_s1_store_data_raw),
-        .mem_valid           (mem_valid),
-        .mem_alu_result      (mem_alu_result),
-        .mem_mem_read_en     (mem_mem_read_en),
-        .mem_store_wea       (mem_store_wea),
-        .mem_store_data      (mem_store_data),
-        .mem_is_cacheable    (is_cacheable_mem),
-        .mem_s1_valid        (mem_s1_valid),
-        .mem_s1_alu_result   (mem_s1_alu_result),
-        .mem_s1_mem_read_en  (mem_s1_mem_read_en),
-        .mem_s1_mem_write_en (mem_s1_mem_write_en),
-        .mem_s1_store_wea    (mem_s1_store_wea),
-        .mem_s1_store_data   (mem_s1_store_data),
-        .mem_s1_is_cacheable (mem_s1_is_cacheable),
-        .mem_ready_go        (mem_ready_go_w),
-        .mem_allowin         (mem_allowin_lsu),
-        .mem_branch_flush    (mem_branch_flush),
-        .cache_rdata         (cache_rdata),
-        .cache_rdata_ex      (cache_rdata_ex),
-        .mmio_rdata          (mmio_rdata),
-        .dual_issue_count    (dual_issue_count),
-        .is_cacheable        (is_cacheable),
-        .is_cacheable_s1     (is_cacheable_s1),
-        .mmio_st_ld_hazard   (mmio_st_ld_hazard),
-        .cache_req           (cache_req),
-        .cache_wr            (cache_wr),
-        .cache_addr          (cache_addr),
-        .cache_lookup_addr   (cache_lookup_addr),
-        .cache_wea           (cache_wea),
-        .cache_wdata         (cache_wdata),
-        .cache_load_mask     (cache_load_mask),
-        .cache_load_size     (cache_load_size),
-        .cache_load_unsigned (cache_load_unsigned),
-        .cache_uncached      (cache_uncached),
-        .cache_flush         (cache_flush),
-        .cache_pipeline_stall(cache_pipeline_stall),
-        .mmio_addr           (mmio_addr),
-        .mmio_wr_addr        (mmio_wr_addr),
-        .mmio_wea            (mmio_wea),
-        .mmio_wdata          (mmio_wdata),
-        .mem_load_data       (mem_load_data),
-        .mem_load_data_ex    (mem_load_data_ex),
-        .mem_load_ready      (mem_load_ready)
-    );
-
-`ifndef SYNTHESIS
-    // Cycle-equivalence reference for the previous implementation, which
-    // killed Slot-1 read/write enables before selecting the LSU lane.  Payload
-    // bits may now differ while invalid, but request-valid must remain exact.
-    wire ex_lsu_read_before_late_kill = ex_s1_lsu_select_raw
-        ? (ex_s1_mem_read_en & ~ex_s1_side_effect_kill)
-        : (ex_mem_read_en & ~ex_priv_trap);
-    wire ex_lsu_write_before_late_kill = ex_s1_lsu_select_raw
-        ? (ex_s1_mem_write_en & ~ex_s1_side_effect_kill)
-        : (ex_mem_write_en & ~ex_priv_trap);
-    wire ex_lsu_cacheable_before_late_kill = ex_s1_lsu_select_raw
-        ? is_cacheable_s1 : is_cacheable;
-    wire cache_req_before_late_kill = ex_valid & ~mem_branch_flush
-        & (ex_lsu_read_before_late_kill | ex_lsu_write_before_late_kill)
-        & (ex_lsu_cacheable_before_late_kill | AXI_UNCACHED_DATA);
-    wire mem_store_active_before_late_kill = (|mem_store_wea)
-                                           | (|mem_s1_store_wea);
-    wire mem_store_uncacheable_before_late_kill =
-        ((|mem_store_wea) & ~is_cacheable_mem)
-        | ((|mem_s1_store_wea) & ~mem_s1_is_cacheable);
-    wire mmio_st_ld_hazard_before_late_kill = !AXI_UNCACHED_DATA
-        & ex_lsu_read_before_late_kill
-        & mem_store_active_before_late_kill
-        & mem_store_uncacheable_before_late_kill;
-`endif
-
-    // Redirect priority is centralized here: fast EX system/timer redirects
-    // can override replay of the older registered MEM redirect.
-    redirect_ctrl u_redirect_ctrl (
-        .clk                         (clk),
-        .rst_n                       (rst_n),
-        .ex_ready_go                 (ex_ready_go_w),
-        .mem_allowin                 (mem_allowin_control),
-        .mem_branch_flush            (mem_branch_flush),
-        .mem_branch_target           (mem_branch_target),
-        .ex_priv_redirect            (ex_priv_redirect),
-        .ex_priv_target              (ex_priv_target),
-        .timer_irq_redirect          (timer_irq_redirect),
-        .timer_irq_target            (timer_irq_target),
-        .ex_redirect_fire            (ex_redirect_fire),
-        .ex_fast_redirect            (ex_fast_redirect),
-        .ex_fast_redirect_target     (ex_fast_redirect_target),
-        .mem_branch_replay           (mem_branch_replay),
-        .frontend_branch_flush       (frontend_branch_flush),
-        .frontend_branch_target      (frontend_branch_target)
-    );
-
-    // Timer interrupts wait until the pipeline is empty before redirecting to
-    // mtvec, which keeps trap entry precise.
-    timer_irq_ctrl u_timer_irq_ctrl (
-        .clk               (clk),
-        .rst_n             (rst_n),
-        .timer_irq_request (timer_irq_request),
-        .id_valid          (id_valid),
-        .frontend_flush    (frontend_branch_flush),
-        .ex_valid          (ex_valid),
-        .mem_valid         (mem_valid),
-        .wb_valid          (wb_valid),
-        .ex_s1_valid       (ex_s1_valid),
-        .mem_s1_valid      (mem_s1_valid),
-        .wb_s1_valid       (wb_s1_valid),
-        .timer_irq_hold    (timer_irq_hold),
-        .pipeline_empty    (timer_irq_pipe_empty),
-        .timer_irq_take    (timer_irq_take)
-    );
+    wire        id_s0_alu_store_data_bypass;
+    wire        ex_s1_side_effect_kill;
+    wire        ex_s1_lsu_select_raw;
 
     // ================================================================
     //  Stage-1 prediction wires
@@ -847,88 +607,66 @@ module cpu_top
     wire [31:0] abtb_shadow_pred_next_pc;
     wire [31:0] abtb_early_pred_next_pc;
 
-    // Compatibility probes mirror IF/ID, ID, and EX prediction metadata for
-    // existing monitors. They do not participate in control.
+    // Stage records remain structured throughout the production predictor
+    // path. The scalar names below are compatibility probes for directed tests.
+    wire prediction_meta_t id_s0_prediction = id_payload.slot0.prediction;
+    wire prediction_meta_t id_s1_prediction = id_payload.slot1.prediction;
+    wire id_ex_prediction_t ex_s0_prediction =
+        ex_s0_payload.common.prediction;
+    wire id_ex_prediction_t ex_s1_prediction =
+        ex_s1_payload.common.prediction;
+
+    // Keep the production path as direct aliases.  A pass-through helper
+    // module looks tidy in the hierarchy, but it prevents Vivado from seeing
+    // these fields in the same optimization boundary as their consumers.
     wire        if_abtb_hit_out = if_id_payload.slot0.prediction.abtb_hit;
     wire        if_abtb_way_out = if_id_payload.slot0.prediction.abtb_way;
-    wire [ 1:0] if_abtb_cfi_type_out = if_id_payload.slot0.prediction.abtb_cfi_type;
-    wire [31:0] if_abtb_target_out = if_id_payload.slot0.prediction.abtb_target;
-    wire        if_abtb_pred_taken_out = if_id_payload.slot0.prediction.abtb_pred_taken;
-    wire [31:0] if_abtb_pred_target_out = if_id_payload.slot0.prediction.abtb_pred_target;
-    wire        if_pred_source_abtb_out = if_id_payload.slot0.prediction.source_abtb;
+    wire [ 1:0] if_abtb_cfi_type_out =
+        if_id_payload.slot0.prediction.abtb_cfi_type;
+    wire [31:0] if_abtb_target_out =
+        if_id_payload.slot0.prediction.abtb_target;
+    wire        if_abtb_pred_taken_out =
+        if_id_payload.slot0.prediction.abtb_pred_taken;
+    wire [31:0] if_abtb_pred_target_out =
+        if_id_payload.slot0.prediction.abtb_pred_target;
+    wire        if_pred_source_abtb_out =
+        if_id_payload.slot0.prediction.source_abtb;
     wire        if_stage1_branch_owned_out =
         if_id_payload.slot0.prediction.stage1_branch_owned;
-    wire        if_s1_abtb_hit_out = if_id_payload.slot1.prediction.abtb_hit;
-    wire        if_s1_abtb_way_out = if_id_payload.slot1.prediction.abtb_way;
-    wire [ 1:0] if_s1_abtb_cfi_type_out = if_id_payload.slot1.prediction.abtb_cfi_type;
-    wire [31:0] if_s1_abtb_target_out = if_id_payload.slot1.prediction.abtb_target;
-    wire        if_s1_abtb_pred_taken_out = if_id_payload.slot1.prediction.abtb_pred_taken;
-    wire [31:0] if_s1_abtb_pred_target_out = if_id_payload.slot1.prediction.abtb_pred_target;
-    wire        if_s1_pred_source_abtb_out = if_id_payload.slot1.prediction.source_abtb;
+    wire        if_s1_abtb_hit_out =
+        if_id_payload.slot1.prediction.abtb_hit;
+    wire        if_s1_abtb_way_out =
+        if_id_payload.slot1.prediction.abtb_way;
+    wire [ 1:0] if_s1_abtb_cfi_type_out =
+        if_id_payload.slot1.prediction.abtb_cfi_type;
+    wire [31:0] if_s1_abtb_target_out =
+        if_id_payload.slot1.prediction.abtb_target;
+    wire        if_s1_abtb_pred_taken_out =
+        if_id_payload.slot1.prediction.abtb_pred_taken;
+    wire [31:0] if_s1_abtb_pred_target_out =
+        if_id_payload.slot1.prediction.abtb_pred_target;
+    wire        if_s1_pred_source_abtb_out =
+        if_id_payload.slot1.prediction.source_abtb;
     wire        if_s1_stage1_branch_owned_out =
         if_id_payload.slot1.prediction.stage1_branch_owned;
 
-    wire        id_abtb_hit = id_payload.slot0.prediction.abtb_hit;
-    wire        id_abtb_way = id_payload.slot0.prediction.abtb_way;
-    wire [ 1:0] id_abtb_cfi_type = id_payload.slot0.prediction.abtb_cfi_type;
-    wire [31:0] id_abtb_target = id_payload.slot0.prediction.abtb_target;
-    wire        id_abtb_pred_taken = id_payload.slot0.prediction.abtb_pred_taken;
-    wire [31:0] id_abtb_pred_target = id_payload.slot0.prediction.abtb_pred_target;
-    wire        id_pred_source_abtb = id_payload.slot0.prediction.source_abtb;
-    wire        id_stage1_branch_owned = id_payload.slot0.prediction.stage1_branch_owned;
+    wire        id_abtb_hit = id_s0_prediction.abtb_hit;
+    wire        id_abtb_way = id_s0_prediction.abtb_way;
     wire        id_abtb_update_qualified_w;
     wire [ 1:0] id_abtb_update_cfi_type_w;
-    wire        id_s1_abtb_hit = id_payload.slot1.prediction.abtb_hit;
-    wire        id_s1_abtb_way = id_payload.slot1.prediction.abtb_way;
-    wire [ 1:0] id_s1_abtb_cfi_type = id_payload.slot1.prediction.abtb_cfi_type;
-    wire [31:0] id_s1_abtb_target = id_payload.slot1.prediction.abtb_target;
-    wire        id_s1_abtb_pred_taken = id_payload.slot1.prediction.abtb_pred_taken;
-    wire [31:0] id_s1_abtb_pred_target = id_payload.slot1.prediction.abtb_pred_target;
-    wire        id_s1_pred_source_abtb = id_payload.slot1.prediction.source_abtb;
-    wire        id_s1_stage1_branch_owned = id_payload.slot1.prediction.stage1_branch_owned;
     wire        id_s1_abtb_update_qualified_w;
     wire [ 1:0] id_s1_abtb_update_cfi_type_w;
 
-    wire        ex_abtb_hit =
-        ex_s0_payload.common.prediction.prediction.abtb_hit;
-    wire        ex_abtb_way =
-        ex_s0_payload.common.prediction.prediction.abtb_way;
+    wire        ex_abtb_hit = ex_s0_prediction.prediction.abtb_hit;
+    wire        ex_abtb_way = ex_s0_prediction.prediction.abtb_way;
     wire [ 1:0] ex_abtb_cfi_type =
-        ex_s0_payload.common.prediction.prediction.abtb_cfi_type;
+        ex_s0_prediction.prediction.abtb_cfi_type;
     wire [31:0] ex_abtb_target =
-        ex_s0_payload.common.prediction.prediction.abtb_target;
+        ex_s0_prediction.prediction.abtb_target;
     wire        ex_abtb_pred_taken =
-        ex_s0_payload.common.prediction.prediction.abtb_pred_taken;
+        ex_s0_prediction.prediction.abtb_pred_taken;
     wire [31:0] ex_abtb_pred_target =
-        ex_s0_payload.common.prediction.prediction.abtb_pred_target;
-    wire        ex_pred_source_abtb =
-        ex_s0_payload.common.prediction.prediction.source_abtb;
-    wire        ex_stage1_branch_owned =
-        ex_s0_payload.common.prediction.prediction.stage1_branch_owned;
-    wire        ex_abtb_update_qualified =
-        ex_s0_payload.common.prediction.update_qualified;
-    wire [ 1:0] ex_abtb_update_cfi_type =
-        ex_s0_payload.common.prediction.update_cfi_type;
-    wire        ex_s1_abtb_hit =
-        ex_s1_payload.common.prediction.prediction.abtb_hit;
-    wire        ex_s1_abtb_way =
-        ex_s1_payload.common.prediction.prediction.abtb_way;
-    wire [ 1:0] ex_s1_abtb_cfi_type =
-        ex_s1_payload.common.prediction.prediction.abtb_cfi_type;
-    wire [31:0] ex_s1_abtb_target =
-        ex_s1_payload.common.prediction.prediction.abtb_target;
-    wire        ex_s1_abtb_pred_taken =
-        ex_s1_payload.common.prediction.prediction.abtb_pred_taken;
-    wire [31:0] ex_s1_abtb_pred_target =
-        ex_s1_payload.common.prediction.prediction.abtb_pred_target;
-    wire        ex_s1_pred_source_abtb =
-        ex_s1_payload.common.prediction.prediction.source_abtb;
-    wire        ex_s1_stage1_branch_owned =
-        ex_s1_payload.common.prediction.prediction.stage1_branch_owned;
-    wire        ex_s1_abtb_update_qualified =
-        ex_s1_payload.common.prediction.update_qualified;
-    wire [ 1:0] ex_s1_abtb_update_cfi_type =
-        ex_s1_payload.common.prediction.update_cfi_type;
+        ex_s0_prediction.prediction.abtb_pred_target;
     wire [ 7:0] stage1_bank0_pht_index;
     wire [ 1:0] stage1_bank0_pht_counter;
     wire        stage1_bank0_pht_taken;
@@ -945,18 +683,19 @@ module cpu_top
         if_id_payload.slot1.prediction.stage1_pht_index;
     wire [ 1:0] if_s1_stage1_pht_counter =
         if_id_payload.slot1.prediction.stage1_pht_counter;
-    wire [ 7:0] id_stage1_pht_index = id_payload.slot0.prediction.stage1_pht_index;
-    wire [ 1:0] id_stage1_pht_counter = id_payload.slot0.prediction.stage1_pht_counter;
-    wire [ 7:0] id_s1_stage1_pht_index = id_payload.slot1.prediction.stage1_pht_index;
-    wire [ 1:0] id_s1_stage1_pht_counter = id_payload.slot1.prediction.stage1_pht_counter;
+    wire [ 7:0] id_stage1_pht_index = id_s0_prediction.stage1_pht_index;
+    wire [ 1:0] id_stage1_pht_counter = id_s0_prediction.stage1_pht_counter;
+    wire [ 7:0] id_s1_stage1_pht_index = id_s1_prediction.stage1_pht_index;
+    wire [ 1:0] id_s1_stage1_pht_counter =
+        id_s1_prediction.stage1_pht_counter;
     wire [ 7:0] ex_stage1_pht_index =
-        ex_s0_payload.common.prediction.prediction.stage1_pht_index;
+        ex_s0_prediction.prediction.stage1_pht_index;
     wire [ 1:0] ex_stage1_pht_counter =
-        ex_s0_payload.common.prediction.prediction.stage1_pht_counter;
+        ex_s0_prediction.prediction.stage1_pht_counter;
     wire [ 7:0] ex_s1_stage1_pht_index =
-        ex_s1_payload.common.prediction.prediction.stage1_pht_index;
+        ex_s1_prediction.prediction.stage1_pht_index;
     wire [ 1:0] ex_s1_stage1_pht_counter =
-        ex_s1_payload.common.prediction.prediction.stage1_pht_counter;
+        ex_s1_prediction.prediction.stage1_pht_counter;
     wire cpu_defs::predictor_resolve_t predictor_resolve_s0;
     wire cpu_defs::predictor_resolve_t predictor_resolve_s1;
     wire cpu_defs::predictor_train_t predictor_train;
@@ -965,11 +704,7 @@ module cpu_top
     wire cpu_defs::abtb_update_t predictor_abtb_write;
     wire cpu_defs::pht_update_t predictor_pht_write;
 
-    // PHT updates use the prediction-time index and counter carried to EX.
-    wire        stage1_direction_update_valid =
-        predictor_pht_update.valid;
-    wire [ 7:0] stage1_direction_update_index =
-        predictor_pht_update.index;
+    // Compatibility aliases referenced by predictor-directed tests.
     wire [ 1:0] stage1_direction_update_counter =
         predictor_pht_update.counter;
     wire        stage1_direction_write_valid =
@@ -981,19 +716,6 @@ module cpu_top
     wire        stage1_direction_write_actual_taken =
         predictor_pht_write.actual_taken;
 
-    wire        abtb_update_valid = predictor_abtb_update.valid;
-    wire        abtb_update_hit = predictor_abtb_update.hit;
-    wire        abtb_update_way = predictor_abtb_update.way;
-    wire [31:0] abtb_update_pc = predictor_abtb_update.pc;
-    wire [ 1:0] abtb_update_cfi_type =
-        predictor_abtb_update.cfi_type;
-    wire [31:0] abtb_update_target = predictor_abtb_update.target;
-    wire        abtb_write_valid = predictor_abtb_write.valid;
-    wire        abtb_write_hit = predictor_abtb_write.hit;
-    wire        abtb_write_way = predictor_abtb_write.way;
-    wire [31:0] abtb_write_pc = predictor_abtb_write.pc;
-    wire [ 1:0] abtb_write_cfi_type = predictor_abtb_write.cfi_type;
-    wire [31:0] abtb_write_target = predictor_abtb_write.target;
     wire        stage1_steer_valid;
     wire        stage1_steer_source_abtb;
     wire        stage1_steer_branch_owned;
@@ -1006,20 +728,188 @@ module cpu_top
 
     wire        s0_pred_update_valid_raw;
     wire        s1_pred_update_valid_raw;
-    wire        pred_train_from_s1 = predictor_train.from_slot1;
-    wire        pred_train_valid = predictor_train.valid;
-    wire [31:0] pred_train_pc = predictor_train.pc;
-    wire pred_train_is_conditional_control =
-        predictor_train.is_conditional_branch;
-    wire pred_train_is_direct_control = predictor_train.is_direct_jump;
-    wire pred_train_is_indirect_control = predictor_train.is_indirect_jump;
-    wire        pred_train_actual_taken = predictor_train.actual_taken;
-    wire [31:0] pred_train_actual_target =
-        predictor_train.actual_target;
+
+`ifdef CPU_TOP_ABTB_OBSERVE
+    // Compatibility names used by directed predictor tests and performance
+    // tooling. The counters themselves live behind the observer boundary.
+    wire cpu_defs::frontend_abtb_counters_t abtb_monitor_counters;
+    wire [31:0] abtb_lookup_block_count =
+        abtb_monitor_counters.lookup_block;
+    wire [31:0] abtb_bank0_hit_count = abtb_monitor_counters.bank0_hit;
+    wire [31:0] abtb_bank1_hit_count = abtb_monitor_counters.bank1_hit;
+    wire [31:0] abtb_ex_update_count = abtb_monitor_counters.ex_update;
+    wire [31:0] abtb_allocation_count = abtb_monitor_counters.allocation;
+    wire [31:0] abtb_hit_update_count = abtb_monitor_counters.hit_update;
+    wire [31:0] abtb_direct_lookup_count =
+        abtb_monitor_counters.direct_lookup;
+    wire [31:0] abtb_direct_steer_count =
+        abtb_monitor_counters.direct_steer;
+    wire [31:0] abtb_direct_bank0_count =
+        abtb_monitor_counters.direct_bank0;
+    wire [31:0] abtb_direct_bank1_count =
+        abtb_monitor_counters.direct_bank1;
+    wire [31:0] abtb_direct_correct_count =
+        abtb_monitor_counters.direct_correct;
+    wire [31:0] abtb_direct_redirect_count =
+        abtb_monitor_counters.direct_redirect;
+    wire [31:0] abtb_direct_target_miss_count =
+        abtb_monitor_counters.direct_target_miss;
+    wire [31:0] stage1_sequential_count =
+        abtb_monitor_counters.stage1_sequential;
+    wire [31:0] stage1_abtb_owned_count =
+        abtb_monitor_counters.stage1_abtb_owned;
+    wire [31:0] stage1_branch_owned_nt_count =
+        abtb_monitor_counters.stage1_branch_owned_nt;
+    wire [31:0] stage1_confirmed_branch_count =
+        abtb_monitor_counters.stage1_confirmed_branch;
+    wire [31:0] stage1_abtb_branch_hit_count =
+        abtb_monitor_counters.stage1_abtb_branch_hit;
+    wire [31:0] stage1_pht_taken_count =
+        abtb_monitor_counters.stage1_pht_taken;
+    wire [31:0] stage1_pht_not_taken_count =
+        abtb_monitor_counters.stage1_pht_not_taken;
+    wire [31:0] stage1_pht_correct_count =
+        abtb_monitor_counters.stage1_pht_correct;
+    wire [31:0] stage1_pht_wrong_count =
+        abtb_monitor_counters.stage1_pht_wrong;
+    wire [31:0] stage1_bank0_branch_lookup_count =
+        abtb_monitor_counters.stage1_bank0_branch_lookup;
+    wire [31:0] stage1_bank1_branch_lookup_count =
+        abtb_monitor_counters.stage1_bank1_branch_lookup;
+`endif
+
+    // ---- Frontend delivery / compatibility probes ----
+    wire        can_dual_issue;
+    wire        raw_pair_raw;
+    logic       predict_dual;
+    wire [31:0] if_inst0_out = if_id_payload.slot0.inst;
+    wire [31:0] if_inst1_out = if_id_payload.slot1.inst;
+    wire [31:0] if_pc_out = if_id_payload.pc;
+    wire        if_pred_taken_out = if_id_payload.slot0.prediction.taken;
+    wire [31:0] if_pred_target_out = if_id_payload.slot0.prediction.target;
+    wire        if_s1_pred_taken_out = if_id_payload.slot1.prediction.taken;
+    wire [31:0] if_s1_pred_target_out = if_id_payload.slot1.prediction.target;
+    wire        if_skip_out;
+    wire        if_s1_valid;
+
+    // Retired raw-pair and skip probes remain only for existing performance
+    // tooling. They have no control or datapath consumers.
+    wire raw_inst1_is_alu_type = 1'b0;
+    wire raw_inst0_is_jump = 1'b0;
+    wire if_sequential_fetch = ~if_pred_taken_out;
+    wire skip_inst0_valid = 1'b0;
 
     // ================================================================
     //  Module instantiations
     // ================================================================
+
+    // ==================== Global pipeline control ====================
+
+    backend_flow_ctrl u_backend_flow_ctrl (
+        .clk                         (clk),
+        .rst_n                       (rst_n),
+        .cache_ready                 (cache_ready),
+        .wb_allowin                  (wb_allowin),
+        .id_valid                    (id_valid),
+        .id_issue_is_muldiv          (id_issue_is_muldiv),
+        .id_issue_serializing        (id_issue_hint.serializing),
+        .id_decoded_serializing      (dec_uop.serializing),
+        .id_dependency_ready         (id_dependency_ready),
+        .id_dependency_ready_if_mem_ready(
+            id_dependency_ready_if_mem_ready),
+        .id_dependency_ready_if_mem_wait(
+            id_dependency_ready_if_mem_wait),
+        .id_non_load_hazard          (id_non_load_hazard),
+        .id_flush                    (id_flush),
+        .ex_valid                    (ex_valid),
+        .ex_slot1_valid              (ex_s1_valid),
+        .ex_is_muldiv                (ex_is_muldiv),
+        .ex_is_divrem                (ex_muldiv_op[2]),
+        .ex_priv_wait_older          (ex_priv_wait_older),
+        .mmio_store_load_hazard      (mmio_st_ld_hazard),
+        .mem_valid                   (mem_valid),
+        .mem_slot1_valid             (mem_s1_valid),
+        .mem_is_mul                  (mem_is_mul),
+        .mem_branch_flush            (mem_branch_flush),
+        .wb_valid                    (wb_valid),
+        .wb_slot1_valid              (wb_s1_valid),
+        .muldiv_busy                 (muldiv_busy),
+        .muldiv_done                 (muldiv_done),
+        .muldiv_consume              (muldiv_consume),
+        .serializing_inflight        (serializing_inflight),
+        .timer_irq_request           (timer_irq_request),
+        .timer_irq_hold              (timer_irq_hold),
+        .ex_muldiv_ready             (ex_muldiv_ready),
+        .ex_priv_ready               (ex_priv_ready),
+        .ex_priv_commit_ready        (ex_priv_commit_ready),
+        .ex_ready_go                 (ex_ready_go),
+        .mem_ready_go                (mem_ready_go),
+        .mem_allowin_lsu             (mem_allowin_lsu),
+        .mem_allowin_control         (mem_allowin_control),
+        .mem_allowin_pipe            (mem_allowin_pipe),
+        .timer_irq_block             (timer_irq_block),
+        .id_serializing_ready        (id_serializing_ready),
+        .id_barrier_ready            (id_barrier_ready),
+        .id_muldiv_unit_ready        (id_muldiv_unit_ready),
+        .id_ready_go                 (id_ready_go),
+        .ex_allowin_if_cache_ready   (ex_allowin_if_cache_ready),
+        .ex_allowin_if_cache_wait    (ex_allowin_if_cache_wait),
+        .ex_allowin                  (ex_allowin),
+        .ex_allowin_timing_copy      (ex_allowin_ex_local),
+        .id_allowin                  (id_allowin),
+        .id_allowin_pipe             (id_allowin_pipe),
+        .id_allowin_frontend         (id_allowin_frontend),
+        .id_to_ex_fire               (id_to_ex_fire)
+    );
+
+    serialization_ctrl u_serialization_ctrl (
+        .clk                  (clk),
+        .rst_n                (rst_n),
+        .id_issue_fire        (id_to_ex_fire),
+        .id_issue_serializing (id_issue_hint.serializing),
+        .wb_slot0_valid       (wb_valid),
+        .serializing_inflight (serializing_inflight)
+    );
+
+    // Redirect priority is centralized here: fast EX system/timer redirects
+    // can override replay of the older registered MEM redirect.
+    redirect_ctrl u_redirect_ctrl (
+        .clk                         (clk),
+        .rst_n                       (rst_n),
+        .ex_ready_go                 (ex_ready_go),
+        .mem_allowin                 (mem_allowin_control),
+        .mem_branch_flush            (mem_branch_flush),
+        .mem_branch_target           (mem_branch_target),
+        .ex_priv_redirect            (ex_priv_redirect),
+        .ex_priv_target              (ex_priv_target),
+        .timer_irq_redirect          (timer_irq_redirect),
+        .timer_irq_target            (timer_irq_target),
+        .ex_redirect_fire            (ex_redirect_fire),
+        .ex_fast_redirect            (ex_fast_redirect),
+        .ex_fast_redirect_target     (ex_fast_redirect_target),
+        .mem_branch_replay           (mem_branch_replay),
+        .frontend_branch_flush       (frontend_branch_flush),
+        .frontend_branch_target      (frontend_branch_target)
+    );
+
+    // Timer interrupts wait until the pipeline is empty before redirecting to
+    // mtvec, which keeps trap entry precise.
+    timer_irq_ctrl u_timer_irq_ctrl (
+        .clk               (clk),
+        .rst_n             (rst_n),
+        .timer_irq_request (timer_irq_request),
+        .id_valid          (id_valid),
+        .frontend_flush    (frontend_branch_flush),
+        .ex_valid          (ex_valid),
+        .mem_valid         (mem_valid),
+        .wb_valid          (wb_valid),
+        .ex_s1_valid       (ex_s1_valid),
+        .mem_s1_valid      (mem_s1_valid),
+        .wb_s1_valid       (wb_s1_valid),
+        .timer_irq_hold    (timer_irq_hold),
+        .pipeline_empty    (timer_irq_pipe_empty),
+        .timer_irq_take    (timer_irq_take)
+    );
 
     // Field extraction and lightweight decode-derived policy shared by both
     // issue slots.
@@ -1065,8 +955,8 @@ module cpu_top
         .s0_is_indirect_control(ex_is_indirect_control),
         .s0_actual_taken      (actual_taken),
         .s0_actual_target     (actual_target),
-        .s0_update_qualified  (ex_abtb_update_qualified),
-        .s0_update_cfi_type   (ex_abtb_update_cfi_type),
+        .s0_update_qualified  (ex_s0_prediction.update_qualified),
+        .s0_update_cfi_type   (ex_s0_prediction.update_cfi_type),
         .s0_abtb_hit          (ex_abtb_hit),
         .s0_abtb_way          (ex_abtb_way),
         .s0_pht_index         (ex_stage1_pht_index),
@@ -1078,10 +968,10 @@ module cpu_top
         .s1_is_indirect_control(ex_s1_is_indirect_control),
         .s1_actual_taken      (ex_s1_actual_taken),
         .s1_actual_target     (ex_s1_branch_target),
-        .s1_update_qualified  (ex_s1_abtb_update_qualified),
-        .s1_update_cfi_type   (ex_s1_abtb_update_cfi_type),
-        .s1_abtb_hit          (ex_s1_abtb_hit),
-        .s1_abtb_way          (ex_s1_abtb_way),
+        .s1_update_qualified  (ex_s1_prediction.update_qualified),
+        .s1_update_cfi_type   (ex_s1_prediction.update_cfi_type),
+        .s1_abtb_hit          (ex_s1_prediction.prediction.abtb_hit),
+        .s1_abtb_way          (ex_s1_prediction.prediction.abtb_way),
         .s1_pht_index         (ex_s1_stage1_pht_index),
         .s1_pht_counter       (ex_s1_stage1_pht_counter),
         .slot0_resolve        (predictor_resolve_s0),
@@ -1091,7 +981,7 @@ module cpu_top
     predictor_update_ctrl u_predictor_update_ctrl (
         .clk              (clk),
         .rst_n            (rst_n),
-        .ex_ready_go      (ex_ready_go_w),
+        .ex_ready_go      (ex_ready_go),
         .mem_allowin      (mem_allowin_control),
         .mem_branch_flush (mem_branch_flush),
         .slot0_resolve    (predictor_resolve_s0),
@@ -1164,37 +1054,35 @@ module cpu_top
         .pred_target          (abtb_shadow_pred_target),
         .pred_next_pc         (abtb_shadow_pred_next_pc),
         .pred_next_pc_early   (abtb_early_pred_next_pc),
-        .update_valid         (abtb_write_valid),
-        .update_hit           (abtb_write_hit),
-        .update_way           (abtb_write_way),
-        .update_pc            (abtb_write_pc),
-        .update_cfi_type      (abtb_write_cfi_type),
-        .update_target        (abtb_write_target)
+        .update_valid         (predictor_abtb_write.valid),
+        .update_hit           (predictor_abtb_write.hit),
+        .update_way           (predictor_abtb_write.way),
+        .update_pc            (predictor_abtb_write.pc),
+        .update_cfi_type      (predictor_abtb_write.cfi_type),
+        .update_target        (predictor_abtb_write.target)
     );
 
 `ifdef CPU_TOP_ABTB_OBSERVE
-    // Simulation and measurement observability only. These outputs never feed
-    // production prediction, ready/valid, redirect, or IROM control.
-    wire cpu_defs::abtb_lookup_bank_t abtb_monitor_bank0;
-    wire cpu_defs::abtb_lookup_bank_t abtb_monitor_bank1;
-    wire cpu_defs::abtb_shadow_result_t abtb_monitor_shadow;
-    wire cpu_defs::stage1_steer_event_t abtb_monitor_steer;
-    wire cpu_defs::frontend_abtb_counters_t abtb_monitor_counters;
-
-    frontend_abtb_monitor_adapter u_frontend_abtb_monitor_adapter (
+    // Observation is a one-way sink. Its packed events and counters are kept
+    // out of the production predictor integration above.
+    frontend_abtb_observer u_frontend_abtb_observer (
+        .clk                    (clk),
+        .rst_n                  (rst_n),
+        .frontend_pc            (pc),
+        .lookup_accept          (abtb_lookup_accept),
         .bank0_hit              (abtb_bank0_hit),
         .bank0_way              (abtb_bank0_way),
         .bank0_cfi_type         (abtb_bank0_cfi_type),
-        .bank0_abtb_pred_target (abtb_bank0_abtb_pred_target),
+        .bank0_abtb_target      (abtb_bank0_abtb_pred_target),
         .bank0_pred_taken       (abtb_bank0_pred_taken),
-        .bank0_final_pred_target(abtb_bank0_final_pred_target),
+        .bank0_final_target     (abtb_bank0_final_pred_target),
         .bank0_pht_taken        (stage1_bank0_pht_taken),
         .bank1_hit              (abtb_bank1_hit),
         .bank1_way              (abtb_bank1_way),
         .bank1_cfi_type         (abtb_bank1_cfi_type),
-        .bank1_abtb_pred_target (abtb_bank1_abtb_pred_target),
+        .bank1_abtb_target      (abtb_bank1_abtb_pred_target),
         .bank1_pred_taken       (abtb_bank1_pred_taken),
-        .bank1_final_pred_target(abtb_bank1_final_pred_target),
+        .bank1_final_target     (abtb_bank1_final_pred_target),
         .bank1_pht_taken        (stage1_bank1_pht_taken),
         .shadow_pred_taken      (abtb_shadow_pred_taken),
         .shadow_pred_bank       (abtb_shadow_pred_bank),
@@ -1206,65 +1094,6 @@ module cpu_top
         .steer_branch_owned     (stage1_steer_branch_owned),
         .steer_branch_owned_nt  (stage1_steer_branch_owned_nt),
         .steer_bank             (stage1_steer_bank),
-        .bank0_lookup           (abtb_monitor_bank0),
-        .bank1_lookup           (abtb_monitor_bank1),
-        .shadow_result          (abtb_monitor_shadow),
-        .steer_event            (abtb_monitor_steer)
-    );
-
-    wire [31:0] abtb_lookup_block_count =
-        abtb_monitor_counters.lookup_block;
-    wire [31:0] abtb_bank0_hit_count = abtb_monitor_counters.bank0_hit;
-    wire [31:0] abtb_bank1_hit_count = abtb_monitor_counters.bank1_hit;
-    wire [31:0] abtb_ex_update_count = abtb_monitor_counters.ex_update;
-    wire [31:0] abtb_allocation_count = abtb_monitor_counters.allocation;
-    wire [31:0] abtb_hit_update_count = abtb_monitor_counters.hit_update;
-    wire [31:0] abtb_direct_lookup_count =
-        abtb_monitor_counters.direct_lookup;
-    wire [31:0] abtb_direct_steer_count =
-        abtb_monitor_counters.direct_steer;
-    wire [31:0] abtb_direct_bank0_count =
-        abtb_monitor_counters.direct_bank0;
-    wire [31:0] abtb_direct_bank1_count =
-        abtb_monitor_counters.direct_bank1;
-    wire [31:0] abtb_direct_correct_count =
-        abtb_monitor_counters.direct_correct;
-    wire [31:0] abtb_direct_redirect_count =
-        abtb_monitor_counters.direct_redirect;
-    wire [31:0] abtb_direct_target_miss_count =
-        abtb_monitor_counters.direct_target_miss;
-    wire [31:0] stage1_sequential_count =
-        abtb_monitor_counters.stage1_sequential;
-    wire [31:0] stage1_abtb_owned_count =
-        abtb_monitor_counters.stage1_abtb_owned;
-    wire [31:0] stage1_branch_owned_nt_count =
-        abtb_monitor_counters.stage1_branch_owned_nt;
-    wire [31:0] stage1_confirmed_branch_count =
-        abtb_monitor_counters.stage1_confirmed_branch;
-    wire [31:0] stage1_abtb_branch_hit_count =
-        abtb_monitor_counters.stage1_abtb_branch_hit;
-    wire [31:0] stage1_pht_taken_count =
-        abtb_monitor_counters.stage1_pht_taken;
-    wire [31:0] stage1_pht_not_taken_count =
-        abtb_monitor_counters.stage1_pht_not_taken;
-    wire [31:0] stage1_pht_correct_count =
-        abtb_monitor_counters.stage1_pht_correct;
-    wire [31:0] stage1_pht_wrong_count =
-        abtb_monitor_counters.stage1_pht_wrong;
-    wire [31:0] stage1_bank0_branch_lookup_count =
-        abtb_monitor_counters.stage1_bank0_branch_lookup;
-    wire [31:0] stage1_bank1_branch_lookup_count =
-        abtb_monitor_counters.stage1_bank1_branch_lookup;
-
-    frontend_abtb_monitor u_frontend_abtb_monitor (
-        .clk                    (clk),
-        .rst_n                  (rst_n),
-        .frontend_pc            (pc),
-        .lookup_accept          (abtb_lookup_accept),
-        .bank0_lookup           (abtb_monitor_bank0),
-        .bank1_lookup           (abtb_monitor_bank1),
-        .shadow_result          (abtb_monitor_shadow),
-        .steer_event            (abtb_monitor_steer),
         .if_slot0_prediction    (if_id_payload.slot0.prediction),
         .if_slot1_prediction    (if_id_payload.slot1.prediction),
         .id_slot0_prediction    (id_payload.slot0.prediction),
@@ -1273,7 +1102,7 @@ module cpu_top
         .ex_slot1_prediction    (ex_s1_payload.common.prediction),
         .slot0_resolve          (predictor_resolve_s0),
         .slot1_resolve          (predictor_resolve_s1),
-        .ex_ready_go            (ex_ready_go_w),
+        .ex_ready_go            (ex_ready_go),
         .mem_allowin            (mem_allowin_control),
         .mem_branch_flush       (mem_branch_flush),
         .slot0_cfi_valid        (s0_pred_update_valid_raw),
@@ -1286,27 +1115,6 @@ module cpu_top
 `endif
 
     // ==================== Pre-IF ====================
-
-    wire        can_dual_issue;
-    wire        raw_pair_raw;
-    logic       predict_dual;
-
-    wire [31:0] if_inst0_out = if_id_payload.slot0.inst;
-    wire [31:0] if_inst1_out = if_id_payload.slot1.inst;
-    wire [31:0] if_pc_out = if_id_payload.pc;
-    wire        if_pred_taken_out = if_id_payload.slot0.prediction.taken;
-    wire [31:0] if_pred_target_out = if_id_payload.slot0.prediction.target;
-    wire        if_s1_pred_taken_out = if_id_payload.slot1.prediction.taken;
-    wire [31:0] if_s1_pred_target_out = if_id_payload.slot1.prediction.target;
-    wire        if_skip_out;
-    wire        if_s1_valid;
-
-    // Compatibility probes retained for the existing performance monitor.
-    // The retired raw-pair and skip machinery no longer feeds the frontend.
-    wire raw_inst1_is_alu_type = 1'b0;
-    wire raw_inst0_is_jump = 1'b0;
-    wire if_sequential_fetch = ~if_pred_taken_out;
-    wire skip_inst0_valid = 1'b0;
 
     assign irom_req_kill = frontend_branch_flush;
 
@@ -1348,7 +1156,7 @@ module cpu_top
         .stage1_bank1_pht_index(stage1_bank1_pht_index),
         .stage1_bank1_pht_counter(stage1_bank1_pht_counter),
         .if_valid         (if_valid),
-        .if_ready_go      (if_ready_go_w),
+        .if_ready_go      (if_ready_go),
         .if_s1_valid      (if_s1_valid),
         .if_payload       (if_id_payload),
         .current_pc       (pc),
@@ -1382,7 +1190,7 @@ module cpu_top
         .clk          (clk),
         .rst_n        (rst_n),
         .if_valid     (if_valid),
-        .if_ready_go  (if_ready_go_w),
+        .if_ready_go  (if_ready_go),
         .id_allowin   (id_allowin_pipe),
         .id_valid     (id_valid),
         .id_flush     (id_flush),
@@ -1428,15 +1236,14 @@ module cpu_top
         .debug_state  (debug_gpr_state)
     );
 
-    // Forwarding also returns id_ready_go_raw. Timer IRQ hold is applied after
-    // hazard detection so interrupts stall ID like an ordinary readiness block.
+    // Forwarding reports whether data dependencies permit issue. Timer IRQ
+    // hold is applied afterward like any other ID-stage readiness block.
     forwarding u_forwarding (
         .id_rs1_addr    (id_rs1_addr),
         .id_rs2_addr    (id_rs2_addr),
         .id_rs1_used    (id_rs1_used),
         .id_rs2_used    (id_rs2_used),
         .id_s0_alu_only (id_s0_alu_only),
-        .id_s0_indirect_control(id_issue_hint.indirect_control),
         .id_s0_conditional_control(id_issue_hint.conditional_control),
         .id_s0_mem_read (id_issue_hint.mem_read),
         .id_s0_mem_write(id_issue_hint.mem_write),
@@ -1459,13 +1266,6 @@ module cpu_top
         .id_s1_alu_src2_sel(dec1_alu_src2_sel),
         .rf_s1_rs1_data (rf_s1_rs1_data),
         .rf_s1_rs2_data (rf_s1_rs2_data),
-        .ex_valid       (ex_valid),
-        .ex_reg_write   (ex_forward_reg_write),
-        .ex_is_muldiv   (ex_is_muldiv),
-        .ex_mem_read    (ex_mem_read_en),
-        .ex_result_repair(ex_alu_src1_wb_repair
-                          | ex_alu_src2_wb_repair),
-        .ex_rd          (ex_rd),
         // Keep CSR/MulDiv/WB-repaired architectural results physically out of
         // the next-ID operand network.  The fast copy uses only ID/EX-register
         // operands; repaired producers are already covered by the repair-use
@@ -1481,12 +1281,6 @@ module cpu_top
         .ex_hazard_mem_read(ex_s0_hazard_mem_read),
         .ex_hazard_result_repair(ex_s0_hazard_result_repair),
         .ex_hazard_rd   (ex_s0_hazard_rd),
-        .ex_s1_valid       (ex_s1_valid),
-        .ex_s1_reg_write   (ex_s1_forward_reg_write),
-        .ex_s1_mem_read    (ex_s1_mem_read_en),
-        .ex_s1_result_repair(ex_s1_alu_src1_wb_repair
-                             | ex_s1_alu_src2_wb_repair),
-        .ex_s1_rd          (ex_s1_rd),
         .ex_s1_alu_result  (ex_s1_fast_forward_result),
         .ex_s1_pc_plus_4   (ex_s1_pc_plus_4),
         .ex_s1_wb_sel      (ex_s1_wb_sel),
@@ -1544,10 +1338,11 @@ module cpu_top
         .id_s1_rs2_wb_repair(fwd_s1_rs2_wb_repair),
         .id_s1_rs1_wb_repair_s1(),
         .id_s1_rs2_wb_repair_s1(),
-        .id_ready_go    (id_ready_go_raw),
-        .id_ready_go_if_mem_ready(id_ready_go_raw_if_mem_ready),
-        .id_ready_go_if_mem_wait(id_ready_go_raw_if_mem_wait),
-        .id_non_load_hazard(id_non_load_hazard)
+        .id_ready_go    (id_dependency_ready),
+        .id_ready_go_if_mem_ready(id_dependency_ready_if_mem_ready),
+        .id_ready_go_if_mem_wait(id_dependency_ready_if_mem_wait),
+        .id_non_load_hazard(id_non_load_hazard),
+        .id_mul_launch_ex_raw_hazard(id_mul_launch_ex_raw_hazard)
     );
 
     // Keep the DSP operand mux physically independent from the ordinary ID/EX
@@ -1585,69 +1380,6 @@ module cpu_top
         .mul_rs1_data         (mul_fwd_rs1_data),
         .mul_rs2_data         (mul_fwd_rs2_data)
     );
-
-`ifndef SYNTHESIS
-    // Simulation-only cycle-equivalence references for the timing-parallelized
-    // ALU source outputs returned by u_forwarding.
-    function automatic issue_hint_t issue_hint_from_uop(
-        input decoded_uop_t uop
-    );
-        begin
-            issue_hint_from_uop = '0;
-            issue_hint_from_uop.src0_used = uop.src0_used;
-            issue_hint_from_uop.src1_used = uop.src1_used;
-            issue_hint_from_uop.src0_addr = uop.src0_addr;
-            issue_hint_from_uop.src1_addr = uop.src1_addr;
-            issue_hint_from_uop.dst_write = uop.dst_write;
-            issue_hint_from_uop.dst_addr = uop.dst_addr;
-            issue_hint_from_uop.alu_only = uop.dst_write
-                & (uop.exec_unit == EXEC_ALU) & (uop.wb_src == WB_EXEC);
-            issue_hint_from_uop.conditional_control =
-                uop.control_flow == CF_CONDITIONAL;
-            issue_hint_from_uop.indirect_control =
-                uop.control_flow == CF_INDIRECT;
-            issue_hint_from_uop.mem_read = uop.mem_cmd == MEM_LOAD;
-            issue_hint_from_uop.mem_write = uop.mem_cmd == MEM_STORE;
-            issue_hint_from_uop.is_muldiv =
-                uop.exec_unit == EXEC_MULDIV;
-            issue_hint_from_uop.is_mul =
-                (uop.exec_unit == EXEC_MULDIV)
-                & (uop.muldiv_op <= MULDIV_MULHU);
-            issue_hint_from_uop.serializing = uop.serializing;
-        end
-    endfunction
-
-    wire issue_hint_t id_issue_hint_reference =
-        issue_hint_from_uop(dec_uop);
-    wire issue_hint_t id_s1_issue_hint_reference =
-        issue_hint_from_uop(dec1_uop);
-    wire [31:0] id_alu_src1_reference;
-    wire [31:0] id_alu_src2_reference;
-    wire [31:0] id_s1_alu_src1_reference;
-    wire [31:0] id_s1_alu_src2_reference;
-
-    alu_src_mux u_alu_src_mux_reference (
-        .rs1_data      (fwd_rs1_data),
-        .rs2_data      (fwd_rs2_data),
-        .pc            (id_pc),
-        .imm           (id_imm),
-        .alu_src1_sel  (dec_alu_src1_sel),
-        .alu_src2_sel  (dec_alu_src2_sel),
-        .alu_src1      (id_alu_src1_reference),
-        .alu_src2      (id_alu_src2_reference)
-    );
-
-    alu_src_mux u_alu_src_mux_s1_reference (
-        .rs1_data      (fwd_s1_rs1_data),
-        .rs2_data      (fwd_s1_rs2_data),
-        .pc            (id_s1_pc),
-        .imm           (id_s1_imm),
-        .alu_src1_sel  (dec1_alu_src1_sel),
-        .alu_src2_sel  (dec1_alu_src2_sel),
-        .alu_src1      (id_s1_alu_src1_reference),
-        .alu_src2      (id_s1_alu_src2_reference)
-    );
-`endif
 
     // ==================== ID/EX ====================
 
@@ -1781,10 +1513,10 @@ module cpu_top
         .ex_s1_predicted_target     (ex_s1_pred_target),
         .ex_s1_addr_replay          (ex_s1_addr_replay),
         .mem_branch_flush           (mem_branch_flush),
-        .ex_ready_go                (ex_ready_go_w),
+        .ex_ready_go                (ex_ready_go),
         .mem_allowin                (mem_allowin_lsu),
-        .ex_branch_redirect         (ex_branch_registered_flush),
-        .ex_branch_request          (branch_flush & ~ex_priv_flow),
+        .ex_branch_flush            (branch_flush),
+        .ex_redirect_fire           (ex_redirect_fire),
         .ex_branch_actual_taken     (actual_taken),
         .ex_priv_redirect           (ex_priv_redirect),
         .ex_priv_flow               (ex_priv_flow),
@@ -1875,166 +1607,104 @@ module cpu_top
         .align_addr_low        (ex_s1_lsu_align_low)
     );
 
-    // DIV/REM hold EX until completion; prestarted MUL operations advance to
-    // MEM after one EX cycle and rendezvous there with the registered product.
-    muldiv_unit u_muldiv_unit (
-        .clk                (clk),
-        .rst_n              (rst_n),
-        .mul_prestart_valid (id_mul_prestart),
-        .mul_prestart_op    (dec_uop.muldiv_op),
-        // The physically independent forwarding copy contains
-        // only registered MEM/WB/RF payloads; EX RAW dependencies interlock.
-        .mul_prestart_rs1   (mul_fwd_rs1_data),
-        .mul_prestart_rs2   (mul_fwd_rs2_data),
-        .req_valid          (ex_muldiv_req),
-        .req_op             (ex_muldiv_op),
-        .req_div_rs1        (ex_alu_src1),
-        .req_div_rs2        (ex_alu_src2),
-        .consume            (muldiv_consume),
-        .flush              (muldiv_flush),
-        .busy               (muldiv_busy),
-        .done               (muldiv_done),
-        .result             (muldiv_result)
+    // The MulDiv wrapper owns prestart, EX completion and MEM result lifetime.
+    // Its ID operands come from a physically independent forwarding copy;
+    // unsupported EX RAW dependencies are interlocked before launch.
+    muldiv_pipeline u_muldiv_pipeline (
+        .clk                  (clk),
+        .rst_n                (rst_n),
+        .id_mul_prestart      (id_mul_prestart),
+        .id_muldiv_op         (dec_uop.muldiv_op),
+        .id_mul_rs1           (mul_fwd_rs1_data),
+        .id_mul_rs2           (mul_fwd_rs2_data),
+        .ex_valid             (ex_valid),
+        .ex_is_muldiv         (ex_is_muldiv),
+        .ex_muldiv_op         (ex_muldiv_op),
+        .ex_div_rs1           (ex_alu_src1),
+        .ex_div_rs2           (ex_alu_src2),
+        .ex_to_mem_allowin    (mem_allowin_lsu),
+        .mem_valid            (mem_valid),
+        .mem_is_mul           (mem_is_mul),
+        .mem_alu_result       (mem_alu_result),
+        .mem_ready            (cache_ready),
+        .wb_allowin           (wb_allowin),
+        .frontend_flush       (frontend_branch_flush),
+        .mem_redirect_flush   (mem_branch_flush),
+        .busy                 (muldiv_busy),
+        .done                 (muldiv_done),
+        .result               (muldiv_result),
+        .consume              (muldiv_consume),
+        .mem_writeback_result (mem_wb_alu_result)
     );
 
 `ifndef SYNTHESIS
-    // The DSP launch deliberately accepts only registered MEM/WB/RF payloads.
-    // Keep both the RAW interlock and the timing-parallelized ALU source
-    // selection cycle-equivalent to their architectural references.
-    always_ff @(posedge clk) begin
-        if (rst_n && id_valid
-                  && (id_issue_hint !== id_issue_hint_reference))
-            $fatal(1, "Slot-0 predecode issue hint disagrees with full decoder");
-        if (rst_n && id_s1_valid
-                  && (id_s1_issue_hint !== id_s1_issue_hint_reference))
-            $fatal(1, "Slot-1 predecode issue hint disagrees with full decoder");
-        if (rst_n && id_valid
-                  && ((id_s0_rf_rs1_addr !== id_rs1_addr)
-                      || (id_s0_rf_rs2_addr !== id_rs2_addr)))
-            $fatal(1, "Slot-0 register-file address copies disagree with hazard metadata");
-        if (rst_n && id_s1_valid
-                  && ((id_s1_rf_rs1_addr !== id_s1_rs1_addr)
-                      || (id_s1_rf_rs2_addr !== id_s1_rs2_addr)))
-            $fatal(1, "Slot-1 register-file address copies disagree with hazard metadata");
-        if (rst_n && ex_valid
-                  && (ex_s0_repair_q !== {
-                        ex_s0_payload.common.alu_src2_wb_repair,
-                        ex_s0_payload.common.alu_src1_wb_repair,
-                        ex_s0_payload.common.rs2_wb_repair,
-                        ex_s0_payload.common.rs1_wb_repair
-                      }))
-            $fatal(1, "Slot-0 EX repair mirror disagrees with ID/EX");
-        if (rst_n && ex_s1_valid
-                  && (ex_s1_repair_q !== {
-                        ex_s1_payload.common.alu_src2_wb_repair,
-                        ex_s1_payload.common.alu_src1_wb_repair,
-                        ex_s1_payload.common.rs2_wb_repair,
-                        ex_s1_payload.common.rs1_wb_repair
-                      }))
-            $fatal(1, "Slot-1 EX repair mirror disagrees with ID/EX");
-        if (rst_n && (ex_s0_hazard_valid !== ex_valid))
-            $fatal(1, "Slot-0 EX hazard-valid mirror disagrees with ID/EX");
-        if (rst_n && ex_valid
-                  && ((ex_s0_hazard_reg_write !== ex_forward_reg_write)
-                      || (ex_s0_hazard_is_muldiv !== ex_is_muldiv)
-                      || (ex_s0_hazard_mem_read !== ex_mem_read_en)
-                      || (ex_s0_hazard_result_repair
-                          !== (ex_alu_src1_wb_repair
-                              | ex_alu_src2_wb_repair))
-                      || (ex_s0_hazard_rd !== ex_rd)))
-            $fatal(1, "Slot-0 EX hazard metadata mirror disagrees with ID/EX");
-        if (rst_n && (ex_s1_hazard_valid !== ex_s1_valid))
-            $fatal(1, "Slot-1 EX hazard-valid mirror disagrees with ID/EX");
-        if (rst_n && ex_s1_valid
-                  && ((ex_s1_hazard_reg_write
-                       !== ex_s1_forward_reg_write)
-                      || (ex_s1_hazard_mem_read !== ex_s1_mem_read_en)
-                      || (ex_s1_hazard_result_repair
-                          !== (ex_s1_alu_src1_wb_repair
-                              | ex_s1_alu_src2_wb_repair))
-                      || (ex_s1_hazard_rd !== ex_s1_rd)))
-            $fatal(1, "Slot-1 EX hazard metadata mirror disagrees with ID/EX");
-        if (rst_n && ex_s1_valid
-                  && (ex_s1_fast_src2_low !== ex_s1_alu_src2[4:0]))
-            $fatal(1, "Slot-1 fast-forward shift mirror disagrees with ID/EX");
-        if (rst_n && (cache_req !== cache_req_before_late_kill))
-            $fatal(1, "Late Slot-1 LSU kill changed DCache request validity");
-        if (rst_n
-                  && (mmio_st_ld_hazard
-                      !== mmio_st_ld_hazard_before_late_kill))
-            $fatal(1, "Late Slot-1 LSU kill changed MMIO store/load hazard");
-        // The canonical MEM register recomputes this equation independently;
-        // keep checking that all placement-local copies remain identical.
-        if (rst_n
-                  && ((mem_allowin_lsu !== mem_allowin)
-                      || (mem_allowin_control !== mem_allowin)
-                      || (mem_allowin_pipe !== mem_allowin)))
-            $fatal(1, "MEM allowin functional-cluster copies diverged");
-        if (rst_n && (id_mul_prestart !== (id_to_ex_fire & id_is_mul)))
-            $fatal(1, "Timing-factored MUL prestart changed ID acceptance");
-        if (rst_n && id_to_ex_fire
-                  && ((id_alu_src1 !== id_alu_src1_reference)
-                      || (id_alu_src2 !== id_alu_src2_reference)))
-            $fatal(1, "Slot-0 parallel ALU source selection changed value");
-        if (rst_n && id_to_ex_fire && id_s1_valid
-                  && ((id_s1_alu_src1 !== id_s1_alu_src1_reference)
-                      || (id_s1_alu_src2 !== id_s1_alu_src2_reference)))
-            $fatal(1, "Slot-1 parallel ALU source selection changed value");
-        if (rst_n && ex_valid && ex_fast_alu_forward
-                  && !(ex_alu_src1_wb_repair | ex_alu_src2_wb_repair)
-                  && (ex_fast_forward_result !== alu_result))
-            $fatal(1, "Slot-0 fast EX ALU copy changed architectural value");
-        if (rst_n && ex_s1_valid
-                  && !(ex_s1_alu_src1_wb_repair
-                       | ex_s1_alu_src2_wb_repair)
-                  && (ex_s1_fast_forward_result !== alu_s1_result))
-            $fatal(1, "Slot-1 fast EX ALU copy changed architectural value");
-        if (rst_n && ex_valid && (ex_control_flow != CF_NONE)
-                  && (ex_control_flow != CF_CONDITIONAL)
-                  && (ex_rs1_wb_repair | ex_rs2_wb_repair))
-            $fatal(1, "Slot-0 non-conditional control entered EX with WB repair");
-        if (rst_n && ex_s1_valid && (ex_s1_control_flow != CF_NONE)
-                  && (ex_s1_control_flow != CF_CONDITIONAL)
-                  && (ex_s1_rs1_wb_repair | ex_s1_rs2_wb_repair))
-            $fatal(1, "Slot-1 non-conditional control entered EX with WB repair");
-        if (rst_n && ex_valid && (ex_control_flow == CF_CONDITIONAL)
-                  && (ex_alu_src1_wb_repair | ex_alu_src2_wb_repair))
-            $fatal(1, "Slot-0 conditional repair leaked into target operands");
-        if (rst_n && ex_s1_valid
-                  && (ex_s1_control_flow == CF_CONDITIONAL)
-                  && (ex_s1_alu_src1_wb_repair
-                      | ex_s1_alu_src2_wb_repair))
-            $fatal(1, "Slot-1 conditional repair leaked into target operands");
-        if (rst_n && ex_valid && (ex_priv_op != PRIV_NONE)
-                  && (ex_rs1_wb_repair | ex_rs2_wb_repair))
-            $fatal(1, "Serialized privileged operation entered EX with WB repair");
-        if (rst_n && ex_valid && ex_s1_valid
-                  && (ex_mem_read_en | ex_mem_write_en)
-                  && (ex_s1_mem_read_en | ex_s1_mem_write_en))
-            $fatal(1, "Dual-issue pair contains two LSU instructions");
-        if (rst_n && mem_valid && mem_s1_valid
-                  && mem_mem_read_en && mem_s1_mem_read_en)
-            $fatal(1, "MEM contains two simultaneous load producers");
-        if (rst_n && id_mul_prestart
-                  && u_forwarding.mul_launch_ex_raw_hazard)
-            $fatal(1, "MUL launched across an EX RAW interlock");
-        if (rst_n && id_mul_prestart
-                  && ((mul_fwd_rs1_data !== fwd_rs1_data)
-                      || (mul_fwd_rs2_data !== fwd_rs2_data)))
-            $fatal(1, "MUL forwarding copy disagrees with architectural forwarding");
-        if (rst_n && ex_valid && ex_is_muldiv && !ex_muldiv_op[2]
-                  && (ex_alu_src1_wb_repair | ex_alu_src2_wb_repair))
-            $fatal(1, "MUL entered EX with an unsupported WB-repair tag");
-        if (rst_n && mem_valid && mem_is_mul && !muldiv_done)
-            $fatal(1, "MEM MUL token is not aligned with registered result");
-        // A completed MUL may remain owned by EX while an older MEM token
-        // blocks the EX-to-MEM transfer.  DIV is also EX-owned until its
-        // completion handshake, so both EX MulDiv forms are legal owners.
-        if (rst_n && muldiv_done
-                  && !((mem_valid && mem_is_mul)
-                       || (ex_valid && ex_is_muldiv)))
-            $fatal(1, "Completed MulDiv result has no matching pipeline owner");
-    end
+    pipeline_consistency_monitor u_pipeline_consistency_monitor (
+        .clk                              (clk),
+        .rst_n                            (rst_n),
+        .id_slot0_valid                   (id_valid),
+        .id_slot1_valid                   (id_s1_valid),
+        .id_slot0_uop                     (dec_uop),
+        .id_slot1_uop                     (dec1_uop),
+        .id_slot0_issue_hint              (id_issue_hint),
+        .id_slot1_issue_hint              (id_s1_issue_hint),
+        .id_slot0_rf_rs1_addr             (id_s0_rf_rs1_addr),
+        .id_slot0_rf_rs2_addr             (id_s0_rf_rs2_addr),
+        .id_slot1_rf_rs1_addr             (id_s1_rf_rs1_addr),
+        .id_slot1_rf_rs2_addr             (id_s1_rf_rs2_addr),
+        .id_slot0_rs1_addr                (id_rs1_addr),
+        .id_slot0_rs2_addr                (id_rs2_addr),
+        .id_slot1_rs1_addr                (id_s1_rs1_addr),
+        .id_slot1_rs2_addr                (id_s1_rs2_addr),
+        .id_to_ex_fire                    (id_to_ex_fire),
+        .id_mul_prestart                  (id_mul_prestart),
+        .id_is_mul                        (id_is_mul),
+        .id_slot0_alu_src1                (id_alu_src1),
+        .id_slot0_alu_src2                (id_alu_src2),
+        .id_slot1_alu_src1                (id_s1_alu_src1),
+        .id_slot1_alu_src2                (id_s1_alu_src2),
+        .id_slot0_forward_rs1             (fwd_rs1_data),
+        .id_slot0_forward_rs2             (fwd_rs2_data),
+        .id_slot1_forward_rs1             (fwd_s1_rs1_data),
+        .id_slot1_forward_rs2             (fwd_s1_rs2_data),
+        .id_slot0_pc                      (id_pc),
+        .id_slot1_pc                      (id_s1_pc),
+        .ex_slot0_valid                   (ex_valid),
+        .ex_slot1_valid                   (ex_s1_valid),
+        .ex_slot0_payload                 (ex_s0_payload),
+        .ex_slot1_payload                 (ex_s1_payload),
+        .ex_slot0_repair                  (ex_s0_repair_q),
+        .ex_slot1_repair                  (ex_s1_repair_q),
+        .ex_slot0_hazard_valid            (ex_s0_hazard_valid),
+        .ex_slot0_hazard_reg_write        (ex_s0_hazard_reg_write),
+        .ex_slot0_hazard_is_muldiv        (ex_s0_hazard_is_muldiv),
+        .ex_slot0_hazard_mem_read         (ex_s0_hazard_mem_read),
+        .ex_slot0_hazard_result_repair    (ex_s0_hazard_result_repair),
+        .ex_slot0_hazard_rd               (ex_s0_hazard_rd),
+        .ex_slot1_hazard_valid            (ex_s1_hazard_valid),
+        .ex_slot1_hazard_reg_write        (ex_s1_hazard_reg_write),
+        .ex_slot1_hazard_mem_read         (ex_s1_hazard_mem_read),
+        .ex_slot1_hazard_result_repair    (ex_s1_hazard_result_repair),
+        .ex_slot1_hazard_rd               (ex_s1_hazard_rd),
+        .ex_slot1_fast_src2_low           (ex_s1_fast_src2_low),
+        .ex_slot0_fast_forward_result     (ex_fast_forward_result),
+        .ex_slot1_fast_forward_result     (ex_s1_fast_forward_result),
+        .ex_slot0_alu_result              (alu_result),
+        .ex_slot1_alu_result              (alu_s1_result),
+        .mem_slot0_valid                  (mem_valid),
+        .mem_slot1_valid                  (mem_s1_valid),
+        .mem_slot0_payload                (mem_s0_payload),
+        .mem_slot1_payload                (mem_s1_payload),
+        .mem_allowin                      (mem_allowin),
+        .mem_allowin_lsu                  (mem_allowin_lsu),
+        .mem_allowin_control              (mem_allowin_control),
+        .mem_allowin_pipe                 (mem_allowin_pipe),
+        .mul_launch_ex_raw_hazard         (id_mul_launch_ex_raw_hazard),
+        .mul_forward_rs1_data             (mul_fwd_rs1_data),
+        .mul_forward_rs2_data             (mul_fwd_rs2_data),
+        .architectural_forward_rs1_data   (fwd_rs1_data),
+        .architectural_forward_rs2_data   (fwd_rs2_data),
+        .muldiv_done                      (muldiv_done)
+    );
 `endif
 
     // The selected ISA owns its privileged registers and trap semantics.
@@ -2042,7 +1712,7 @@ module cpu_top
         .clk                (clk),
         .rst_n              (rst_n),
         .ex_valid           (ex_valid),
-        .ex_ready_go        (ex_ready_go_w),
+        .ex_ready_go        (ex_ready_go),
         .ex_priv_commit_ready(ex_priv_commit_ready),
         .mem_allowin        (mem_allowin_control),
         .mem_branch_flush   (mem_branch_flush),
@@ -2109,89 +1779,164 @@ module cpu_top
         .actual_target    (actual_target)
     );
 
-    // Store interface (EX stage -> DCache)
-    mem_interface u_mem_interface (
-        // Store side (EX stage)
-        .store_valid     (ex_valid & ~ex_priv_trap),
-        .store_en        (ex_mem_write_en),
-        .store_addr_low  (ex_lsu_align_low),
-        .store_mem_size  (ex_mem_size),
-        .store_data_in   (ex_rs2_data_repair),
-        .store_wea       (dram_wea),
-        .store_data_out  (),
-        // Shared load side (MEM stage, single LSU)
-        .load_en         (mem_selected_load_en),
-        .load_addr_low   (mem_selected_load_addr_low),
-        .load_mem_size   (mem_selected_load_size),
-        .load_unsigned   (mem_selected_load_unsigned),
-        .load_dram_dout  (mem_load_data),
-        .load_data_out   (mem_load_data_ext_raw)
+    // ==================== Load/store unit ====================
+
+    // Pair-local policy qualifies the same-pair store-data bypass in ID, then
+    // selects and suppresses the younger Slot-1 request in EX when required.
+    dual_issue_lsu_ctrl u_dual_issue_lsu_ctrl (
+        .id_slot1_valid                 (id_s1_valid),
+        .id_slot0_alu_only              (id_s0_alu_only),
+        .id_slot0_reg_write_en          (dec_reg_write_en),
+        .id_slot0_rd                    (id_rd_addr),
+        .id_slot1_mem_write_en          (dec1_mem_write_en),
+        .id_slot1_rs1                   (id_s1_rs1_addr),
+        .id_slot1_rs2                   (id_s1_rs2_addr),
+        .id_slot0_to_slot1_store_bypass (id_s0_alu_store_data_bypass),
+        .ex_slot1_valid                 (ex_s1_valid),
+        .ex_slot1_mem_read_en           (ex_s1_mem_read_en),
+        .ex_slot1_mem_write_en          (ex_s1_mem_write_en),
+        .ex_slot0_branch_redirect       (branch_flush),
+        .ex_slot0_priv_trap             (ex_priv_trap),
+        .ex_slot1_addr_replay           (ex_s1_addr_replay),
+        .ex_slot1_lsu_select            (ex_s1_lsu_select_raw),
+        .ex_slot1_side_effect_kill      (ex_s1_side_effect_kill),
+        .ex_slot0_store_bypass_q        (ex_s0_store_data_bypass_q),
+        .ex_slot0_alu_result            (alu_result),
+        .ex_slot1_rs2_data              (ex_s1_rs2_data_repair),
+        .ex_slot1_store_data            (ex_s1_store_data_raw)
     );
 
-    // NSCSCC formats all cacheable and uncached AXI load responses beside the
-    // DCache BRAM banks. Other platforms retain the shared raw-data formatter.
-    assign mem_load_data_ext = CACHE_RDATA_FORMATTED
-                             ? mem_load_data : mem_load_data_ext_raw;
-    assign mem_load_data_ext_ex = CACHE_RDATA_FORMATTED
-                                ? mem_load_data_ex : mem_load_data_ext_raw;
+    // Data formatting is independent from request arbitration: it prepares
+    // both EX store candidates and the shared MEM load result.
+    lsu_data_format #(
+        .CACHE_RDATA_FORMATTED(CACHE_RDATA_FORMATTED)
+    ) u_lsu_data_format (
+        .ex_slot0_valid             (ex_valid),
+        .ex_slot0_kill              (ex_priv_trap),
+        .ex_slot0_store             (ex_mem_write_en),
+        .ex_slot0_addr_low          (ex_lsu_align_low),
+        .ex_slot0_mem_size          (ex_mem_size),
+        .ex_slot0_store_data        (ex_rs2_data_repair),
+        .ex_slot0_store_wea         (dram_wea),
+        .ex_slot1_valid             (ex_s1_valid),
+        .ex_slot1_kill              (ex_s1_side_effect_kill),
+        .ex_slot1_store             (ex_s1_mem_write_en),
+        .ex_slot1_addr_low          (ex_s1_lsu_align_low),
+        .ex_slot1_mem_size          (ex_s1_mem_size),
+        .ex_slot1_store_data        (ex_s1_store_data_raw),
+        .ex_slot1_store_wea         (dram_wea_s1),
+        .mem_load_en                (mem_selected_load_en),
+        .mem_load_addr_low          (mem_selected_load_addr_low),
+        .mem_load_size              (mem_selected_load_size),
+        .mem_load_unsigned          (mem_selected_load_unsigned),
+        .mem_load_data              (mem_load_data),
+        .mem_load_data_ex           (mem_load_data_ex),
+        .mem_load_result            (mem_load_data_ext),
+        .mem_load_repair_result     (mem_load_data_ext_ex)
+    );
 
-    // Same-pair Slot 0 ALU forwarding is younger than every ordinary
-    // forwarding/WB-repair source captured for Slot 1, so it has priority.
-    // Carry only raw data across the EX and cache request boundaries; DCache
-    // and MMIO perform byte-lane alignment after their pipeline register.
-    assign ex_s1_store_data_raw = ex_s0_store_data_bypass_q
-                                ? alu_result
-                                : ex_s1_rs2_data_repair;
-
-    mem_interface u_mem_interface_s1_load (
-        // Store side (EX stage, shares the single LSU when Slot0 is non-LSU)
-        .store_valid     (ex_s1_valid & ~ex_s1_side_effect_kill),
-        .store_en        (ex_s1_mem_write_en),
-        .store_addr_low  (ex_s1_lsu_align_low),
-        .store_mem_size  (ex_s1_mem_size),
-        .store_data_in   (ex_s1_store_data_raw),
-        .store_wea       (dram_wea_s1),
-        .store_data_out  (),
-        // Load formatting is shared by the Slot0 instance above.
-        .load_en         (1'b0),
-        .load_addr_low   (2'd0),
-        .load_mem_size   (2'd0),
-        .load_unsigned   (1'b0),
-        .load_dram_dout  (32'd0),
-        .load_data_out   ()
+    // Request routing chooses the active issue slot, sends cacheable accesses
+    // to DCache, sends uncached accesses to MMIO and returns the raw MEM word.
+    memory_access_unit #(
+        .CACHE_ADDR_BASE  (CACHE_ADDR_BASE),
+        .CACHE_ADDR_MASK  (CACHE_ADDR_MASK),
+        .AXI_UNCACHED_DATA(AXI_UNCACHED_DATA)
+    ) u_memory_access_unit (
+        .ex_valid            (ex_valid),
+        .ex_mem_read_en      (ex_mem_read_en & ~ex_priv_trap),
+        .ex_mem_write_en     (ex_mem_write_en & ~ex_priv_trap),
+        .ex_alu_addr         (alu_addr),
+        .ex_lookup_addr      (ex_lsu_addr_low),
+        .ex_mem_size         (ex_mem_size),
+        .ex_mem_unsigned     (ex_mem_unsigned),
+        .ex_store_wea        (dram_wea),
+        .ex_store_data       (ex_rs2_data_repair),
+        .ex_s1_lsu_select    (ex_s1_lsu_select_raw),
+        .ex_s1_side_effect_kill(ex_s1_side_effect_kill),
+        .ex_s1_mem_read_en   (ex_s1_mem_read_en),
+        .ex_s1_mem_write_en  (ex_s1_mem_write_en),
+        .ex_s1_alu_addr      (alu_s1_addr),
+        .ex_s1_lookup_addr   (ex_s1_lsu_addr_low),
+        .ex_s1_mem_size      (ex_s1_mem_size),
+        .ex_s1_mem_unsigned  (ex_s1_mem_unsigned),
+        .ex_s1_store_wea     (dram_wea_s1),
+        .ex_s1_store_data    (ex_s1_store_data_raw),
+        .mem_valid           (mem_valid),
+        .mem_alu_result      (mem_alu_result),
+        .mem_mem_read_en     (mem_mem_read_en),
+        .mem_store_wea       (mem_store_wea),
+        .mem_store_data      (mem_store_data),
+        .mem_is_cacheable    (is_cacheable_mem),
+        .mem_s1_valid        (mem_s1_valid),
+        .mem_s1_alu_result   (mem_s1_alu_result),
+        .mem_s1_mem_read_en  (mem_s1_mem_read_en),
+        .mem_s1_mem_write_en (mem_s1_mem_write_en),
+        .mem_s1_store_wea    (mem_s1_store_wea),
+        .mem_s1_store_data   (mem_s1_store_data),
+        .mem_s1_is_cacheable (mem_s1_is_cacheable),
+        .mem_ready_go        (mem_ready_go),
+        .mem_allowin         (mem_allowin_lsu),
+        .mem_branch_flush    (mem_branch_flush),
+        .cache_rdata         (cache_rdata),
+        .cache_rdata_ex      (cache_rdata_ex),
+        .mmio_rdata          (mmio_rdata),
+        .dual_issue_count    (dual_issue_count),
+        .is_cacheable        (is_cacheable),
+        .is_cacheable_s1     (is_cacheable_s1),
+        .mmio_st_ld_hazard   (mmio_st_ld_hazard),
+        .cache_req           (cache_req),
+        .cache_wr            (cache_wr),
+        .cache_addr          (cache_addr),
+        .cache_lookup_addr   (cache_lookup_addr),
+        .cache_wea           (cache_wea),
+        .cache_wdata         (cache_wdata),
+        .cache_load_mask     (cache_load_mask),
+        .cache_load_size     (cache_load_size),
+        .cache_load_unsigned (cache_load_unsigned),
+        .cache_uncached      (cache_uncached),
+        .cache_flush         (cache_flush),
+        .cache_pipeline_stall(cache_pipeline_stall),
+        .mmio_addr           (mmio_addr),
+        .mmio_wr_addr        (mmio_wr_addr),
+        .mmio_wea            (mmio_wea),
+        .mmio_wdata          (mmio_wdata),
+        .mem_load_data       (mem_load_data),
+        .mem_load_data_ex    (mem_load_data_ex),
+        .mem_load_ready      (mem_load_ready)
     );
 
 `ifndef SYNTHESIS
-    always_ff @(posedge clk) begin
-        if (rst_n && ex_valid && (ex_mem_read_en | ex_mem_write_en)) begin
-            if (ex_alu_src2_wb_repair)
-                $fatal(1, "Slot0 LSU unexpectedly repairs immediate source 2");
-            if (ex_lsu_addr_low !== alu_addr[18:0])
-                $fatal(1, "Slot0 short LSU address disagrees with full address");
-            if (ex_lsu_align_low !== alu_addr[1:0])
-                $fatal(1, "Slot0 alignment address disagrees with full address");
-        end
-        if (rst_n && ex_s1_valid
-                  && (ex_s1_mem_read_en | ex_s1_mem_write_en)) begin
-            if (ex_s1_alu_src2_wb_repair)
-                $fatal(1, "Slot1 LSU unexpectedly repairs immediate source 2");
-            if (ex_s1_lsu_addr_low !== alu_s1_addr[18:0])
-                $fatal(1, "Slot1 short LSU address disagrees with full address");
-            if (ex_s1_lsu_align_low !== alu_s1_addr[1:0])
-                $fatal(1, "Slot1 alignment address disagrees with full address");
-        end
-        if (rst_n && ex_s1_valid
-                  && ex_s0_store_data_bypass_q) begin
-            if (!(ex_valid && ex_reg_write_en && (ex_rd != 5'd0)
-                  && ex_s1_mem_write_en && (ex_s1_rs2_addr == ex_rd)
-                  && (ex_s1_rs1_addr != ex_rd)
-                  && !ex_mem_read_en && !ex_mem_write_en
-                  && !ex_uses_priv_result && !ex_is_muldiv))
-                $fatal(1, "Invalid Slot0-ALU to Slot1-store-data bypass tag");
-            if (ex_s1_store_data_raw !== alu_result)
-                $fatal(1, "Slot1 store-data bypass did not select Slot0 ALU result");
-        end
-    end
+    lsu_consistency_monitor #(
+        .AXI_UNCACHED_DATA (AXI_UNCACHED_DATA)
+    ) u_lsu_consistency_monitor (
+        .clk                         (clk),
+        .rst_n                       (rst_n),
+        .ex_slot0_valid              (ex_valid),
+        .ex_slot1_valid              (ex_s1_valid),
+        .ex_slot0_payload            (ex_s0_payload),
+        .ex_slot1_payload            (ex_s1_payload),
+        .ex_slot0_repair             (ex_s0_repair_q),
+        .ex_slot1_repair             (ex_s1_repair_q),
+        .ex_slot0_branch_flush       (branch_flush),
+        .ex_slot0_priv_trap          (ex_priv_trap),
+        .ex_slot1_addr_replay        (ex_s1_addr_replay),
+        .ex_slot0_lsu_addr_low       (ex_lsu_addr_low),
+        .ex_slot1_lsu_addr_low       (ex_s1_lsu_addr_low),
+        .ex_slot0_align_addr_low     (ex_lsu_align_low),
+        .ex_slot1_align_addr_low     (ex_s1_lsu_align_low),
+        .ex_slot0_alu_addr           (alu_addr),
+        .ex_slot1_alu_addr           (alu_s1_addr),
+        .ex_slot0_is_cacheable       (is_cacheable),
+        .ex_slot1_is_cacheable       (is_cacheable_s1),
+        .ex_slot0_store_data_bypass  (ex_s0_store_data_bypass_q),
+        .ex_slot1_store_data         (ex_s1_store_data_raw),
+        .ex_slot0_alu_result         (alu_result),
+        .mem_branch_flush            (mem_branch_flush),
+        .cache_req                   (cache_req),
+        .mmio_store_load_hazard      (mmio_st_ld_hazard),
+        .mem_slot0_payload           (mem_s0_payload),
+        .mem_slot1_payload           (mem_s1_payload)
+    );
 `endif
 
     // ==================== EX/MEM ====================
@@ -2246,10 +1991,10 @@ module cpu_top
         .clk              (clk),
         .rst_n            (rst_n),
         .ex_valid         (ex_valid),
-        .ex_ready_go      (ex_ready_go_w),
+        .ex_ready_go      (ex_ready_go),
         .mem_allowin      (mem_allowin),
         .mem_valid        (mem_valid),
-        .mem_ready_go     (mem_ready_go_w),
+        .mem_ready_go     (mem_ready_go),
         .wb_allowin       (wb_allowin),
         .ex_redirect      (ex_mem_redirect),
         .mem_redirect     (mem_redirect),
@@ -2269,7 +2014,7 @@ module cpu_top
         .clk                 (clk),
         .rst_n               (rst_n),
         .ex_s1_valid         (ex_s1_valid),
-        .ex_ready_go         (ex_ready_go_w),
+        .ex_ready_go         (ex_ready_go),
         .mem_allowin         (mem_allowin_pipe),
         .ex_branch_flush     (branch_flush | ex_priv_trap
                               | ex_s1_addr_replay),
@@ -2290,48 +2035,33 @@ module cpu_top
     );
 
 `ifndef SYNTHESIS
-    // Executable reference for the former EX-wide target path.  It is kept
-    // out of synthesis so verification checks the new narrow-control/MEM-mux
-    // implementation without recreating the timing path in hardware.
-    wire [31:0] ex_redirect_target_reference =
-        ex_priv_flow ? ex_priv_target :
-        (branch_flush & ~ex_priv_flow)
-            ? (actual_taken ? ex_control_target : ex_pc_plus_4) :
-        (ex_valid & ex_s1_valid & ex_s1_addr_replay) ? ex_s1_pc :
-        ex_s1_actual_taken ? ex_s1_branch_target : ex_s1_pc_plus_4;
-    logic        redirect_reference_valid_q;
-    logic [31:0] redirect_reference_target_q;
-
-    always_ff @(posedge clk) begin
-        if (!rst_n) begin
-            redirect_reference_valid_q <= 1'b0;
-        end else begin
-            if (mem_redirect.valid !== redirect_reference_valid_q)
-                $fatal(1, "Registered redirect valid changed latency");
-            if (redirect_reference_valid_q
-                && (mem_branch_target !== redirect_reference_target_q))
-                $fatal(1, "MEM redirect target differs from EX reference");
-
-            redirect_reference_valid_q <= ex_registered_branch_flush;
-            if (ex_registered_branch_flush)
-                redirect_reference_target_q <= ex_redirect_target_reference;
-
-            if (ex_registered_branch_flush
-                && (ex_registered_redirect_source == REDIRECT_S0_CONTROL)
-                && ex_registered_redirect_actual_taken
-                && ((ex_pipe_alu_result
-                     & ~{30'd0, ex_target_clear_mask})
-                    !== ex_control_target))
-                $fatal(1, "Slot0 EX/MEM ALU candidate differs from CFI target");
-            if (ex_registered_branch_flush
-                && (ex_registered_redirect_source == REDIRECT_S1_CONTROL)
-                && ex_registered_redirect_actual_taken
-                && ((alu_s1_result
-                     & ~{30'd0, ex_s1_target_clear_mask})
-                    !== ex_s1_branch_target))
-                $fatal(1, "Slot1 EX/MEM ALU candidate differs from CFI target");
-        end
-    end
+    redirect_consistency_monitor u_redirect_consistency_monitor (
+        .clk                            (clk),
+        .rst_n                          (rst_n),
+        .ex_redirect_valid              (ex_registered_branch_flush),
+        .ex_redirect_source             (ex_registered_redirect_source),
+        .ex_redirect_actual_taken       (
+            ex_registered_redirect_actual_taken),
+        .ex_priv_flow                   (ex_priv_flow),
+        .ex_priv_target                 (ex_priv_target),
+        .ex_slot0_branch_flush          (branch_flush),
+        .ex_slot0_actual_taken          (actual_taken),
+        .ex_slot0_control_target        (ex_control_target),
+        .ex_slot0_pc_plus_4             (ex_pc_plus_4),
+        .ex_slot0_valid                 (ex_valid),
+        .ex_slot1_valid                 (ex_s1_valid),
+        .ex_slot1_addr_replay           (ex_s1_addr_replay),
+        .ex_slot1_pc                    (ex_s1_pc),
+        .ex_slot1_actual_taken          (ex_s1_actual_taken),
+        .ex_slot1_control_target        (ex_s1_branch_target),
+        .ex_slot1_pc_plus_4             (ex_s1_pc_plus_4),
+        .ex_slot0_mem_alu_candidate     (ex_pipe_alu_result),
+        .ex_slot0_target_clear_mask     (ex_target_clear_mask),
+        .ex_slot1_mem_alu_candidate     (alu_s1_result),
+        .ex_slot1_target_clear_mask     (ex_s1_target_clear_mask),
+        .mem_redirect                   (mem_redirect),
+        .mem_redirect_target            (mem_branch_target)
+    );
 `endif
 
     // ==================== MEM/WB ====================
@@ -2375,7 +2105,7 @@ module cpu_top
         .clk            (clk),
         .rst_n          (rst_n),
         .mem_valid      (mem_valid),
-        .mem_ready_go   (mem_ready_go_w),
+        .mem_ready_go   (mem_ready_go),
         .wb_allowin     (wb_allowin),
         .wb_valid       (wb_valid),
         .mem_load_valid (mem_load_valid),
@@ -2390,7 +2120,7 @@ module cpu_top
         .clk           (clk),
         .rst_n         (rst_n),
         .mem_s1_valid  (mem_s1_valid),
-        .mem_ready_go  (mem_ready_go_w),
+        .mem_ready_go  (mem_ready_go),
         .wb_allowin    (wb_allowin),
         .mem_payload   (mem_wb_s1_payload),
         .wb_s1_valid   (wb_s1_valid),

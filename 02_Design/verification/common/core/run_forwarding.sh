@@ -33,7 +33,9 @@ fi
 
 RTL_FILES="
     $RTL_DIR/core/decode/load_hazard_ctrl.sv
+    $RTL_DIR/core/decode/issue_hazard_ctrl.sv
     $RTL_DIR/core/decode/forwarding.sv
+    $RTL_DIR/core/decode/mul_operand_forwarding.sv
     $SCRIPT_DIR/tb_forwarding.sv
 "
 

@@ -49,8 +49,8 @@ module ex_stage_ctrl
     input  logic        mem_branch_flush,
     input  logic        ex_ready_go,
     input  logic        mem_allowin,
-    input  logic        ex_branch_redirect,
-    input  logic        ex_branch_request,
+    input  logic        ex_branch_flush,
+    input  logic        ex_redirect_fire,
     input  logic        ex_branch_actual_taken,
     input  logic        ex_priv_redirect,
     input  logic        ex_priv_flow,
@@ -171,7 +171,10 @@ module ex_stage_ctrl
                                     & ex_s1_addr_replay
                                     & ~mem_branch_flush
                                     & ex_ready_go & mem_allowin;
-    assign ex_registered_branch_flush = ex_branch_redirect
+    wire ex_slot0_branch_request = ex_branch_flush & ~ex_priv_flow;
+    wire ex_slot0_branch_redirect = ex_slot0_branch_request
+                                  & ex_redirect_fire;
+    assign ex_registered_branch_flush = ex_slot0_branch_redirect
                                       | ex_priv_redirect
                                       | ex_s1_branch_redirect
                                       | ex_s1_addr_replay_redirect;
@@ -191,7 +194,7 @@ module ex_stage_ctrl
             ex_registered_redirect_source = REDIRECT_S1_REPLAY;
             ex_registered_redirect_actual_taken = 1'b0;
         end
-        if (ex_branch_request) begin
+        if (ex_slot0_branch_request) begin
             ex_registered_redirect_source = REDIRECT_S0_CONTROL;
             ex_registered_redirect_actual_taken = ex_branch_actual_taken;
         end

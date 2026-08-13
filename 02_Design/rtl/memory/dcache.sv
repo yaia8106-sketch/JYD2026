@@ -118,10 +118,8 @@ module dcache #(
         input logic        load_unsigned
     );
         begin
-            // Select address and size together.  This preserves the previous
-            // logical-right-shift behavior for every misaligned combination,
-            // but removes the serial 32-bit shift -> size -> sign-extension
-            // cone from the BRAM output path.
+            // Address and size select together, avoiding a serial variable
+            // shift followed by size selection and sign extension.
             case ({load_size, addr_low})
                 4'b00_00: format_load_data = {
                     {24{raw_data[7] & ~load_unsigned}}, raw_data[7:0]
@@ -144,21 +142,20 @@ module dcache #(
                 4'b01_10: format_load_data = {
                     {16{raw_data[31] & ~load_unsigned}}, raw_data[31:16]
                 };
-                // A logical shift by 24 places zeros in shifted[15:8], so the
-                // old signed-halfword result is also zero-extended here.
+                // A logical shift by 24 places zeros in shifted[15:8].
                 4'b01_11: format_load_data = {24'd0, raw_data[31:24]};
                 4'b10_00: format_load_data = raw_data;
                 4'b10_01: format_load_data = {8'd0, raw_data[31:8]};
                 4'b10_10: format_load_data = {16'd0, raw_data[31:16]};
                 4'b10_11: format_load_data = {24'd0, raw_data[31:24]};
-                default: format_load_data = 32'd0;
+                default:  format_load_data = 32'd0;
             endcase
         end
     endfunction
 
 `ifndef SYNTHESIS
-    // Literal reference for the former serial implementation.  Keep it out of
-    // synthesis and compare it at the registered request boundary below.
+    // Literal reference for the former serial formatter.  The assertion at
+    // the registered request boundary protects every address/size case.
     function automatic [31:0] format_load_data_reference (
         input logic [31:0] raw_data,
         input logic [ 1:0] addr_low,
@@ -554,7 +551,6 @@ module dcache #(
     assign refill_write_data = merge_bytes(
         backend_rd_data, refill_store_data, refill_store_merge_wea
     );
-
     // ================================================================
     //  FSM - variable-latency refill/store backend
     // ================================================================
@@ -1033,11 +1029,8 @@ module dcache #(
     wire [3:0] raw_bypass_mask = raw_bypass_wea
                                & {4{raw_bypass_apply}};
     wire [31:0] cache_read_data = merge_bytes(
-        data_rd,
-        raw_bypass_data,
-        raw_bypass_mask
+        data_rd, raw_bypass_data, raw_bypass_mask
     );
-
     wire [31:0] formatted_hit = format_load_data(
         cache_read_data, mem_addr[1:0],
         mem_load_size, mem_load_unsigned
@@ -1177,22 +1170,4 @@ module dcache #(
     end
 `endif
 
-endmodule
-
-// Keep the two instances separate through synthesis.  This module contains
-// only the final source select, so duplication does not replicate byte-lane
-// extraction, sign extension, BRAMs, or state.
-(* keep_hierarchy = "yes" *)
-module dcache_read_result_select (
-    input  logic        special_valid,
-    input  logic [31:0] formatted_hit,
-    input  logic [31:0] formatted_special,
-    (* keep = "true" *) output logic [31:0] selected_data
-);
-    always_comb begin
-        if (special_valid)
-            selected_data = formatted_special;
-        else
-            selected_data = formatted_hit;
-    end
 endmodule

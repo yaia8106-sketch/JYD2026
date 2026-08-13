@@ -121,7 +121,9 @@ module frontend_ftq
     wire frontend_abtb_meta_t f0_abtb_bank1_meta;
     wire [FTQ_PTR_W:0] ftq_count;
 
-    // Compatibility aliases for directed tests and performance monitors.
+    // Compatibility names are direct aliases of the canonical records. Some
+    // of them remain on the F0/FQ control path, so keep these aliases local
+    // instead of inserting an observation-module boundary into production RTL.
     wire f0_valid_r = f0_state.valid;
     wire [1:0] f0_epoch_r = f0_state.epoch;
     wire [31:0] f0_start_pc_r = f0_state.start_pc;
@@ -134,12 +136,12 @@ module frontend_ftq
     wire [31:0] f0_steer_next_pc_r = f0_state.steer.next_pc;
     wire f0_stage1_bank0_branch_owned_r =
         f0_state.bank0_meta.branch_owned;
-    wire f0_stage1_bank1_branch_owned_r =
-        f0_state.bank1_meta.branch_owned;
     wire [7:0] f0_stage1_bank0_pht_index_r =
         f0_state.bank0_meta.pht_index;
     wire [1:0] f0_stage1_bank0_pht_counter_r =
         f0_state.bank0_meta.pht_counter;
+    wire f0_stage1_bank1_branch_owned_r =
+        f0_state.bank1_meta.branch_owned;
     wire [7:0] f0_stage1_bank1_pht_index_r =
         f0_state.bank1_meta.pht_index;
     wire [1:0] f0_stage1_bank1_pht_counter_r =

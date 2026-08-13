@@ -23,9 +23,9 @@ module backend_flow_ctrl (
     input  logic id_issue_is_muldiv,
     input  logic id_issue_serializing,
     input  logic id_decoded_serializing,
-    input  logic id_ready_go_raw,
-    input  logic id_ready_go_raw_if_mem_ready,
-    input  logic id_ready_go_raw_if_mem_wait,
+    input  logic id_dependency_ready,
+    input  logic id_dependency_ready_if_mem_ready,
+    input  logic id_dependency_ready_if_mem_wait,
     input  logic id_non_load_hazard,
     input  logic id_flush,
 
@@ -151,12 +151,12 @@ module backend_flow_ctrl (
     assign timer_irq_block = timer_irq_request | timer_irq_hold;
 
     assign id_base_ready_if_cache_ready =
-        id_ready_go_raw_if_mem_ready
+        id_dependency_ready_if_mem_ready
         & ~timer_irq_block
         & id_serializing_ready
         & id_barrier_ready;
     assign id_base_ready_if_cache_wait =
-        id_ready_go_raw_if_mem_wait
+        id_dependency_ready_if_mem_wait
         & ~timer_irq_block
         & id_serializing_ready
         & id_barrier_ready;
@@ -227,7 +227,7 @@ module backend_flow_ctrl (
 
     assign id_serializing_ready_reference = ~id_decoded_serializing
                                           | backend_older_empty;
-    assign id_ready_go_reference = id_ready_go_raw
+    assign id_ready_go_reference = id_dependency_ready
                                  & ~timer_irq_block
                                  & id_serializing_ready_reference
                                  & id_barrier_ready

@@ -16,6 +16,7 @@ if ! vcs -full64 -sverilog -timescale=1ns/1ps \
     "$RTL_DIR/common/cpu_defs.sv" \
     "$RTL_DIR/isa/loongarch/loongarch_defs.sv" \
     "$RTL_DIR/isa/loongarch/loongarch_predecode.sv" \
+    "$RTL_DIR/memory/icache_refill_ctrl.sv" \
     "$RTL_DIR/memory/icache.sv" \
     "$NSCSCC_DIR/tb/tb_icache_metadata.sv" \
     "$VCS_SHIM" >"$WORK_DIR/compile.log" 2>&1; then

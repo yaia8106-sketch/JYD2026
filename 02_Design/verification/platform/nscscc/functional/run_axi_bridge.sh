@@ -19,6 +19,7 @@ vcs -full64 -sverilog -timescale=1ns/1ps \
     "$RTL_DIR/isa/loongarch/loongarch_predecode.sv" \
     "$RTL_DIR/bus/axi/axi_master_adapter.sv" \
     "$RTL_DIR/bus/axi/memory_backend_arbiter.sv" \
+    "$RTL_DIR/memory/icache_refill_ctrl.sv" \
     "$RTL_DIR/memory/icache.sv" \
     "$PLATFORM_RTL_DIR/nscscc_axi_bridge.sv" \
     "$NSCSCC_DIR/tb/tb_nscscc_axi_bridge.sv" \

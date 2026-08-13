@@ -28,8 +28,8 @@ module tb_ex_stage_redirect;
     logic [31:0] ex_s1_predicted_target;
     logic ex_s1_addr_replay;
     logic mem_branch_flush, ex_ready_go, mem_allowin;
-    logic ex_branch_redirect;
-    logic ex_branch_request;
+    logic ex_branch_flush;
+    logic ex_redirect_fire;
     logic ex_branch_actual_taken;
     logic ex_priv_redirect;
     logic ex_priv_flow;
@@ -134,8 +134,8 @@ module tb_ex_stage_redirect;
         mem_branch_flush = 1'b0;
         ex_ready_go = 1'b1;
         mem_allowin = 1'b1;
-        ex_branch_redirect = 1'b0;
-        ex_branch_request = 1'b0;
+        ex_branch_flush = 1'b0;
+        ex_redirect_fire = 1'b0;
         ex_branch_actual_taken = 1'b0;
         ex_priv_redirect = 1'b0;
         ex_priv_flow = 1'b0;
@@ -215,8 +215,8 @@ module tb_ex_stage_redirect;
 
         // A false-positive S0 prediction repairs to the registered S0 PC+4.
         ex_s1_addr_replay = 1'b0;
-        ex_branch_redirect = 1'b1;
-        ex_branch_request = 1'b1;
+        ex_branch_flush = 1'b1;
+        ex_redirect_fire = 1'b1;
         ex_branch_actual_taken = 1'b0;
         expect_target(32'h1c00_1004, REDIRECT_S0_CONTROL,
                       "S0 false-positive BTB repair");

@@ -17,6 +17,8 @@ set design_dir [file normalize [file join $script_dir ../../../..]]
 set rtl_dir [file join $design_dir rtl]
 set platform_rtl_dir [file join $design_dir platform nscscc rtl]
 
+read_verilog -sv [file join $rtl_dir memory dcache_read_result_select.sv]
+read_verilog -sv [file join $rtl_dir memory dcache_data_format.sv]
 read_verilog -sv [file join $rtl_dir memory dcache.sv]
 read_verilog -sv [file join $platform_rtl_dir dcache_data_ram.sv]
 

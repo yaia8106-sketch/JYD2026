@@ -39,6 +39,7 @@ RTL_FILES="
     $RTL_DIR/core/frontend/frontend_fetch_state.sv
     $RTL_DIR/core/frontend/frontend_fetch_queue.sv
     $RTL_DIR/core/frontend/frontend_abtb_sidecar.sv
+    $RTL_DIR/core/frontend/observe/frontend_ftq_compat_adapter.sv
     $RTL_DIR/core/frontend/frontend_ftq.sv
     $LOONGARCH_DIR/tb/tb_loongarch_frontend_ftq.sv
 "

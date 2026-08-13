@@ -22,6 +22,7 @@ for cache_bytes in 8192 16384 32768; do
             "$RTL_DIR/common/cpu_defs.sv" \
             "$RTL_DIR/isa/loongarch/loongarch_defs.sv" \
             "$RTL_DIR/isa/loongarch/loongarch_predecode.sv" \
+            "$RTL_DIR/memory/icache_refill_ctrl.sv" \
             "$RTL_DIR/memory/icache.sv" \
             "$NSCSCC_DIR/tb/tb_icache_configurations.sv" \
             "$VCS_SHIM" >"$work_dir/compile.log" 2>&1; then

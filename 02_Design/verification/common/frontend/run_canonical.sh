@@ -36,6 +36,7 @@ if ! vcs $VCS_OPTS $VCS_EXTRA_OPTS \
     "$RTL_DIR/core/frontend/frontend_fetch_state.sv" \
     "$RTL_DIR/core/frontend/frontend_fetch_queue.sv" \
     "$RTL_DIR/core/frontend/frontend_abtb_sidecar.sv" \
+    "$RTL_DIR/core/frontend/observe/frontend_ftq_compat_adapter.sv" \
     "$RTL_DIR/core/frontend/frontend_ftq.sv" \
     "$SCRIPT_DIR/tb_frontend_ftq_canonical.sv" \
     "$VCS_SHIM" >"$COMPILE_LOG" 2>&1; then

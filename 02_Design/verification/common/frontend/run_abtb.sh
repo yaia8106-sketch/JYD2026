@@ -32,6 +32,7 @@ if ! command -v vcs >/dev/null 2>&1; then
 fi
 
 RTL_FILES="
+    $RTL_DIR/core/frontend/frontend_abtb_predict_select.sv
     $RTL_DIR/core/frontend/frontend_abtb.sv
     $SCRIPT_DIR/tb_frontend_abtb.sv
 "

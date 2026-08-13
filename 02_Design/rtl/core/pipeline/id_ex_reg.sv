@@ -1,20 +1,3 @@
-// A deliberately tiny, hierarchy-preserved late selector.  The three inputs
-// have low fanout; placing one selector beside each payload register cluster
-// prevents Vivado from merging every ID/EX clock-enable back into one global
-// 500+ load net.
-(* keep_hierarchy = "yes" *)
-module id_ex_allowin_local (
-    input  logic cache_ready,
-    input  logic allow_if_cache_ready,
-    input  logic allow_if_cache_wait,
-    (* keep = "true" *) output logic allowin
-);
-    always_comb begin
-        allowin = cache_ready ? allow_if_cache_ready
-                              : allow_if_cache_wait;
-    end
-endmodule
-
 // ============================================================
 // Module: id_ex_reg
 // Description: Slot 0 ID/EX handshake and structured payload register.

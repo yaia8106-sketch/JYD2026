@@ -86,13 +86,10 @@ module icache #(
     localparam integer LINE_SLOT_WIDTH = $clog2(LINES);
     localparam integer DATA_ROW_WIDTH = $clog2(DATA_ROWS);
 
-    typedef enum logic [1:0] {
-        REFILL_IDLE,
-        REFILL_REQ,
-        REFILL_DATA
-    } refill_state_t;
-
-    refill_state_t refill_state_q;
+    localparam logic [1:0] REFILL_IDLE = 2'd0;
+    localparam logic [1:0] REFILL_REQ  = 2'd1;
+    localparam logic [1:0] REFILL_DATA = 2'd2;
+    wire [1:0] refill_state_q;
 
     // ----------------------------------------------------------------
     // Cache arrays
@@ -153,15 +150,15 @@ module icache #(
     logic [BLOCK_CLASS_WIDTH-1:0] refill_buffer_block1_class_q;
     logic [ 1:0] refill_line_resp_q;
 
-    logic [27:0] refill_line_addr_q;
-    logic        refill_block_q;
-    logic [WAY_WIDTH-1:0] refill_way_q;
-    logic        refill_second_block_q;
-    logic        refill_response_needed_q;
-    logic        refill_drop_q;
-    logic        refill_beat_q;
-    logic [31:0] refill_word0_q;
-    logic [ 1:0] refill_block_resp_q;
+    wire [27:0] refill_line_addr_q;
+    wire        refill_block_q;
+    wire [WAY_WIDTH-1:0] refill_way_q;
+    wire        refill_second_block_q;
+    wire        refill_response_needed_q;
+    wire        refill_drop_q;
+    wire        refill_beat_q;
+    wire [31:0] refill_word0_q;
+    wire [ 1:0] refill_block_resp_q;
     wire         refill_block_commit;
 
     // The last refill beat first completes the registered block-class
@@ -302,8 +299,8 @@ module icache #(
     // Refill transaction and partial-line buffer
     // ----------------------------------------------------------------
 
-    wire mem_req_fire = mem_req_valid & mem_req_ready;
-    wire mem_rd_fire = mem_rd_valid & mem_rd_ready;
+    wire mem_req_fire;
+    wire mem_rd_fire;
     wire refill_block_complete =
         (refill_state_q == REFILL_DATA)
         & mem_rd_fire
@@ -632,136 +629,40 @@ module icache #(
             : miss_resp_resp_q;
 
     // ----------------------------------------------------------------
-    // Refill state machine
+    // Refill transaction owner
     // ----------------------------------------------------------------
-
-    // Reset owns only the FSM state. All transaction fields are initialized by
-    // the event that makes their state observable.
-    always_ff @(posedge clk) begin
-        if (!rst_n)
-            refill_state_q <= REFILL_IDLE;
-        else if (irom_req_kill) begin
-            if (refill_state_q == REFILL_REQ)
-                refill_state_q <= mem_req_fire ? REFILL_DATA : REFILL_IDLE;
-            else if ((refill_state_q == REFILL_DATA)
-                     && mem_rd_fire && mem_rd_last)
-                refill_state_q <= REFILL_IDLE;
-        end else begin
-            case (refill_state_q)
-                REFILL_IDLE:
-                    if (launch_refill)
-                        refill_state_q <= REFILL_REQ;
-                REFILL_REQ:
-                    if (mem_req_fire)
-                        refill_state_q <= REFILL_DATA;
-                REFILL_DATA:
-                    if (mem_rd_fire) begin
-                        if (refill_drop_q && mem_rd_last)
-                            refill_state_q <= REFILL_IDLE;
-                        else if (!refill_drop_q && refill_beat_q
-                                 && refill_second_block_q && mem_rd_last)
-                            refill_state_q <= REFILL_IDLE;
-                    end
-                default:
-                    refill_state_q <= REFILL_IDLE;
-            endcase
-        end
-    end
-
-    always_ff @(posedge clk) begin
-        if (irom_req_kill) begin
-            refill_response_needed_q <= 1'b0;
-            if (refill_state_q == REFILL_REQ) begin
-                if (mem_req_fire) begin
-                    refill_beat_q <= 1'b0;
-                    refill_block_resp_q <= 2'b00;
-                    refill_drop_q <= 1'b1;
-                end else begin
-                    refill_drop_q <= 1'b0;
-                end
-            end else if (refill_state_q == REFILL_DATA) begin
-                if (mem_rd_fire && mem_rd_last) begin
-                    refill_drop_q <= 1'b0;
-                    refill_beat_q <= 1'b0;
-                    refill_second_block_q <= 1'b0;
-                    refill_block_resp_q <= 2'b00;
-                end else begin
-                    refill_drop_q <= 1'b1;
-                end
-            end
-        end else begin
-            case (refill_state_q)
-                REFILL_IDLE: begin
-                    refill_drop_q <= 1'b0;
-                    if (launch_refill) begin
-                        refill_line_addr_q <=
-                            launch_miss_block_addr[28:1];
-                        refill_block_q <= launch_miss_block_addr[0];
-                        refill_way_q <= miss_replacement_way;
-                        refill_second_block_q <= 1'b0;
-                        refill_response_needed_q <= 1'b1;
-                    end
-                end
-
-                REFILL_REQ: begin
-                    if (mem_req_fire) begin
-                        refill_beat_q <= 1'b0;
-                        refill_block_resp_q <= 2'b00;
-                    end
-                end
-
-                REFILL_DATA: begin
-                    if (mem_rd_fire) begin
-                        // Once a redirect kills this refill, AXI RLAST is the
-                        // only trustworthy completion marker. A kill may
-                        // coincide with an accepted middle beat, so the local
-                        // beat/block counters no longer describe the remaining
-                        // bus transaction and must not drive normal sequencing.
-                        if (refill_drop_q) begin
-                            if (mem_rd_last) begin
-                                refill_drop_q <= 1'b0;
-                                refill_beat_q <= 1'b0;
-                                refill_second_block_q <= 1'b0;
-                                refill_response_needed_q <= 1'b0;
-                                refill_block_resp_q <= 2'b00;
-                            end
-                        end else if (!refill_beat_q) begin
-                            refill_word0_q <= mem_rd_data;
-                            refill_beat_q <= 1'b1;
-                            refill_block_resp_q <= refill_block_resp;
-                        end else begin
-                            refill_beat_q <= 1'b0;
-                            refill_block_resp_q <= 2'b00;
-                            if (!refill_second_block_q) begin
-                                refill_block_q <= ~refill_block_q;
-                                refill_second_block_q <= 1'b1;
-                                refill_response_needed_q <= 1'b0;
-                            end else if (mem_rd_last) begin
-                                refill_second_block_q <= 1'b0;
-                                refill_response_needed_q <= 1'b0;
-                                refill_drop_q <= 1'b0;
-                            end
-                        end
-                    end
-                end
-
-                default: begin
-                    refill_drop_q <= 1'b0;
-                    refill_response_needed_q <= 1'b0;
-                end
-            endcase
-        end
-    end
-
-    assign mem_req_valid = refill_state_q == REFILL_REQ;
-    assign mem_req_addr = {
-        refill_line_addr_q,
-        refill_block_q,
-        3'b000
-    };
-    assign mem_req_len = 8'd3;
-    assign mem_req_burst = 2'b10;
-    assign mem_rd_ready = refill_state_q == REFILL_DATA;
+    icache_refill_ctrl #(
+        .WAY_WIDTH (WAY_WIDTH)
+    ) u_refill_ctrl (
+        .clk             (clk),
+        .rst_n           (rst_n),
+        .kill            (irom_req_kill),
+        .launch          (launch_refill),
+        .launch_block_addr(launch_miss_block_addr),
+        .launch_way      (miss_replacement_way),
+        .state           (refill_state_q),
+        .line_addr       (refill_line_addr_q),
+        .block           (refill_block_q),
+        .way             (refill_way_q),
+        .second_block    (refill_second_block_q),
+        .response_needed (refill_response_needed_q),
+        .drop            (refill_drop_q),
+        .beat            (refill_beat_q),
+        .first_word      (refill_word0_q),
+        .block_resp_q    (refill_block_resp_q),
+        .mem_req_valid   (mem_req_valid),
+        .mem_req_ready   (mem_req_ready),
+        .mem_req_addr    (mem_req_addr),
+        .mem_req_len     (mem_req_len),
+        .mem_req_burst   (mem_req_burst),
+        .mem_rd_valid    (mem_rd_valid),
+        .mem_rd_ready    (mem_rd_ready),
+        .mem_rd_data     (mem_rd_data),
+        .mem_rd_last     (mem_rd_last),
+        .mem_rd_resp     (mem_rd_resp),
+        .mem_req_fire    (mem_req_fire),
+        .mem_rd_fire     (mem_rd_fire)
+    );
 
 `ifndef SYNTHESIS
     initial begin

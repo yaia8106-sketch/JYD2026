@@ -38,6 +38,7 @@ if ! vcs $VCS_OPTS $VCS_EXTRA_OPTS -top tb_loongarch_decode_contract \
     "$RTL_DIR/isa/loongarch/loongarch_defs.sv" \
     "$RTL_DIR/isa/loongarch/loongarch_decoder.sv" \
     "$RTL_DIR/isa/loongarch/loongarch_predecode.sv" \
+    "$RTL_DIR/core/execute/alu_result_datapath.sv" \
     "$RTL_DIR/core/execute/alu.sv" \
     "$LOONGARCH_DIR/tb/tb_loongarch_decode_contract.sv" \
     "$VCS_SHIM" >"$COMPILE_LOG" 2>&1; then

@@ -24,6 +24,7 @@ vcs -full64 -sverilog -timescale=1ns/1ps \
     -Mdir="$WORK_DIR/csrc" \
     -o "$WORK_DIR/simv" \
     "$RTL_DIR/common/cpu_defs.sv" \
+    "$RTL_DIR/core/execute/alu_result_datapath.sv" \
     "$RTL_DIR/core/execute/alu.sv" \
     "$SCRIPT_DIR/tb_alu_split_equivalence.sv" \
     "$VCS_SHIM" >"$WORK_DIR/compile.log" 2>&1

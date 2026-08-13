@@ -14,6 +14,8 @@ vcs -full64 -sverilog -timescale=1ns/1ps \
     -top tb_dcache_uncached \
     -Mdir="$WORK_DIR/csrc" \
     -o "$WORK_DIR/simv" \
+    "$RTL_DIR/memory/dcache_read_result_select.sv" \
+    "$RTL_DIR/memory/dcache_data_format.sv" \
     "$RTL_DIR/memory/dcache.sv" \
     "$PLATFORM_RTL_DIR/dcache_data_ram.sv" \
     "$NSCSCC_DIR/tb/tb_dcache_uncached.sv" \
