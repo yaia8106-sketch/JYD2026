@@ -31,6 +31,7 @@
 ../core/control/redirect_ctrl.sv
 ../core/control/timer_irq_ctrl.sv
 ../core/control/serialization_ctrl.sv
+../core/control/backend_flow_ctrl.sv
 ../core/lsu/lsu_address_prepare.sv
 ../core/lsu/memory_access_unit.sv
 ../core/execute/muldiv_unit.sv

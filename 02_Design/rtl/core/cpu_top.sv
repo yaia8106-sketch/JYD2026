@@ -540,177 +540,84 @@ module cpu_top
     // ---- Dual-issue performance counter ----
     wire [31:0] dual_issue_count;
 
-    // ---- Handshake ----
+    // ---- Backend flow control ----
     wire if_ready_go_w;             // driven by frontend_ftq
     wire mmio_st_ld_hazard;
-    wire ex_muldiv_ready = mem_branch_flush | ~ex_muldiv_req
-                         | ~ex_muldiv_op[2] | muldiv_done;
-    wire ex_priv_older_pending = mem_valid | wb_valid
-                               | mem_s1_valid | wb_s1_valid;
-    // Privileged instructions are serialized before entering EX; late address
-    // faults explicitly wait for the same registered older-token condition.
-    // This class-specific commit readiness therefore does not need the generic
-    // DCache-derived mem_allowin cone.
-    wire ex_priv_commit_ready = ~ex_priv_older_pending;
-    wire ex_priv_ready = ~ex_priv_wait_older | ~ex_priv_older_pending;
-    wire ex_ready_go_w  = ~mmio_st_ld_hazard
-                        & ex_muldiv_ready & ex_priv_ready;
-    wire mem_ready_go_w = cache_ready; // DCache controls MEM stage flow
-    wire mem_can_advance = ~mem_valid | mem_ready_go_w;
-    // wb_allowin is structurally true today, but retain the canonical equation
-    // in every cluster so the copies remain cycle-equivalent if WB later gains
-    // a real ready condition.
-    assign mem_allowin_lsu = ~mem_valid
-                           | (mem_ready_go_w & wb_allowin);
-    assign mem_allowin_control = ~mem_valid
-                               | (mem_ready_go_w & wb_allowin);
-    assign mem_allowin_pipe = ~mem_valid
-                            | (mem_ready_go_w & wb_allowin);
-    // A completed multiplier may accept a new M owner on the same edge that
-    // its MEM token advances. If MEM is held, block only a new M instruction;
-    // independent ID traffic remains governed by normal pipeline capacity.
-    wire mem_mul_owner_releases = ~mem_valid | ~mem_is_mul
-                                | mem_ready_go_w;
-    wire id_muldiv_unit_ready = ~id_issue_is_muldiv | ~muldiv_busy;
-    // done is deliberately excluded from muldiv_busy, but a completed owner
-    // is not necessarily leaving the unit on this edge. In particular, a MUL
-    // may still be held in EX behind an older non-MUL MEM request. Do not let a
-    // younger MulDiv prestart until the completed EX/MEM owner is consumed.
-    //
-    // Keep the late cache-ready split explicit. With cache_ready=1 MEM always
-    // allows in, while cache_ready=0 only a completed EX divide above an empty
-    // MEM stage can release its owner.
-    wire muldiv_done_releases_if_cache_ready =
-        (mem_valid & mem_is_mul)
-        | (ex_valid & ex_is_muldiv & ex_muldiv_op[2]
-           & ~mem_branch_flush);
-    wire muldiv_done_releases_if_cache_wait =
-        ex_valid & ex_is_muldiv & ex_muldiv_op[2]
-        & ~mem_valid & ~mem_branch_flush;
-    wire id_muldiv_done_ready_if_cache_ready =
-        ~id_issue_is_muldiv | ~muldiv_done
-        | muldiv_done_releases_if_cache_ready;
-    wire id_muldiv_done_ready_if_cache_wait =
-        ~id_issue_is_muldiv | ~muldiv_done
-        | muldiv_done_releases_if_cache_wait;
-    // Serializing instructions (CSR/trap/return and ISA-defined illegal
-    // operations) enter an empty backend and keep younger instructions out
-    // until their WB token retires.  Besides precise traps, this guarantees
-    // that architectural CSR state is observed at the same commit boundary as
-    // the instruction that changed it.
+    wire ex_muldiv_ready;
+    wire ex_priv_ready;
+    wire ex_priv_commit_ready;
+    wire ex_ready_go_w;
+    wire mem_ready_go_w;
+    (* keep = "true" *) wire ex_allowin_if_cache_ready;
+    (* keep = "true" *) wire ex_allowin_if_cache_wait;
     wire serializing_inflight;
-    wire backend_older_empty = ~ex_valid & ~mem_valid & ~wb_valid
-                             & ~ex_s1_valid & ~mem_s1_valid & ~wb_s1_valid;
-    // Use the registered frontend hint in the backwards ready path.  The
-    // simulation reference below retains the full decoder equation and checks
-    // cycle equivalence, while synthesis avoids instruction decode here.
-    wire id_serializing_ready = ~id_issue_hint.serializing
-                              | backend_older_empty;
-    wire id_barrier_ready = ~serializing_inflight;
-
-    // Evaluate the complete pipeline handshake for both values of the late
-    // DCache-ready bit. cache_ready then selects each one-bit result only once;
-    // it no longer traverses load-hazard, M-owner and downstream-allow logic.
-    // Stop the boundary instruction as soon as an enabled interrupt becomes
-    // visible.  Waiting only for the registered hold bit gives that
-    // instruction one cycle to enter EX; a self-branch can then repeatedly
-    // flush the pending request and starve software interrupts forever.
-    assign timer_irq_block = timer_irq_request | timer_irq_hold;
-    wire id_base_ready_if_cache_ready = id_ready_go_raw_if_mem_ready
-                                      & ~timer_irq_block
-                                      & id_serializing_ready
-                                      & id_barrier_ready;
-    wire id_base_ready_if_cache_wait = id_ready_go_raw_if_mem_wait
-                                     & ~timer_irq_block
-                                     & id_serializing_ready
-                                     & id_barrier_ready;
-    wire id_muldiv_owner_ready_if_cache_wait = ~id_issue_is_muldiv
-                                             | ~mem_valid | ~mem_is_mul;
-
-    (* keep = "true" *) wire id_ready_no_common_if_cache_ready =
-        id_base_ready_if_cache_ready & id_muldiv_unit_ready
-                                     & id_muldiv_done_ready_if_cache_ready;
-    (* keep = "true" *) wire id_ready_no_common_if_cache_wait =
-        id_base_ready_if_cache_wait & id_muldiv_unit_ready
-                                    & id_muldiv_owner_ready_if_cache_wait
-                                    & id_muldiv_done_ready_if_cache_wait;
-
-    // wb_allowin is permanently true. Therefore MEM is always able to advance
-    // when cache_ready=1, while cache_ready=0 permits EX to advance only into
-    // an empty MEM stage.
-    (* keep = "true" *) wire ex_allowin_if_cache_ready =
-        ~ex_valid | ex_ready_go_w;
-    (* keep = "true" *) wire ex_allowin_if_cache_wait =
-        ~ex_valid | (ex_ready_go_w & ~mem_valid);
-
-    // All cache-dependent candidates are complete before the common EX repair/
-    // MulDiv hazard arrives.  The late hazard therefore sees only one selected
-    // readiness bit instead of traversing both candidate trees.
-    (* keep = "true" *) wire id_progress_no_common_if_cache_ready =
-        id_ready_no_common_if_cache_ready & ex_allowin_if_cache_ready;
-    (* keep = "true" *) wire id_progress_no_common_if_cache_wait =
-        id_ready_no_common_if_cache_wait & ex_allowin_if_cache_wait;
-    wire id_ready_no_common =
-        cache_ready ? id_ready_no_common_if_cache_ready
-                    : id_ready_no_common_if_cache_wait;
-    wire id_progress_no_common =
-        cache_ready ? id_progress_no_common_if_cache_ready
-                    : id_progress_no_common_if_cache_wait;
-
-    assign id_ready_go = id_ready_no_common & ~id_non_load_hazard;
-    assign ex_allowin = cache_ready ? ex_allowin_if_cache_ready
-                                    : ex_allowin_if_cache_wait;
-    // ID/EX builds its payload-clock enables inside hierarchy-preserved local
-    // selector cells.  Keep one additional selector beside the narrow EX
-    // repair/hazard mirrors owned by this module.
-    logic ex_allowin_ex_local;
-    id_ex_allowin_local u_ex_allowin_ex_local (
-        .cache_ready         (cache_ready),
-        .allow_if_cache_ready(ex_allowin_if_cache_ready),
-        .allow_if_cache_wait (ex_allowin_if_cache_wait),
-        .allowin             (ex_allowin_ex_local)
-    );
-    assign id_allowin = ~id_valid
-                      | (id_progress_no_common & ~id_non_load_hazard);
-    // The IF/ID payload CE and the FQ dequeue live in different physical
-    // clusters. Preserve two identical final gates so neither one asks a
-    // single 250+ load net to span both clusters after placement.
-    (* keep = "true" *) wire id_allowin_pipe = ~id_valid
-        | (id_progress_no_common & ~id_non_load_hazard);
-    (* keep = "true" *) wire id_allowin_frontend = ~id_valid
-        | (id_progress_no_common & ~id_non_load_hazard);
-
-`ifndef SYNTHESIS
-    // Executable references retain the original serial equations.
-    wire id_serializing_ready_reference = ~dec_uop.serializing
-                                        | backend_older_empty;
-    wire id_ready_go_reference = id_ready_go_raw & ~timer_irq_block
-                               & id_serializing_ready_reference
-                               & id_barrier_ready
-                               & id_muldiv_unit_ready
-                               & (~id_issue_is_muldiv | ~muldiv_done
-                                  | muldiv_consume)
-                               & (~id_issue_is_muldiv
-                                  | mem_mul_owner_releases);
-    wire ex_allowin_reference = ~ex_valid
-                              | (ex_ready_go_w & mem_can_advance);
-    wire id_allowin_reference = ~id_valid
-                              | (id_ready_go_reference
-                                 & ex_allowin_reference);
-`endif
+    wire id_serializing_ready;
+    wire id_barrier_ready;
+    wire id_muldiv_unit_ready;
+    wire ex_allowin_ex_local;
+    wire id_allowin_pipe;
+    wire id_allowin_frontend;
+    wire id_to_ex_fire;
 
     // ---- Flush / redirect ----
     wire id_flush = frontend_branch_flush;
     wire ex_flush = frontend_branch_flush;
-    // This is the exact ID/EX acceptance edge. A Slot 0 MUL establishes its
-    // narrow MulDiv owner here while its forwarded rs payload is duplicated
-    // into free-running local DSP input registers.
-    wire id_to_ex_fire = id_valid & id_progress_no_common
-                        & ~id_non_load_hazard & ~id_flush;
-`ifndef SYNTHESIS
-    wire id_to_ex_fire_reference = id_valid & id_ready_go_reference
-                                 & ex_allowin_reference & ~id_flush;
-`endif
+
+    backend_flow_ctrl u_backend_flow_ctrl (
+        .clk                         (clk),
+        .rst_n                       (rst_n),
+        .cache_ready                 (cache_ready),
+        .wb_allowin                  (wb_allowin),
+        .id_valid                    (id_valid),
+        .id_issue_is_muldiv          (id_issue_is_muldiv),
+        .id_issue_serializing        (id_issue_hint.serializing),
+        .id_decoded_serializing      (dec_uop.serializing),
+        .id_ready_go_raw             (id_ready_go_raw),
+        .id_ready_go_raw_if_mem_ready(id_ready_go_raw_if_mem_ready),
+        .id_ready_go_raw_if_mem_wait (id_ready_go_raw_if_mem_wait),
+        .id_non_load_hazard          (id_non_load_hazard),
+        .id_flush                    (id_flush),
+        .ex_valid                    (ex_valid),
+        .ex_slot1_valid              (ex_s1_valid),
+        .ex_is_muldiv                (ex_is_muldiv),
+        .ex_is_divrem                (ex_muldiv_op[2]),
+        .ex_priv_wait_older          (ex_priv_wait_older),
+        .mmio_store_load_hazard      (mmio_st_ld_hazard),
+        .mem_valid                   (mem_valid),
+        .mem_slot1_valid             (mem_s1_valid),
+        .mem_is_mul                  (mem_is_mul),
+        .mem_branch_flush            (mem_branch_flush),
+        .wb_valid                    (wb_valid),
+        .wb_slot1_valid              (wb_s1_valid),
+        .muldiv_busy                 (muldiv_busy),
+        .muldiv_done                 (muldiv_done),
+        .muldiv_consume              (muldiv_consume),
+        .serializing_inflight        (serializing_inflight),
+        .timer_irq_request           (timer_irq_request),
+        .timer_irq_hold              (timer_irq_hold),
+        .ex_muldiv_ready             (ex_muldiv_ready),
+        .ex_priv_ready               (ex_priv_ready),
+        .ex_priv_commit_ready        (ex_priv_commit_ready),
+        .ex_ready_go                 (ex_ready_go_w),
+        .mem_ready_go                (mem_ready_go_w),
+        .mem_allowin_lsu             (mem_allowin_lsu),
+        .mem_allowin_control         (mem_allowin_control),
+        .mem_allowin_pipe            (mem_allowin_pipe),
+        .timer_irq_block             (timer_irq_block),
+        .id_serializing_ready        (id_serializing_ready),
+        .id_barrier_ready            (id_barrier_ready),
+        .id_muldiv_unit_ready        (id_muldiv_unit_ready),
+        .id_ready_go                 (id_ready_go),
+        .ex_allowin_if_cache_ready   (ex_allowin_if_cache_ready),
+        .ex_allowin_if_cache_wait    (ex_allowin_if_cache_wait),
+        .ex_allowin                  (ex_allowin),
+        .ex_allowin_timing_copy      (ex_allowin_ex_local),
+        .id_allowin                  (id_allowin),
+        .id_allowin_pipe             (id_allowin_pipe),
+        .id_allowin_frontend         (id_allowin_frontend),
+        .id_to_ex_fire               (id_to_ex_fire)
+    );
+
     // A Slot-0 multiply may pair with an independent Slot-1 instruction, so
     // every accepted multiply must establish the MulDiv owner here.
     wire id_mul_prestart = id_to_ex_fire & id_is_mul;
@@ -2056,30 +1963,13 @@ module cpu_top
                   && (mmio_st_ld_hazard
                       !== mmio_st_ld_hazard_before_late_kill))
             $fatal(1, "Late Slot-1 LSU kill changed MMIO store/load hazard");
-        // When ID is invalid its payload is intentionally don't-care and the
-        // frontend hint may describe an older queue entry.  ready_go is only
-        // observable together with id_valid, so compare the two equations at
-        // the same validity boundary used by the pipeline handshake.
-        if (rst_n && id_valid
-                  && (id_ready_go !== id_ready_go_reference))
-            $fatal(1, "Timing-factored id_ready_go changed pipeline handshake");
-        if (rst_n && (ex_allowin !== ex_allowin_reference))
-            $fatal(1, "Timing-factored ex_allowin changed pipeline handshake");
-        if (rst_n && (ex_allowin_ex_local !== ex_allowin))
-            $fatal(1, "EX allowin functional-cluster copies diverged");
+        // The canonical MEM register recomputes this equation independently;
+        // keep checking that all placement-local copies remain identical.
         if (rst_n
                   && ((mem_allowin_lsu !== mem_allowin)
                       || (mem_allowin_control !== mem_allowin)
                       || (mem_allowin_pipe !== mem_allowin)))
             $fatal(1, "MEM allowin functional-cluster copies diverged");
-        if (rst_n && (id_allowin !== id_allowin_reference))
-            $fatal(1, "Timing-factored id_allowin changed pipeline handshake");
-        if (rst_n
-                  && ((id_allowin_pipe !== id_allowin)
-                      || (id_allowin_frontend !== id_allowin)))
-            $fatal(1, "ID allowin physical-cluster copies diverged");
-        if (rst_n && (id_to_ex_fire !== id_to_ex_fire_reference))
-            $fatal(1, "Timing-factored ID-to-EX fire changed pipeline handshake");
         if (rst_n && (id_mul_prestart !== (id_to_ex_fire & id_is_mul)))
             $fatal(1, "Timing-factored MUL prestart changed ID acceptance");
         if (rst_n && id_to_ex_fire
