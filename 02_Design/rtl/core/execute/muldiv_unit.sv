@@ -32,19 +32,19 @@ module muldiv_unit
     output logic [31:0] result
 );
 
-    typedef enum logic [2:0] {
-        S_IDLE,
-        S_MUL_EXEC,
-        S_MUL_DONE,
-        S_DIV_RUN,
-        S_DIV_FINISH,
-        S_DONE
-    } state_t;
+    typedef logic [5:0] state_t;
+    localparam state_t S_IDLE       = 6'b00_0001;
+    localparam state_t S_MUL_EXEC   = 6'b00_0010;
+    localparam state_t S_MUL_DONE   = 6'b00_0100;
+    localparam state_t S_DIV_RUN    = 6'b00_1000;
+    localparam state_t S_DIV_FINISH = 6'b01_0000;
+    localparam state_t S_DONE       = 6'b10_0000;
 
     // Keep local FSM feedback on the D input.  Extracting a shared CE makes
     // the remote EX/MEM consume condition drive all six one-hot state flops;
     // the D form is functionally identical and avoids the slower CE setup arc.
-    (* extract_enable = "no" *) state_t state;
+    (* fsm_encoding = "none", extract_enable = "no" *) state_t state;
+    state_t state_next;
 
     muldiv_op_t op_r;
     logic signed [32:0] mul_a_pipe;
@@ -254,61 +254,68 @@ module muldiv_unit
 
     // Only narrow ownership/control sees launch/consume/flush. A same-edge
     // younger MUL prestart has priority over releasing the old completed owner.
+    // Every state bit receives a D value each cycle. This keeps the remote
+    // consume/allowin cone away from the slower slice CE setup arc.
+    always_comb begin
+        state_next = S_IDLE;
+
+        case (state)
+            S_IDLE: begin
+                state_next = S_IDLE;
+                if (mul_prestart_valid) begin
+                    state_next = S_MUL_EXEC;
+                end else if (req_valid && req_op[2]) begin
+                    if (req_div_by_zero | req_div_overflow
+                            | req_div_fast_valid)
+                        state_next = S_DONE;
+                    else
+                        state_next = S_DIV_RUN;
+                end
+            end
+
+            S_MUL_EXEC: begin
+                // mul_product_r captures the local input-register product
+                // on this edge, then exposes it throughout S_MUL_DONE.
+                state_next = S_MUL_DONE;
+            end
+
+            S_MUL_DONE: begin
+                state_next = S_MUL_DONE;
+                if (mul_prestart_valid)
+                    state_next = S_MUL_EXEC;
+                else if (consume)
+                    state_next = S_IDLE;
+            end
+
+            S_DIV_RUN: begin
+                state_next = (div_count == 6'd1)
+                           ? S_DIV_FINISH
+                           : S_DIV_RUN;
+            end
+
+            S_DIV_FINISH: begin
+                state_next = S_DONE;
+            end
+
+            S_DONE: begin
+                state_next = S_DONE;
+                if (mul_prestart_valid)
+                    state_next = S_MUL_EXEC;
+                else if (consume)
+                    state_next = S_IDLE;
+            end
+
+            default: begin
+                state_next = S_IDLE;
+            end
+        endcase
+    end
+
     always_ff @(posedge clk) begin
         if (!rst_n || flush)
             state <= S_IDLE;
-        else begin
-            case (state)
-                S_IDLE: begin
-                    if (mul_prestart_valid) begin
-                        state <= S_MUL_EXEC;
-                    end else if (req_valid && req_op[2]) begin
-                        if (req_div_by_zero | req_div_overflow) begin
-                            state <= S_DONE;
-                        end else if (req_div_fast_valid) begin
-                            state <= S_DONE;
-                        end else begin
-                            state <= S_DIV_RUN;
-                        end
-                    end
-                end
-
-                S_MUL_EXEC: begin
-                    // mul_product_r captures the local input-register product
-                    // on this edge, then exposes it throughout S_MUL_DONE.
-                    state <= S_MUL_DONE;
-                end
-
-                S_MUL_DONE: begin
-                    if (mul_prestart_valid) begin
-                        state <= S_MUL_EXEC;
-                    end else if (consume) begin
-                        state <= S_IDLE;
-                    end
-                end
-
-                S_DIV_RUN: begin
-                    if (div_count == 6'd1)
-                        state <= S_DIV_FINISH;
-                end
-
-                S_DIV_FINISH: begin
-                    state <= S_DONE;
-                end
-
-                S_DONE: begin
-                    if (mul_prestart_valid) begin
-                        state <= S_MUL_EXEC;
-                    end else if (consume) begin
-                        state <= S_IDLE;
-                    end
-                end
-
-                default: begin
-                    state <= S_IDLE;
-                end
-            endcase
-        end
+        else
+            state <= state_next;
     end
 
     // op_r is payload owned by the FSM. Launch establishes it before any MUL
