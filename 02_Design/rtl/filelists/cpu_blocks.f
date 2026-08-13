@@ -7,6 +7,7 @@
 ../core/pipeline/id_ex_payload_builder.sv
 ../core/pipeline/id_ex_reg.sv
 ../core/pipeline/id_ex_reg_s1.sv
+../core/pipeline/id_ex_timing_mirror.sv
 ../core/execute/alu.sv
 ../core/execute/branch_condition.sv
 ../core/decode/id_stage_derive.sv
@@ -29,6 +30,8 @@
 ../core/control/redirect_target_select.sv
 ../core/control/redirect_ctrl.sv
 ../core/control/timer_irq_ctrl.sv
+../core/control/serialization_ctrl.sv
+../core/lsu/lsu_address_prepare.sv
 ../core/lsu/memory_access_unit.sv
 ../core/execute/muldiv_unit.sv
 ../core/dual_issue_counter.sv
@@ -38,4 +41,5 @@
 ../core/pipeline/mem_wb_payload_builder.sv
 ../core/pipeline/mem_wb_reg.sv
 ../core/pipeline/mem_wb_reg_s1.sv
+../core/observe/commit_debug_adapter.sv
 ../core/wb_mux.sv
