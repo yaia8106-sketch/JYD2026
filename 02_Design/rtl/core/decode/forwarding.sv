@@ -333,18 +333,35 @@ module forwarding (
         preselect_alu_src2(id_s0_alu_src2_sel,
                            s0_rs2_rf_or_mul_data, id_s0_imm);
 
-    wire [31:0] s1_alu_src1_ex_candidate =
-        preselect_alu_src1(id_s1_alu_src1_sel,
-                           s1_rs1_ex_group_data, id_s1_pc);
-    wire [31:0] s1_alu_src1_mem_candidate =
-        preselect_alu_src1(id_s1_alu_src1_sel,
-                           s1_rs1_mem_group_data, id_s1_pc);
-    wire [31:0] s1_alu_src1_wb_candidate =
-        preselect_alu_src1(id_s1_alu_src1_sel,
-                           s1_rs1_wb_group_data, id_s1_pc);
-    wire [31:0] s1_alu_src1_rf_candidate =
-        preselect_alu_src1(id_s1_alu_src1_sel,
-                           s1_rs1_rf_or_mul_data, id_s1_pc);
+    // For the timing-critical Slot-1 source-1 result, remove the youngest
+    // Slot-1 EX producer from the complete older-source tree.  Its result and
+    // the already-complete older fallback are calculated in parallel, leaving
+    // one final LUT-sized choice after the EX adder/barrel shifter.
+    wire s1_rs1_older_ex_hit = s1_rs1_s0_ex_hit;
+    wire s1_rs1_older_mem_mul_select = !s1_rs1_older_ex_hit
+        && !s1_rs1_s1_mem_hit && s1_rs1_s0_mem_hit && mem_is_mul
+        && !mem_select_pc4;
+    wire s1_rs1_older_wb_select_hit = s1_rs1_wb_group_hit
+        && !s1_rs1_older_mem_mul_select;
+    wire [1:0] s1_rs1_older_group_select = {
+        ~s1_rs1_older_ex_hit & ~s1_rs1_mem_group_hit,
+        ~s1_rs1_older_ex_hit
+            & (s1_rs1_mem_group_hit | ~s1_rs1_older_wb_select_hit)
+    };
+    wire [31:0] s1_rs1_s0_ex_data = ex_fast_alu
+        ? ex_fast_alu_result : ex_fwd_val;
+    wire [31:0] s1_rs1_older_rf_or_mul_data =
+        s1_rs1_older_mem_mul_select ? mem_mul_result : rf_s1_rs1_data;
+    wire [31:0] s1_rs1_older_fallback = select_forward_group(
+        s1_rs1_older_group_select,
+        s1_rs1_s0_ex_data,
+        s1_rs1_mem_group_data,
+        s1_rs1_wb_group_data,
+        s1_rs1_older_rf_or_mul_data
+    );
+    wire [31:0] s1_alu_src1_older_candidate = preselect_alu_src1(
+        id_s1_alu_src1_sel, s1_rs1_older_fallback, id_s1_pc
+    );
 
     // Build the complete forwarding result with Slot 1 EX structurally
     // removed.  This fallback is selected only when s1_rs2_s1_ex_hit is low,
@@ -381,6 +398,14 @@ module forwarding (
             ? ((ex_s1_wb_sel == 2'b10) ? 2'b10 : 2'b01)
             : 2'b11;
 
+    // 01=S1 ALU, 10=S1 PC+4, 11=preselected PC/zero/older operand.
+    // A PC/zero operand is not a register consumer and therefore bypasses the
+    // EX match even if unused instruction bits happen to equal ex_s1_rd.
+    wire [1:0] s1_alu_src1_fast_select =
+        (id_s1_alu_src1_sel == 2'b00) && s1_rs1_s1_ex_hit
+            ? ((ex_s1_wb_sel == 2'b10) ? 2'b10 : 2'b01)
+            : 2'b11;
+
     assign id_s0_alu_src1 = select_forward_group(
         s0_rs1_group_select,
         s0_alu_src1_ex_candidate, s0_alu_src1_mem_candidate,
@@ -391,10 +416,12 @@ module forwarding (
         s0_alu_src2_ex_candidate, s0_alu_src2_mem_candidate,
         s0_alu_src2_wb_candidate, s0_alu_src2_rf_candidate
     );
-    assign id_s1_alu_src1 = select_forward_group(
-        s1_rs1_group_select,
-        s1_alu_src1_ex_candidate, s1_alu_src1_mem_candidate,
-        s1_alu_src1_wb_candidate, s1_alu_src1_rf_candidate
+    assign id_s1_alu_src1 = select_s1_src2_fast(
+        s1_alu_src1_fast_select,
+        32'd0,
+        ex_s1_alu_result,
+        ex_s1_pc_plus_4,
+        s1_alu_src1_older_candidate
     );
     assign id_s1_alu_src2 = select_s1_src2_fast(
         s1_alu_src2_fast_select,
