@@ -109,7 +109,7 @@ module frontend_f0_packet_builder
     // ICache 已经保存了指令类别和少量属性。F0 只根据这些缓存的
     // 分类信息补出前端需要的语义位，而不是在同步 ICache 输出后
     // 再放置一个完整指令译码器。
-    loongarch_cached_predecode_expand u_expand_slot0 (
+    isa_cached_predecode_expand u_expand_slot0 (
         .inst          (slot0_inst),
         .cached        (slot0_cached_dec),
         .pred_taken    (slot0_pred_taken),
@@ -117,7 +117,7 @@ module frontend_f0_packet_builder
         .pair_metadata (slot0_pair_metadata)
     );
 
-    loongarch_cached_predecode_expand u_expand_slot1 (
+    isa_cached_predecode_expand u_expand_slot1 (
         .inst          (slot1_inst),
         .cached        (slot1_cached_dec),
         .pred_taken    (slot1_pred_taken),

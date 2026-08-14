@@ -1194,12 +1194,12 @@ module cpu_top
         .id_s1_rf_rs2_addr(id_s1_rf_rs2_addr)
     );
 
-    loongarch_decoder u_decoder (
+    isa_decoder u_decoder (
         .inst (id_inst),
         .uop  (dec_uop)
     );
 
-    loongarch_decoder u_decoder_s1 (
+    isa_decoder u_decoder_s1 (
         .inst (id_inst1),
         .uop  (dec1_uop)
     );
@@ -1691,8 +1691,8 @@ module cpu_top
     );
 `endif
 
-    // LoongArch 模块负责特权寄存器和陷阱语义。
-    loongarch_priv_unit u_isa_priv_unit (
+    // LoongArch 通过稳定的 ISA 边界提供特权寄存器和陷阱语义。
+    isa_priv_unit u_isa_priv_unit (
         .clk                (clk),
         .rst_n              (rst_n),
         .ex_valid           (ex_valid),

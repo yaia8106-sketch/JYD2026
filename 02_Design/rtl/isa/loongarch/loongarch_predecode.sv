@@ -397,3 +397,35 @@ module loongarch_icache_block_predecode
 
     assign block_metadata = {high_metadata, low_metadata};
 endmodule
+
+// 稳定的 LoongArch 预译码边界。NSCSCC filelist 只编译这一种 ISA。
+module isa_predecode
+    import cpu_defs::*;
+(
+    input  logic [31:0]         inst,
+    output frontend_predecode_t decoded
+);
+    loongarch_predecode u_impl (
+        .inst    (inst),
+        .decoded (decoded)
+    );
+endmodule
+
+// ICache 中的压缩预译码信息通过该边界恢复为完整前端元数据。
+module isa_cached_predecode_expand
+    import cpu_defs::*;
+(
+    input  logic [31:0]                 inst,
+    input  frontend_icache_predecode_t  cached,
+    input  logic                        pred_taken,
+    output frontend_predecode_t         expanded,
+    output frontend_pair_meta_t         pair_metadata
+);
+    loongarch_cached_predecode_expand u_impl (
+        .inst          (inst),
+        .cached        (cached),
+        .pred_taken    (pred_taken),
+        .expanded      (expanded),
+        .pair_metadata (pair_metadata)
+    );
+endmodule

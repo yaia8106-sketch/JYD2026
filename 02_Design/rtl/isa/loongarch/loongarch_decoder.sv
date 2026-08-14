@@ -389,3 +389,17 @@ module loongarch_decoder
     end
 
 endmodule
+
+// 核心流水线通过稳定的 ISA 边界名访问唯一的 LoongArch 译码器。
+// 该包装只做端口直连，不引入新的组合逻辑或架构状态。
+module isa_decoder
+    import cpu_defs::*;
+(
+    input  logic [31:0] inst,
+    output decoded_uop_t uop
+);
+    loongarch_decoder u_impl (
+        .inst (inst),
+        .uop  (uop)
+    );
+endmodule
