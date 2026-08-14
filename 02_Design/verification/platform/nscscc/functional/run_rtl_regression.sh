@@ -8,6 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 NSCSCC_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 VERIFICATION_DIR="$(cd "$NSCSCC_DIR/../.." && pwd)"
 COMMON_CORE_DIR="$VERIFICATION_DIR/common/core"
+COMMON_FRONTEND_DIR="$VERIFICATION_DIR/common/frontend"
 LOONGARCH_FUNC_DIR="$VERIFICATION_DIR/loongarch/functional"
 
 passed=0
@@ -42,6 +43,12 @@ run_case "MulDiv directed/random arithmetic" \
     "$COMMON_CORE_DIR/run_muldiv.sh"
 run_case "EX redirect source/flush selection" \
     "$COMMON_CORE_DIR/run_ex_stage_redirect.sh"
+run_case "backend ready/allow/flush contract" \
+    "$COMMON_CORE_DIR/run_backend_flow_contract.sh"
+run_case "dual-issue LSU control/address/data contracts" \
+    "$COMMON_CORE_DIR/run_lsu_contracts.sh"
+run_case "predictor EX-capture/write boundary" \
+    "$COMMON_FRONTEND_DIR/run_predictor_update_contract.sh"
 
 # LoongArch decode, dual issue, real cpu_top streams and precise state.
 # run_decode_contract also invokes the LoongArch FTQ and cpu_top smoke gates.

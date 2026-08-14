@@ -19,6 +19,14 @@ The aggregate gate includes:
 - forwarding priority and load-repair matrices across both producer slots,
   both consumer slots and both operands, including repaired-EX interlocks,
   r0, same-destination WAW priority and multiple random seeds;
+- backend ready/allow/fire equations under DCache wait, flush, interrupt,
+  serialization and MulDiv ownership, including all physical control copies;
+- dual-issue LSU slot selection, same-group store-data bypass, younger-slot
+  side-effect kill, truncated-address equivalence, byte enables and load data
+  formatting for both raw-memory and NSCSCC DCache responses;
+- predictor update selection and the EX-to-write clock boundary, including
+  consecutive events, backpressure, wrong-path suppression and the rule that a
+  later redirect cannot cancel an update already captured at the prior edge;
 - CSR/SYSCALL/ERTN under artificial MEM backpressure, plus direct alignment,
   flush suppression and exactly-once commit checks;
 - LoongArch decode, FTQ pairing, dual-issue `cpu_top`, BL, variable IROM,
