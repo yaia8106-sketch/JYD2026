@@ -28,6 +28,17 @@ target_compile_options(direction_study PRIVATE
     $<$<CONFIG:Release>:-O3>
 )
 
+add_executable(nscscc_bpu_trace_study
+    src/nscscc_bpu_trace_main.cpp
+)
+target_compile_features(nscscc_bpu_trace_study PRIVATE cxx_std_20)
+target_compile_options(nscscc_bpu_trace_study PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+    $<$<CONFIG:Release>:-O3>
+)
+
 add_executable(frontend_study
     src/frontend_main.cpp
     src/frontend_model.cpp

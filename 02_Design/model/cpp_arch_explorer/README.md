@@ -1,6 +1,9 @@
 # C++ Architecture Explorer
 
-这个目录用纯 C++ 执行六个竞赛 COE 程序，并在线评估分支预测方案。它的用途是先筛掉收益小、资源不合适或对更新延迟敏感的设计，再决定哪些方案值得进入 RTL；它不是周期精确的 RTL 替代品。
+这个目录包含两条分支预测研究路径：旧路径用纯 C++ 执行六个 RISC-V
+竞赛 COE 程序；NSCSCC 路径从当前 LoongArch RTL 的 20 个 perf 程序提取
+已确认控制流，再离线重放候选预测器。它们用于先筛掉收益小、资源不合适
+或对更新延迟敏感的设计，不是周期精确的 RTL 替代品。
 
 功能模拟器覆盖这些程序实际使用的 RV32I/RV32M、机器态 CSR、ECALL/MRET、DRAM、测试平台 MMIO 镜像和定时器 MMIO。完整运行必须覆盖：
 
@@ -26,6 +29,32 @@ ctest --test-dir 02_Design/model/cpp_arch_explorer/build --output-on-failure
 ```
 
 测试目标在 Release 构建中显式启用 `assert`，避免 `NDEBUG` 让单元测试静默失效。
+
+## 当前 NSCSCC LoongArch 方向预测扫描
+
+旧的 `rv32_sim` 不能执行 Chiplab 的 LoongArch perf ELF。当前比赛负载不再
+复制一套 LoongArch 功能模拟器，而是让 RTL 只输出已经确认的 CFI 事件；
+软件模型据此重放 bimodal、GShare 和 GSelect 的容量、历史长度、PC 折叠
+以及 PHT 写入可见性。RTL 随分支保存的 PHT index 还能反推出预测当拍看到
+的 GHR，因此当前 256-entry/H8 GShare 可以逐程序校准。
+
+在工作区根目录执行：
+
+```bash
+python3 core/02_Design/verification/platform/nscscc/performance/run_rtl_perf_profile.py \
+    --workspace . --delay-mode none --dump-bpu-trace \
+    --jobs 12 --build-jobs 12 \
+    --results-dir /tmp/nscscc-bpu-traces
+
+core/02_Design/model/cpp_arch_explorer/build/nscscc_bpu_trace_study \
+    --trace-root /tmp/nscscc-bpu-traces \
+    --output-dir /tmp/nscscc-bpu-model-results
+```
+
+`delay-mode none` 只删除无关的 DDR 空等，不删除或抽样已提交控制流。输出的
+`per_program.csv` 保留每个 perf 的结果，`aggregate.csv` 给出全部 20 个
+程序的动态分支汇总。PHT 的 `storage_bits` 是单份逻辑状态，
+`two_read_storage_bits` 是当前两个异步读口可能导致复制时的保守口径。
 
 ## 六类实验
 

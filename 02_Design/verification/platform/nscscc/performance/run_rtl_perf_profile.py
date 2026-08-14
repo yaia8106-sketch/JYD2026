@@ -279,6 +279,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="write compact cached load/store traces for the software model",
     )
+    parser.add_argument(
+        "--dump-bpu-trace",
+        action="store_true",
+        help="write confirmed CFI events for the software BPU model",
+    )
     return parser.parse_args()
 
 
@@ -613,6 +618,8 @@ def run_benchmark(
         command.append(f"+perf_icache_trace={run_dir / 'icache.trace'}")
     if args.dump_dcache_trace:
         command.append(f"+perf_dcache_trace={run_dir / 'dcache.trace'}")
+    if args.dump_bpu_trace:
+        command.append(f"+perf_bpu_trace={run_dir / 'bpu.trace'}")
     env = os.environ.copy()
     env["CHIPLAB_HOME"] = str((args.workspace / "chiplab").resolve())
     started = time.monotonic()

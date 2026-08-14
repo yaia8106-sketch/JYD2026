@@ -136,12 +136,16 @@ module nscscc_perf_monitor (
     input logic        dcache_read_port_internal_busy,
 
     input logic        pht_update_valid,
+    input logic [7:0]  pht_update_index,
     input logic [1:0]  pht_update_counter,
     input logic        pht_update_taken,
     input logic        pred_train_valid,
+    input logic [31:0] pred_train_pc,
     input logic        pred_train_conditional,
     input logic        pred_train_direct,
     input logic        pred_train_indirect,
+    input logic        pred_train_taken,
+    input logic [31:0] pred_train_target,
     input logic        abtb_update_valid,
     input logic        abtb_update_hit,
 
@@ -206,6 +210,8 @@ module nscscc_perf_monitor (
     string icache_trace_path;
     integer dcache_trace_fd;
     string dcache_trace_path;
+    integer bpu_trace_fd;
+    string bpu_trace_path;
 
     longint unsigned boundaries;
     longint unsigned intervals;
@@ -1335,6 +1341,12 @@ module nscscc_perf_monitor (
             if (dcache_trace_fd == 0)
                 $fatal(1, "cannot open DCache trace %s", dcache_trace_path);
         end
+        bpu_trace_fd = 0;
+        if ($value$plusargs("perf_bpu_trace=%s", bpu_trace_path)) begin
+            bpu_trace_fd = $fopen(bpu_trace_path, "w");
+            if (bpu_trace_fd == 0)
+                $fatal(1, "cannot open BPU trace %s", bpu_trace_path);
+        end
     end
 
     // Optional compact trace for the explanatory software cache model. The
@@ -1358,6 +1370,20 @@ module nscscc_perf_monitor (
                       measurement_active,
                       dcache_store_hit | dcache_store_miss,
                       dcache_lookup_addr);
+    end
+
+    // 只记录已经确认的控制流事件。软件模型用 resolution cycle 近似
+    // prediction-to-update 可见性，同时用 RTL 随指令携带的 PHT counter
+    // 作为当前 256-entry GShare 的校准真值。该 trace 不进入综合。
+    always_ff @(posedge clk) begin
+        if (bpu_trace_fd != 0 && pred_train_valid)
+            $fdisplay(bpu_trace_fd,
+                      "%0d %0d %08x %0d %0d %0d %0d %08x %02x %01x",
+                      measurement_active, simulation_cycles, pred_train_pc,
+                      pred_train_conditional, pred_train_direct,
+                      pred_train_indirect, pred_train_taken,
+                      pred_train_target, pht_update_index,
+                      pht_update_counter);
     end
 
     task automatic emit_results;
@@ -2896,6 +2922,8 @@ module nscscc_perf_monitor (
                     $fclose(icache_trace_fd);
                 if (dcache_trace_fd != 0)
                     $fclose(dcache_trace_fd);
+                if (bpu_trace_fd != 0)
+                    $fclose(bpu_trace_fd);
                 $finish;
             end
         end
@@ -3036,7 +3064,10 @@ bind simu_top nscscc_perf_monitor u_nscscc_perf_monitor (
     .id_pc                       (soc.cpu.u_cpu.id_pc),
     .id_inst                     (soc.cpu.u_cpu.id_inst),
     .id_issue_hint               (soc.cpu.u_cpu.id_issue_hint),
-    .id_issue_hint_reference     (soc.cpu.u_cpu.id_issue_hint_reference),
+    // cpu_top no longer keeps a second decoder-derived issue-hint mirror.
+    // pipeline_consistency_monitor performs that equivalence check directly;
+    // keep this legacy diagnostic input neutral instead of duplicating decode.
+    .id_issue_hint_reference     (soc.cpu.u_cpu.id_issue_hint),
     .ex_valid                    (soc.cpu.u_cpu.ex_valid),
     .mem_valid                   (soc.cpu.u_cpu.mem_valid),
     .wb_valid                    (soc.cpu.u_cpu.wb_valid),
@@ -3051,11 +3082,11 @@ bind simu_top nscscc_perf_monitor u_nscscc_perf_monitor (
                == cpu_defs::REDIRECT_PRIVILEGED)
               | (soc.cpu.u_cpu.mem_redirect.source
                  == cpu_defs::REDIRECT_S1_REPLAY)))),
-    .if_ready_go                 (soc.cpu.u_cpu.if_ready_go_w),
+    .if_ready_go                 (soc.cpu.u_cpu.if_ready_go),
     .id_allowin                  (soc.cpu.u_cpu.id_allowin),
     .id_ready_go                 (soc.cpu.u_cpu.id_ready_go),
     .ex_allowin                  (soc.cpu.u_cpu.ex_allowin),
-    .ex_ready_go                 (soc.cpu.u_cpu.ex_ready_go_w),
+    .ex_ready_go                 (soc.cpu.u_cpu.ex_ready_go),
     .ex_s1_flush                 (
         soc.cpu.u_cpu.branch_flush | soc.cpu.u_cpu.ex_priv_trap
         | soc.cpu.u_cpu.ex_s1_addr_replay
@@ -3072,20 +3103,20 @@ bind simu_top nscscc_perf_monitor u_nscscc_perf_monitor (
         & (soc.cpu.u_cpu.ex_control_flow != cpu_defs::CF_NONE)
         & (soc.cpu.u_cpu.ex_rs1_wb_repair
            | soc.cpu.u_cpu.ex_rs2_wb_repair)
-        & soc.cpu.u_cpu.ex_ready_go_w
+        & soc.cpu.u_cpu.ex_ready_go
         & soc.cpu.u_cpu.mem_allowin),
     .ex_control_repair_redirect  (
         soc.cpu.u_cpu.ex_valid
         & (soc.cpu.u_cpu.ex_control_flow != cpu_defs::CF_NONE)
         & (soc.cpu.u_cpu.ex_rs1_wb_repair
            | soc.cpu.u_cpu.ex_rs2_wb_repair)
-        & soc.cpu.u_cpu.ex_ready_go_w
+        & soc.cpu.u_cpu.ex_ready_go
         & soc.cpu.u_cpu.mem_allowin
         & soc.cpu.u_cpu.branch_flush),
     .mem_allowin                 (soc.cpu.u_cpu.mem_allowin),
-    .mem_ready_go                (soc.cpu.u_cpu.mem_ready_go_w),
+    .mem_ready_go                (soc.cpu.u_cpu.mem_ready_go),
     .wb_allowin                  (soc.cpu.u_cpu.wb_allowin),
-    .wb_exception                (soc.cpu.u_cpu.wb_exception),
+    .wb_exception                (soc.cpu.debug0_wb_exception_i),
     .mem_redirect_valid          (soc.cpu.u_cpu.mem_redirect.valid),
     .mem_redirect_machine_clear  (
         (soc.cpu.u_cpu.mem_redirect.source
@@ -3115,9 +3146,9 @@ bind simu_top nscscc_perf_monitor u_nscscc_perf_monitor (
     .id_muldiv_structure_ready   (
         soc.cpu.u_cpu.id_muldiv_unit_ready
         & (soc.cpu.cache_ready
-           ? soc.cpu.u_cpu.id_muldiv_done_ready_if_cache_ready
-           : (soc.cpu.u_cpu.id_muldiv_owner_ready_if_cache_wait
-              & soc.cpu.u_cpu.id_muldiv_done_ready_if_cache_wait))),
+           ? soc.cpu.u_cpu.u_backend_flow_ctrl.id_muldiv_done_ready_if_cache_ready
+           : (soc.cpu.u_cpu.u_backend_flow_ctrl.id_muldiv_owner_ready_if_cache_wait
+              & soc.cpu.u_cpu.u_backend_flow_ctrl.id_muldiv_done_ready_if_cache_wait))),
     .timer_irq_block             (soc.cpu.u_cpu.timer_irq_block),
     .ex_mmio_order_ready         (~soc.cpu.u_cpu.mmio_st_ld_hazard),
     .ex_muldiv_ready             (soc.cpu.u_cpu.ex_muldiv_ready),
@@ -3259,14 +3290,21 @@ bind simu_top nscscc_perf_monitor u_nscscc_perf_monitor (
         soc.cpu.u_dcache.wb_read_issue
         | soc.cpu.u_dcache.state_replay),
     .pht_update_valid            (soc.cpu.u_cpu.predictor_pht_update.valid),
+    .pht_update_index            (soc.cpu.u_cpu.predictor_pht_update.index),
     .pht_update_counter          (soc.cpu.u_cpu.predictor_pht_update.counter),
     .pht_update_taken            (soc.cpu.u_cpu.predictor_pht_update.actual_taken),
-    .pred_train_valid            (soc.cpu.u_cpu.pred_train_valid),
-    .pred_train_conditional      (soc.cpu.u_cpu.pred_train_is_conditional_control),
-    .pred_train_direct           (soc.cpu.u_cpu.pred_train_is_direct_control),
-    .pred_train_indirect         (soc.cpu.u_cpu.pred_train_is_indirect_control),
-    .abtb_update_valid           (soc.cpu.u_cpu.abtb_update_valid),
-    .abtb_update_hit             (soc.cpu.u_cpu.abtb_update_hit),
+    .pred_train_valid            (soc.cpu.u_cpu.predictor_train.valid),
+    .pred_train_pc               (soc.cpu.u_cpu.predictor_train.pc),
+    .pred_train_conditional      (
+        soc.cpu.u_cpu.predictor_train.is_conditional_branch),
+    .pred_train_direct           (
+        soc.cpu.u_cpu.predictor_train.is_direct_jump),
+    .pred_train_indirect         (
+        soc.cpu.u_cpu.predictor_train.is_indirect_jump),
+    .pred_train_taken            (soc.cpu.u_cpu.predictor_train.actual_taken),
+    .pred_train_target           (soc.cpu.u_cpu.predictor_train.actual_target),
+    .abtb_update_valid           (soc.cpu.u_cpu.predictor_abtb_update.valid),
+    .abtb_update_hit             (soc.cpu.u_cpu.predictor_abtb_update.hit),
     .icache_busy                 (soc.cpu.u_nscscc_axi_bridge.u_icache.refill_state_q != 0),
     .icache_miss_wait            (
         soc.cpu.u_nscscc_axi_bridge.u_icache.pending_miss_valid_q
