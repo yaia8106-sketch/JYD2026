@@ -1,6 +1,8 @@
 // ============================================================
-// Module: loongarch_predecode
-// Description: Shallow LA32R classification for fetch/pairing policy.
+// 中文说明：在 ICache refill 或前端取指阶段提取 LoongArch 指令类别和配对属性。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 模块：loongarch_predecode。
+// 说明：为取指和配对策略提供浅层 LA32R 指令分类。
 // ============================================================
 
 module loongarch_predecode
@@ -110,10 +112,9 @@ module loongarch_predecode
                             | instruction_illegal;
     wire uses_rd_as_src1 = is_store | is_conditional;
 
-    // Keep the late pairing controls independent from the full legality
-    // reduction.  Each set below is the exact complement of the classes that
-    // must be restricted for that output, so the IROM -> FQ path does not
-    // traverse "all legal" and then re-add exceptional classes serially.
+    // 让末级配对控制与完整合法性归约相互独立。下面每个集合都是该输出
+    // 必须限制的类别补集，因此 IROM -> FQ 路径不必先经过“全部合法”判断，
+    // 再串行添加例外类别。
     wire slot1_allowed = is_alu_rr | is_alu_imm | is_upper_imm
                        | is_load | is_store | is_conditional
                        | is_direct | inst_jirl;
@@ -155,8 +156,7 @@ module loongarch_predecode
         decoded.is_control = is_conditional | is_direct | inst_jirl
                            | is_privileged_flow;
         decoded.is_lsu = is_load | is_store;
-        // Privileged redirects are serialized by their own metadata and must
-        // not train or occupy the ordinary branch-predictor CFI path.
+        // 特权重定向由自身元数据串行化，不能训练或占用普通分支预测器 CFI 路径。
         decoded.is_cfi = is_conditional | is_direct | inst_jirl;
 
         decoded.lane_mask = slot1_allowed ? 2'b11 : 2'b01;
@@ -166,9 +166,9 @@ module loongarch_predecode
 
 endmodule
 
-// Exact metadata generated only when an ICache refill block is completed.
-// The packed seven-bit record is split physically between RAMB36 parity and
-// the shortened-tag LUTRAM, but is reconstructed before reaching F0.
+// 只有 ICache refill block 完成时才生成精确元数据。
+// 打包的 7 位记录在物理上拆分到 RAMB36 parity 和缩短 tag LUTRAM，
+// 但在到达 F0 前会重新拼接。
 module loongarch_icache_predecode
     import cpu_defs::*;
 (
@@ -241,9 +241,9 @@ module loongarch_icache_predecode
     end
 endmodule
 
-// Expand refill-time metadata into the complete frontend scheduling view.
-// Every supported and illegal instruction is represented by an exact kind;
-// consequently no instruction-bit opcode decoder remains after ICache BRAM.
+// 将 refill 时的元数据展开为完整的前端调度视图。
+// 每条支持或非法指令都有精确 kind 表示，因此 ICache BRAM 之后不再需要
+// 对原始指令位进行 opcode 译码。
 module loongarch_cached_predecode_expand
     import cpu_defs::*;
 (
@@ -335,8 +335,8 @@ module loongarch_cached_predecode_expand
                                ? inst[4:0] : inst[14:10];
         expanded.dst_addr = kind_branch_link ? 5'd1
                           : kind_counter_id ? inst[9:5] : inst[4:0];
-        // The exact-kind encoding keeps this late F0 control as a direct bit
-        // while the named kind predicates continue to build payload fields.
+        // 精确 kind 编码让末级 F0 控制可以直接取一位，同时继续使用具名
+        // kind 谓词构造 payload 字段。
         expanded.is_jump =
             cached.inst_kind[ICACHE_KIND_STATIC_KILL_BIT];
         expanded.is_control = kind_conditional
@@ -349,9 +349,9 @@ module loongarch_cached_predecode_expand
         expanded.block_younger = cached.block_younger;
         expanded.serializing = ~(younger_allowed | kind_jirl);
 
-        // Pairing and the complete FQ entry consume the same exact-kind
-        // predicates. Build both views here so synthesis shares each 5-bit
-        // kind comparison instead of retaining a second timing-only decoder.
+        // 配对策略和完整 FQ 表项使用同一组精确 kind 谓词。
+        // 在这里同时构造两种视图，使综合共享每次 5 位 kind 比较，
+        // 不再保留第二个只为时序服务的译码器。
         pair_metadata = '0;
         pair_metadata.pred_taken = pred_taken;
         pair_metadata.force_single = cached.block_younger;

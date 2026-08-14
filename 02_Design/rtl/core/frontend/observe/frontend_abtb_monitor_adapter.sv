@@ -1,8 +1,10 @@
 // ============================================================
-// Module: frontend_abtb_monitor_adapter
-// Description: Pure combinational packing for ABTB observability metadata.
-// Domain: frontend observation.
-// These outputs are consumed only by frontend_abtb_monitor.
+// 中文说明：把前端 ABTB 内部信号转换成统一的观察接口。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 模块：frontend_abtb_monitor_adapter。
+// 说明：将 ABTB 观测元数据纯组合地打包成统一接口。
+// 所属部分：前端观测。
+// 这些输出只由 frontend_abtb_monitor 消费。
 // ============================================================
 
 module frontend_abtb_monitor_adapter
@@ -42,8 +44,7 @@ module frontend_abtb_monitor_adapter
     output stage1_steer_event_t  steer_event
 );
 
-    // Pack loose top-level signals into structured monitor records without
-    // creating any control dependency on observation logic.
+    // 将顶层分散信号打包成结构化观测记录，但不让观测逻辑进入任何控制依赖。
     always_comb begin
         bank0_lookup = '0;
         bank0_lookup.hit = bank0_hit;

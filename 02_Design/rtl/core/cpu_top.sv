@@ -1,10 +1,10 @@
 // ============================================================
-// Module: cpu_top
-// Description: ISA-neutral 5-stage pipeline skeleton and module interconnect
-// Rule: Keep behavior in stage/helper modules; cpu_top owns wiring and small glue.
-// IROM: instantiated outside this module and accessed through ports.
-// DRAM: accessed through the DCache instantiated by student_top.
-// Frontend Prediction: Stage-1 ABTB + PHT canonical steering
+// 中文说明：连接取指、译码、执行、访存、写回、Cache、AXI 和 LoongArch 特权单元，是处理器核心的顶层连线模块。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 说明：处理器使用五级流水线。各阶段的具体行为放在对应子模块中，
+// cpu_top 主要负责模块连接和少量必要的连线逻辑。
+// IROM 在本模块外部实例化，通过端口连接；DRAM 由上层实例化的 DCache 访问。
+// 前端默认使用一级 ABTB 与 PHT 组合的取指方向预测。
 // ============================================================
 
 `ifdef SYNTHESIS
@@ -29,7 +29,7 @@ module cpu_top
     input  logic        clk,
     input  logic        rst_n,
 
-    // IROM interface (IF stage): 64-bit aligned block ROM
+    // IROM 接口（IF 阶段）：64 位对齐取指块。
     output logic [11:0] irom_addr,
     output logic        irom_req_valid,
     output logic [31:0] irom_req_addr,
@@ -39,32 +39,32 @@ module cpu_top
     input  logic [63:0] irom_data,
     input  logic [13:0] irom_resp_predecode,
 
-    // DCache interface (EX to MEM stage)
-    output logic        cache_req,       // EX stage: memory request valid
-    output logic        cache_wr,        // EX stage: 0=load, 1=store
-    output logic [31:0] cache_addr,      // EX stage: memory address
-    output logic [16:0] cache_lookup_addr, // EX stage: addr[18:2], short DCache lookup path
-    output logic [ 3:0] cache_wea,       // EX stage: byte write enable
-    output logic [31:0] cache_wdata,     // EX stage: raw store data
-    output logic [ 3:0] cache_load_mask, // EX stage: load byte lanes
+    // DCache 接口（EX 到 MEM 阶段）。
+    output logic        cache_req,       // EX 阶段：访存请求有效
+    output logic        cache_wr,        // EX 阶段：0=load，1=store
+    output logic [31:0] cache_addr,      // EX 阶段：访存地址
+    output logic [16:0] cache_lookup_addr, // EX 阶段：addr[18:2]，DCache 短查询路径
+    output logic [ 3:0] cache_wea,       // EX 阶段：字节写使能
+    output logic [31:0] cache_wdata,     // EX 阶段：原始 store 数据
+    output logic [ 3:0] cache_load_mask, // EX 阶段：load 字节通道
     output logic [ 1:0] cache_load_size,
     output logic        cache_load_unsigned,
-    output logic        cache_uncached,  // platform path: bypass DCache arrays
-    input  logic [31:0] cache_rdata,     // MEM stage: read data from DCache
-    input  logic [31:0] cache_rdata_ex,  // independent copy for EX load repair
-    input  logic        cache_ready,     // MEM stage: hit or completed miss
-    output logic        cache_flush,     // MEM stage: pipeline flush (abort refill)
-    output logic        cache_pipeline_stall, // DCache sync: ~mem_allowin
+    output logic        cache_uncached,  // 平台路径：绕过 DCache 数据阵列
+    input  logic [31:0] cache_rdata,     // MEM 阶段：DCache 读数据
+    input  logic [31:0] cache_rdata_ex,  // EX load 修复使用的独立副本
+    input  logic        cache_ready,     // MEM 阶段：命中或缺失完成
+    output logic        cache_flush,     // MEM 阶段：流水线冲刷（中止 refill）
+    output logic        cache_pipeline_stall, // DCache 同步：~mem_allowin
 
-    // MMIO interface, preserving the existing perip-style split address ports
-    output logic [31:0] mmio_addr,       // EX stage: address
-    output logic [31:0] mmio_wr_addr,    // MEM stage: write address
-    output logic [ 3:0] mmio_wea,        // MEM stage: write enable
-    output logic [31:0] mmio_wdata,      // MEM stage: write data
-    input  logic [31:0] mmio_rdata,      // MEM stage: read data
+    // MMIO 接口，保持原有外设风格的分拆地址端口。
+    output logic [31:0] mmio_addr,       // EX 阶段：地址
+    output logic [31:0] mmio_wr_addr,    // MEM 阶段：写地址
+    output logic [ 3:0] mmio_wea,        // MEM 阶段：写使能
+    output logic [31:0] mmio_wdata,      // MEM 阶段：写数据
+    input  logic [31:0] mmio_rdata,      // MEM 阶段：读数据
     input  logic        timer_irq_pending,
 
-    // Architectural commit/debug outputs used by the chiplab core contract.
+    // chiplab 核心接口使用的架构提交和调试输出。
     output logic        debug0_wb_valid,
     output logic [31:0] debug0_wb_pc,
     output logic [ 3:0] debug0_wb_rf_wen,
@@ -103,22 +103,21 @@ module cpu_top
 );
 
     // ================================================================
-    //  Internal wires
+    //  内部连线
     // ================================================================
 
-    // ---- PC & IF ----
-    // pc is driven by the frontend fetch state and doubles as the predictor
-    // lookup PC for the current BP0 request.
+    // ---- PC 和 IF ----
+    // pc 由前端取指状态机驱动，同时作为当前 BP0 请求的预测器查找 PC。
     wire [31:0] pc;
     wire        if_valid;
 
-    // 250MHz: Pre-computed PC+4 register - eliminates carry chain from irom_addr default path
-    // Each branch computes +4 independently from its registered source (no irom_addr feedback)
+    // 预先计算并寄存 PC+4，避免把进位链放入 irom_addr 的默认路径。
+    // 每个分支从自己的寄存器源独立计算 +4，不形成 irom_addr 反馈。
     logic [31:0] pc_plus4;
     logic [31:0] pc_plus8;
     logic [31:0] pc_plus12;
 
-    // ---- IF/ID ----
+    // ---- IF/ID 流水寄存器 ----
     wire        id_valid;
     wire        id_allowin;
     wire        id_ready_go;
@@ -127,8 +126,7 @@ module cpu_top
     wire        id_dependency_ready_if_mem_wait;
     wire        id_non_load_hazard;
     wire        id_mul_launch_ex_raw_hazard;
-    // Structured payloads keep per-slot prediction metadata adjacent to the
-    // instruction as it crosses the pipeline boundary.
+    // 结构化 payload 让每个 slot 的预测元数据和指令一起跨过流水边界。
     wire cpu_defs::if_id_payload_t if_id_payload;
     wire cpu_defs::if_id_payload_t id_payload;
     wire [31:0] id_pc = id_payload.pc;
@@ -140,12 +138,12 @@ module cpu_top
     wire [4:0] id_s0_rf_rs2_addr;
     wire [4:0] id_s1_rf_rs1_addr;
     wire [4:0] id_s1_rf_rs2_addr;
-    wire        id_s1_valid;       // registered slot1 issue valid
+    wire        id_s1_valid;       // 已寄存的 Slot1 发射有效
 
-    // ---- Instruction hold register ----
+    // ---- 指令保持寄存器 ----
     wire        irom_held_valid;
 
-    // ---- Selected ISA decoder outputs ----
+    // ---- LoongArch 译码输出 ----
     wire decoded_uop_t dec_uop;
     wire decoded_uop_t dec1_uop;
     wire alu_op_t dec_alu_op = dec_uop.alu_op;
@@ -167,7 +165,7 @@ module cpu_top
     wire id_issue_is_muldiv = id_issue_hint.is_muldiv;
     wire id_issue_is_mul = id_issue_hint.is_mul;
 
-    // ---- Slot 1 selected ISA decoder outputs ----
+    // ---- slot1 LoongArch 译码输出 ----
     wire alu_op_t dec1_alu_op = dec1_uop.alu_op;
     wire operand_a_sel_t dec1_alu_src1_sel = dec1_uop.operand_a_sel;
     wire operand_b_sel_t dec1_alu_src2_sel = dec1_uop.operand_b_sel;
@@ -181,13 +179,13 @@ module cpu_top
     wire [31:0] id_imm = dec_uop.imm;
     wire [31:0] id_s1_imm = dec1_uop.imm;
 
-    // ---- Regfile ----
+    // ---- 寄存器堆 ----
     wire [31:0] rf_rs1_data;
     wire [31:0] rf_rs2_data;
     wire [31:0] rf_s1_rs1_data;
     wire [31:0] rf_s1_rs2_data;
 
-    // ---- Forwarding ----
+    // ---- 操作数前递 ----
     wire [31:0] fwd_rs1_data;
     wire [31:0] fwd_rs2_data;
     wire [31:0] mul_fwd_rs1_data;
@@ -199,7 +197,7 @@ module cpu_top
     wire        fwd_s1_rs1_wb_repair;
     wire        fwd_s1_rs2_wb_repair;
 
-    // ---- Timing-parallelized ALU sources from forwarding ----
+    // ---- 从前递网络得到的并行化 ALU 操作数 ----
     wire [31:0] id_alu_src1;
     wire [31:0] id_alu_src2;
     wire [31:0] id_s1_alu_src1;
@@ -302,17 +300,16 @@ module cpu_top
 
     // ---- ALU ----
     wire [31:0] alu_result;
-    wire [31:0] alu_sum;               // Raw ALU adder result before output MUX
-    wire [31:0] alu_addr;              // Independent address adder, not alu_op-dependent
+    wire [31:0] alu_sum;               // MUX 前的原始 ALU 加法结果
+    wire [31:0] alu_addr;              // 独立地址加法结果，不依赖 alu_op
     wire [31:0] alu_s1_result;
     wire [31:0] alu_s1_sum;
     wire [31:0] alu_s1_addr;
     wire [31:0] ex_fast_forward_result;
     wire [31:0] ex_s1_fast_forward_result;
-    // The five shift-amount bits otherwise drive both complete Slot-1 ALUs
-    // and every level of the forwarding barrel shifter.  Keep a physically
-    // independent, cycle-identical copy for the EX-to-ID fast result so that
-    // the architectural ALU placement does not load that critical source.
+    // 五位移位量原本会同时驱动完整的 Slot1 ALU 和前递桶形移位器的每一级。
+    // 为 EX 到 ID 的快速结果保留一个物理独立、周期一致的副本，避免架构
+    // ALU 的布局给这条关键源路径增加负载。
     wire [ 4:0] ex_s1_fast_src2_low;
     wire        ex_s0_store_data_bypass_q;
     wire [31:0] ex_alu_src1_repair;
@@ -328,12 +325,12 @@ module cpu_top
     wire [ 1:0] ex_lsu_align_low;
     wire [ 1:0] ex_s1_lsu_align_low;
 
-    // ---- Branch ----
-    wire        branch_flush;          // EX stage combinational (for predictor update)
-    wire        actual_taken;          // for predictor update
-    wire [31:0] actual_target;         // for predictor update
-    wire [31:0] ex_control_target;     // EX-computed target for Slot 0 CFI
-    wire        ex_s1_branch_redirect; // Slot1 branch delayed frontend redirect
+    // ---- 分支 ----
+    wire        branch_flush;          // EX 阶段组合结果（供预测器更新）
+    wire        actual_taken;          // 供预测器更新的实际方向
+    wire [31:0] actual_target;         // 供预测器更新的实际目标
+    wire [31:0] ex_control_target;     // EX 计算的 Slot0 CFI 目标
+    wire        ex_s1_branch_redirect; // Slot1 分支延迟前端重定向
     wire [31:0] ex_s1_branch_target;
     wire        ex_s1_actual_taken;
     wire        ex_redirect_fire;
@@ -356,7 +353,7 @@ module cpu_top
     wire cpu_defs::redirect_source_t ex_registered_redirect_source;
     wire        ex_registered_redirect_actual_taken;
 
-    // ---- Registered branch flush (MEM stage, for 250MHz timing) ----
+    // ---- 已寄存的分支冲刷（MEM 阶段，用于 250MHz 时序）----
     wire cpu_defs::redirect_t ex_mem_redirect;
     wire cpu_defs::redirect_t mem_redirect;
     wire        mem_branch_flush = mem_redirect.valid;
@@ -365,31 +362,30 @@ module cpu_top
     wire        frontend_branch_flush;
     wire [31:0] frontend_branch_target;
 
-    // ---- Memory interface ----
+    // ---- 访存接口 ----
     wire [ 3:0] dram_wea;
     wire [ 3:0] dram_wea_s1;
     wire [31:0] ex_s1_store_data_raw;
-    // Raw on legacy platforms; already formatted by the NSCSCC DCache.
+    // 旧平台返回原始数据；NSCSCC DCache 已经完成格式化。
     wire [31:0] mem_load_data;
     wire [31:0] mem_load_data_ex;
     wire [31:0] mem_load_data_ext;
     wire [31:0] mem_load_data_ext_ex;
-    // A ready load in either MEM slot may repair an eligible EX consumer.
+    // 任一 MEM 槽位中已经 ready 的 load 都可以修复满足条件的 EX 消费者。
     wire        mem_load_ready;
-    wire        is_cacheable;          // EX stage: addr in DRAM range
-    wire        is_cacheable_s1;       // EX stage: Slot1 addr in DRAM range
+    wire        is_cacheable;          // EX 阶段：地址位于 DRAM 范围
+    wire        is_cacheable_s1;       // EX 阶段：Slot1 地址位于 DRAM 范围
 
-    // ---- EX pre-computed ----
+    // ---- EX 预计算结果 ----
     wire [31:0] ex_pc_plus_4;
     wire [31:0] ex_s1_pc_plus_4;
 
     // ---- EX/MEM ----
     wire        mem_valid;
     wire        mem_allowin;
-    // Consumer-local copies of the MEM accept condition. All are the same
-    // combinational equation; explicit functional clusters keep one global
-    // net from spanning LSU/EX control, frontend recovery and both wide
-    // EX/MEM payload banks.
+    // MEM 接受条件的消费者局部副本。它们逻辑上都是同一个组合方程；
+    // 显式按功能分簇，避免一条全局网络横跨 LSU/EX 控制、前端恢复和两个
+    // 宽 EX/MEM payload bank。
     (* keep = "true" *) wire mem_allowin_lsu;
     (* keep = "true" *) wire mem_allowin_control;
     (* keep = "true" *) wire mem_allowin_pipe;
@@ -422,7 +418,7 @@ module cpu_top
     wire        mem_csr_rstat = mem_s0_payload.csr_rstat;
     wire [31:0] mem_csr_data = mem_s0_payload.csr_data;
 
-    // ---- Slot 1 MEM ----
+    // ---- Slot1 MEM ----
     wire        mem_s1_valid;
     wire        mem_s1_hazard_valid;
     wire        mem_s1_hazard_is_load;
@@ -444,7 +440,7 @@ module cpu_top
     wire [31:0] mem_s1_store_data = mem_s1_payload.store_data;
     wire        mem_s1_is_cacheable = mem_s1_payload.is_cacheable;
 
-    // The issue policy allows only one LSU operation per pair.
+    // 发射策略保证每个发射组最多只有一个 LSU 操作。
     wire        mem_s1_load_active = mem_s1_valid & mem_s1_mem_read_en;
     wire        mem_load_valid = (mem_valid & mem_mem_read_en)
                                | mem_s1_load_active;
@@ -473,7 +469,7 @@ module cpu_top
     wire [31:0] wb_load_data_ex_s0;
     wire [31:0] wb_load_data_ex_s1;
 
-    // ---- Slot 1 shadow WB ----
+    // ---- Slot1 WB 镜像 ----
     wire        wb_s1_valid;
     wire cpu_defs::mem_wb_slot1_t mem_wb_s1_payload;
     wire cpu_defs::mem_wb_slot1_t wb_s1_payload;
@@ -487,34 +483,33 @@ module cpu_top
     wire [31:0] wb_write_data;
     wire [31:0] wb_s1_write_data;
 
-    // ---- Selected ISA privileged state ----
+    // ---- 选定 ISA 的特权状态 ----
     wire [31:0] ex_priv_rdata;
     wire [31:0] ex_forward_result;
     wire [31:0] ex_pipe_alu_result;
     wire        ex_fast_alu_forward = ~ex_uses_priv_result & ~ex_is_muldiv
                                     & (ex_wb_sel != WB_NEXT_PC);
 
-    // ---- Integer multiply/divide unit ----
+    // ---- 整数乘除法单元 ----
     wire        muldiv_busy;
     wire        muldiv_done;
     wire [31:0] muldiv_result;
     wire        muldiv_consume;
     wire [31:0] mem_wb_alu_result;
 
-    // Only values that are physically present on the fast EX bypass network
-    // advertise an EX forwarding hit. Loads, MulDiv, and privileged results
-    // are consumed from a registered older stage instead.
+    // 只有物理上位于 EX 快速旁路网络中的值才报告 EX 前递命中。
+    // load、MulDiv 和特权结果从已经寄存的较老流水级获取。
     wire        ex_forward_reg_write = ex_reg_write_en
                                       & ~ex_mem_read_en
                                       & ~ex_is_muldiv
                                       & ~ex_uses_priv_result;
     wire        ex_s1_forward_reg_write = ex_s1_reg_write_en
                                          & ~ex_s1_mem_read_en;
-    // ---- Dual-issue performance counter ----
+    // ---- 双发射性能计数器 ----
     wire [31:0] dual_issue_count;
 
-    // ---- Backend flow control ----
-    wire if_ready_go;               // driven by frontend_ftq
+    // ---- 后端流控制 ----
+    wire if_ready_go;               // 由 frontend_ftq 驱动
     wire mmio_st_ld_hazard;
     wire ex_muldiv_ready;
     wire ex_priv_ready;
@@ -532,15 +527,15 @@ module cpu_top
     wire id_allowin_frontend;
     wire id_to_ex_fire;
 
-    // ---- Flush / redirect ----
+    // ---- 冲刷 / 重定向 ----
     wire id_flush = frontend_branch_flush;
     wire ex_flush = frontend_branch_flush;
 
-    // A Slot-0 multiply may pair with an independent Slot-1 instruction, so
-    // every accepted multiply must establish the MulDiv owner here.
+    // Slot0 乘法可以与独立的 Slot1 指令配对，因此每条接受的乘法都必须
+    // 在这里建立 MulDiv 所有权。
     wire id_mul_prestart = id_to_ex_fire & id_is_mul;
 
-    // ---- Register addresses from the selected ISA decoder ----
+    // ---- 从选定 ISA 译码器得到的寄存器地址 ----
     wire [4:0] id_rs1_addr;
     wire [4:0] id_rs2_addr;
     wire [4:0] id_rd_addr;
@@ -564,16 +559,16 @@ module cpu_top
     wire        ex_s1_lsu_select_raw;
 
     // ================================================================
-    //  Stage-1 prediction wires
+    //  一级预测连线。
     // ================================================================
 
-    // ID stage prediction (from IF/ID reg)
+    // ID 阶段预测信息（来自 IF/ID 寄存器）。
     wire        id_pred_taken = id_payload.slot0.prediction.taken;
     wire [31:0] id_pred_target = id_payload.slot0.prediction.target;
     wire        id_s1_pred_taken = id_payload.slot1.prediction.taken;
     wire [31:0] id_s1_pred_target = id_payload.slot1.prediction.target;
 
-    // EX stage prediction (from ID/EX reg)
+    // EX 阶段预测信息（来自 ID/EX 寄存器）。
     wire        ex_pred_taken =
         ex_s0_payload.common.prediction.prediction.taken;
     wire [31:0] ex_pred_target =
@@ -583,8 +578,8 @@ module cpu_top
     wire [31:0] ex_s1_pred_target =
         ex_s1_payload.common.prediction.prediction.target;
 
-    // ABTB lookup/training metadata. ABTB/PHT owns Stage-1 J/CALL and branch
-    // steering by default. Legacy predictor metadata has been retired.
+    // ABTB 查询/训练元数据。默认由 ABTB/PHT 负责一级 J/CALL 和条件分支
+    // 的方向选择；旧预测器元数据已经停用。
     wire        abtb_lookup_accept;
     wire        abtb_bank0_hit;
     wire        abtb_bank0_lookup_hit;
@@ -607,8 +602,8 @@ module cpu_top
     wire [31:0] abtb_shadow_pred_next_pc;
     wire [31:0] abtb_early_pred_next_pc;
 
-    // Stage records remain structured throughout the production predictor
-    // path. The scalar names below are compatibility probes for directed tests.
+    // 正式预测器路径始终使用结构化阶段记录。下面的标量名称只是定向测试
+    // 使用的兼容探针。
     wire prediction_meta_t id_s0_prediction = id_payload.slot0.prediction;
     wire prediction_meta_t id_s1_prediction = id_payload.slot1.prediction;
     wire id_ex_prediction_t ex_s0_prediction =
@@ -616,9 +611,8 @@ module cpu_top
     wire id_ex_prediction_t ex_s1_prediction =
         ex_s1_payload.common.prediction;
 
-    // Keep the production path as direct aliases.  A pass-through helper
-    // module looks tidy in the hierarchy, but it prevents Vivado from seeing
-    // these fields in the same optimization boundary as their consumers.
+    // 正式路径保持直接别名。虽然直通辅助模块的层次结构看起来整齐，
+    // 但它会阻止 Vivado 将这些字段与消费者放在同一优化边界中。
     wire        if_abtb_hit_out = if_id_payload.slot0.prediction.abtb_hit;
     wire        if_abtb_way_out = if_id_payload.slot0.prediction.abtb_way;
     wire [ 1:0] if_abtb_cfi_type_out =
@@ -704,7 +698,7 @@ module cpu_top
     wire cpu_defs::abtb_update_t predictor_abtb_write;
     wire cpu_defs::pht_update_t predictor_pht_write;
 
-    // Compatibility aliases referenced by predictor-directed tests.
+    // 预测器定向测试引用的兼容别名。
     wire [ 1:0] stage1_direction_update_counter =
         predictor_pht_update.counter;
     wire        stage1_direction_write_valid =
@@ -730,8 +724,7 @@ module cpu_top
     wire        s1_pred_update_valid_raw;
 
 `ifdef CPU_TOP_ABTB_OBSERVE
-    // Compatibility names used by directed predictor tests and performance
-    // tooling. The counters themselves live behind the observer boundary.
+    // 定向预测器测试和性能工具使用的兼容名称；计数器本身位于观测边界之后。
     wire cpu_defs::frontend_abtb_counters_t abtb_monitor_counters;
     wire [31:0] abtb_lookup_block_count =
         abtb_monitor_counters.lookup_block;
@@ -778,7 +771,7 @@ module cpu_top
         abtb_monitor_counters.stage1_bank1_branch_lookup;
 `endif
 
-    // ---- Frontend delivery / compatibility probes ----
+    // ---- 前端交付 / 兼容探针 ----
     wire        can_dual_issue;
     wire        raw_pair_raw;
     logic       predict_dual;
@@ -792,18 +785,18 @@ module cpu_top
     wire        if_skip_out;
     wire        if_s1_valid;
 
-    // Retired raw-pair and skip probes remain only for existing performance
-    // tooling. They have no control or datapath consumers.
+    // 已停用的 raw-pair 和 skip 探针只为现有性能工具保留，不连接任何控制
+    // 或数据通路消费者。
     wire raw_inst1_is_alu_type = 1'b0;
     wire raw_inst0_is_jump = 1'b0;
     wire if_sequential_fetch = ~if_pred_taken_out;
     wire skip_inst0_valid = 1'b0;
 
     // ================================================================
-    //  Module instantiations
+    //  模块实例化。
     // ================================================================
 
-    // ==================== Global pipeline control ====================
+    // ==================== 全局流水线控制 ====================
 
     backend_flow_ctrl u_backend_flow_ctrl (
         .clk                         (clk),
@@ -871,8 +864,8 @@ module cpu_top
         .serializing_inflight (serializing_inflight)
     );
 
-    // Redirect priority is centralized here: fast EX system/timer redirects
-    // can override replay of the older registered MEM redirect.
+    // 重定向优先级集中在这里：EX 快速系统/定时器重定向可以覆盖旧的
+    // 已寄存 MEM 重定向重放。
     redirect_ctrl u_redirect_ctrl (
         .clk                         (clk),
         .rst_n                       (rst_n),
@@ -892,8 +885,7 @@ module cpu_top
         .frontend_branch_target      (frontend_branch_target)
     );
 
-    // Timer interrupts wait until the pipeline is empty before redirecting to
-    // mtvec, which keeps trap entry precise.
+    // 定时器中断等流水线为空后才重定向到 mtvec，从而保持精确陷阱入口。
     timer_irq_ctrl u_timer_irq_ctrl (
         .clk               (clk),
         .rst_n             (rst_n),
@@ -911,8 +903,7 @@ module cpu_top
         .timer_irq_take    (timer_irq_take)
     );
 
-    // Field extraction and lightweight decode-derived policy shared by both
-    // issue slots.
+    // 两个发射槽共用的字段提取和轻量译码策略。
     id_stage_derive u_id_stage_derive (
         .id_pc             (id_pc),
         .slot0_uop         (dec_uop),
@@ -943,9 +934,9 @@ module cpu_top
         .id_s1_abtb_update_cfi_type (id_s1_abtb_update_cfi_type_w)
     );
 
-    // ==================== Branch Predictor ====================
-    // EX resolves control-flow outcomes. The update controller chooses at most
-    // one architecturally valid CFI per cycle to train ABTB/PHT.
+    // ==================== 分支预测器 ====================
+    // EX 确认控制流实际结果；更新控制器每周期最多选择一条架构有效的 CFI
+    // 训练 ABTB/PHT。
 
     predictor_resolve_builder u_predictor_resolve_builder (
         .s0_valid             (ex_valid),
@@ -1063,8 +1054,7 @@ module cpu_top
     );
 
 `ifdef CPU_TOP_ABTB_OBSERVE
-    // Observation is a one-way sink. Its packed events and counters are kept
-    // out of the production predictor integration above.
+    // 观测逻辑是单向接收端。打包事件和计数器不进入上面的正式预测器路径。
     frontend_abtb_observer u_frontend_abtb_observer (
         .clk                    (clk),
         .rst_n                  (rst_n),
@@ -1114,12 +1104,12 @@ module cpu_top
     );
 `endif
 
-    // ==================== Pre-IF ====================
+    // ==================== Pre-IF（预取指） ====================
 
     assign irom_req_kill = frontend_branch_flush;
 
-    // Frontend FTQ owns BP0/F0/F1 fetch flow and returns at most two
-    // predecoded instructions to the existing IF/ID register.
+    // 前端 FTQ 管理 BP0/F0/F1 取指流程，向现有 IF/ID 寄存器最多返回两条
+    // 已预译码的指令。
     frontend_ftq #(
         .VARIABLE_IROM_LATENCY(IROM_VARIABLE_LATENCY),
         .RESET_PC             (RESET_PC)
@@ -1236,8 +1226,8 @@ module cpu_top
         .debug_state  (debug_gpr_state)
     );
 
-    // Forwarding reports whether data dependencies permit issue. Timer IRQ
-    // hold is applied afterward like any other ID-stage readiness block.
+    // 前递逻辑报告数据相关性是否允许发射。定时器中断保持请求在其后生效，
+    // 与其他 ID 阶段 ready 阻塞条件相同。
     forwarding u_forwarding (
         .id_rs1_addr    (id_rs1_addr),
         .id_rs2_addr    (id_rs2_addr),
@@ -1266,10 +1256,9 @@ module cpu_top
         .id_s1_alu_src2_sel(dec1_alu_src2_sel),
         .rf_s1_rs1_data (rf_s1_rs1_data),
         .rf_s1_rs2_data (rf_s1_rs2_data),
-        // Keep CSR/MulDiv/WB-repaired architectural results physically out of
-        // the next-ID operand network.  The fast copy uses only ID/EX-register
-        // operands; repaired producers are already covered by the repair-use
-        // interlock until their correct result reaches MEM.
+        // 让 CSR/MulDiv/WB 修复后的架构结果物理上远离下一条 ID 操作数网络。
+        // 快速副本只使用 ID/EX 寄存器中的操作数；修复产生者在正确结果到达
+        // MEM 前已经由 repair-use 互锁覆盖。
         .ex_alu_result  (ex_fast_forward_result),
         .ex_fast_alu    (ex_fast_alu_forward),
         .ex_fast_alu_result(ex_fast_forward_result),
@@ -1289,9 +1278,8 @@ module cpu_top
         .ex_s1_hazard_mem_read(ex_s1_hazard_mem_read),
         .ex_s1_hazard_result_repair(ex_s1_hazard_result_repair),
         .ex_s1_hazard_rd   (ex_s1_hazard_rd),
-        // Forwarding and load-hazard comparisons consume the narrow physical
-        // producer mirror.  Result data still comes from the canonical MEM
-        // payload below.
+        // 前递和 load-hazard 比较使用窄的物理产生者镜像；结果数据仍从下面的
+        // 规范 MEM payload 获取。
         .mem_valid      (mem_hazard_valid),
         .mem_reg_write  (mem_hazard_reg_write),
         .mem_is_load    (mem_hazard_is_load),
@@ -1304,9 +1292,8 @@ module cpu_top
         .mem_pc_plus_4  (mem_pc_plus_4),
         .mem_load_ready (mem_load_ready),
         .mem_wb_sel     (mem_hazard_wb_sel),
-        // Use the physically local EX/MEM metadata copy for forwarding and
-        // load-hazard comparison.  It is cycle-identical to the canonical
-        // payload fields used by the LSU and commit path.
+        // 前递和 load-hazard 比较使用物理局部的 EX/MEM 元数据副本。
+        // 它与 LSU 和提交路径使用的规范 payload 字段周期一致。
         .mem_s1_valid       (mem_s1_hazard_valid),
         .mem_s1_reg_write   (mem_s1_reg_write_en),
         .mem_s1_is_load     (mem_s1_hazard_is_load),
@@ -1345,9 +1332,9 @@ module cpu_top
         .id_mul_launch_ex_raw_hazard(id_mul_launch_ex_raw_hazard)
     );
 
-    // Keep the DSP operand mux physically independent from the ordinary ID/EX
-    // outputs. A true EX -> MUL RAW is interlocked above, so only registered
-    // MEM/WB/RF candidates can reach the local DSP input registers.
+    // 让 DSP 操作数 MUX 物理上独立于普通 ID/EX 输出。真正的 EX -> MUL RAW
+    // 已在上面互锁，因此只有已寄存的 MEM/WB/寄存器堆候选可以到达本地
+    // DSP 输入寄存器。
     (* keep_hierarchy = "yes" *) mul_operand_forwarding u_mul_operand_forwarding (
         .id_rs1_addr          (id_s0_rf_rs1_addr),
         .id_rs2_addr          (id_s0_rf_rs2_addr),
@@ -1383,7 +1370,7 @@ module cpu_top
 
     // ==================== ID/EX ====================
 
-    // Payload builders keep large struct assembly out of sequential registers.
+    // payload 构造器把大结构体的拼接移出时序寄存器过程。
     id_ex_payload_builder u_id_ex_payload_builder (
         .s0_pc                 (id_pc),
         .s0_inst               (id_inst),
@@ -1471,11 +1458,10 @@ module cpu_top
         .ex_slot0_store_bypass_q     (ex_s0_store_data_bypass_q)
     );
 
-    // ==================== EX stage ====================
-    // MEM-ready load consumers repair their architectural operands from WB
-    // here.  A physically separate raw-operand ALU below serves younger ID
-    // consumers, and repair_use_hazard holds any true consumer until the
-    // corrected result is registered in MEM.
+    // ==================== EX 阶段 ====================
+    // MEM 已 ready 的 load 消费者在这里从 WB 修复架构操作数。下面物理独立
+    // 的原始操作数 ALU 服务更年轻的 ID 消费者，而 repair_use_hazard 会保持
+    // 真正的消费者，直到修正结果在 MEM 中寄存。
     ex_stage_ctrl u_ex_stage_ctrl (
         .ex_pc                      (ex_pc),
         .ex_s1_pc                   (ex_s1_pc),
@@ -1564,10 +1550,9 @@ module cpu_top
         .alu_addr     (alu_s1_addr)
     );
 
-    // Physically independent ordinary-result copies for EX-to-ID forwarding.
-    // These inputs come directly from the ID/EX payload registers, so neither
-    // WB load repair nor privileged read data can enter the bypass datapath.
-    // The existing architectural ALUs above retain all corrected behavior.
+    // 物理独立的普通结果副本，用于 EX 到 ID 的前递。输入直接来自 ID/EX
+    // payload 寄存器，因此 WB load 修复和特权读数据不会进入旁路通路。
+    // 上面的架构 ALU 保留全部修正后的行为。
     alu_result_datapath u_ex_fast_forward_alu (
         .alu_op     (ex_alu_op),
         .alu_src1   (ex_alu_src1),
@@ -1580,9 +1565,8 @@ module cpu_top
     alu_result_datapath u_ex_s1_fast_forward_alu (
         .alu_op     (ex_s1_alu_op),
         .alu_src1   (ex_s1_alu_src1),
-        // Arithmetic, compare, and logic retain the canonical registered
-        // operand.  Only the barrel shifter consumes the physically local
-        // five-bit copy, so that copy cannot launch a 32-bit carry chain.
+        // 算术、比较和逻辑继续使用规范寄存操作数。只有桶形移位器使用物理
+        // 局部的五位副本，因此该副本不会启动 32 位进位链。
         .alu_src2   (ex_s1_alu_src2),
         .shift_amount(ex_s1_fast_src2_low),
         .alu_result (ex_s1_fast_forward_result),
@@ -1607,9 +1591,9 @@ module cpu_top
         .align_addr_low        (ex_s1_lsu_align_low)
     );
 
-    // The MulDiv wrapper owns prestart, EX completion and MEM result lifetime.
-    // Its ID operands come from a physically independent forwarding copy;
-    // unsupported EX RAW dependencies are interlocked before launch.
+    // MulDiv 包装器负责预启动、EX 完成和 MEM 结果生命周期。
+    // 它的 ID 操作数来自物理独立的前递副本；不支持的 EX RAW 相关会在启动前
+    // 被互锁。
     muldiv_pipeline u_muldiv_pipeline (
         .clk                  (clk),
         .rst_n                (rst_n),
@@ -1707,7 +1691,7 @@ module cpu_top
     );
 `endif
 
-    // LoongArch owns its privileged registers and trap semantics.
+    // LoongArch 模块负责特权寄存器和陷阱语义。
     loongarch_priv_unit u_isa_priv_unit (
         .clk                (clk),
         .rst_n              (rst_n),
@@ -1719,9 +1703,8 @@ module cpu_top
         .ex_redirect_fire   (ex_redirect_fire),
         .ex_pc              (ex_pc),
         .ex_inst            (ex_inst),
-        // Privileged operations enter EX only after older backend tokens have
-        // drained, so their registered operands cannot carry WB-repair tags.
-        // Keep the generic repair mux out of every CSR write-data path.
+        // 特权操作只有在更老的后端 token 排空后才进入 EX，因此其寄存操作数
+        // 不会携带 WB 修复标签。让通用 repair MUX 远离每一条 CSR 写数据路径。
         .ex_src0_data       (ex_rs1_data),
         .ex_src1_data       (ex_rs2_data),
         .ex_priv_op         (ex_priv_op),
@@ -1763,8 +1746,8 @@ module cpu_top
         .debug_priv_state   (debug_priv_state)
     );
 
-    // Slot 0 branch_unit checks prediction correctness; Slot 1 redirect is
-    // handled in ex_stage_ctrl because it has separate younger-slot priority.
+    // Slot0 branch_unit 检查预测正确性；Slot1 重定向由 ex_stage_ctrl 处理，
+    // 因为它有独立的年轻槽位优先级。
     branch_unit u_branch_unit (
         .target_pc        (ex_control_target),
         .src0_data        (ex_rs1_data_repair),
@@ -1779,10 +1762,10 @@ module cpu_top
         .actual_target    (actual_target)
     );
 
-    // ==================== Load/store unit ====================
+    // ==================== Load/store 单元 ====================
 
-    // Pair-local policy qualifies the same-pair store-data bypass in ID, then
-    // selects and suppresses the younger Slot-1 request in EX when required.
+    // 同组策略在 ID 阶段筛选 store-data 旁路；需要时在 EX 选择并屏蔽年轻
+    // Slot1 请求。
     dual_issue_lsu_ctrl u_dual_issue_lsu_ctrl (
         .id_slot1_valid                 (id_s1_valid),
         .id_slot0_alu_only              (id_s0_alu_only),
@@ -1806,8 +1789,7 @@ module cpu_top
         .ex_slot1_store_data            (ex_s1_store_data_raw)
     );
 
-    // Data formatting is independent from request arbitration: it prepares
-    // both EX store candidates and the shared MEM load result.
+    // 数据格式化与请求仲裁独立：它准备两个 EX store 候选和共享的 MEM load 结果。
     lsu_data_format #(
         .CACHE_RDATA_FORMATTED(CACHE_RDATA_FORMATTED)
     ) u_lsu_data_format (
@@ -1835,8 +1817,8 @@ module cpu_top
         .mem_load_repair_result     (mem_load_data_ext_ex)
     );
 
-    // Request routing chooses the active issue slot, sends cacheable accesses
-    // to DCache, sends uncached accesses to MMIO and returns the raw MEM word.
+    // 请求路由选择实际发射槽位，将可缓存访问送往 DCache，将未缓存访问送往
+    // MMIO，并返回原始 MEM 字。
     memory_access_unit #(
         .CACHE_ADDR_BASE  (CACHE_ADDR_BASE),
         .CACHE_ADDR_MASK  (CACHE_ADDR_MASK),
@@ -2127,7 +2109,7 @@ module cpu_top
         .wb_payload    (wb_s1_payload)
     );
 
-    // ==================== WB stage ====================
+    // ==================== WB 阶段 ====================
 
     wb_mux u_wb_mux (
         .wb_alu_result (wb_alu_result),

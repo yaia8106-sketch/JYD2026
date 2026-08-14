@@ -1,7 +1,7 @@
 // ============================================================
-// Module: ex_mem_reg
-// Description: Slot 0 EX/MEM handshake, payload, and redirect register.
-// Domain: pipeline boundary.
+// 中文说明：保存 slot0 的 EX/MEM 流水状态、执行结果、访存信息和重定向信息。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 说明：保存 slot0 的 EX/MEM 握手状态、payload 和重定向信息。
 // ============================================================
 
 module ex_mem_reg
@@ -10,7 +10,7 @@ module ex_mem_reg
     input  logic          clk,
     input  logic          rst_n,
 
-    // Handshake
+    // 流水线握手信号
     input  logic          ex_valid,
     input  logic          ex_ready_go,
     output logic          mem_allowin,
@@ -18,19 +18,18 @@ module ex_mem_reg
     input  logic          mem_ready_go,
     input  logic          wb_allowin,
 
-    // Redirect is registered independently from the stalled MEM payload.
+    // 重定向信息独立于被 MEM 反压的 payload 寄存。
     input  redirect_t     ex_redirect,
     output redirect_t     mem_redirect,
 
-    // Registered payload
+    // 需要保存的流水线 payload
     input  ex_mem_slot0_t ex_payload,
     (* extract_enable = "yes", extract_reset = "no" *)
     output ex_mem_slot0_t mem_payload,
 
-    // Physically independent, narrow producer metadata for the backwards
-    // forwarding/hazard network.  The architectural payload remains the sole
-    // data source; these bits only keep its remote rd/control fields from
-    // pulling the complete EX/MEM bank towards decode.
+    // 给反向前递/相关性网络使用的物理独立窄字段副本。架构 payload
+    // 仍然是唯一的数据来源；这些字段只是避免远端 rd 和控制位把完整
+    // EX/MEM 存储簇拉到译码阶段。
     (* keep = "true" *)
     output logic          mem_hazard_valid,
     (* keep = "true", extract_enable = "yes", extract_reset = "no" *)
@@ -41,9 +40,8 @@ module ex_mem_reg
     output logic          mem_hazard_is_mul,
     (* keep = "true", extract_enable = "yes", extract_reset = "no" *)
     output logic [4:0]    mem_hazard_rd,
-    // Deterministic source-register replicas divide the four ID operand
-    // comparison cones into two placement/fanout clusters.  They contain no
-    // architectural state and are checked against the canonical mirror below.
+    // 源寄存器地址副本把四个 ID 操作数比较路径分成两个布局/扇出簇。
+    // 它们不包含架构状态，下面的检查会持续验证它们和标准副本一致。
     (* keep = "true", extract_enable = "yes", extract_reset = "no" *)
     output logic [4:0]    mem_fwd_s0_rd,
     (* keep = "true", extract_enable = "yes", extract_reset = "no" *)
@@ -52,12 +50,12 @@ module ex_mem_reg
     output wb_src_t       mem_hazard_wb_sel
 );
 
-    // Standard valid/allow pipeline rule: MEM can accept a new payload when it
-    // is empty or the current payload can advance to WB.
+    // 标准 valid/allow 规则：MEM 为空，或当前 payload 能前进到 WB 时，
+    // MEM 才能接受新的 payload。
     assign mem_allowin = !mem_valid || (mem_ready_go & wb_allowin);
 
-    // A registered redirect invalidates the younger EX instruction only when
-    // MEM can advance. A stalled miss must remain valid until completion.
+    // 已寄存的重定向只有在 MEM 可以前进时才会清除年轻的 EX 指令。
+    // 缺失请求被停住时必须保持有效，直到访存完成。
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             mem_valid <= 1'b0;
@@ -69,7 +67,7 @@ module ex_mem_reg
         end
     end
 
-    // The payload has no independent lifetime; mem_valid is its sole owner.
+    // payload 没有独立生命周期，mem_valid 是它唯一的所有权标志。
     always_ff @(posedge clk) begin
         if (mem_allowin) begin
             mem_payload <= ex_payload;
@@ -83,8 +81,8 @@ module ex_mem_reg
         end
     end
 
-    // Redirect propagation must not be blocked by MEM backpressure.
-    // Frontend replay must see control-flow recovery even while a load waits.
+    // 重定向传播不能被 MEM 反压阻塞；即使 load 正在等待，前端重放也
+    // 必须能看到控制流恢复请求。
     always_ff @(posedge clk) begin
         if (!rst_n)
             mem_redirect.valid <= 1'b0;
@@ -92,17 +90,17 @@ module ex_mem_reg
             mem_redirect.valid <= ex_redirect.valid;
     end
 
-    // The source and direction are don't-care unless redirect.valid is set.
-    // Keeping them outside reset prevents the reset net from reaching payload
-    // flops and leaves only three narrow control bits on this boundary.
+    // redirect.valid 为 0 时，来源和方向对架构没有意义。把它们排除在
+    // 复位之外，可以避免复位网进入宽 payload 触发器，这个边界只需复位
+    // 三个窄控制位。
     always_ff @(posedge clk) begin
         mem_redirect.source <= ex_redirect.source;
         mem_redirect.actual_taken <= ex_redirect.actual_taken;
     end
 
 `ifndef SYNTHESIS
-    // The narrow copy is a placement aid only.  Prove continuously that it
-    // observes exactly the same accept/hold/flush contract as EX/MEM.
+    // 窄副本只用于帮助布局布线。持续检查它是否和 EX/MEM 遵守完全相同
+    // 的接受、保持和冲刷周期约定。
     always_ff @(posedge clk) begin
         if (rst_n) begin
             if (mem_hazard_valid !== mem_valid)

@@ -1,11 +1,12 @@
 // ============================================================
-// Module: branch_unit
-// Description: Branch/jump decision + misprediction detection (EX stage)
-// Domain: execute.
-//   With branch prediction: compares predicted vs actual outcome.
-//   Flush only on misprediction (not on every taken branch).
-//   EX emits only direction/repair control; MEM selects the final replay PC.
-// Spec: 02_Design/spec/branch_unit_spec.md
+// 中文说明：计算直接跳转和间接跳转的目标地址，并输出 EX 阶段的控制流结果。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 模块：branch_unit
+// 说明：在 EX 阶段计算分支/跳转结果，并检测预测错误。
+// 所属阶段：execute。
+// 使用预测时，比较预测结果与实际结果；只有预测错误才清空流水线，
+// 不会因为每次实际跳转都清空。EX 只输出方向和修复控制，MEM 再选择最终重取 PC。
+// 规格说明：02_Design/spec/branch_unit_spec.md。
 // ============================================================
 
 module branch_unit
@@ -18,21 +19,21 @@ module branch_unit
     input  branch_op_t    branch_op,
     input  logic        ex_valid,
 
-    // Prediction from pipeline (IF -> ID -> EX)
+    // 来自流水线（IF -> ID -> EX）的预测信息。
     input  logic        predicted_taken,
     input  logic [31:0] predicted_target,
 
-    // Flush outputs
+    // 流水线清空输出。
     output logic        branch_flush,
 
-    // Actual outcome (for predictor update)
+    // 实际执行结果（供预测器更新）。
     output logic        actual_taken,
-    output logic [31:0] actual_target     // actual destination address
+    output logic [31:0] actual_target     // 实际目标地址
 );
 
     wire branch_taken;
 
-    // Conditional branches use the comparator; jumps are unconditionally taken.
+    // 条件分支使用比较器结果；跳转指令无条件视为跳转。
     branch_condition u_branch_condition (
         .src0_data (src0_data),
         .src1_data (src1_data),
@@ -40,25 +41,25 @@ module branch_unit
         .taken     (branch_taken)
     );
 
-    // ---- Actual outcome ----
+    // ---- 实际结果 ----
     wire is_conditional = control_flow == CF_CONDITIONAL;
     wire is_unconditional = (control_flow == CF_DIRECT)
                           | (control_flow == CF_INDIRECT);
     assign actual_taken = is_unconditional | (is_conditional & branch_taken);
     assign actual_target = target_pc;
 
-    // ---- Misprediction detection ----
-    // Case 1: direction wrong
-    // Case 2: both taken, but target wrong
-    // Timing: keep the EX compare result as a late MUX select instead of
-    // feeding both XOR and target-wrong OR trees on the redirect path.
+    // ---- 预测错误检测 ----
+    // 情况 1：预测方向错误。
+    // 情况 2：预测和实际都跳转，但目标地址错误。
+    // 时序上，将 EX 比较结果作为末级 MUX 选择信号，避免在重定向路径上
+    // 同时经过 XOR 和 target-wrong 的 OR 逻辑树。
     wire target_mismatch = (target_pc != predicted_target);
     wire direction_to_target = actual_taken & ~predicted_taken;
     wire direction_to_fallthrough = ~actual_taken & predicted_taken;
     wire target_mismatch_flush = actual_taken & predicted_taken & target_mismatch;
 
-    // Keep branch redirects out of the same-cycle IROM address path.  All
-    // branch misses replay from the registered EX/MEM redirect one cycle later.
+    // 分支重定向不进入同周期的 IROM 地址路径；所有分支预测错误都从
+    // 已寄存的 EX/MEM 重定向信息出发，下一拍重新取指。
     assign branch_flush = ex_valid & (direction_to_target
                                     | direction_to_fallthrough
                                     | target_mismatch_flush);

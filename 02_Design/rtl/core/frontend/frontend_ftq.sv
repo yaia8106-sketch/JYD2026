@@ -1,10 +1,10 @@
 // ============================================================
-// Module: frontend_ftq
-// Description: BP0/F0/F1 frontend with packet queue and predecode.
-// Domain: frontend.
-//   BP0: current PC prediction, packet allocation, IROM request
-//   F0 : 64-bit IROM response alignment, predecode, enqueue
-//   F1 : fetch-queue head pair selection for the existing ID stage
+// 中文说明：连接取指包整理器、取指队列和前端预测信息，管理 F0 到 ID 的指令流。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 说明：前端由 BP0、F0、F1 三个阶段组成：
+//   BP0：根据当前 PC 做预测、分配取指包并发出 IROM 请求；
+//   F0 ：对 64 位 IROM 返回对齐、预译码并写入取指队列；
+//   F1 ：从取指队列队首选择一条或两条指令，送给现有 ID 阶段。
 // ============================================================
 
 `ifdef SYNTHESIS
@@ -28,14 +28,14 @@ module frontend_ftq
     input  logic        clk,
     input  logic        rst_n,
 
-    // Downstream IF/ID handshake.
+    // 和下游 IF/ID 阶段之间的握手。
     input  logic        id_allowin,
 
-    // Registered backend redirect. Highest priority.
+    // 已寄存的后端重定向，优先级最高。
     input  logic        ex_redirect_valid,
     input  logic [31:0] ex_redirect_target,
 
-    // Single 64-bit synchronous IROM.
+    // 单端口 64 位同步 IROM 接口。
     output logic [11:0] irom_addr,
     output logic        irom_req_valid,
     output logic [31:0] irom_req_addr,
@@ -44,8 +44,8 @@ module frontend_ftq
     input  logic [63:0] irom_data,
     input  logic [13:0] irom_resp_predecode,
 
-    // Shadow ABTB metadata for the physical fetch-block banks. These fields
-    // are captured only when abtb_lookup_accept is asserted.
+    // 物理取指块 bank 对应的 ABTB 元数据副本。只有
+    // abtb_lookup_accept 为 1 时才捕获这些字段。
     input  logic        abtb_bank0_lookup_hit,
     input  logic        abtb_bank0_hit,
     input  logic        abtb_bank0_way,
@@ -60,25 +60,24 @@ module frontend_ftq
     input  logic [31:0] abtb_bank1_abtb_pred_target,
     input  logic        abtb_bank1_pred_taken,
     input  logic [31:0] abtb_bank1_final_pred_target,
-    // Canonical wide next-PC result selected locally inside the ABTB.  FTQ
-    // retains its metadata arbitration, but does not rebuild this data path.
+    // ABTB 内部已经选出的完整 next-PC 结果。FTQ 继续保留自己的元数据
+    // 仲裁，但不再重新构造这条宽地址路径。
     input  logic [31:0] abtb_pred_next_pc,
 
-    // Stage-1 direction metadata is queried in parallel with ABTB and captured
-    // with the accepted prediction block. ABTB/PHT branch steering is the
-    // default Stage-1 behavior.
+    // 一级方向预测元数据与 ABTB 并行查询，并和接受的预测块一起捕获。
+    // 当前默认使用 ABTB/PHT 联合结果决定取指方向。
     input  logic [ 7:0] stage1_bank0_pht_index,
     input  logic [ 1:0] stage1_bank0_pht_counter,
     input  logic [ 7:0] stage1_bank1_pht_index,
     input  logic [ 1:0] stage1_bank1_pht_counter,
 
-    // F1 output to IF/ID.
+    // F1 输出到 IF/ID。
     output logic        if_valid,
     output logic        if_ready_go,
     output logic        if_s1_valid,
     output if_id_payload_t if_payload,
 
-    // Compatibility/debug signals used by existing performance monitors.
+    // 现有性能监控器使用的兼容/调试信号。
     output logic [31:0] current_pc,
     output logic        abtb_lookup_accept,
     output logic        stage1_steer_valid,
@@ -97,7 +96,7 @@ module frontend_ftq
     output logic        if_skip_out
 );
 
-    localparam logic [FTQ_PTR_W:0] FTQ_DEPTH_COUNT = (FTQ_PTR_W+1)'(FTQ_DEPTH); // FTQ_DEPTH_COUNT = FTQ_DEPTH = 8
+    localparam logic [FTQ_PTR_W:0] FTQ_DEPTH_COUNT = (FTQ_PTR_W+1)'(FTQ_DEPTH); // FTQ_DEPTH_COUNT 等于 FTQ_DEPTH，即 8
     localparam logic [FQ_PTR_W:0]  FQ_DEPTH_MINUS_2 = (FQ_PTR_W+1)'(FQ_DEPTH - 2); // 8 - 2 = 6
     localparam logic [FQ_PTR_W:0]  FQ_DEPTH_MINUS_4 = (FQ_PTR_W+1)'(FQ_DEPTH - 4); // 8 - 4 = 4
 `ifdef FRONTEND_FTQ_ABTB_WIDE_META
@@ -107,10 +106,10 @@ module frontend_ftq
 `endif
 
     // ================================================================
-    //  BP0 / F0 metadata
+    //  BP0 / F0 元数据
     // ================================================================
-    // BP0 predicts and issues an IROM request. F0 captures the accepted
-    // prediction context and later combines it with the synchronous IROM data.
+    // BP0 预测并发出 IROM 请求；F0 捕获已接受的预测上下文，随后与
+    // 同步 IROM 返回的数据合并。
     wire [31:0] fetch_current_pc;
     wire [ 1:0] frontend_epoch;
     wire frontend_f0_state_t f0_state;
@@ -121,9 +120,9 @@ module frontend_ftq
     wire frontend_abtb_meta_t f0_abtb_bank1_meta;
     wire [FTQ_PTR_W:0] ftq_count;
 
-    // Compatibility names are direct aliases of the canonical records. Some
-    // of them remain on the F0/FQ control path, so keep these aliases local
-    // instead of inserting an observation-module boundary into production RTL.
+    // 兼容名称只是 canonical 记录的直接别名。其中一部分仍在 F0/FQ
+    // 控制路径上使用，因此保留为局部别名，不在正式数据路径中插入
+    // 观察模块边界。
     wire f0_valid_r = f0_state.valid;
     wire [1:0] f0_epoch_r = f0_state.epoch;
     wire [31:0] f0_start_pc_r = f0_state.start_pc;
@@ -178,7 +177,7 @@ module frontend_ftq
     wire frontend_f0_bank_meta_t bp0_f0_bank0_meta;
     wire frontend_f0_bank_meta_t bp0_f0_bank1_meta;
 
-    // Convert ABTB/PHT outputs into the canonical steering input record.
+    // 将 ABTB/PHT 输出转换成统一的取指方向记录。
     assign bp0_steer_bank0.lookup_hit = abtb_bank0_lookup_hit;
     assign bp0_steer_bank0.cfi_type = abtb_bank0_cfi_type;
     assign bp0_steer_bank0.target = abtb_bank0_abtb_pred_target;
@@ -208,8 +207,8 @@ module frontend_ftq
     assign bp0_abtb_bank1_meta.pred_taken = abtb_bank1_pred_taken;
     assign bp0_abtb_bank1_meta.pred_target = abtb_bank1_final_pred_target;
 
-    // Preserve every metadata bit produced by the existing canonical control,
-    // while taking the 32-bit next-PC payload from the earlier ABTB-local mux.
+    // 保留原有 canonical 控制产生的全部元数据，同时从前面 ABTB 的
+    // 局部选择器取得 32 位 next-PC 数据。
     assign bp0_steer_result.valid = bp0_steer_metadata_result.valid;
     assign bp0_steer_result.source_abtb =
         bp0_steer_metadata_result.source_abtb;
@@ -244,8 +243,8 @@ module frontend_ftq
     );
 
 `ifndef SYNTHESIS
-    // The old FTQ-local wide selector remains as a simulation-only reference.
-    // At an accepted lookup, the ABTB-local result must be cycle-identical.
+    // 旧的 FTQ 局部宽选择器只作为仿真参考保留。查找握手时，ABTB 局部
+    // 选择器的结果必须与它周期一致。
     always_ff @(posedge clk) begin
         if (rst_n && bp0_fire
                   && (abtb_pred_next_pc
@@ -280,14 +279,14 @@ module frontend_ftq
         .outstanding_count      (ftq_count)
     );
 
-    // IROM is addressed by aligned 64-bit fetch block.
+    // IROM 按 64 位对齐的取指块寻址。
     assign irom_addr = {1'b0, current_pc[13:3]};
     assign irom_req_addr = {current_pc[31:3], 3'b000};
 
     // ================================================================
-    //  F0 alignment and enqueue preparation
+    //  F0 对齐和入队准备
     // ================================================================
-    // Epoch matching drops stale IROM responses produced before a redirect.
+    // epoch 匹配会丢弃重定向之前发出的旧 IROM 响应。
     wire f0_epoch_match = (f0_epoch_r == frontend_epoch);
     assign f0_response_fire = f0_valid_r
                             && (!VARIABLE_IROM_LATENCY || irom_resp_valid);
@@ -347,7 +346,7 @@ module frontend_ftq
         .pair_meta1        (f0_pair_meta1)
     );
 
-    // Compatibility aliases for directed tests and performance monitors.
+    // 定向测试和性能监控器使用的兼容别名。
     wire [31:0] f0_slot0_inst = f0_entry0.inst;
     wire [31:0] f0_slot1_inst = f0_entry1.inst;
     wire [31:0] f0_slot0_pc = f0_entry0.pc;
@@ -389,7 +388,7 @@ module frontend_ftq
     wire f0_enq_none = !f0_enq0_valid;
 
     // ================================================================
-    //  Instruction-granular fetch queue
+    //  以指令为粒度的取指队列
     // ================================================================
     wire [FQ_PTR_W-1:0] fq_head;
     wire [FQ_PTR_W-1:0] fq_head_p1;
@@ -466,8 +465,8 @@ module frontend_ftq
         .odd_write_data     (fq_abtb_odd_write_data)
     );
 
-    // F1 exposes the queue head to IF/ID. The complete policy is evaluated
-    // here from registered metadata; enqueue records only packet continuity.
+    // F1 将队首暴露给 IF/ID。完整配对策略在这里根据已寄存的元数据
+    // 判断；入队阶段只记录取指包的 PC 连续性。
     wire fq_has_slot0 = (fq_count != 0);
     wire fq_has_slot1 = (fq_count >= 2);
     wire fq_tail_has_prev = (fq_count != 0);
@@ -522,10 +521,9 @@ module frontend_ftq
     assign if_payload.slot0.issue_hint.mem_write = fq_head0.is_store;
     assign if_payload.slot0.issue_hint.is_muldiv = fq_head0.is_muldiv;
     assign if_payload.slot0.issue_hint.is_mul = fq_head0.is_mul;
-    // block_younger differs from serializing only for JIRL: JIRL must issue
-    // alone but does not wait for the older backend to drain.  Reconstruct
-    // the exact predecode result from fields already stored in the FQ rather
-    // than sending the full instruction decoder into the ready feedback path.
+    // 只有 JIRL 的 block_younger 和 serializing 含义不同：JIRL 必须单独
+    // 发射，但不需要等待更老的后端完全排空。这里根据 FQ 已保存的字段
+    // 重建预译码结果，避免把完整指令译码器接入 ready 反馈路径。
     assign if_payload.slot0.issue_hint.serializing =
         fq_head0.force_single & ~fq_head0.is_indirect_jump;
     assign if_payload.slot1.issue_hint.src0_used =
@@ -635,13 +633,12 @@ module frontend_ftq
         .head_pair_contiguous (fq_head_pair_contiguous)
     );
 
-    // Leave enough fetch-queue credit for the in-flight F0 response and a new
-    // two-instruction BP0 packet.
+    // 为正在返回的 F0 响应和新的两条指令 BP0 取指包预留足够队列空间。
     wire ftq_alloc_ready = (ftq_count < FTQ_DEPTH_COUNT);
     wire fq_credit_for_bp0 = f0_valid_r ? (fq_count <= FQ_DEPTH_MINUS_4)
                                         : (fq_count <= FQ_DEPTH_MINUS_2);
-    // A variable-latency F0 entry that responds now frees its slot at the same
-    // edge. Permit the next BP request to replace it without an empty bubble.
+    // 可变延迟 F0 表项如果在当前沿返回，会同时释放自己的槽位；允许
+    // 下一条 BP 请求在同一沿替换它，避免产生空泡。
     wire variable_f0_slot_ready = ~f0_valid_r | f0_response_fire;
     assign irom_req_valid = ftq_alloc_ready
                           && fq_credit_for_bp0
@@ -652,8 +649,8 @@ module frontend_ftq
                     && (!VARIABLE_IROM_LATENCY || irom_req_ready);
     assign abtb_lookup_accept = bp0_fire;
 
-    // Existing perf monitor expects these names to exist; the new queue removes
-    // the old hold/skip machinery.
+    // 现有性能监控器仍依赖这些名称；新的队列已经删除旧的 hold/skip 机制，
+    // 因此这里只保留对应的兼容信号。
     assign irom_held_valid = 1'b0;
     assign if_skip_out = 1'b0;
 

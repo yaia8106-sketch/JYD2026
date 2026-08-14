@@ -1,9 +1,11 @@
 // ============================================================
-// Module: loongarch_priv_unit
-// Description: LA32R CSR, synchronous trap, interrupt, and ERTN state.
+// 中文说明：实现 LoongArch 的特权寄存器、异常、软件中断、定时器中断和 ERTN 流程。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 模块：loongarch_priv_unit。
+// 说明：实现 LA32R CSR、同步陷阱、中断和 ERTN 状态。
 //
-// CSR numbers, reset values, exception codes, and CSRXCHG behavior stay in the
-// sole LoongArch ISA boundary instead of leaking into the common pipeline.
+// CSR 编号、复位值、异常码和 CSRXCHG 行为都保留在唯一的 LoongArch ISA
+// 边界中，不泄漏到通用流水线。
 // ============================================================
 
 module loongarch_priv_unit
@@ -90,7 +92,7 @@ module loongarch_priv_unit
     localparam logic [13:0] CSR_TLBRENTRY = 14'h088;
     localparam logic [13:0] CSR_DMW0      = 14'h180;
     localparam logic [13:0] CSR_DMW1      = 14'h181;
-    // Chiplab compatibility CSR used by the reference startup code.
+    // Chiplab 兼容 CSR，供参考启动代码使用。
     localparam logic [13:0] CSR_DISABLE_CACHE = 14'h101;
 
     localparam logic [5:0] ECODE_INT = 6'h00;
@@ -198,14 +200,13 @@ module loongarch_priv_unit
     );
         begin
             case (word_index)
-                // Simplified LA32, 32-bit physical/virtual addresses, no
-                // paging MMU, IOCSR, or unaligned-access support.
+                // 简化 LA32：物理/虚拟地址均为 32 位，不支持分页 MMU、IOCSR
+                // 或未对齐访问。
                 32'h0000_0001: cpucfg_read = 32'h0001_f1f0;
-                // Do not expose the internal DCache architecturally until a
-                // matching CACOP maintenance path is implemented. This also
-                // lets the reference startup skip all cache-maintenance loops.
+                // 在实现对应的 CACOP 维护路径前，不向架构层暴露内部 DCache。
+                // 这样参考启动代码也可以跳过所有 cache 维护循环。
                 32'h0000_0010: cpucfg_read = 32'd0;
-                // Undefined configuration words architecturally read as zero.
+                // 未定义的配置字在架构上读取为零。
                 default:       cpucfg_read = 32'd0;
             endcase
         end
@@ -233,10 +234,9 @@ module loongarch_priv_unit
                       | ex_priv_violation | ex_bad_csr
                       | ex_fetch_misaligned | ex_data_misaligned;
     wire ex_valid_return = ex_is_return & ~ex_priv_violation;
-    // A privileged flow reaches EX only after older backend tokens are gone;
-    // address faults discovered in EX wait for that same condition.  Commit
-    // directly from the registered token cone so AXI/DCache readiness cannot
-    // enter trap, ERTN, or CSR register enables.
+    // 特权流只有在更老的后端 token 消失后才能到达 EX；EX 发现的地址错误
+    // 也等待同一条件。直接从已寄存的 token 逻辑锥提交，避免 AXI/DCache
+    // ready 进入 trap、ERTN 或 CSR 寄存器使能逻辑。
     wire ex_priv_stage_fire = ex_valid & ex_priv_commit_ready
                             & ~mem_branch_flush;
     wire ex_sync_trap_fire = ex_priv_stage_fire & ex_sync_trap;
@@ -260,10 +260,9 @@ module loongarch_priv_unit
 
     wire [63:0] compensated_counter = stable_counter
                                     + {{32{csr_cntc[31]}}, csr_cntc};
-    // A decoded CSR operation and a counter read are mutually exclusive.
-    // Keep the ordinary CSR read candidate independent so the 64-bit counter
-    // compensation carry chain cannot be synthesized in front of every CSR
-    // write-data register merely through the shared architectural read mux.
+    // 已译码 CSR 操作和计数器读取互斥。普通 CSR 读取候选保持独立，
+    // 这样 64 位计数器补偿进位链不会仅因为共享架构读 MUX 就进入每个
+    // CSR 写数据寄存器的前端。
     wire [31:0] ex_csr_old_data = csr_read(csr_addr);
     assign ex_priv_rdata = ex_is_cpucfg
                          ? cpucfg_read(ex_src0_data)
@@ -287,20 +286,17 @@ module loongarch_priv_unit
                           | (((ex_priv_cmd == PRIV_CMD_SET)
                               | (ex_priv_cmd == PRIV_CMD_CLEAR))
                              & (|ex_csr_src));
-    // CSR writes are serialized behind older MEM/WB tokens before entering EX.
-    // Use that registered class-specific readiness directly: the generic
-    // ex_ready_go also contains address-fault, LSU, and MulDiv conditions which
-    // are mutually exclusive with a decoded CSR but otherwise enter every CSR
-    // register enable.
+    // CSR 写入在进入 EX 前必须在更老的 MEM/WB token 后串行化。
+    // 直接使用已寄存的类别专用 ready；通用 ex_ready_go 还包含地址错误、LSU
+    // 和 MulDiv 条件，这些虽然与 CSR 译码互斥，但会进入每个 CSR 寄存器使能。
     wire ex_csr_write_fire = ex_priv_stage_fire
                            & ex_is_csr
                            & ex_csr_supported & ~ex_priv_violation
                            & ex_csr_write_req;
 
 `ifndef SYNTHESIS
-    // Retain the original expression as an executable equivalence check.  The
-    // serializing decoder guarantees that the two readiness terms agree for a
-    // CSR write without putting the old cone back into the synthesized design.
+    // 保留原表达式作为可执行等价检查。串行化译码器保证 CSR 写入时两种
+    // ready 表达式一致，同时不会把旧逻辑锥放回综合设计。
     wire ex_csr_write_fire_reference =
         ex_valid & ex_ready_go & ~mem_branch_flush
         & ex_is_csr & ex_csr_supported & ~ex_priv_violation
@@ -331,10 +327,9 @@ module loongarch_priv_unit
     assign ex_priv_redirect = ex_sync_trap_fire | ex_return_fire;
     assign ex_priv_target = ex_valid_return ? csr_era : csr_eentry;
     assign ex_priv_trap = ex_valid & ex_sync_trap;
-    // Unlike decoded system instructions, address faults are discovered only
-    // after the address adder in EX.  Ask the common pipeline to hold them
-    // until every older MEM/WB token has retired, so CSR state and the
-    // Difftest exception event share one precise architectural boundary.
+    // 与已经译码的系统指令不同，地址错误只有在 EX 地址加法器之后才能发现。
+    // 请求通用流水线保持它，直到所有更老的 MEM/WB token 提交，使 CSR 状态
+    // 和 Difftest 异常事件共享同一个精确架构边界。
     assign ex_priv_wait_older = ex_valid
                               & (ex_fetch_misaligned | ex_data_misaligned
                                  | (ex_is_csr & ex_csr_write_req));
@@ -444,8 +439,7 @@ module loongarch_priv_unit
                     CSR_CRMD:      csr_crmd <= ex_csr_wdata & 32'h0000_01ff;
                     CSR_PRMD:      csr_prmd <= ex_csr_wdata & 32'h0000_0007;
                     CSR_EUEN:      csr_euen <= ex_csr_wdata & 32'h0000_0001;
-                    // ECFG.LIE has no bit 10; bits 0..9 and 11..12 are
-                    // writable in LA32R.
+                    // ECFG.LIE 没有 bit10；LA32R 中可写的是 bits 0..9 和 11..12。
                     CSR_ECFG:      csr_ecfg <= ex_csr_wdata & 32'h0000_1bff;
                     CSR_ESTAT:     csr_estat[1:0] <= ex_csr_wdata[1:0];
                     CSR_ERA:       csr_era <= ex_csr_wdata;

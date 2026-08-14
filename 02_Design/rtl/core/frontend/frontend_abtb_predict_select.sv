@@ -1,12 +1,13 @@
 // ============================================================
-// Module: frontend_abtb_predict_select
-// Description: Convert four ABTB way matches into one program-order prediction.
-// Domain: frontend branch prediction.
+// 中文说明：从 ABTB 和顺序取指候选中选择当前取指阶段使用的预测结果。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 模块：frontend_abtb_predict_select。
+// 说明：将四个 ABTB way 的命中结果转换成一个按程序顺序排列的预测结果。
+// 所属部分：前端分支预测。
 //
-// The ABTB table owns storage, tag matching, allocation, and training. This
-// combinational block owns only CFI interpretation and the earliest-taken
-// choice. Keeping that boundary explicit makes the recursive next-PC rule
-// readable without changing its parallel candidate structure.
+// ABTB 表负责存储、tag 匹配、分配和训练；本组合模块只负责解释 CFI 类型，
+// 并选择最早发生的跳转。明确这个边界可以让递归 next-PC 规则更容易阅读，
+// 同时保持候选项并行计算结构不变。
 // ============================================================
 
 module frontend_abtb_predict_select (
@@ -169,9 +170,8 @@ module frontend_abtb_predict_select (
             ? bank1_selected_final_target : bank1_abtb_pred_target;
     end
 
-    // Bank 0 is earlier in program order and wins when both banks predict
-    // taken. The early choice intentionally omits lookup_valid qualification;
-    // the fetch state samples it only when a lookup is accepted.
+    // bank0 在程序顺序上更早，两个 bank 都预测跳转时由 bank0 优先。
+    // 这里有意不加入 lookup_valid 条件；取指状态只在查询被接受时采样结果。
     wire bank0_selected = bank0_pred_taken;
     wire bank1_selected = bank1_pred_taken & ~bank0_pred_taken;
     wire [1:0] qualified_select = {bank0_selected, bank1_selected};

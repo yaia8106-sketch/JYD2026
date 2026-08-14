@@ -1,8 +1,8 @@
 // ============================================================
-// Module: mem_wb_payload_builder
-// Description: Pure combinational construction of MEM/WB payloads.
-// Domain: pipeline boundary.
-// Pipeline valid/allow state remains in mem_wb_reg modules.
+// 中文说明：组合生成 MEM/WB 流水寄存器需要保存的最终结果和写回控制字段。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 说明：只组合生成 MEM/WB payload；流水线 valid/allow 状态由
+// mem_wb_reg 模块保存。
 // ============================================================
 
 module mem_wb_payload_builder
@@ -44,8 +44,8 @@ module mem_wb_payload_builder
     output mem_wb_slot1_t    slot1_payload
 );
 
-    // MEM/WB carries the final load data only for Slot 0 because the shared LSU
-    // allows at most one load result per cycle.
+    // 由于共享 LSU 每周期最多产生一个 load 结果，MEM/WB 只在 slot0
+    // 字段中携带最终 load 数据。
     always_comb begin
         slot0_payload = '0;
         slot0_payload.pc = s0_pc;

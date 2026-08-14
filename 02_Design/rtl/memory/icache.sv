@@ -1,35 +1,24 @@
 // ============================================================
-// Module: icache
-// Description:
-//   NSCSCC instruction cache between the variable-latency frontend port and
-//   the shared 32-bit memory backend.
-//
-// Organization:
-//   - parameterized 8/16/32 KiB, 1/2-way, 16-byte lines
-//   - one capacity-sized 72-bit simple-dual-port memory; the selected way is
-//     part of its row address, so 2-way operation does not duplicate data BRAM
-//   - 8 KiB uses 1024 x 72 (two RAMB36s), while 16/32 KiB use
-//     2048/4096 x 72 respectively for instruction data plus refill-time
-//     predecode metadata
-//   - distributed per-way shortened-tag/class storage with one valid bit per
-//     line and one replacement bit per set when WAYS=2
-//   - one four-beat WRAP refill starting at the critical 64-bit block
-//
-// A request is accepted when irom_req_valid and irom_req_ready are both high.
-// A local hit is returned from the synchronous data RAM in the following
-// cycle. The frontend has no response backpressure and consumes each valid
-// response immediately.
-//
-// A frontend kill discards lookup/miss ownership at the clock edge. An AXI
-// read already accepted by the backend is drained without writing later
-// response beats into the cache. Independent cache hits may continue while
-// that stale read is draining.
+// 中文说明：实现只读 ICache，包括指令命中、缺失 refill、关键字优先返回和预译码元数据。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 说明：这是位于可变延迟前端接口和共享 32 位存储后端之间的 ICache。
+// 组织方式：
+//   - 容量、路数和 line 大小由参数决定；当前比赛配置使用 16 字节 line；
+//   - 数据使用简单双口 BRAM，way 被折叠进 BRAM 行地址，避免每一路重复
+//     一份数据存储；
+//   - 指令数据和 refill 时产生的预译码元数据共用 BRAM 的数据位；
+//   - Tag、valid 和分类信息使用分布式存储，双路配置额外保存替换位；
+//   - 缺失时从关键 64 位块开始进行四拍 WRAP refill。
+// 当 irom_req_valid 和 irom_req_ready 同时为 1 时，请求被接受；同步
+// 数据 RAM 的命中结果在下一周期返回。前端没有响应反压，会立即消费
+// 每个 valid 响应。前端冲刷只清除当前查找/缺失的所有权；已经被后端
+// 接受的 AXI 读仍会排空，但后续返回拍不会写入 cache，排空期间独立
+// 的 cache 命中仍可继续服务。
 // ============================================================
 
 module icache #(
-    // NSCSCC programs execute from a one-megabyte physical-PC window.  Only
-    // requests in this prefix may allocate or hit in the shortened-tag array;
-    // every request still keeps its complete 32-bit address on the AXI side.
+    // NSCSCC 程序在一个 1 MiB 的物理 PC 窗口内执行。只有窗口内请求
+    // 可以在压缩 Tag 数组中分配或命中；AXI 侧始终保留完整 32 位地址。
     parameter logic [11:0] ICACHE_ADDR_PREFIX = 12'h1c0,
     parameter integer CACHE_BYTES =
 `ifdef NSCSCC_ICACHE_BYTES
@@ -44,11 +33,11 @@ module icache #(
         1
 `endif
 ) (
-    // Clock and reset
+    // 时钟和复位
     input  logic        clk,
     input  logic        rst_n,
 
-    // Frontend 64-bit instruction-block channel
+    // 前端 64 位指令块接口
     input  logic        irom_req_valid,
     output logic        irom_req_ready,
     input  logic [31:0] irom_req_addr,
@@ -58,7 +47,7 @@ module icache #(
     output logic [13:0] irom_resp_predecode,
     output logic [ 1:0] irom_resp_resp,
 
-    // Shared 32-bit memory-backend read channel
+    // 共享 32 位存储后端读接口
     output logic        mem_req_valid,
     input  logic        mem_req_ready,
     output logic [31:0] mem_req_addr,
@@ -92,15 +81,14 @@ module icache #(
     wire [1:0] refill_state_q;
 
     // ----------------------------------------------------------------
-    // Cache arrays
+    // Cache 数组
     // ----------------------------------------------------------------
 
-    // The selected way is folded into the synchronous BRAM row address after
-    // the distributed-tag lookup.  Keep the two instruction lanes in separate
-    // 36-bit memories: each lane carries one 32-bit instruction plus its four
-    // parity-bit predecode fields.  At 16 KiB this still consumes four RAMB36
-    // in total, but each response lane only selects between two depth banks
-    // instead of passing through the four-bank mux of one 72-bit memory.
+    // 分布式 Tag 查找完成后，把选中的 way 折叠进同步 BRAM 行地址。
+    // 两条指令 lane 使用独立的 36 位存储：每 lane 保存一条 32 位指令
+    // 和四个 parity 位的预译码信息。这样 16 KiB 配置仍使用四个 RAMB36，
+    // 但每个返回 lane 只需在两个深度 bank 之间选择，不必经过一个 72 位
+    // 四 bank 存储器的末端大选择器。
     (* ram_style = "block" *)
     logic [35:0] data_mem_slot0 [0:DATA_ROWS-1];
     (* ram_style = "block" *)
@@ -121,7 +109,7 @@ module icache #(
     logic [BLOCK_CLASS_WIDTH-1:0] lookup_class_q;
 
     // ----------------------------------------------------------------
-    // One-cycle lookup pipeline
+    // 一拍查找流水
     // ----------------------------------------------------------------
 
     logic        lookup_valid_q;
@@ -161,9 +149,8 @@ module icache #(
     wire [ 1:0] refill_block_resp_q;
     wire         refill_block_commit;
 
-    // The last refill beat first completes the registered block-class
-    // records. Tag/valid publication then uses those registers on the next
-    // edge, keeping the refill decoder out of the LUTRAM write-data path.
+    // 最后一拍 refill 先完成已寄存的 block 分类信息；下一时钟沿再提交
+    // Tag/valid。这样 refill 译码器不会进入 LUTRAM 写数据路径。
     logic                   tag_commit_pending_q;
     logic [INDEX_WIDTH-1:0] tag_commit_index_q;
     logic [TAG_WIDTH-1:0]   tag_commit_tag_q;
@@ -189,19 +176,18 @@ module icache #(
         end
     endgenerate
 
-    // A registered local hit is consumed by the frontend in this cycle, so
-    // its lookup slot may be replaced by the next BP request at the same edge.
-    // A miss retains ownership until it has been copied to pending_miss.
+    // 已寄存的本地命中会在当前周期被前端消费，因此同一时钟沿可以
+    // 用下一条 BP 请求替换查找槽。缺失请求在复制到 pending_miss 前
+    // 一直保持所有权。
     assign irom_req_ready =
         (~lookup_valid_q | lookup_hit_q | lookup_commit_hit)
         & ~pending_miss_valid_q
         & ~miss_resp_valid_q;
 
-    // BP-stage hit computation. All way tags are read in parallel from
-    // distributed memory. The matching way is then included in the single
-    // synchronous data-memory row address, avoiding a duplicated BRAM read.
-    // Split each shortened-tag equality into low/high groups so Vivado can
-    // evaluate them in parallel rather than building a serial comparator.
+    // BP 阶段计算命中。所有 way 的 Tag 从分布式存储中并行读取，命中的
+    // way 随后进入同步数据 RAM 的行地址，避免重复读取 BRAM。压缩 Tag
+    // 比较拆成低位和高位两组，使综合工具可以并行计算，而不是形成
+    // 串行比较器。
     wire [WAYS-1:0] irom_req_way_hit;
     wire [TAG_RAM_WIDTH-1:0] irom_req_way_tag_payload [0:WAYS-1];
     genvar lookup_way;
@@ -231,7 +217,7 @@ module icache #(
         if (WAYS == 1) begin : g_select_one_way
             assign irom_req_array_way = '0;
         end else begin : g_select_two_ways
-            // At most one way can hold a given shortened tag in a set.
+            // 同一个组中最多只有一路可以保存给定的压缩 Tag。
             assign irom_req_array_way =
                 irom_req_way_hit[0] ? 0 : 1;
         end
@@ -253,9 +239,8 @@ module icache #(
     wire irom_req_refill_block_valid =
         irom_req_block ? refill_buffer_filled_q[1]
                        : refill_buffer_filled_q[0];
-    // Keep a completed line visible through its one-cycle atomic tag commit.
-    // Requests in that window use the refill buffer instead of starting a
-    // duplicate miss against the not-yet-published tag.
+    // 在一拍原子 Tag 提交期间保持刚完成的 line 可见。这个窗口内的请求
+    // 使用 refill 缓冲，而不是针对尚未发布的 Tag 再发起一次重复缺失。
     wire refill_buffer_lookup_active =
         (refill_state_q == REFILL_DATA) | tag_commit_pending_q;
     wire irom_req_refill_hit =
@@ -275,15 +260,14 @@ module icache #(
             lookup_valid_q <= 1'b0;
     end
 
-    // Hit/source/address metadata is owned solely by lookup_valid_q.  A kill
-    // clears that one owner bit; stale payload cannot produce a response.
+    // 命中、来源和地址元数据只由 lookup_valid_q 管理。冲刷只清除这一
+    // 个所有权位，旧的 payload 因此不会产生响应。
     always_ff @(posedge clk) begin
         if (irom_req_fire) begin
             lookup_hit_q <= irom_req_hit;
             lookup_refill_hit_q <= irom_req_refill_hit;
-            // Precompute this wide comparison while the request is accepted.
-            // A final-beat refill commit may become visible in the following
-            // cycle, but the request and refill line addresses are unchanged.
+            // 请求握手时预先计算这个宽地址比较。最后一拍 refill 的提交
+            // 可能在下一周期可见，但请求地址和 refill line 地址不会改变。
             lookup_refill_line_match_q <=
                 irom_req_refill_eq0 & irom_req_refill_eq1
                 & irom_req_refill_eq2 & irom_req_refill_eq3
@@ -296,7 +280,7 @@ module icache #(
     end
 
     // ----------------------------------------------------------------
-    // Refill transaction and partial-line buffer
+    // Refill 事务和部分 line 缓冲
     // ----------------------------------------------------------------
 
     wire mem_req_fire;
@@ -310,9 +294,8 @@ module icache #(
             ? {mem_rd_data, refill_word0_q}
             : {32'd0, mem_rd_data};
     wire [13:0] refill_block_predecode;
-    // The RAMB36 parity bits retain the original four controls per
-    // instruction.  The new three-bit classes are accumulated separately and
-    // committed atomically with the shortened line tag.
+    // RAMB36 的 parity 位继续保存每条指令原有的四个控制位；新增的
+    // 三位指令类别先单独累积，再和压缩 Tag 一起原子提交。
     wire [7:0] refill_block_control = {
         refill_block_predecode[13:10],
         refill_block_predecode[6:3]
@@ -332,10 +315,9 @@ module icache #(
         & ~refill_drop_q
         & ~irom_req_kill;
 
-    // In the common idle case, launch a newly detected lookup miss directly
-    // instead of first copying it through pending_miss and spending an extra
-    // cycle in REFILL_IDLE.  The pending slot remains the fallback for a miss
-    // detected while an older refill transaction is still being drained.
+    // 通常空闲时，查找阶段刚发现的缺失可以直接启动，不必先复制到
+    // pending_miss 再在 REFILL_IDLE 多停一拍。若旧 refill 仍在排空，
+    // 才使用 pending 槽保存新缺失。
     wire launch_lookup_miss =
         (refill_state_q == REFILL_IDLE)
         & ~pending_miss_valid_q
@@ -410,8 +392,8 @@ module icache #(
         refill_buffer_block0_class_q
     };
 
-    // This decoder is outside the hit path: it runs only on the completed
-    // 64-bit refill block before that block is committed to the RAMB36.
+    // 这个译码器不在命中路径上，只处理已经完成的 64 位 refill block，
+    // 并在写入 RAMB36 前产生预译码类别。
     loongarch_icache_block_predecode u_refill_predecode (
         .block_data     (refill_block_data),
         .block_metadata (refill_block_predecode)
@@ -426,9 +408,9 @@ module icache #(
         refill_block_payload[63:32]
     };
 
-    // Keep each lane's data read and refill write as two independent BRAM
-    // ports.  A same-row collision is harmless: that row has no valid line
-    // yet, and the partial-line buffer supplies matching refill data instead.
+    // 每条 lane 的数据读取和 refill 写入保持为 BRAM 的两个独立端口。
+    // 同行读写冲突是安全的，因为该行还没有 valid line；部分 line 缓冲
+    // 会提供对应的 refill 数据。
     always_ff @(posedge clk) begin
         if (irom_req_fire) begin
             lookup_slot0_q <= data_mem_slot0[irom_req_data_row];
@@ -456,9 +438,9 @@ module icache #(
         end
     end
 
-    // For two ways this bit names the next victim after both ways are valid.
-    // Invalid ways always win allocation, so the payload itself needs no
-    // reset. Array hits and successful fills make the opposite way oldest.
+    // 双路配置下，该位表示两路都有效时下一次应选择的 victim。无效 way
+    // 总是优先分配，因此 payload 本身不需要复位；命中和成功填充会把
+    // 另一条 way 标记为更旧。
     generate
         if (WAYS == 2) begin : g_replacement_state
             always_ff @(posedge clk) begin
@@ -472,10 +454,9 @@ module icache #(
         end
     endgenerate
 
-    // Only the pending bit needs reset. Index/tag payloads are overwritten by
-    // the event that makes them observable. A redirect after the final beat
-    // does not cancel this delayed publication, matching the former design in
-    // which the line had already become valid on that final-beat edge.
+    // 这里只复位 pending 位。index/Tag payload 会在真正可见之前被事件
+    // 覆盖。最后一拍之后发生的重定向不会取消延迟提交，这和原设计中
+    // line 已在最后一拍时钟沿变为有效的行为一致。
     always_ff @(posedge clk) begin
         if (!rst_n)
             tag_commit_pending_q <= 1'b0;
@@ -520,15 +501,14 @@ module icache #(
     end
 
     // ----------------------------------------------------------------
-    // Lookup result and frontend response
+    // 查找结果和前端响应
     // ----------------------------------------------------------------
 
     wire lookup_block = lookup_block_addr_q[0];
-    // A request accepted on the final refill beat sampled the old buffer-valid
-    // bits. Rescue it one cycle later from registered refill state instead of
-    // feeding AXI RVALID/RRESP combinationally into the BP-stage hit path.
-    // This keeps the original one-cycle hit response and back-to-back request
-    // behavior without creating a memory-bus-to-frontend timing path.
+    // 最后一拍 refill 同时接受的请求可能采样到旧的 buffer-valid。下一拍
+    // 从已寄存的 refill 状态恢复它，而不是把 AXI RVALID/RRESP 组合地
+    // 接入 BP 命中路径。这样既保持原来的一拍命中响应和背靠背请求，
+    // 又不会形成从存储总线直达前端的长时序路径。
     always_comb begin
         lookup_commit_hit =
             lookup_valid_q
@@ -629,7 +609,7 @@ module icache #(
             : miss_resp_resp_q;
 
     // ----------------------------------------------------------------
-    // Refill transaction owner
+    // Refill 事务所有权
     // ----------------------------------------------------------------
     icache_refill_ctrl #(
         .WAY_WIDTH (WAY_WIDTH)

@@ -1,9 +1,10 @@
 // ============================================================
-// Module: predictor_resolve_builder
-// Description: Pure combinational builder that packages EX resolve/update
-//              information into predictor structures; 将 EX 更新信息封装成结构体。
-// Domain: frontend.
-// Update arbitration and architectural state remain in predictor_update_ctrl.
+// 中文说明：整理 EX 阶段确认后的分支结果，形成预测器更新所需的统一信息。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 模块：predictor_resolve_builder。
+// 说明：纯组合的构造模块，将 EX 阶段确认/更新信息打包成预测器结构体。
+// 所属阶段：frontend。
+// 更新仲裁和架构状态仍由 predictor_update_ctrl 负责。
 // ============================================================
 
 module predictor_resolve_builder
@@ -41,8 +42,8 @@ module predictor_resolve_builder
     output predictor_resolve_t     slot1_resolve
 );
 
-    // Package resolved EX facts with the prediction-time metadata needed by
-    // the single predictor update port.
+    // 将 EX 的实际结果与预测时保存的元数据组合，形成单一预测器更新端口
+    // 所需的结构体。
     always_comb begin
         slot0_resolve = '0;
         slot0_resolve.valid = s0_valid;

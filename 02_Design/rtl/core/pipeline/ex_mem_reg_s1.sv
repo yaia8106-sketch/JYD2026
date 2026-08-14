@@ -1,7 +1,7 @@
 // ============================================================
-// Module: ex_mem_reg_s1
-// Description: Slot 1 EX/MEM structured payload register.
-// Domain: pipeline boundary.
+// 中文说明：保存 slot1 的 EX/MEM 流水状态，并处理年轻指令受到的冲刷。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 说明：保存 slot1 的 EX/MEM 结构化 payload。
 // ============================================================
 
 module ex_mem_reg_s1
@@ -21,10 +21,9 @@ module ex_mem_reg_s1
     (* extract_enable = "yes", extract_reset = "no" *)
     output ex_mem_slot1_t mem_payload,
 
-    // Physically independent narrow copy for the backwards ID hazard path.
-    // Keeping these fields out of the ordinary MEM payload lets placement put
-    // their registers next to the forwarding comparators without moving the
-    // LSU/commit copy of the same metadata.
+    // 给反向 ID 相关性路径使用的物理独立窄副本。把这些字段从普通
+    // MEM payload 中分离出来，能让它们靠近前递比较器，而不会移动
+    // LSU/提交路径使用的同一份元数据。
     (* keep = "true" *)
     output logic          mem_s1_hazard_valid,
     (* keep = "true", extract_enable = "yes", extract_reset = "no" *)
@@ -33,8 +32,8 @@ module ex_mem_reg_s1
     output logic [4:0]    mem_s1_hazard_rd
 );
 
-    // Slot 1 is younger than Slot 0, so either a same-cycle EX miss or an older
-    // registered MEM redirect invalidates it.
+    // slot1 比 slot0 更新，因此同周期 EX 缺失或更老指令的已寄存 MEM
+    // 重定向都会使它失效。
     wire s1_flush = ex_branch_flush | mem_branch_flush;
 
     always_ff @(posedge clk) begin
@@ -56,8 +55,8 @@ module ex_mem_reg_s1
     end
 
 `ifndef SYNTHESIS
-    // The mirror is a physical implementation detail only.  Check the exact
-    // cycle contract against the architectural EX/MEM payload continuously.
+    // 这个副本只服务于物理实现。持续检查它和架构 EX/MEM payload 的
+    // 周期约定完全一致。
     always_ff @(posedge clk) begin
         if (rst_n) begin
             if (mem_s1_hazard_valid !== mem_s1_valid)

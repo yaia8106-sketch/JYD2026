@@ -1,9 +1,11 @@
 `ifndef SYNTHESIS
+// 中文说明：检查 LSU 请求、响应和提交状态之间是否符合访存协议。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
 // ============================================================
-// Module: lsu_consistency_monitor
-// Description: Simulation-only checks for dual-issue LSU steering, compact
-//              address mirrors, and the Slot-0 to Slot-1 store-data bypass.
-// Domain: observe.
+// 模块：lsu_consistency_monitor。
+// 说明：仅在仿真中检查双发射 LSU 选择、紧凑地址镜像以及
+// Slot0 到 Slot1 的 store-data 旁路。
+// 所属部分：observe。
 // ============================================================
 
 module lsu_consistency_monitor

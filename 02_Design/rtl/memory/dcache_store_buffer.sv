@@ -1,12 +1,13 @@
 // ============================================================
-// Module: dcache_store_buffer
-// Description: Two-entry write-through store buffer and recent-store lookup.
-//
-// Responsibilities:
-//   - retain pending stores until the memory backend acknowledges them
-//   - retain the two most recent stores for fully-covered load-miss bypass
-//   - snapshot same-line recent stores when a cache-line refill starts
-//   - merge those snapshots into each accepted refill word
+// 中文说明：保存已经接受但尚未完成的 store，隔离写入请求与流水线前端。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 模块：dcache_store_buffer。
+// 说明：保存两项尚未完成的写直达 store，并查询最近的 store。
+// 职责：
+//   - 保留待处理 store，直到存储后端确认；
+//   - 保留最近两项 store，用于完全覆盖的 load-miss 旁路；
+//   - cache line refill 开始时保存同 line 的最近 store 快照；
+//   - 将快照合并到每个被接受的 refill word 中。
 // ============================================================
 
 module dcache_store_buffer (
@@ -25,9 +26,8 @@ module dcache_store_buffer (
     output logic [ 3:0] drain_wea,
     output logic [31:0] drain_data,
 
-    // Two independently precomputed read-address candidates. Splitting line
-    // and word fields prevents late word/beat arithmetic from serializing in
-    // front of the full line equality.
+    // 两个独立预计算的读地址候选。拆开 line 和 word 字段，避免较晚的
+    // word/beat 算术在完整 line 等值比较前串行展开。
     input  logic [13:0] drain_compare_line0,
     input  logic [ 1:0] drain_compare_word0,
     input  logic [13:0] drain_compare_line1,
@@ -46,7 +46,7 @@ module dcache_store_buffer (
     input  logic [31:0] refill_base_data,
     output logic [31:0] refill_merged_data,
 
-    // Compatibility/observation outputs retained at the DCache boundary.
+    // 保留在 DCache 边界上的兼容和观测输出。
     output logic [ 1:0] pending_q,
     output logic [ 1:0] recent_valid_q,
     output logic        alloc_sel,
@@ -76,21 +76,20 @@ module dcache_store_buffer (
     endfunction
 
     // ================================================================
-    //  Drain selection
+    //  排空选择。
     // ================================================================
     assign any_pending = |pending_q;
     assign full        = &pending_q;
 
-    // With both entries pending, alloc_sel identifies the older entry because
-    // allocation alternates. With one entry pending, select that physical slot.
+    // 两项都待处理时，alloc_sel 根据交替分配规则指出较老的项；只有一项时，
+    // 直接选择该物理槽位。
     assign drain_sel  = (pending_q == 2'b11) ? alloc_sel : pending_q[1];
     assign drain_addr = drain_sel ? addr_q[1] : addr_q[0];
     assign drain_wea  = drain_sel ? wea_q[1]  : wea_q[0];
     assign drain_data = drain_sel ? data_q[1] : data_q[0];
 
-    // Compare both physical entries and both read candidates in parallel.
-    // KEEP prevents synthesis from rebuilding a 16-bit equality after the
-    // late candidate select, which was the reported BRAM-enable timing cone.
+    // 两个物理表项和两个读候选并行比较。KEEP 防止综合在末级候选选择之后
+    // 重新构造 16 位等值比较；该逻辑曾经位于报告中的 BRAM-enable 时序锥上。
     (* keep = "true" *) wire entry0_line0_match =
         addr_q[0][17:4] == drain_compare_line0;
     (* keep = "true" *) wire entry1_line0_match =
@@ -113,21 +112,19 @@ module dcache_store_buffer (
                                          : entry0_addr1_match;
 
     // ================================================================
-    //  Recent-store load-miss lookup
+    //  最近 store 的 load-miss 查询。
     // ================================================================
-    // The DCache serves only the contest DRAM window
-    // 0x8010_0000..0x8013_FFFF.  Bits [31:18] are therefore constant and the
-    // cache itself identifies a word with {tag,index,word} = address[17:2].
-    // Keep the store-buffer lookup on that same key instead of building a
-    // redundant 30-bit equality chain on the CPU-ready critical path.
+    // DCache 只服务比赛 DRAM 窗口 0x8010_0000..0x8013_FFFF，因此 [31:18]
+    // 恒定；Cache 用 address[17:2] 的 {tag,index,word} 标识一个字。
+    // store buffer 使用相同的 key，不在 CPU-ready 关键路径上重复构造
+    // 30 位等值比较链。
     wire lookup_match0 = recent_valid_q[0]
                        & (addr_q[0][17:2] == lookup_addr[17:2]);
     wire lookup_match1 = recent_valid_q[1]
                        & (addr_q[1][17:2] == lookup_addr[17:2]);
 
-    // Coverage and data candidates do not depend on the late address matches.
-    // Keeping those matches out of the byte-mask/merge cones leaves only one
-    // small selector between the address equality and DCache cpu_ready.
+    // 覆盖信息和数据候选不依赖较晚的地址匹配。将匹配结果移出字节掩码/合并
+    // 逻辑锥后，地址等值比较和 DCache cpu_ready 之间只剩一个小选择器。
     wire lookup_mask_nonzero = |lookup_mask;
     (* keep = "true" *) wire lookup_cover_entry0_candidate =
         lookup_mask_nonzero
@@ -144,8 +141,8 @@ module dcache_store_buffer (
     wire [31:0] lookup_entry1_candidate =
         merge_bytes(32'd0, data_q[1], wea_q[1]);
 
-    // alloc=0: entry0 is older, entry1 is newer.
-    // alloc=1: entry1 is older, entry0 is newer.
+    // alloc=0：entry0 较老，entry1 较新。
+    // alloc=1：entry1 较老，entry0 较新。
     wire [31:0] lookup_both_0_then_1_candidate =
         merge_bytes(lookup_entry0_candidate, data_q[1], wea_q[1]);
     wire [31:0] lookup_both_1_then_0_candidate =
@@ -176,7 +173,7 @@ module dcache_store_buffer (
     end
 
     // ================================================================
-    //  Refill overlay
+    //  Refill 覆盖。
     // ================================================================
     wire recent_old_valid = alloc_sel ? recent_valid_q[1] : recent_valid_q[0];
     wire [31:0] recent_old_addr = alloc_sel ? addr_q[1] : addr_q[0];
@@ -196,7 +193,7 @@ module dcache_store_buffer (
                 refill_merge_data[e]  <= 32'd0;
             end
         end else if (refill_capture) begin
-            // Preserve age order so entry 1 wins overlapping bytes.
+            // 保持年龄顺序，使 entry1 在字节重叠时获胜。
             refill_merge_valid[0] <= recent_old_valid
                                    & (recent_old_addr[31:4] == refill_line_addr[31:4]);
             refill_merge_word[0]  <= recent_old_addr[3:2];
@@ -223,7 +220,7 @@ module dcache_store_buffer (
         merge_bytes(refill_after_0, refill_merge_data[1], refill_strobe1);
 
     // ================================================================
-    //  Queue state
+    //  队列状态。
     // ================================================================
     always_ff @(posedge clk) begin
         if (!rst_n) begin
@@ -253,9 +250,9 @@ module dcache_store_buffer (
 `ifndef SYNTHESIS
     always_ff @(posedge clk) begin
         if (rst_n) begin
-            // Simultaneous pop/push is legal for an independent direct-BRAM
-            // drain. A full queue may replace the just-drained oldest slot;
-            // the later push assignment intentionally keeps its pending bit.
+            // 对于独立的直接 BRAM 排空，同周期 pop/push 是合法的。
+            // 满队列可以用新写入替换刚排空的最老槽位；后面的 push 赋值
+            // 有意保留该槽位的 pending 位。
             if (push && pending_q[alloc_sel]
                      && !(pop && (drain_sel == alloc_sel)))
                 $error("DCache store buffer overwrote a pending entry");

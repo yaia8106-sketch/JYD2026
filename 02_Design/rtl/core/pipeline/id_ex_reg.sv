@@ -1,7 +1,7 @@
 // ============================================================
-// Module: id_ex_reg
-// Description: Slot 0 ID/EX handshake and structured payload register.
-// Domain: pipeline boundary.
+// 中文说明：保存 slot0 的 ID/EX 流水状态，并处理发射、保持、清空和重定向。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 说明：保存 slot0 的 ID/EX 握手状态和结构化 payload。
 // ============================================================
 
 module id_ex_reg
@@ -10,7 +10,7 @@ module id_ex_reg
     input  logic          clk,
     input  logic          rst_n,
 
-    // Handshake
+    // 流水线握手信号
     input  logic          id_valid,
     input  logic          id_ready_go,
     input  logic          cache_ready,
@@ -18,10 +18,10 @@ module id_ex_reg
     input  logic          ex_allowin_if_cache_wait,
     output logic          ex_valid,
 
-    // Flush
+    // 冲刷信号
     input  logic          ex_flush,
 
-    // Registered payload
+    // 需要保存的流水线 payload
     input  id_ex_slot0_t  id_payload,
     (* extract_enable = "yes", extract_reset = "no" *)
     output id_ex_slot0_t  ex_payload
@@ -60,7 +60,7 @@ module id_ex_reg
         .allowin             (ex_allowin_priv)
     );
 
-    // Reset and redirect invalidate the stage; stale payload is unobservable.
+    // 复位和重定向只使本级失效；只要 valid 为 0，旧 payload 就不可见。
     always_ff @(posedge clk) begin
         if (!rst_n)
             ex_valid <= 1'b0;
@@ -70,9 +70,8 @@ module id_ex_reg
             ex_valid <= id_valid & id_ready_go;
     end
 
-    // Payload fields are partitioned by their downstream placement cluster.
-    // Every local enable is logically identical, so this changes neither the
-    // accepted instruction nor the cycle in which any observable field moves.
+    // payload 字段按下游布局簇分组。每个局部使能在逻辑上完全等价，
+    // 因此既不改变接受的指令，也不改变任何可观察字段移动的周期。
     always_ff @(posedge clk) begin
         if (ex_allowin_src1) begin
             ex_payload.common.alu_src1 <= id_payload.common.alu_src1;

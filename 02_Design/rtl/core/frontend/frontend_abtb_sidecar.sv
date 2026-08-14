@@ -1,9 +1,11 @@
 // ============================================================
-// Module: frontend_abtb_sidecar
-// Description: Banked ABTB metadata storage for the fetch queue.
-// Domain: frontend.
-// The valid-controlled FQ owns entry lifetime; this sidecar only stores and
-// retrieves metadata for the corresponding even/odd queue entries.
+// 中文说明：保存与主 ABTB 查询并行的轻量预测元数据，供前端后续阶段使用。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 模块：frontend_abtb_sidecar。
+// 说明：为取指队列保存与 ABTB 并行产生的 bank 化预测元数据。
+// 所属阶段：frontend。
+// FQ 的 valid 位负责表项生命周期；本旁路存储只为对应的偶数/奇数队列表项
+// 保存和读取元数据。
 // ============================================================
 
 module frontend_abtb_sidecar
@@ -35,7 +37,7 @@ module frontend_abtb_sidecar
     output frontend_abtb_meta_t        head0_meta,
     output frontend_abtb_meta_t        head1_meta,
 
-    // Compatibility/debug probes retained at the frontend_ftq boundary.
+    // 保留在 frontend_ftq 边界上的兼容和调试探针。
     output logic                       slot1_write_valid,
     output logic [FQ_PTR_W-1:0]        entry1_ptr,
     output frontend_abtb_meta_t        meta1_write_data,
@@ -53,8 +55,8 @@ module frontend_abtb_sidecar
     output frontend_abtb_meta_t        odd_write_data
 );
 
-    // The sidecar stores ABTB metadata in even/odd banks keyed by FQ pointer
-    // parity so the main queue does not grow with optional debug fields.
+    // 旁路存储按照 FQ 指针奇偶性写入偶数/奇数 bank，避免主队列因为可选
+    // 调试字段而继续变宽。
     (* ram_style = "distributed" *)
     logic even_hit [0:(FQ_DEPTH/2)-1];
     (* ram_style = "distributed" *)
@@ -68,13 +70,13 @@ module frontend_abtb_sidecar
     frontend_abtb_meta_t odd_wide_read;
 
     always_comb begin
-        // A fetch beginning at block_pc+4 presents physical bank1 first.
+        // 从 block_pc+4 开始的取指会先呈现物理 bank1。
         f0_meta0 = f0_start_pc[2] ? f0_bank1_meta : f0_bank0_meta;
         f0_meta1 = f0_bank1_meta;
     end
 
-    // Read rows are selected so head0/head1 metadata follows queue order even
-    // when the head pointer starts on the odd bank.
+    // 读取行经过选择，使 head0/head1 的元数据始终遵循队列顺序，
+    // 即使队首指针从奇数 bank 开始也一样。
     assign even_read_row = fq_head[0]
                          ? fq_head_p1[FQ_PTR_W-1:1]
                          : fq_head[FQ_PTR_W-1:1];
@@ -126,7 +128,7 @@ module frontend_abtb_sidecar
 `endif
     end
 
-    // Entry 0 writes at tail; entry 1 writes at tail+1 if it survived kill.
+    // 表项 0 写入 tail；表项 1 只有没有被 kill 时才写入 tail+1。
     assign even_write_entry0 = enq0_valid && !fq_tail[0];
     assign even_write_entry1 = slot1_write_valid && !fq_tail_p1[0];
     assign odd_write_entry0 = enq0_valid && fq_tail[0];

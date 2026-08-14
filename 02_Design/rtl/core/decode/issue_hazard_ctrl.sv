@@ -1,15 +1,14 @@
 // ============================================================
-// Module: issue_hazard_ctrl
-// Description: ID-stage dependency policy and issue readiness.
-// Domain: decode and issue.
-//
-// Operand data selection belongs to forwarding.sv. This module consumes only
-// register metadata and forwarding-priority matches, then decides whether ID
-// may advance and which ready MEM loads can be repaired from WB in EX.
+// 中文说明：根据操作数相关性、流水线状态和访存结果是否可修复，决定 ID 阶段是否允许发射。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 说明：负责 ID 阶段的相关性策略和发射就绪判断。
+// 操作数数据选择由 forwarding.sv 完成；本模块只使用寄存器元数据和
+// 前递优先级匹配结果，决定 ID 能否前进，以及哪些已就绪的 MEM load
+// 可以在 EX 使用 WB 修复值。
 // ============================================================
 
 module issue_hazard_ctrl (
-    // Slot 0 ID consumer
+    // slot0 的 ID 消费者
     input  logic [4:0] id_rs1_addr,
     input  logic [4:0] id_rs2_addr,
     input  logic       id_rs1_used,
@@ -17,7 +16,7 @@ module issue_hazard_ctrl (
     input  logic       id_s0_repair_ok,
     input  logic       id_s0_is_mul,
 
-    // Slot 1 ID consumer
+    // slot1 的 ID 消费者
     input  logic       id_s1_valid,
     input  logic [4:0] id_s1_rs1_addr,
     input  logic [4:0] id_s1_rs2_addr,
@@ -25,7 +24,7 @@ module issue_hazard_ctrl (
     input  logic       id_s1_rs2_used,
     input  logic       id_s1_repair_ok,
 
-    // Physically local EX producer metadata
+    // 物理局部的 EX 生产者元数据
     input  logic       ex_s0_valid,
     input  logic       ex_s0_reg_write,
     input  logic       ex_s0_is_muldiv,
@@ -38,7 +37,7 @@ module issue_hazard_ctrl (
     input  logic       ex_s1_result_repair,
     input  logic [4:0] ex_s1_rd,
 
-    // MEM producer metadata
+    // MEM 生产者元数据
     input  logic       mem_s0_valid,
     input  logic       mem_s0_reg_write,
     input  logic       mem_s0_is_load,
@@ -49,7 +48,7 @@ module issue_hazard_ctrl (
     input  logic [4:0] mem_s1_rd,
     input  logic       mem_load_ready,
 
-    // Younger forwarding matches that suppress an older MEM repair source.
+    // 更年轻的前递匹配会压制更老的 MEM 修复来源。
     input  logic       s0_rs1_s1_ex_hit,
     input  logic       s0_rs1_s0_ex_hit,
     input  logic       s0_rs1_s1_mem_hit,
@@ -63,7 +62,7 @@ module issue_hazard_ctrl (
     input  logic       s1_rs2_s0_ex_hit,
     input  logic       s1_rs2_s1_mem_hit,
 
-    // Repair tags carried into EX
+    // 传入 EX 的修复标签
     output logic       id_rs1_wb_repair,
     output logic       id_rs2_wb_repair,
     output logic       id_rs1_wb_repair_s1,
@@ -73,13 +72,13 @@ module issue_hazard_ctrl (
     output logic       id_s1_rs1_wb_repair_s1,
     output logic       id_s1_rs2_wb_repair_s1,
 
-    // Issue readiness
+    // 发射就绪状态
     output logic       id_ready_go,
     output logic       id_ready_go_if_mem_ready,
     output logic       id_ready_go_if_mem_wait,
     output logic       id_non_load_hazard,
 
-    // Named observation signals retained by forwarding.sv
+    // forwarding.sv 保留的具名观察信号
     output logic       id_s0_uses_ex_load,
     output logic       id_s1_uses_ex_load,
     output logic       id_s0_uses_s1_ex_load,
@@ -98,8 +97,8 @@ module issue_hazard_ctrl (
     output logic       mul_launch_ex_raw_hazard
 );
 
-    // A repair tag is valid only when no younger producer has priority over
-    // the candidate MEM load in the forwarding network.
+    // 只有当前递网络中没有更年轻生产者压过候选 MEM load 时，修复标签
+    // 才有效。
     wire s0_rs1_blocks_s0_mem_repair = s0_rs1_s1_ex_hit
                                      | s0_rs1_s0_ex_hit
                                      | s0_rs1_s1_mem_hit;
@@ -185,8 +184,8 @@ module issue_hazard_ctrl (
         .load_use_hazard_if_mem_wait    (load_use_hazard_if_mem_wait)
     );
 
-    // A repaired EX result becomes ordinarily forwardable from MEM one cycle
-    // later. Hold only a true consumer while that repair is still in EX.
+    // 修复后的 EX 结果在下一周期从 MEM 变成普通前递来源。只有真正的
+    // 消费者需要在修复结果仍处于 EX 时等待。
     wire id_s0_uses_s0_ex_repair =
         (id_rs1_used & (ex_s0_rd == id_rs1_addr))
       | (id_rs2_used & (ex_s0_rd == id_rs2_addr));
@@ -208,9 +207,8 @@ module issue_hazard_ctrl (
          & (ex_s1_rd != 5'd0)
          & (id_s0_uses_s1_ex_repair | id_s1_uses_s1_ex_repair));
 
-    // MUL leaves EX before its registered result is visible. DIV/REM also
-    // satisfy this predicate while running, with EX backpressure remaining
-    // their primary blocker.
+    // MUL 在寄存结果可见前就离开 EX。DIV/REM 运行期间也满足这个条件，
+    // 但它们的主要阻塞来源仍然是 EX 反压。
     wire id_s0_uses_ex_muldiv =
         (id_rs1_used & (ex_s0_rd == id_rs1_addr))
       | (id_rs2_used & (ex_s0_rd == id_rs2_addr));
@@ -223,9 +221,8 @@ module issue_hazard_ctrl (
                              & (id_s0_uses_ex_muldiv
                                 | id_s1_uses_ex_muldiv);
 
-    // A prestarted Slot-0 MUL samples its DSP inputs as it enters EX. If one
-    // of those inputs is still being produced in EX, defer launch by one cycle
-    // and use the ordinary MEM forwarding path on the retry.
+    // 已预启动的 slot0 MUL 在进入 EX 时采样 DSP 输入。如果某个输入仍由
+    // EX 中的生产者产生，就把启动延后一拍，重试时使用普通 MEM 前递。
     wire id_mul_uses_s0_ex_writer =
         (id_rs1_used & (ex_s0_rd == id_rs1_addr))
       | (id_rs2_used & (ex_s0_rd == id_rs2_addr));
@@ -239,9 +236,8 @@ module issue_hazard_ctrl (
          | (ex_s1_valid & ex_s1_reg_write & (ex_s1_rd != 5'd0)
             & id_mul_uses_s1_ex_writer));
 
-    // EX-load dependencies are independent of MEM/DCache readiness. Keep
-    // them in the common late hazard term instead of duplicating their address
-    // comparisons through both MEM-readiness cofactors.
+    // EX-load 相关性与 MEM/DCache 是否就绪无关。把它放在公共的末端
+    // hazard 条件中，不要把地址比较复制到两个 MEM-ready 分支中。
     assign id_non_load_hazard = repair_use_hazard | muldiv_use_hazard
                               | mul_launch_ex_raw_hazard
                               | load_in_ex | load_in_s1_ex;

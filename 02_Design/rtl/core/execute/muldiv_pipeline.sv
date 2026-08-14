@@ -1,12 +1,13 @@
 // ============================================================
-// Module: muldiv_pipeline
-// Description: Own the MulDiv unit and its cross-stage result lifetime.
-// Domain: execute and MEM handoff.
+// 中文说明：为乘法、除法和取余操作提供多周期流水控制及结果保存。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 模块：muldiv_pipeline
+// 说明：管理乘除法单元，以及结果在多个流水级之间的有效期。
+// 所属阶段：execute，并负责交接到 MEM。
 //
-// Multiplication starts from an accepted ID instruction and advances through
-// EX before the DSP result is ready. Division and remainder remain in EX until
-// completion. This wrapper keeps those ownership rules beside the unit instead
-// of spreading them across cpu_top.
+// 乘法指令在 ID 被接收后启动，经过 EX 后 DSP 结果才准备好；除法和取余
+// 在结果完成前始终由 EX 持有。这个包装模块把这些所有权规则集中在单元旁边，
+// 避免分散到 cpu_top 中。
 // ============================================================
 
 module muldiv_pipeline
@@ -50,9 +51,9 @@ module muldiv_pipeline
 
     assign ex_request = ex_valid & ex_is_muldiv & ~mem_redirect_flush;
 
-    // DIV/REM retain the EX owner until the result and EX/MEM handshakes are
-    // both complete. A prestarted MUL releases its owner with the aligned MEM
-    // token, after any older DCache transaction has finished.
+    // DIV/REM 一直由 EX 持有，直到结果完成且 EX/MEM 握手都结束。
+    // 预启动的 MUL 在对应 MEM token 对齐时释放所有权，但必须先等待更老的
+    // DCache 事务结束。
     assign ex_div_consume = ex_valid & ex_is_muldiv & ex_muldiv_op[2]
                           & done & ex_to_mem_allowin
                           & ~mem_redirect_flush;
@@ -61,9 +62,8 @@ module muldiv_pipeline
     assign consume = ex_div_consume | mem_mul_consume;
     assign flush = frontend_flush | mem_redirect_flush;
 
-    // A MUL token reaches MEM before its DSP result. The MEM/WB payload must
-    // therefore select the registered MulDiv result rather than the early ALU
-    // placeholder carried by EX/MEM.
+    // MUL 的 token 会先于 DSP 结果到达 MEM，因此 MEM/WB payload 必须选择
+    // 已寄存的 MulDiv 结果，而不能选择 EX/MEM 中暂存的早期 ALU 占位结果。
     assign mem_writeback_result =
         ({32{mem_is_mul}}  & result)
       | ({32{~mem_is_mul}} & mem_alu_result);

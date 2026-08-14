@@ -1,8 +1,10 @@
 `ifndef SYNTHESIS
+// 中文说明：在仿真中检查控制流重定向的来源、目标和生效时机是否一致。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
 // ============================================================
-// Module: redirect_consistency_monitor
-// Description: Simulation-only reference for the EX-to-MEM redirect boundary.
-// Domain: observe.
+// 模块：redirect_consistency_monitor。
+// 说明：仅在仿真中参考并检查 EX 到 MEM 的重定向边界。
+// 所属部分：observe。
 // ============================================================
 
 module redirect_consistency_monitor

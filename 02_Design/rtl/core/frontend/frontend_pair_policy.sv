@@ -1,7 +1,9 @@
 // ============================================================
-// Module: frontend_pair_policy
-// Description: Stateless dual-issue pairing policy.
-// Domain: frontend.
+// 中文说明：根据指令类型、资源冲突和串行属性决定两条指令能否组成一个双发射组。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 模块：frontend_pair_policy。
+// 说明：无状态的双发射配对策略。
+// 所属阶段：frontend。
 // ============================================================
 
 module frontend_pair_policy
@@ -44,10 +46,10 @@ module frontend_pair_policy
     (* keep = "true" *) logic pair_ok_if_slot0_lsu;
     (* keep = "true" *) logic pair_ok_if_slot0_non_lsu;
 
-    // Pairing is conservative: only supported instruction classes, no two LSU
-    // ops, no two CFIs, and no Slot 0 -> Slot 1 RAW except the explicit
-    // ALU-to-store-data bypass below. A multiplier may be the Slot 0 producer,
-    // but cannot use that same-cycle ALU-to-store-data bypass.
+    // 配对策略比较保守：只允许支持的指令类别；不允许两个 LSU、两个 CFI，
+    // 也不允许 Slot0 -> Slot1 的 RAW，唯一例外是下面明确允许的
+    // ALU-to-store-data 旁路。乘法器可以作为 Slot0 的产生者，但不能使用
+    // 同周期 ALU-to-store-data 旁路。
     always_comb begin
         raw_rs1_dep = slot0_meta.writes_dst
                     && (slot0_meta.dst_addr != 5'd0)
@@ -59,12 +61,12 @@ module frontend_pair_policy
                     && (slot1_meta.src1_addr == slot0_meta.dst_addr);
         raw_dep = raw_rs1_dep | raw_rs2_dep;
 
-        // In the current ISA subset, a store is the only LSU class that uses
-        // rs2. Its address (rs1) must remain independent, while its data can
-        // consume the Slot 0 ALU result through the EX same-pair bypass.
+        // 在当前 ISA 子集中，store 是唯一使用 rs2 的 LSU 类别。
+        // 它的地址操作数 rs1 必须独立，但写入数据可以通过 EX 同组旁路
+        // 使用 Slot0 的 ALU 结果。
         slot1_is_store = slot1_meta.is_lsu & slot1_meta.uses_src1;
-        // Exact reduction of raw_dep & ~store_data_bypassable: an rs1 RAW
-        // always blocks; an rs2-only RAW is allowed only for ALU -> store data.
+        // 这是 raw_dep & ~store_data_bypassable 的等价简化：rs1 RAW 始终阻塞；
+        // 只有 ALU -> store data 的 rs2 单独 RAW 可以放行。
         blocking_raw_dep = raw_rs1_dep
                          | (raw_rs2_dep
                             & ~(slot0_meta.is_alu_type & slot1_is_store));
@@ -76,9 +78,8 @@ module frontend_pair_policy
             slot1_meta.is_alu_type | slot1_meta.is_lsu | slot1_meta.is_cfi;
         both_cfi = slot0_meta.is_cfi & slot1_meta.is_cfi;
 
-        // Cofactor the class policy on Slot 0 LSU. Its late predecode bit now
-        // selects between two precomputed one-bit candidates instead of
-        // reconverging through supported and both_lsu terms.
+        // 以 Slot0 LSU 为条件因子化类别策略。末级预译码位只在两个已预计算
+        // 的一位候选项之间选择，不再通过 supported 和 both_lsu 重新汇合。
         pair_supported_if_slot0_lsu = slot1_supported
                                     & ~slot1_meta.is_lsu
                                     & ~both_cfi;

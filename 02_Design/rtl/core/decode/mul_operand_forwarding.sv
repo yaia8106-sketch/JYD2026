@@ -1,11 +1,12 @@
 // ============================================================
-// Module: mul_operand_forwarding
-// Description: Physically independent Slot-0 MUL operand forwarding.
-// Domain: decode and issue.
+// 中文说明：为乘法单元提供局部的操作数前递，避免把远端 DSP 输入拖入普通译码选择路径。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 模块：mul_operand_forwarding。
+// 说明：为 Slot0 MUL 提供物理独立的操作数前递。
+// 所属阶段：decode 和 issue。
 //
-// A MUL with an EX RAW dependency waits until the producer reaches MEM. This
-// local forwarding copy therefore selects only registered MEM/WB/RF values and
-// does not pull the ordinary ID operand muxes toward the distant DSP inputs.
+// 当 MUL 与 EX 产生 RAW 相关时，要等产生者到达 MEM。本地前递副本只选择
+// 已寄存的 MEM/WB/寄存器堆值，不把普通 ID 操作数 MUX 的路径拉到远端 DSP 输入。
 // ============================================================
 
 (* keep_hierarchy = "yes" *)

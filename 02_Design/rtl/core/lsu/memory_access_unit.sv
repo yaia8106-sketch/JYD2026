@@ -1,7 +1,9 @@
 // ============================================================
-// Module: memory_access_unit
-// Description: Cache/MMIO request routing and MEM-stage load data muxing.
-// Domain: load/store unit.
+// 中文说明：执行处理器的 load、store 和非缓存访问，并管理 DCache 返回数据和流水线握手。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 模块：memory_access_unit。
+// 说明：路由 Cache/MMIO 请求，并在 MEM 阶段选择 load 数据。
+// 所属单元：load/store。
 // ============================================================
 
 module memory_access_unit #(
@@ -18,9 +20,8 @@ module memory_access_unit #(
     input  logic        ex_mem_unsigned,
     input  logic [ 3:0] ex_store_wea,
     input  logic [31:0] ex_store_data,
-    // Ungated decode intent and payload are selected speculatively.  The late
-    // redirect/trap/replay result is applied only to the final request-valid
-    // predicate, so it cannot enter the wide address/data selection cones.
+    // 未门控的译码意图和 payload 先以推测方式选择。较晚的重定向/陷阱/重放
+    // 结果只作用于最终 request-valid 条件，不会进入宽地址/数据选择逻辑锥。
     input  logic        ex_s1_lsu_select,
     input  logic        ex_s1_side_effect_kill,
     input  logic        ex_s1_mem_read_en,
@@ -83,12 +84,12 @@ module memory_access_unit #(
 
     localparam logic [31:0] DUAL_ISSUE_CNT_ADDR = 32'h8020_0060;
 
-    // Pairing already forbids two LSU instructions.  ex_s1_lsu_select therefore
-    // is the selected-lane bit by itself; repeating the Slot-0 classification
-    // here only places another control level in front of the DCache tag RAM.
-    // Keep the late redirect/trap kill out of the speculative DCache lookup
-    // payload.  A killed request leaves cache_req low, so the selected address,
-    // type and write data are unobservable side-effect-free payload bits.
+    // 配对策略已经禁止两个 LSU 指令同时发射，因此 ex_s1_lsu_select 本身
+    // 就是选中槽位位；这里再次判断 Slot0 类型只会在 DCache tag RAM 前增加
+    // 一层控制逻辑。
+    // 较晚的重定向/陷阱 kill 不进入推测的 DCache 查询 payload。被 kill 的
+    // 请求会让 cache_req 保持低电平，选出的地址、类型和写数据只是不可见的
+    // 无副作用 payload。
     wire ex_use_s1_lsu = ex_s1_lsu_select;
     wire [31:0] ex_lsu_addr = ex_use_s1_lsu ? ex_s1_alu_addr : ex_alu_addr;
     wire [18:0] ex_lsu_lookup_addr = ex_use_s1_lsu
@@ -104,22 +105,21 @@ module memory_access_unit #(
     wire        ex_lsu_unsigned = ex_use_s1_lsu
                                 ? ex_s1_mem_unsigned : ex_mem_unsigned;
     wire [ 3:0] ex_lsu_wea = ex_use_s1_lsu ? ex_s1_store_wea : ex_store_wea;
-    // Store data stays unaligned through the EX request and EX/MEM boundary.
-    // DCache captures it in its internal EX->MEM register and aligns it there;
-    // MMIO aligns the registered payload below.
+    // store 数据在 EX 请求和 EX/MEM 边界保持未对齐形式。DCache 在内部
+    // EX->MEM 寄存器中捕获并完成对齐；MMIO 在下面对已寄存的 payload 对齐。
     wire [31:0] ex_lsu_wdata = ex_use_s1_lsu ? ex_s1_store_data : ex_store_data;
     wire        ex_lsu_cacheable = ex_use_s1_lsu ? is_cacheable_s1 : is_cacheable;
-    // Precompute load-byte candidates in EX; DCache registers the selected
-    // mask with the request for recent-store coverage checks.
+    // 在 EX 预计算 load 字节候选；DCache 随请求寄存最终掩码，用于检查最近
+    // store 是否覆盖了所需数据。
     wire [3:0] ex_load_byte_mask = 4'b0001 << ex_lsu_lookup_addr[1:0];
     wire [3:0] ex_load_half_mask = 4'b0011 << ex_lsu_lookup_addr[1:0];
 
     wire mem_s1_load_active = mem_s1_valid & mem_s1_mem_read_en;
     wire [31:0] mem_lsu_addr = mem_s1_load_active ? mem_s1_alu_result : mem_alu_result;
     wire        mem_lsu_cacheable = mem_s1_load_active ? mem_s1_is_cacheable : mem_is_cacheable;
-    // store_wea is generated with valid/write gating in EX and is masked again
-    // at the EX/MEM.S1 boundary.  Use that registered one-hot payload directly
-    // so redundant valid/write predicates do not enter MMIO read arbitration.
+    // store_wea 在 EX 中已结合 valid/write 条件生成，并在 EX/MEM.S1 边界再次
+    // 掩码。这里直接使用已寄存的 one-hot payload，避免重复 valid/write 条件
+    // 进入 MMIO 读仲裁。
     wire        mem_s0_store_active = |mem_store_wea;
     wire        mem_s1_store_active = |mem_s1_store_wea;
     wire        mem_use_s1_store = mem_s1_store_active;
@@ -136,15 +136,14 @@ module memory_access_unit #(
     wire dual_issue_cnt_read = (mem_lsu_addr == DUAL_ISSUE_CNT_ADDR);
     wire [31:0] mmio_load_data = dual_issue_cnt_read ? dual_issue_count : mmio_rdata;
 
-    // The cacheable window is platform-owned.  JYD keeps its 0x8010_0000
-    // private DRAM window; NSCSCC selects the LA32R data SRAM window without
-    // introducing ISA macros into this shared LSU.
+    // 可缓存地址窗口由平台决定。JYD 保留自己的 0x8010_0000 DRAM 窗口；
+    // NSCSCC 选择 LA32R 数据 SRAM 窗口，同时不把 ISA 宏引入这个共享 LSU。
     assign is_cacheable = (ex_alu_addr & CACHE_ADDR_MASK)
                         == (CACHE_ADDR_BASE & CACHE_ADDR_MASK);
     assign is_cacheable_s1 = (ex_s1_alu_addr & CACHE_ADDR_MASK)
                            == (CACHE_ADDR_BASE & CACHE_ADDR_MASK);
 
-    // An uncacheable store in MEM can conflict with a younger load request.
+    // MEM 中的非缓存 store 可能与更年轻的 load 请求冲突。
     assign mmio_st_ld_hazard = !AXI_UNCACHED_DATA
                              & ex_lsu_read_valid
                              & mem_store_active

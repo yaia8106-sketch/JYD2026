@@ -1,7 +1,7 @@
 // ============================================================
-// Module: id_ex_reg_s1
-// Description: Slot 1 ID/EX structured payload register.
-// Domain: pipeline boundary.
+// 中文说明：保存 slot1 的 ID/EX 流水状态，并处理双发射中的年轻指令清空。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 说明：保存 slot1 的 ID/EX 结构化 payload。
 // ============================================================
 
 module id_ex_reg_s1
@@ -57,10 +57,9 @@ module id_ex_reg_s1
             ex_s1_valid <= id_s1_valid & id_ready_go;
     end
 
-    // The three enables are logically identical but physically local to the
-    // consumers they control.  Splitting the 500+ load global CE keeps each
-    // copy inside one operand/control placement cluster without introducing
-    // data-input hold muxes.
+    // 三个使能在逻辑上相同，但分别靠近各自控制的消费者。拆分原本
+    // 需要驱动 500 多个寄存器的全局 CE 后，每个副本都留在一个操作数/
+    // 控制布局簇中，同时不引入数据输入保持选择器。
     always_ff @(posedge clk) begin
         if (ex_allowin_src1) begin
             ex_payload.common.alu_src1 <= id_payload.common.alu_src1;

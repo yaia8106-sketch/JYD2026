@@ -1,8 +1,10 @@
 // ============================================================
-// Module: frontend_abtb_monitor
-// Description: Simulation/measurement-only ABTB and PHT observability.
-// Domain: frontend observation.
-// These counters and sinks must never feed production control or datapaths.
+// 中文说明：在仿真和调试中观察 ABTB 查询、命中、训练和重定向事件。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 模块：frontend_abtb_monitor。
+// 说明：仅用于仿真和测量，观察 ABTB 与 PHT 的行为。
+// 所属部分：前端观测。
+// 这些计数器和接收端绝不能反馈到正式控制逻辑或数据通路。
 // ============================================================
 
 module frontend_abtb_monitor
@@ -40,8 +42,8 @@ module frontend_abtb_monitor
     output frontend_abtb_counters_t counters
 );
 
-    // Direct-prediction correctness is checked at EX fire, after wrong-path
-    // suppression and Slot 0 priority are applied.
+    // 直接预测正确性在 EX 接收时检查，此时错误路径抑制和 Slot0 优先级
+    // 已经生效。
     wire slot0_direct_resolve =
         slot0_resolve.valid
         && ex_slot0_prediction.prediction.source_abtb
@@ -78,7 +80,7 @@ module frontend_abtb_monitor
         && bank1_lookup.hit
         && (bank1_lookup.cfi_type == CFI_TYPE_BRANCH);
 
-    // Counters are observation-only and must not feed back into prediction.
+    // 计数器只用于观测，不得反馈到预测逻辑。
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             counters <= '0;
@@ -252,7 +254,7 @@ module frontend_abtb_monitor
         counters.hit_update
     };
 
-    // Keep the wide measurement vector live in synthesis measurement builds.
+    // 在综合测量版本中保持宽测量向量不被优化掉。
     (* dont_touch = "true" *)
     logic [ABTB_MEASUREMENT_SINK_W-1:0] measurement_sink_q;
 

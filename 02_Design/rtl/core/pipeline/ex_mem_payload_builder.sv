@@ -1,8 +1,8 @@
 // ============================================================
-// Module: ex_mem_payload_builder
-// Description: Pure combinational construction of EX/MEM payloads.
-// Domain: pipeline boundary.
-// Pipeline valid/allow/flush state remains in ex_mem_reg modules.
+// 中文说明：组合生成 EX/MEM 流水寄存器需要保存的有效载荷，不负责流水寄存器的握手状态。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 说明：只组合生成 EX/MEM 的 payload，不在这里保存流水状态。
+// valid、allow 和 flush 由 ex_mem_reg 模块负责。
 // ============================================================
 
 module ex_mem_payload_builder
@@ -54,8 +54,8 @@ module ex_mem_payload_builder
     output ex_mem_slot1_t      slot1_payload
 );
 
-    // Redirect payload and data payload are built together, but the register
-    // stage may propagate the redirect even when MEM is backpressured.
+    // 重定向 payload 和数据 payload 一起生成，但即使 MEM 受到反压，
+    // 后面的寄存器阶段仍可能单独传播重定向信息。
     always_comb begin
         redirect.valid = redirect_valid;
         redirect.source = redirect_source;

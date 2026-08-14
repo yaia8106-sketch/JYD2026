@@ -1,22 +1,20 @@
 // ============================================================
-// Module: load_hazard_ctrl
-// Description: Load-use stall detection and MEM-load WB repair tagging.
-// Domain: decode and issue.
-//
-// The forwarding network supplies whether a younger producer blocks each
-// possible MEM-load repair source. This module owns only dependency policy;
-// it does not select operand data.
+// 中文说明：识别 load-use 相关性，并为可以在 EX 阶段使用的 MEM load 结果生成修复标签。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 说明：检测 load-use 停顿，并为 MEM load 的 WB 修复生成标签。
+// forwarding 网络提供更年轻生产者是否阻塞某个 MEM load 修复来源的信息；
+// 本模块只负责相关性策略，不选择实际的操作数数据。
 // ============================================================
 
 module load_hazard_ctrl (
-    // Slot 0 ID consumer
+    // slot0 的 ID 消费者
     input  logic [4:0] id_rs1_addr,
     input  logic [4:0] id_rs2_addr,
     input  logic       id_rs1_used,
     input  logic       id_rs2_used,
     input  logic       id_s0_repair_ok,
 
-    // Slot 1 ID consumer
+    // slot1 的 ID 消费者
     input  logic       id_s1_valid,
     input  logic [4:0] id_s1_rs1_addr,
     input  logic [4:0] id_s1_rs2_addr,
@@ -24,7 +22,7 @@ module load_hazard_ctrl (
     input  logic       id_s1_rs2_used,
     input  logic       id_s1_repair_ok,
 
-    // EX load producers
+    // EX 阶段的 load 生产者
     input  logic       ex_valid,
     input  logic       ex_mem_read,
     input  logic [4:0] ex_rd,
@@ -32,7 +30,7 @@ module load_hazard_ctrl (
     input  logic       ex_s1_mem_read,
     input  logic [4:0] ex_s1_rd,
 
-    // MEM load producers
+    // MEM 阶段的 load 生产者
     input  logic       mem_valid,
     input  logic       mem_reg_write,
     input  logic       mem_is_load,
@@ -43,7 +41,7 @@ module load_hazard_ctrl (
     input  logic [4:0] mem_s1_rd,
     input  logic       mem_load_ready,
 
-    // Younger forwarding sources suppress an older MEM-load repair tag.
+    // 更年轻的前递来源会压制更老的 MEM-load 修复标签。
     input  logic       s0_rs1_blocks_s0_mem_repair,
     input  logic       s0_rs2_blocks_s0_mem_repair,
     input  logic       s1_rs1_blocks_s0_mem_repair,
@@ -53,7 +51,7 @@ module load_hazard_ctrl (
     input  logic       s1_rs1_blocks_s1_mem_repair,
     input  logic       s1_rs2_blocks_s1_mem_repair,
 
-    // Repair tags carried into EX
+    // 传入 EX 的修复标签
     output logic       id_rs1_wb_repair,
     output logic       id_rs2_wb_repair,
     output logic       id_rs1_wb_repair_s1,
@@ -63,7 +61,7 @@ module load_hazard_ctrl (
     output logic       id_s1_rs1_wb_repair_s1,
     output logic       id_s1_rs2_wb_repair_s1,
 
-    // Named observation outputs retained by the forwarding integration shell.
+    // forwarding 集成外壳保留的具名观察输出。
     output logic       id_s0_uses_ex_load,
     output logic       id_s1_uses_ex_load,
     output logic       id_s0_uses_s1_ex_load,
@@ -81,12 +79,12 @@ module load_hazard_ctrl (
     output logic       load_use_hazard_if_mem_wait
 );
 
-    // A ready MEM load is registered in MEM/WB while its consumer advances.
-    // The consumer then selects that registered value in EX on the next cycle.
+    // 已就绪的 MEM load 会在消费者前进时写入 MEM/WB，消费者在下一周期
+    // 的 EX 阶段选择这个已寄存的结果。
     localparam logic ENABLE_MEM_LOAD_WB_REPAIR = 1'b1;
 
-    // A MEM load can be either a blocking dependency or a repair source,
-    // depending on whether its data is ready and the consumer can be repaired.
+    // MEM load 可能造成阻塞，也可能成为修复来源，取决于数据是否就绪
+    // 以及当前消费者是否支持修复。
     wire mem_s0_load_pending = mem_valid & mem_is_load & (mem_rd != 5'd0);
     wire mem_s1_load_pending = mem_s1_valid & mem_s1_is_load
                              & (mem_s1_rd != 5'd0);
@@ -113,8 +111,8 @@ module load_hazard_ctrl (
     wire s1_rs2_uses_s1_mem_load = id_s1_valid & id_s1_rs2_used
                                  & (mem_s1_rd == id_s1_rs2_addr);
 
-    // Per-source repair tags distinguish Slot 0 MEM and Slot 1 MEM so EX can
-    // preserve normal forwarding priority when both slots name the same rd.
+    // 每个来源单独保存修复标签，以区分 slot0 MEM 和 slot1 MEM；当两个
+    // slot 写同一个 rd 时，EX 仍能保持正常的前递优先级。
     wire id_rs1_wb_repair_s0_candidate = mem_s0_load_repair_candidate
                                        & id_s0_has_mem_load_repair_path
                                        & s0_rs1_uses_s0_mem_load
@@ -149,9 +147,8 @@ module load_hazard_ctrl (
                                           & s1_rs2_uses_s1_mem_load
                                           & ~s1_rs2_blocks_s1_mem_repair;
 
-    // Readiness is deliberately the final gate on every repair tag. The
-    // dependency/match cones above are useful candidates even while DCache is
-    // still deciding whether the MEM load completes this cycle.
+    // 就绪状态故意作为所有修复标签的最后一道门。即使 DCache 还在决定
+    // 本周期是否完成 MEM load，上面的相关性/匹配逻辑也可以并行计算候选。
     assign id_rs1_wb_repair = mem_load_ready
                             & (id_rs1_wb_repair_s0_candidate
                                | id_rs1_wb_repair_s1_candidate);
@@ -174,7 +171,7 @@ module load_hazard_ctrl (
                                   & id_s1_rs2_wb_repair_s1_candidate;
 
     // ================================================================
-    //  Load-use stall detection
+    //  Load-use 停顿检测
     // ================================================================
     assign id_s0_uses_ex_load = (id_rs1_used & (ex_rd == id_rs1_addr))
                                | (id_rs2_used & (ex_rd == id_rs2_addr));
@@ -206,9 +203,9 @@ module load_hazard_ctrl (
     assign id_s1_uses_s1_mem_load = s1_rs1_uses_s1_mem_load
                                    | s1_rs2_uses_s1_mem_load;
 
-    // Compute both cofactors of MEM readiness in parallel. When the load is
-    // ready, only consumers without a repair path wait. When it is not ready,
-    // every matching consumer waits. The late ready signal selects once.
+    // 并行计算 MEM 就绪和未就绪两种条件下的结果。load 已就绪时，
+    // 只有没有修复路径的消费者需要等待；未就绪时，所有匹配消费者等待。
+    // 最后只用一次末端就绪信号选择结果。
     wire load_in_mem_if_ready = mem_s0_load_pending
                               & ((id_s0_uses_s0_mem_load
                                   & ~id_s0_has_mem_load_repair_path)
@@ -226,11 +223,9 @@ module load_hazard_ctrl (
                                 & (id_s0_uses_s1_mem_load
                                    | id_s1_uses_s1_mem_load);
 
-    // EX-load dependencies are common to both MEM-readiness cofactors.  Keep
-    // only the genuinely readiness-dependent MEM hazards here; forwarding
-    // folds the common EX term into its single late hazard gate.  This avoids
-    // duplicating the same ID address comparisons through both cache-ready
-    // trees before selecting one of them again.
+    // EX-load 相关性同时属于两种 MEM-ready 条件。这里只保留真正依赖
+    // ready 的 MEM hazard；公共 EX 条件由 forwarding 合并到一个末端门控，
+    // 避免同一组 ID 地址比较经过两棵 cache-ready 树后再次选择。
     assign load_use_hazard_if_mem_ready = load_in_mem_if_ready
                                         | load_in_s1_mem_if_ready;
     assign load_use_hazard_if_mem_wait = load_in_mem_if_wait

@@ -1,60 +1,60 @@
 // ============================================================
-// Module: mem_interface
-// Description: DRAM access helpers (pure combinational)
-// Domain: load/store unit.
-//   - Store side (EX stage): WEA generation + store data shift
-//   - Load side (MEM stage): byte extraction + sign/zero extension
-//     Address candidates are computed in parallel before a late lane select.
-// Spec: 02_Design/spec/mem_interface_spec.md
+// 中文说明：连接流水线访存请求和 DCache 接口，保存访存请求在等待期间必须保持的字段。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 模块：mem_interface。
+// 说明：提供 DRAM 访问辅助逻辑（纯组合逻辑）。
+// 所属单元：load/store。
+//   - store 侧（EX 阶段）：生成 WEA，并移动 store 数据；
+//   - load 侧（MEM 阶段）：提取字节并进行符号/零扩展；
+//     地址候选项先并行计算，末级再选择槽位。
+// 规格说明：02_Design/spec/mem_interface_spec.md。
 // ============================================================
 
 module mem_interface (
-    // ---- Store side (used in EX stage) ----
+    // ---- store 侧（EX 阶段使用）----
     input  logic        store_valid,       // ex_valid
     input  logic        store_en,          // ex_mem_write_en
     input  logic [ 1:0] store_addr_low,    // ALU_result[1:0]
     input  logic [ 1:0] store_mem_size,    // 00=B, 01=H, 10=W
     input  logic [31:0] store_data_in,     // rs2_data (raw)
-    output logic [ 3:0] store_wea,         // BRAM byte write enable (gated)
-    output logic [31:0] store_data_out,    // shifted data to BRAM din
+    output logic [ 3:0] store_wea,         // BRAM 字节写使能（已门控）
+    output logic [31:0] store_data_out,    // 移位后送入 BRAM din 的数据
 
-    // ---- Load side (used in MEM stage) ----
+    // ---- load 侧（MEM 阶段使用）----
     input  logic        load_en,
     input  logic [ 1:0] load_addr_low,
     input  logic [ 1:0] load_mem_size,     // 00=B, 01=H, 10=W
     input  logic        load_unsigned,
-    input  logic [31:0] load_dram_dout,    // raw 32-bit BRAM output
-    output wire  [31:0] load_data_out      // extracted + extended result
+    input  logic [31:0] load_dram_dout,    // BRAM 原始 32 位输出
+    output wire  [31:0] load_data_out      // 提取并扩展后的结果
 );
 
     // ================================================================
-    //  Store side: WEA + data shift
+    //  store 侧：WEA + 数据移动。
     // ================================================================
 
-    // WEA: which bytes to write (gated by valid & enable)
+    // WEA：需要写入哪些字节（由 valid 和 enable 控制）。
     wire st_byte = (store_mem_size == 2'b00);
     wire st_half = (store_mem_size == 2'b01);
     wire st_word = (store_mem_size == 2'b10);
 
-    // Misaligned halfword masks are generated literally; the memory system
-    // decides whether such accesses are legal for the target platform.
+    // 未对齐半字掩码按字面生成；访问是否合法由目标平台的存储系统决定。
     wire [3:0] wea_raw = ({4{st_byte}} & (4'b0001 << store_addr_low))
                        | ({4{st_half}} & (4'b0011 << store_addr_low))
                        | ({4{st_word}} & 4'b1111);
 
     assign store_wea = (store_valid & store_en) ? wea_raw : 4'b0000;
 
-    // Data shift: move rs2 data to correct byte lane
+    // 数据移动：将 rs2 数据移到正确的字节通道。
     assign store_data_out = store_data_in << {store_addr_low, 3'b0};
 
     // ================================================================
-    //  Load side: parallel byte extraction + sign/zero extension
+    //  load 侧：并行字节提取 + 符号/零扩展。
     // ================================================================
 
-    // Load validity is deliberately kept out of this wide payload path.  The
-    // MEM/WB registers observe load_data_out only when mem_load_valid accepts
-    // a completed load, so an inactive cycle may carry an arbitrary formatted
-    // candidate.  This removes late LSU-valid control from all 32 data bits.
+    // load 有效位刻意不进入这个宽 payload 路径。MEM/WB 只有在 mem_load_valid
+    // 接受完成的 load 时才观察 load_data_out，因此无效周期可以携带任意格式化
+    // 候选值。这样 32 个数据位都不需要经过末级 LSU-valid 控制。
     wire load_byte_signed   = (load_mem_size == 2'b00) & ~load_unsigned;
     wire load_byte_unsigned = (load_mem_size == 2'b00) &  load_unsigned;
     wire load_half_signed   = (load_mem_size == 2'b01) & ~load_unsigned;
@@ -87,8 +87,7 @@ module mem_interface (
         end
     endfunction
 
-    // These candidates exactly match a logical right shift by addr_low * 8,
-    // including the zero fill used for misaligned accesses.
+    // 这些候选项等价于按 addr_low * 8 进行逻辑右移，包括未对齐访问所需的零填充。
     wire [31:0] shifted_addr0 = load_dram_dout;
     wire [31:0] shifted_addr1 = { 8'd0, load_dram_dout[31:8]};
     wire [31:0] shifted_addr2 = {16'd0, load_dram_dout[31:16]};

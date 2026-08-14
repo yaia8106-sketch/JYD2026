@@ -1,7 +1,9 @@
 // ============================================================
-// Module: mem_wb_reg_s1
-// Description: Slot 1 MEM/WB structured payload register.
-// Domain: pipeline boundary.
+// 中文说明：保存 slot1 的 MEM/WB 流水状态和写回信息。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 模块：mem_wb_reg_s1。
+// 说明：保存 Slot1 的 MEM/WB 结构化 payload。
+// 所属部分：流水线边界。
 // ============================================================
 
 module mem_wb_reg_s1

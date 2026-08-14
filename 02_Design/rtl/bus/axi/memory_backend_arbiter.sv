@@ -1,16 +1,12 @@
 // ============================================================
-// Module: memory_backend_arbiter
-// Description:
-//   Two-client arbiter for the common memory-backend command/response stream.
-//
-//   ICache and DCache reads use different AXI IDs, so one read from each
-//   client may remain outstanding at the same time. Read data is returned by
-//   RID instead of by one global owner bit. DCache writes remain
-//   single-outstanding. Dirty-line writebacks may overlap reads, while
-//   uncached/MMIO writes remain serialized against both read clients.
-//
-//   DCache has command priority so an LSU miss that stalls retirement cannot
-//   be starved by speculative instruction fetches.
+// 中文说明：在 ICache、DCache 和写回请求之间仲裁共享的存储后端接口。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 说明：这是 ICache 与 DCache 共用存储后端的双客户端仲裁器。
+// 两个 Cache 使用不同的 AXI 读 ID，因此各自可以同时保留一个未完成
+// 读请求；返回数据根据 RID 分配给对应客户端，而不是依赖单一 owner 位。
+// 写通道仍然只允许一个未完成写请求。脏行写回可以和读请求重叠，
+// 未缓存/MMIO 写则继续与两个读客户端保持串行。
+// DCache 命令具有优先权，避免 LSU 缺失长期等待时被投机取指饿死。
 // ============================================================
 
 module memory_backend_arbiter #(
@@ -82,9 +78,9 @@ module memory_backend_arbiter #(
     logic d_write_active_q;
     logic d_write_overlap_ok_q;
 
-    // Read slots are independent by AXI ID.  The write slot is independent as
-    // well, but only an explicitly identified cache-line writeback opens the
-    // read/write overlap; an uncached write preserves strong serialization.
+    // 读请求通过不同 AXI ID 独立管理。写请求也有自己的槽位，但只有
+    // 明确标记为 cache line 脏行写回时才允许和读请求重叠；未缓存写仍然
+    // 使用强串行规则。
     wire d_read_can_start = ~d_read_active_q
                           & (~d_write_active_q | d_write_overlap_ok_q);
     wire d_write_can_start = ~d_write_active_q

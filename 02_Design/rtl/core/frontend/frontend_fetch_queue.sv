@@ -1,11 +1,9 @@
 // ============================================================
-// Module: frontend_fetch_queue
-// Description:
-// Domain: frontend.
-// 指令是否能被配对的信息会在模块外进行计算，这个模块是用来实现“队列”的
-// Pair metadata is stored with each entry. Only PC continuity is recorded at
-// enqueue time; the complete pairing policy is evaluated from registered
-// queue-head metadata.
+// 中文说明：保存已经取回并完成前端标记的指令，向译码阶段提供有序的指令表项。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 说明：该模块只负责实现取指队列的存储、入队、出队和占用量管理。
+// 指令能否配对由模块外的配对策略计算；队列中保存配对元数据，入队时
+// 只记录 PC 是否连续，完整的配对判断在队首使用已经寄存的元数据完成。
 // ============================================================
 
 module frontend_fetch_queue
@@ -24,13 +22,13 @@ module frontend_fetch_queue
     input  frontend_fq_entry_t         enq_entry1,
     input  frontend_pair_meta_t        enq_pair_meta0, // 预译码信息。
     input  frontend_pair_meta_t        enq_pair_meta1,
-    // Whether the old tail and this packet's first entry are consecutive.
-    // Same-packet entries are consecutive by construction.
+    // 判断旧 tail 和本次取指包第一条指令的 PC 是否连续；同一取指包
+    // 内两条指令天然连续。
     input  logic                       prev_tail_contiguous,
 
-    // Keep the late acceptance event separate from the already-known packet
-    // width. deq_two selects the early one-entry/two-entry next-state
-    // candidates; deq_fire is only the final select between those candidates.
+    // 将末端的接受事件和已经知道的取指包宽度分开。deq_two 先决定
+    // 一次出队一条还是两条的候选状态，deq_fire 只负责在候选状态间做
+    // 最后的选择。
     input  logic                       deq_fire,
     input  logic                       deq_two,
 
@@ -51,24 +49,21 @@ module frontend_fetch_queue
     localparam int FQ_BANK_DEPTH = FQ_DEPTH / 2;
     localparam int FQ_BANK_ROW_W = FQ_PTR_W - 1;
 
-    // Producer and consumer state are physically independent.  In particular,
-    // the backend-derived dequeue event only enables head_q/deq_total_q; it
-    // never selects a value on the enqueue-side D cone.
+    // 入队端和出队端状态在物理上独立。后端产生的出队事件只使能
+    // head_q/deq_total_q，不参与入队数据端的选择路径。
     (* extract_enable = "yes" *) logic [FQ_PTR_W-1:0] head_q;
     (* extract_enable = "yes" *) logic [FQ_PTR_W:0] enq_total_q;
     (* extract_enable = "yes" *) logic [FQ_PTR_W:0] deq_total_q;
 
     assign head = head_q;
-    // The queue never contains more than FQ_DEPTH entries, so the modulo
-    // (2 * FQ_DEPTH) producer-consumer difference is the exact occupancy.
+    // 队列最多保存 FQ_DEPTH 个表项，因此生产者和消费者指针在
+    // 2*FQ_DEPTH 模空间中的差值就是精确的占用量。
     assign count = enq_total_q - deq_total_q;
 
-    // Only fields consumed after the queue are stored.  Pair-policy metadata
-    // already contains pred_taken, force_single, is_muldiv, is_alu_type,
-    // writes/uses-register and is_lsu/is_cfi, so keeping a second copy of those
-    // bits in the wide entry array merely creates more flops and routing.
-    // Fields used only by the F0 compatibility/debug aliases (privileged,
-    // fence, illegal and exact CFI type) never cross the queue boundary.
+    // 队列只保存出队后仍会使用的字段。配对元数据已经包含预测结果、
+    // 串行属性、乘除法/ALU 类型、寄存器读写属性以及 LSU/控制流属性，
+    // 因此不再在宽表项中复制一份。仅供 F0 兼容或调试使用的特权、
+    // fence、非法指令和精确 CFI 类型不会越过队列边界。
     typedef struct packed {
         logic [31:0]          pc;
         logic [31:0]          inst;
@@ -86,19 +81,18 @@ module frontend_fetch_queue
     } fq_storage_t;
     localparam int FQ_STORAGE_W = $bits(fq_storage_t);
 
-    // The queue always reads two adjacent entries and writes at most two
-    // adjacent entries.  Adjacent pointers have opposite parity, therefore an
-    // even/odd split turns the old logical 2R2W array into two compact 1R1W
-    // banks.  This is both a better RAM inference shape and removes the large
-    // read/write mux fabric that previously occupied the left-side hotspot.
+    // 队列每次读取两个相邻表项，最多写入两个相邻表项。相邻指针的
+    // 奇偶性相反，所以按偶数 bank 和奇数 bank 拆分后，原来的逻辑
+    // 2R2W 数组变成两个紧凑的 1R1W bank，有利于 RAM 推断，也能去掉
+    // 原来占据左侧热点的大型读写选择网络。
     (* ram_style = "distributed" *)
     logic [FQ_STORAGE_W-1:0] even_bank [0:FQ_BANK_DEPTH-1];
     (* ram_style = "distributed" *)
     logic [FQ_STORAGE_W-1:0] odd_bank [0:FQ_BANK_DEPTH-1];
 
-    // pair_contiguous_mem[i] is updated both at the current tail and at the
-    // preceding packet boundary.  Keeping these eight one-bit flags separate
-    // avoids turning either payload bank back into a two-write-port memory.
+    // pair_contiguous_mem[i] 会在当前 tail 和前一个取指包边界分别更新。
+    // 将这八个一位标志独立存放，可以避免把任一 payload bank 重新变成
+    // 双写端口存储器。
     logic pair_contiguous_mem [0:FQ_DEPTH-1];
 
     function automatic fq_storage_t compress_entry(
@@ -130,8 +124,8 @@ module frontend_fetch_queue
     );
         logic reconstructed_direct_jump;
         begin
-            // count is the validity owner, so an exposed queue entry is valid
-            // by construction.  Stale RAM contents are ignored while empty.
+            // count 是队列有效性的唯一所有者，因此只要表项被暴露就一定有效；
+            // 队列为空时，RAM 中的旧数据会被忽略。
             reconstructed_direct_jump = stored.pair_meta.is_cfi
                                       & ~stored.is_conditional_branch
                                       & ~stored.is_indirect_jump;
@@ -207,18 +201,17 @@ module frontend_fetch_queue
 
     wire [31:0] enq_last_next_pc =
         enq_two ? (enq_entry1.pc + 32'd4) : (enq_entry0.pc + 32'd4);
-    // Only these pointers/counters define which queue entries are valid.
-    // Payload storage is intentionally left unreset: stale words cannot be
-    // observed while count is zero, and every newly allocated slot is written
-    // before count exposes it.
+    // 只有这些指针和计数器决定哪些队列表项有效。payload 存储故意不复位：
+    // count 为零时旧数据不可见，而新分配的槽位一定会先写入，再由 count
+    // 对外暴露。
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             head_q <= '0;
         end else if (flush) begin
             head_q <= '0;
         end else if (deq_fire)
-            // Backend acceptance reaches only CE.  Once enabled, the data
-            // input depends solely on the early one-entry/two-entry choice.
+            // 后端接受事件只连接到寄存器 CE。寄存器被使能后，数据输入
+            // 只由前面产生的一条/两条出队候选决定。
             head_q <= deq_two ? head_p2 : head_p1;
     end
 
@@ -249,18 +242,17 @@ module frontend_fetch_queue
             deq_total_q <= deq_total_next;
     end
 
-    // count==0 masks this continuity payload after reset/flush.  The next
-    // accepted packet overwrites it before it is observed.
+    // 复位或冲刷后 count==0 会屏蔽这个连续性字段；下一次接受的取指包
+    // 会在它被观察之前将其覆盖。
     always_ff @(posedge clk) begin
         if (enq_fire)
             tail_next_pc <= enq_last_next_pc;
     end
 
-    // Decode boundary-bit write addresses into per-entry enables. A packet's
-    // first entry is marked contiguous unconditionally: when no valid slot 1
-    // follows it, count prevents pairing and the next packet overwrites this
-    // bit with the real cross-packet continuity result. Consequently no IROM
-    // instruction bit reaches this storage D input.
+    // 将包边界标志的写地址译成每个表项的独立使能。每个包的第一条
+    // 表项先无条件标记为连续；如果后面没有有效 slot1，count 会阻止
+    // 错误配对，下一包随后会用真实的跨包连续性覆盖该位。因此 IROM
+    // 指令位不会进入这部分存储的 D 输入。
     generate
         for (genvar pair_idx = 0; pair_idx < FQ_DEPTH; pair_idx++) begin : g_pair_contiguous_write
             localparam logic [FQ_PTR_W-1:0] PAIR_INDEX = pair_idx;
@@ -297,9 +289,8 @@ module frontend_fetch_queue
         ? compress_entry(enq_entry0, enq_pair_meta0)
         : compress_entry(enq_entry1, enq_pair_meta1);
 
-    // Keep payload banks off reset/flush fanout.  A flush-coincident write is
-    // harmless because count is cleared, and a later allocation overwrites the
-    // selected row before exposing it.
+    // payload bank 不连接复位/冲刷的高扇出网络。与冲刷同周期的写入
+    // 是安全的，因为 count 已经清零；后续分配会在暴露该行前覆盖它。
     always_ff @(posedge clk) begin
         if (even_write)
             even_bank[even_write_row] <= even_write_data;
@@ -310,9 +301,8 @@ module frontend_fetch_queue
 `ifndef SYNTHESIS
     logic [FQ_PTR_W:0] count_reference_q;
 
-    // Retain the former monolithic occupancy equation as an executable model.
-    // This proves simultaneous enqueue/dequeue, wrap, reset and flush behavior
-    // remain cycle-identical after separating producer and consumer state.
+    // 保留原来的整体占用量方程作为可执行参考模型，用来验证拆分生产者
+    // 和消费者状态后，同时入队/出队、指针回绕、复位和冲刷仍保持周期一致。
     always_ff @(posedge clk) begin
         if (!rst_n)
             count_reference_q <= '0;
@@ -338,12 +328,10 @@ module frontend_fetch_queue
             $fatal(1, "FQ occupancy exceeded configured depth");
     end
 
-    // Compression deliberately relies on metadata equality that the packet
-    // builder guarantees.  Keep that contract executable so future frontend
-    // edits cannot silently make a removed duplicate field architecturally
-    // observable. entry.is_control is intentionally excluded: static-kill
-    // illegal/privileged entries may set it without being a CFI, and no
-    // post-FQ consumer observes that retired compatibility field.
+    // 压缩表项依赖 packet builder 保证的元数据等价关系。这里保留可执行
+    // 检查，防止以后前端修改后让被删除的重复字段重新影响架构行为。
+    // entry.is_control 故意不参与压缩：静态冲刷、非法或特权表项可能置位
+    // 它但并不一定是控制流指令，FQ 后的消费者也不会读取这个兼容字段。
     always_ff @(posedge clk) begin
         if (rst_n && enq0_valid) begin
             if ((enq_entry0.pred_taken !== enq_pair_meta0.pred_taken)

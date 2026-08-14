@@ -1,9 +1,11 @@
 // ============================================================
-// Module: alu
-// Description: Architectural integer result plus independent LSU address add.
-// Domain: execute.
-// Spec: 02_Design/spec/alu_spec.md
-// Encoding: semantic values are defined by cpu_defs::alu_op_t.
+// 中文说明：执行加减、逻辑、移位和比较等普通整数 ALU 操作。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 模块：alu
+// 说明：生成架构整数结果，并独立计算 LSU 访存地址。
+// 所属阶段：execute。
+// 规格说明：02_Design/spec/alu_spec.md。
+// 运算编码：具体含义由 cpu_defs::alu_op_t 定义。
 // ============================================================
 
 module alu
@@ -28,8 +30,7 @@ module alu
         .alu_sum    (alu_sum)
     );
 
-    // LSU address calculation is deliberately not part of the duplicated
-    // forwarding datapath.  Its operands retain WB repair semantics.
+    // LSU 地址计算不放入复制的前递数据通路；它的操作数仍遵循 WB 修复规则。
     assign alu_addr = alu_addr_src1 + alu_addr_src2;
 
 endmodule

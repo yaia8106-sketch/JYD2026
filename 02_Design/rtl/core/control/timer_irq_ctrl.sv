@@ -1,7 +1,9 @@
 // ============================================================
-// Module: timer_irq_ctrl
-// Description: Hold a timer interrupt request while the pipeline drains.
-// Domain: architectural control.
+// 中文说明：管理定时器中断的计数、请求生成和进入中断前的边界条件。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 模块：timer_irq_ctrl。
+// 说明：在流水线排空期间保持定时器中断请求。
+// 所属部分：架构控制。
 // ============================================================
 
 module timer_irq_ctrl (
@@ -24,8 +26,7 @@ module timer_irq_ctrl (
     output logic timer_irq_take
 );
 
-    // Timer interrupts are taken only at an instruction boundary after all
-    // older in-flight instructions have drained.
+    // 定时器中断只在指令边界进入，并且必须等所有更老的在途指令排空。
     assign pipeline_empty = ~ex_valid
                           & ~mem_valid
                           & ~wb_valid
@@ -34,7 +35,7 @@ module timer_irq_ctrl (
                           & ~wb_s1_valid;
     assign timer_irq_take = timer_irq_hold & id_valid & pipeline_empty;
 
-    // Hold the request once ID observes it; redirects cancel the pending hold.
+    // ID 观察到请求后将其保持；发生重定向时取消尚未处理的保持请求。
     always_ff @(posedge clk) begin
         if (!rst_n)
             timer_irq_hold <= 1'b0;

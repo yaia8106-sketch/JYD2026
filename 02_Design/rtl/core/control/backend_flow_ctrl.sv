@@ -1,15 +1,15 @@
 // ============================================================
-// Module: backend_flow_ctrl
-// Description:
-//   Owns the combinational ready/allow/fire contract from ID through WB.
-//   Cache readiness is evaluated as two parallel candidates so the late
-//   DCache-ready bit selects one-bit results instead of traversing the full
-//   hazard and MulDiv control cone.
+// 中文说明：汇总后端各流水级的 valid、allow、stall 和 flush 条件，控制指令能否继续向后流动。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 模块：backend_flow_ctrl。
+// 说明：负责 ID 到 WB 的组合 ready/allow/fire 握手约定。
+// Cache 就绪条件并行计算为两个候选项，末级 DCache-ready 位只选择一位结果，
+// 不再穿过完整的 hazard 和 MulDiv 控制逻辑锥。
 //
-// Contract:
-//   - no architectural or pipeline state is stored here;
-//   - flush, serialization and interrupt priority match the original flow;
-//   - duplicated allow outputs intentionally serve separate physical users.
+// 约定：
+//   - 本模块不保存架构状态或流水线状态；
+//   - flush、串行化和中断优先级与原有流程一致；
+//   - 重复的 allow 输出有意服务于不同的物理使用者。
 // ============================================================
 
 module backend_flow_ctrl (
@@ -110,8 +110,8 @@ module backend_flow_ctrl (
                        & ex_muldiv_ready
                        & ex_priv_ready;
 
-    // DCache owns MEM completion. Keep three identical copies because their
-    // consumers occupy the LSU, control and wide pipeline-register clusters.
+    // DCache 负责 MEM 阶段完成条件。保留三份相同副本，因为它们的消费者
+    // 分别位于 LSU、控制逻辑和宽流水线寄存器簇。
     assign mem_ready_go = cache_ready;
     assign mem_can_advance = ~mem_valid | mem_ready_go;
     assign mem_allowin_lsu = ~mem_valid
@@ -125,8 +125,8 @@ module backend_flow_ctrl (
                                   | mem_ready_go;
     assign id_muldiv_unit_ready = ~id_issue_is_muldiv | ~muldiv_busy;
 
-    // A completed MulDiv owner may be replaced on the same edge that its
-    // aligned EX/MEM token advances. Build both cache-ready cases in parallel.
+    // 已完成的 MulDiv 所有者可以在对齐的 EX/MEM token 前进的同一时钟沿被替换。
+    // 两种 cache-ready 情况并行构造。
     assign muldiv_done_releases_if_cache_ready =
         (mem_valid & mem_is_mul)
         | (ex_valid & ex_is_muldiv & ex_is_divrem & ~mem_branch_flush);
@@ -173,8 +173,8 @@ module backend_flow_ctrl (
         & id_muldiv_owner_ready_if_cache_wait
         & id_muldiv_done_ready_if_cache_wait;
 
-    // WB is always ready today. When the cache is waiting, EX may advance only
-    // into an empty MEM stage; the two equations stay explicit for placement.
+    // 当前 WB 始终 ready。Cache 等待时，EX 只能进入空的 MEM 阶段；
+    // 两个方程保持显式形式，便于布局。
     assign ex_allowin_if_cache_ready = ~ex_valid | ex_ready_go;
     assign ex_allowin_if_cache_wait = ~ex_valid
                                     | (ex_ready_go & ~mem_valid);
@@ -196,8 +196,8 @@ module backend_flow_ctrl (
                       ? ex_allowin_if_cache_ready
                       : ex_allowin_if_cache_wait;
 
-    // This local selector remains separate from the architectural EX allow net
-    // so the narrow ID/EX timing mirrors have a placement-local copy.
+    // 这个局部选择器与架构 EX allow 网络分开，使窄的 ID/EX 时序镜像拥有
+    // 布局局部的副本。
     id_ex_allowin_local u_ex_allowin_ex_local (
         .cache_ready         (cache_ready),
         .allow_if_cache_ready(ex_allowin_if_cache_ready),

@@ -1,8 +1,9 @@
 // ============================================================
-// Module: serialization_ctrl
-// Description:
-//   Tracks the single serializing instruction that may occupy the backend.
-//   Decode prevents a second instruction from entering while this bit is set.
+// 中文说明：识别需要串行执行的指令，并阻止更年轻的指令越过它们。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 模块：serialization_ctrl。
+// 说明：跟踪当前占用后端的唯一串行化指令；该位有效时，译码会阻止第二条
+// 指令进入后端。
 // ============================================================
 
 module serialization_ctrl (

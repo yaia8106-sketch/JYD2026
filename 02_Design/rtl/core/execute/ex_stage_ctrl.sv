@@ -1,7 +1,9 @@
 // ============================================================
-// Module: ex_stage_ctrl
-// Description: EX-stage local glue for repair/result muxing and S1 redirect.
-// Domain: execute.
+// 中文说明：组织 EX 阶段的执行选择、结果有效性、访存请求和跳转请求。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 模块：ex_stage_ctrl
+// 说明：组织 EX 阶段的 repair、结果 MUX 以及 S1 重定向控制。
+// 所属阶段：execute。
 // ============================================================
 
 module ex_stage_ctrl
@@ -81,8 +83,8 @@ module ex_stage_ctrl
     assign ex_pc_plus_4 = ex_pc + 32'd4;
     assign ex_s1_pc_plus_4 = ex_s1_pc + 32'd4;
 
-    // WB repair replaces only operands that originally came from rs1/rs2.
-    // PC/zero/immediate operands must remain unchanged.
+    // WB 修复只替换原本来自 rs1/rs2 的操作数；PC、常数零和立即数
+    // 这些来源不应被替换。
     assign ex_alu_src1_repair = ex_alu_src1_wb_repair
                               ? wb_load_data_ex_s0 : ex_alu_src1;
     assign ex_alu_src2_repair = ex_alu_src2_wb_repair
@@ -99,10 +101,9 @@ module ex_stage_ctrl
                                  ? wb_load_data_ex_s1 : ex_s1_rs1_data;
     assign ex_s1_rs2_data_repair = ex_s1_rs2_wb_repair
                                  ? wb_load_data_ex_s1 : ex_s1_rs2_data;
-    // Forward the architectural writeback value, not always the ALU output.
-    // Compute independent candidates in parallel and keep the late result
-    // selection as a shallow AND-OR mux. These instruction classes are
-    // mutually exclusive by decode.
+    // 前递架构写回值，而不是固定前递 ALU 输出。
+    // 各候选结果并行计算，末级只保留浅层 AND-OR MUX；这些指令类别
+    // 由译码保证互斥。
     wire ex_uses_forward_special_result = ex_is_priv_reg | ex_is_muldiv;
     wire [31:0] ex_forward_selected_result =
         ({32{ex_is_priv_reg}}   & ex_priv_rdata)
@@ -111,13 +112,11 @@ module ex_stage_ctrl
     assign ex_forward_result = ex_forward_selected_result;
     assign ex_pipe_alu_result = ex_forward_selected_result;
 
-    // Keep S0 and S1 targets physically separate. The issue rules make their
-    // CFI paths mutually exclusive, but STA still times any shared mux output
-    // into both redirect checkers.
-    // Conditional/direct targets are PC + immediate. JIRL is not allowed to
-    // carry a repair tag. Use the raw target operands here so the new
-    // WB-load-to-branch comparator path cannot also enter either 32-bit target
-    // adder and redirect checker.
+    // S0 和 S1 的目标地址通路保持物理分离。虽然发射规则保证两条控制流
+    // 路径互斥，STA 仍会分析共享 MUX 输出到两个重定向检查点的路径。
+    // 条件分支和直接跳转的目标是 PC + 立即数；JIRL 不允许携带 repair 标签。
+    // 这里使用原始目标操作数，使新增的 WB-load-to-branch 比较器前递路径
+    // 不会再进入两个 32 位目标加法器和重定向检查器。
     wire [31:0] ex_control_target_sum = ex_alu_src1 + ex_alu_src2;
     assign ex_control_target = ex_control_target_sum
                              & ~{30'd0, ex_target_clear_mask};
@@ -142,11 +141,10 @@ module ex_stage_ctrl
     wire ex_s1_target_mismatch = ex_s1_control_target
                                != ex_s1_predicted_target;
 
-    // Form redirect truth-table candidates directly from the comparator and
-    // prediction.  The old path first constructed the complete actual_taken,
-    // then direction_wrong, target_wrong and finally their OR.  These three
-    // candidates are equivalent but independent, leaving only the CFI-class
-    // selector after the late branch comparison.
+    // 直接根据比较器和预测结果构造重定向真值表候选项。
+    // 旧路径先生成完整的 actual_taken，再依次生成 direction_wrong、
+    // target_wrong，最后再 OR；现在三个候选项并行生成，只在分支比较之后
+    // 保留一个 CFI 类别选择器。
     wire ex_s1_conditional_mispredict = ex_s1_branch_taken
         ? (~ex_s1_predicted_taken | ex_s1_target_mismatch)
         : ex_s1_predicted_taken;
@@ -164,9 +162,9 @@ module ex_stage_ctrl
                                  & ex_s1_mispredict
                                  & ~mem_branch_flush
                                  & ex_ready_go & mem_allowin;
-    // A misaligned Slot-1 LSU is replayed from its own PC.  It then becomes
-    // Slot 0 and enters the ISA-owned precise exception path after the older
-    // instruction in this pair has retired.
+    // Slot-1 LSU 地址未对齐时，从该指令自己的 PC 重新执行。
+    // 重放后它会成为 Slot 0，并在同一发射组中更老的指令提交后进入
+    // ISA 规定的精确异常路径。
     wire ex_s1_addr_replay_redirect = ex_valid & ex_s1_valid
                                     & ex_s1_addr_replay
                                     & ~mem_branch_flush
@@ -178,12 +176,11 @@ module ex_stage_ctrl
                                       | ex_priv_redirect
                                       | ex_s1_branch_redirect
                                       | ex_s1_addr_replay_redirect;
-    // Register only the redirect source and actual direction.  MEM selects the
-    // final 32-bit PC from candidates already present in the EX/MEM payload.
-    // A false-positive BTB hit deliberately redirects even when the decoded
-    // operation is CF_NONE, so source selection must use the raw repair
-    // request rather than the decoded CFI class.  S0 has age priority over S1,
-    // and synchronous privileged flow has priority over both slots.
+    // 这里只寄存重定向来源和实际方向。MEM 从 EX/MEM payload 中已有的候选项
+    // 选择最终 32 位 PC。
+    // 对于 BTB 误命中的情况，即使译码结果为 CF_NONE，也要按设计进行重定向，
+    // 因此来源选择必须使用原始 repair 请求，而不是译码出的 CFI 类别。
+    // S0 年龄优先于 S1，同步特权流优先于两个发射槽。
     wire ex_s1_addr_replay_request = ex_valid & ex_s1_valid
                                    & ex_s1_addr_replay;
     always_comb begin

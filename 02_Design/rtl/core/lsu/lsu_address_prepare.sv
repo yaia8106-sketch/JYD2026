@@ -1,9 +1,10 @@
 // ============================================================
-// Module: lsu_address_prepare
-// Description:
-//   Computes the DCache lookup address and byte-alignment address for one EX
-//   lane. The two-bit modulo sum is intentionally independent of the 19-bit
-//   lookup adder so alignment does not inherit the DCache address carry chain.
+// 中文说明：整理 LSU 使用的有效地址、地址低位、缓存属性和异常检查输入。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 模块：lsu_address_prepare。
+// 说明：为一个 EX 槽位计算 DCache 查询地址和字节对齐所需地址。
+// 两位模加法器与 19 位查询加法器刻意独立，使对齐判断不继承 DCache 地址
+// 加法器的进位链。
 // ============================================================
 
 module lsu_address_prepare (

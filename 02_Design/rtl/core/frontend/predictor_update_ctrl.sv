@@ -1,8 +1,10 @@
 // ============================================================
-// Module: predictor_update_ctrl
-// Description: Select one resolved CFI and generate ABTB/PHT updates.
-// Domain: frontend.
-// The issue policy guarantees that at most one slot contains a CFI.
+// 中文说明：根据已确认的分支结果更新方向预测器和 ABTB，并屏蔽错误路径上的更新。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 模块：predictor_update_ctrl。
+// 说明：选择一条已经确认的 CFI，并生成 ABTB/PHT 更新。
+// 所属阶段：frontend。
+// 发射策略保证每个发射组最多只有一个 slot 包含 CFI。
 // ============================================================
 
 module predictor_update_ctrl
@@ -25,9 +27,9 @@ module predictor_update_ctrl
     output abtb_update_t       abtb_update,
     output pht_update_t        pht_update,
 
-    // Registered predictor write events. The raw outputs above remain aligned
-    // with EX for redirect/observation; only these events mutate ABTB/PHT/GHR.
-    // 原始 update 与 EX 对齐；真正修改 ABTB/PHT/GHR 的 write 事件延后一拍。
+    // 已寄存的预测器写事件。上面的原始输出仍与 EX 对齐，用于重定向和观测；
+    // 只有这些事件会真正修改 ABTB/PHT/GHR。
+    // 真正的 write 事件相对 EX 延后一拍。
     output abtb_update_t       abtb_write,
     output pht_update_t        pht_write
 );
@@ -40,17 +42,16 @@ module predictor_update_ctrl
                              & (slot1_resolve.is_conditional_branch
                               | slot1_resolve.is_direct_jump
                               | slot1_resolve.is_indirect_jump);
-    // frontend_pair_policy rejects two-CFI pairs, and Slot-0 JALR is forced
-    // single.  Keep the slots independent here so one slot's CFI decode does
-    // not sit on the other slot's predictor write-enable path.  The assertion
-    // below guards this pipeline invariant in simulation.
+    // frontend_pair_policy 已拒绝两个 CFI 的配对，Slot0 JALR 也被强制单发。
+    // 这里仍让两个 slot 独立处理，使一个 slot 的 CFI 译码不会进入另一个
+    // slot 的预测器写使能路径；下面的断言在仿真中保护这个流水线不变量。
     wire slot0_selected = slot0_cfi_candidate;
     wire slot1_selected = slot1_cfi_candidate;
     wire update_fire = ex_ready_go & mem_allowin & ~mem_branch_flush;
 
-    // Qualify each slot independently before the final priority selection.
-    // In particular, Slot 1 actual_taken no longer passes through a selected
-    // type/actual mux before it reaches the ABTB update-valid decision.
+    // 在最终优先级选择之前分别筛选每个 slot。
+    // 特别是 Slot1 的 actual_taken 不再先经过 selected type/actual MUX，
+    // 而是直接进入 ABTB update-valid 判断。
     wire slot0_is_abtb_branch =
         slot0_resolve.update_cfi_type == CFI_TYPE_BRANCH;
     wire slot1_is_abtb_branch =
@@ -61,8 +62,8 @@ module predictor_update_ctrl
     wire slot1_abtb_qualified = slot1_resolve.update_qualified
                               & (~slot1_is_abtb_branch
                                  | slot1_resolve.actual_taken);
-    // update_qualified is generated only for predictor-trainable CFIs, so the
-    // An additional control-flow-class candidate gate would be redundant.
+    // update_qualified 只对可以训练预测器的 CFI 产生，因此不需要再增加
+    // 一个重复的控制流类别候选门。
     wire slot0_abtb_fire = update_fire & slot0_resolve.valid
                          & slot0_abtb_qualified;
     wire slot1_abtb_fire = update_fire & slot1_resolve.valid
@@ -75,9 +76,8 @@ module predictor_update_ctrl
     assign slot0_cfi_valid = slot0_cfi_candidate;
     assign slot1_cfi_valid = slot1_cfi_candidate;
 
-    // Only one CFI trains the predictors each cycle.  Because the slot-valid
-    // predicates are mutually exclusive for CFIs, this remains a one-hot
-    // selection without a cross-slot priority dependency.
+    // 每周期只有一条 CFI 训练预测器。由于两个 slot 的 CFI 有效条件互斥，
+    // 这里保持 one-hot 选择，不需要跨 slot 的优先级依赖。
     always_comb begin
         train = '0;
         abtb_update = '0;
@@ -119,12 +119,11 @@ module predictor_update_ctrl
         pht_update.actual_taken = train.actual_taken;
     end
 
-    // EX resolve and frontend predictor state are separated by a real clock
-    // boundary. Payload fields are deliberately free-running; reset and late
-    // wrong-path suppression affect only valid. Once captured, an older event
-    // must write on the next edge even if a new MEM redirect is then present.
-    // This pipeline accepts one event every cycle, so consecutive CFIs retain
-    // their original order without a queue or backpressure path.
+    // EX 确认和前端预测器状态之间有真实的时钟边界。payload 字段故意自由运行；
+    // 复位和末级错误路径抑制只影响 valid。事件一旦捕获，下一拍必须写入，
+    // 即使这时又出现了新的 MEM 重定向。
+    // 该流水线每周期可接受一个事件，因此连续 CFI 在不增加队列和反压路径的
+    // 情况下仍保持原有程序顺序。
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             abtb_write.valid <= 1'b0;

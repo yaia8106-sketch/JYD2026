@@ -1,15 +1,12 @@
 // ============================================================
-// Module: frontend_abtb
-// "a" means ahead
-// "btb" means branch target buffer
-// Description: Two-bank, two-way ahead BTB for one 64-bit fetch block.
-// Domain: frontend.
-//   - bank0 describes block_pc
-//   - bank1 describes block_pc + 4
-//   - both banks are read combinationally and in parallel
-//   - only one confirmed CFI update(not two) can be written per cycle
-
-// Direction and ret ins'state&direction are intentionally outside this module.
+// 中文说明：实现地址分支目标表，保存分支 PC、目标地址和预测相关属性。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 模块：frontend_abtb。
+// “a”表示 ahead（提前查询），“btb”表示 branch target buffer（分支目标缓冲）。
+// 说明：为一个 64 位取指块提供双 bank、两路组相联的提前查询 BTB。
+// bank0 对应 block_pc，bank1 对应 block_pc + 4；两组都并行组合读出，
+// 每周期最多写入一条已经确认的控制流指令更新。
+// 方向预测和返回指令状态/方向由模块外部维护。
 // ============================================================
 
 module frontend_abtb #(
@@ -19,17 +16,16 @@ module frontend_abtb #(
     input  logic        clk,
     input  logic        rst_n,
 
-    // The integrated frontend gives the ABTB the same redirect observed by
-    // the canonical fetch-PC state.  Standalone users may leave local lookup
-    // index state disabled and drive predict_pc directly as before.
+    // 集成前端把规范取指 PC 状态观察到的同一个重定向送给 ABTB。
+    // 独立使用时可以关闭本地查询索引状态，继续直接驱动 predict_pc。
     input  logic        redirect_valid,
     input  logic [31:0] redirect_target,
 
-    // Stage-1 lookup. lookup_valid also qualifies LRU updates.
+    // 一级查询。lookup_valid 同时作为 LRU 更新的有效条件。
     input  logic        lookup_valid,
     input  logic [31:0] predict_pc, // 当前预测 PC；模块内部同时派生顺序 PC。
 
-    // Future PHT/RAS result inputs. J type instruction's directions are generated locally from the stored CFI type.
+    // 预留的 PHT/RAS 结果输入。J 类指令的方向由本地保存的 CFI 类型直接产生。
     input  logic        bank0_branch_taken,
     input  logic        bank1_branch_taken,
     input  logic        bank0_ret_valid,
@@ -37,15 +33,15 @@ module frontend_abtb #(
     input  logic        bank1_ret_valid,
     input  logic [31:0] bank1_ret_target,
 
-    // Parallel per-bank lookup metadata.
-    output logic        bank0_eligible, // if predict_pc[2] is 1, bank0 is not eligible for prediction
-    output logic        bank0_lookup_hit, // if(pred_tag == bank0_tag && bank0_valid)
-    output logic        bank0_hit, // if(lookup_valid && bank0_lookup_hit)
+    // 每个 bank 的并行查询元数据。
+    output logic        bank0_eligible, // predict_pc[2] 为 1 时，bank0 不参与预测
+    output logic        bank0_lookup_hit, // pred_tag == bank0_tag 且 bank0_valid
+    output logic        bank0_hit, // lookup_valid 且 bank0_lookup_hit
     output logic        bank0_way, // ~pred_pc[3]
-    output logic [ 1:0] bank0_cfi_type, // JAL, JALR, BRANCH, RET
-    output logic [31:0] bank0_abtb_pred_target, // from ABTB RAM, before RET replacement
+    output logic [ 1:0] bank0_cfi_type, // JAL、JALR、BRANCH、RET
+    output logic [31:0] bank0_abtb_pred_target, // 来自 ABTB RAM，尚未替换 RET 目标
     output logic        bank0_pred_taken,
-    output logic [31:0] bank0_final_pred_target, // if RET, from RAS; else from ABTB RAM
+    output logic [31:0] bank0_final_pred_target, // RET 时来自 RAS，否则来自 ABTB RAM
 
     output logic        bank1_eligible,
     output logic        bank1_lookup_hit,
@@ -56,24 +52,22 @@ module frontend_abtb #(
     output logic        bank1_pred_taken,
     output logic [31:0] bank1_final_pred_target,
 
-    // Program-order selection. bank0 wins when both candidates are taken.
+    // 按程序顺序选择；两个候选都跳转时 bank0 优先。
     output logic        pred_taken,
     output logic        pred_bank,
     output logic [ 1:0] pred_cfi_type,
     output logic [31:0] pred_target,
-    output logic [31:0] pred_next_pc, // if pred_taken is 1, pred_next_pc = pred_target; else pred_next_pc = sequential_next_pc
-    // Same prediction without lookup_valid qualification. The frontend samples
-    // it only on an accepted lookup, while keeping acceptance/backpressure out
-    // of the recursive next-PC datapath.
+    output logic [31:0] pred_next_pc, // pred_taken 为 1 时取 pred_target，否则取顺序 next PC
+    // 不附加 lookup_valid 条件的预测结果。前端只在查询被接受时采样结果，
+    // 这样接受/反压逻辑不会进入递归的 next-PC 数据通路。
     output logic [31:0] pred_next_pc_early,
 
-    // Confirmed update port.
-    // A hit uses bank/way metadata carried from prediction to update
-    // unhit update will be allocated by valid/LRU.
+    // 已确认更新端口。命中时使用预测阶段携带的 bank/way 元数据更新；
+    // 未命中时由 valid/LRU 逻辑选择分配位置。
     input  logic        update_valid,
     input  logic        update_hit,
-    // !These metadata may become stale after an intervening replacement;
-    // !now we choose to use the stale metadata to update, but it will cause misprediction if the stale metadata is wrong.
+    // 注意：如果中间发生了替换，这些元数据可能过期。
+    // 当前仍使用保存下来的位置更新；若位置已错误，结果会表现为预测错误。
     input  logic        update_way,
     input  logic [31:0] update_pc,
     input  logic [ 1:0] update_cfi_type,
@@ -82,34 +76,32 @@ module frontend_abtb #(
 
     localparam int SETS = 32;
     localparam int SET_IDX_W = $clog2(SETS);
-    // Competition traces need two more retained address bits than the former
-    // PC[13:7] tag. With 32 sets, PC[7:3] selects the set and PC[16:8] is the
-    // observed alias-free nine-bit tag.
+    // 比赛程序的地址分布需要比原来的 PC[13:7] tag 多保存两位地址。
+    // 在 32 个 set 的配置中，PC[7:3] 选择 set，PC[16:8] 作为当前观察到的
+    // 无别名九位 tag。
     localparam int TAG_W = 9;
 
     localparam int PAYLOAD_W = TAG_W + 2 + 32;
     localparam int TYPE_MSB = 33;
     localparam int TYPE_LSB = 32;
 
-    // Lookup validity lives in one compact four-bit-wide LUTRAM.  This removes
-    // the four resettable 32:1 FF muxes from the recursive next-PC path while
-    // leaving the wide payload RAMs with only their normal update write port.
-    // A separate non-critical mirror serves miss allocation.
+    // 查询有效位存放在一个紧凑的四位宽 LUTRAM 中。这样可以从递归 next-PC
+    // 路径中移除四个需要复位的 32:1 FF MUX，同时让宽 payload RAM 只保留
+    // 普通更新写端口。另有一个非关键路径镜像供 miss 分配使用。
     logic bank0_way0_alloc_valid [0:SETS-1];
     logic bank0_way1_alloc_valid [0:SETS-1];
     logic bank1_way0_alloc_valid [0:SETS-1];
     logic bank1_way1_alloc_valid [0:SETS-1];
 
-    // Bit order is {bank1 way1, bank1 way0, bank0 way1, bank0 way0}.
-    // Only this narrow memory is cleared after reset.  Clearing the 44-bit
-    // payload memories made Vivado duplicate their LUTRAM implementation.
+    // 位顺序为 {bank1 way1, bank1 way0, bank0 way1, bank0 way0}。
+    // 复位后只清除这个窄存储体；如果清除 44 位 payload 存储体，Vivado 会
+    // 复制其 LUTRAM 实现，增加资源和布线。
     (* ram_style = "distributed" *)
     logic [3:0] lookup_valid_mem [0:SETS-1];
 
-    // Keep each bank/way payload as one compact logical memory. Predictor
-    // training is registered before this module, so its write enable no
-    // longer contains the backend resolve/allow chain that motivated the
-    // former payload chunking experiment.
+    // 每个 bank/way 的 payload 保持为一个紧凑的逻辑存储体。
+    // 预测器训练在进入本模块前已经寄存，因此写使能不再包含曾经导致
+    // payload 分块实验的后端 resolve/allow 逻辑链。
     (* ram_style = "distributed" *)
     logic [PAYLOAD_W-1:0] bank0_way0_payload [0:SETS-1];
     (* ram_style = "distributed" *)
@@ -119,7 +111,7 @@ module frontend_abtb #(
     (* ram_style = "distributed" *)
     logic [PAYLOAD_W-1:0] bank1_way1_payload [0:SETS-1];
 
-    // Value is the way to replace next when both ways are valid.
+    // 当两路都有效时，表示下一次要替换的 way。
     logic bank0_lru [0:SETS-1];
     logic bank1_lru [0:SETS-1];
 
@@ -129,12 +121,10 @@ module frontend_abtb #(
     wire [TAG_W-1:0] pred_lookup_tag =
         pred_lookup_block_pc[3 + SET_IDX_W +: TAG_W];
 
-    // PC[7:3] addresses every bit of five asynchronous LUTRAMs.  Driving all
-    // of those address pins from the canonical fetch-PC register created the
-    // remaining high-fanout recursive timing path.  In the integrated core,
-    // keep five small, cycle-identical index states local to their memories.
-    // Only the index is replicated: tags, targets and the architectural PC
-    // remain single-copy state.
+    // PC[7:3] 同时驱动五个异步 LUTRAM 的地址位。由规范取指 PC 寄存器直接
+    // 驱动所有地址引脚会形成剩余的高扇出递归时序路径。
+    // 在集成核心中，为每个存储体保留一个小型、周期同步的本地索引状态。
+    // 只复制索引；tag、target 和架构 PC 仍保持单份状态。
     wire [SET_IDX_W-1:0] bank0_way0_lookup_set;
     wire [SET_IDX_W-1:0] bank0_way1_lookup_set;
     wire [SET_IDX_W-1:0] bank1_way0_lookup_set;
@@ -143,9 +133,8 @@ module frontend_abtb #(
 
     generate
         if (LOCAL_LOOKUP_INDEX) begin : g_local_lookup_index
-            // KEEP is intentional and narrowly scoped: without it these five
-            // equivalent state vectors collapse back into the original
-            // high-fanout PC-index driver during synthesis.
+            // KEEP 是有意且局部使用的：没有它，综合可能把五个等价的状态向量
+            // 合并回原来的高扇出 PC 索引驱动器。
             (* keep = "true" *) logic [SET_IDX_W-1:0] bank0_way0_set_q;
             (* keep = "true" *) logic [SET_IDX_W-1:0] bank0_way1_set_q;
             (* keep = "true" *) logic [SET_IDX_W-1:0] bank1_way0_set_q;
@@ -217,7 +206,7 @@ module frontend_abtb #(
     wire bank1_way0_lookup_valid = lookup_valid_vector[2];
     wire bank1_way1_lookup_valid = lookup_valid_vector[3];
 
-    // TAG
+    // TAG 字段。
     wire [TAG_W-1:0] bank0_way0_lookup_tag =
         bank0_way0_lookup_payload[PAYLOAD_W-1 -: TAG_W];
     wire [TAG_W-1:0] bank0_way1_lookup_tag =
@@ -227,7 +216,7 @@ module frontend_abtb #(
     wire [TAG_W-1:0] bank1_way1_lookup_tag =
         bank1_way1_lookup_payload[PAYLOAD_W-1 -: TAG_W];
 
-    // TYPE
+    // TYPE 字段。
     wire [1:0] bank0_way0_lookup_type =
         bank0_way0_lookup_payload[TYPE_MSB:TYPE_LSB];
     wire [1:0] bank0_way1_lookup_type =
@@ -237,7 +226,7 @@ module frontend_abtb #(
     wire [1:0] bank1_way1_lookup_type =
         bank1_way1_lookup_payload[TYPE_MSB:TYPE_LSB];
 
-    // TARGET
+    // TARGET 字段。
     wire [31:0] bank0_way0_stored_target = bank0_way0_lookup_payload[31:0];
     wire [31:0] bank0_way1_stored_target = bank0_way1_lookup_payload[31:0];
     wire [31:0] bank1_way0_stored_target = bank1_way0_lookup_payload[31:0];
@@ -326,10 +315,10 @@ module frontend_abtb #(
     logic bank0_update_alloc_way;
     logic bank1_update_alloc_way;
 
-    // Miss allocation first fills invalid ways, then falls back to pseudo-LRU.
-    // Compute both banks in parallel. The former bank-first priority tree put
-    // update_bank in front of allocation, hit selection, and the LUTRAM write
-    // enable; only the final bank-valid gate actually depends on update_bank.
+    // miss 分配优先使用无效 way，两个 way 都有效时再使用伪 LRU。
+    // 两个 bank 并行计算。旧的 bank-first 优先树会把 update_bank 放到
+    // 分配、命中选择和 LUTRAM 写使能之前；实际上只有末级 bank-valid 门
+    // 真正依赖 update_bank。
     always_comb begin
         if (!bank0_way0_alloc_valid[update_set])
             bank0_update_alloc_way = 1'b0;
@@ -350,9 +339,8 @@ module frontend_abtb #(
                                                 : bank0_update_alloc_way;
     wire bank1_update_selected_way = update_hit ? update_way
                                                 : bank1_update_alloc_way;
-    // Predictor training during the short reset-clear window is deliberately
-    // ignored. It is speculative state only; architectural execution keeps
-    // running sequentially and normal training resumes as soon as ready.
+    // 复位清除的短窗口内故意忽略预测器训练。这里的状态只是推测状态，
+    // 架构执行仍按顺序进行；ready 后恢复正常训练。
     wire bank0_update_fire = update_valid & abtb_ready & ~update_bank;
     wire bank1_update_fire = update_valid & abtb_ready &  update_bank;
 
@@ -373,8 +361,8 @@ module frontend_abtb #(
     end
 
     integer set_i;
-    // This resettable mirror is used only by the update/allocation cluster.
-    // The timing-critical lookup consumes the valid bit stored in LUTRAM.
+    // 这个可复位镜像只供更新/分配逻辑使用；时序关键的查询使用 LUTRAM
+    // 中保存的有效位。
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             for (set_i = 0; set_i < SETS; set_i = set_i + 1) begin
@@ -425,8 +413,8 @@ module frontend_abtb #(
             ? (bank1_update_selected_way ? 4'b1000 : 4'b0100)
             : 4'b0000);
 
-    // Only the narrow lookup-valid LUTRAM is cleared, one set per cycle.
-    // Prediction is masked until the last set is cleared.
+    // 每周期清除一个 set 的窄 lookup-valid LUTRAM。最后一个 set 清除前，
+    // 预测输出会被屏蔽。
     always_ff @(posedge clk) begin
         if (rst_n) begin
             if (clear_active) begin
@@ -436,9 +424,8 @@ module frontend_abtb #(
         end
     end
 
-    // Wide payload contents are irrelevant until lookup_valid_mem says that
-    // the corresponding way is valid, so these arrays intentionally have no
-    // reset or background-clear write port.
+    // 在 lookup_valid_mem 表明对应 way 有效之前，宽 payload 的内容都无关紧要；
+    // 因此这些数组故意不提供复位或后台清除写端口。
     always_ff @(posedge clk) begin
         if (bank0_update_fire && !bank0_update_selected_way)
             bank0_way0_payload[update_set] <=

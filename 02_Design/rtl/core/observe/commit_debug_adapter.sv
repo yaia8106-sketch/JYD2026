@@ -1,8 +1,9 @@
 // ============================================================
-// Module: commit_debug_adapter
-// Description:
-//   Adapts the two WB payloads to the flat NSCSCC commit/debug interface.
-//   This module contains no architectural state.
+// 中文说明：把写回提交信息整理成调试和比赛接口使用的格式。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 模块：commit_debug_adapter。
+// 说明：把两个 WB payload 适配为扁平的 NSCSCC 提交/调试接口。
+// 本模块不保存架构状态。
 // ============================================================
 
 module commit_debug_adapter (

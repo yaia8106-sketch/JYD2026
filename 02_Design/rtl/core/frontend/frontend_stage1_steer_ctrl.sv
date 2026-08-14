@@ -1,13 +1,15 @@
 // ============================================================
-// Module: frontend_stage1_steer_ctrl
-// Description: Canonical BP0 arbitration across two ABTB/PHT banks.
-// Domain: frontend.
+// 中文说明：把一级方向预测、ABTB 目标和顺序 PC 组合成前端的取指方向选择。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 模块：frontend_stage1_steer_ctrl。
+// 说明：在两个 ABTB/PHT bank 之间完成规范 BP0 仲裁。
+// 所属阶段：frontend。
 // ============================================================
 
 module frontend_stage1_steer_ctrl
     import cpu_defs::*;
 (
-    input  logic                   lookup_valid, // = ftq_alloc_ready && fq_credit_for_bp0 && !redirect_valid
+    input  logic                   lookup_valid, // ftq_alloc_ready && fq_credit_for_bp0 && !redirect_valid
     input  logic [31:0]            current_pc,
     input  frontend_steer_bank_t   bank0,
     input  frontend_steer_bank_t   bank1,
@@ -38,10 +40,10 @@ module frontend_stage1_steer_ctrl
     wire bank1_taken = bank1_direct
         || (bank1_branch_owned && bank1.pred_taken);
 
-    // Bank 0 is older only when the fetch block starts at its first word.
-    // Compute the two mutually exclusive taken candidates before touching the
-    // 32-bit targets.  A not-taken Bank-0 branch deliberately permits a taken
-    // Bank-1 CFI, matching the original program-order policy.
+    // 只有取指块从第一个字开始时，bank0 才是更老的指令。
+    // 在处理 32 位目标地址之前，先计算两个互斥的跳转候选项。
+    // bank0 的分支预测为不跳转时，故意允许 bank1 的 CFI 跳转，
+    // 这与原来的程序顺序策略一致。
     wire bank0_selected_taken = !current_pc[2] && bank0_taken;
     wire bank1_selected_taken = !bank0_selected_taken && bank1_taken;
     wire selected_taken = bank0_selected_taken || bank1_selected_taken;
@@ -55,10 +57,10 @@ module frontend_stage1_steer_ctrl
     wire [1:0] first_cfi_type = current_pc[2]
         ? bank1.cfi_type : bank0.cfi_type;
 
-    // Keep target/next-PC steering independent from metadata bookkeeping.
-    // steer.target is consumed only when steer.taken is asserted, so writing
-    // the already-selected candidate on a not-taken packet is harmless.  The
-    // valid/taken bits retain sole ownership of that speculative payload.
+    // 目标和 next-PC 的选择与元数据记录相互独立。
+    // 只有 steer.taken 为 1 时才会使用 steer.target，因此不跳转取指包中
+    // 即使写入已选择的候选目标也没有影响；valid/taken 位独自决定该推测
+    // payload 是否可见。
     always_comb begin
         steer = '0;
         steer.valid = lookup_valid;
@@ -68,8 +70,8 @@ module frontend_stage1_steer_ctrl
         steer.target = selected_target_candidate;
         steer.next_pc = selected_next_pc;
 
-        // A not-taken first branch retains ownership even when a younger
-        // Bank-1 CFI supplies the taken target.
+        // 第一条分支预测不跳转时，即使更年轻的 bank1 CFI 提供跳转目标，
+        // 第一条指令仍保持其程序顺序上的所有权。
         if (first_valid) begin
             steer.branch_owned = first_cfi_type == CFI_TYPE_BRANCH;
             steer.branch_owned_nt =

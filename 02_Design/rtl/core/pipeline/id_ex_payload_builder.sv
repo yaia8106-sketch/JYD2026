@@ -1,7 +1,7 @@
 // ============================================================
-// Module: id_ex_payload_builder
-// Description: Build ID/EX payloads from ISA-neutral decoded uops.
-// Domain: pipeline boundary.
+// 中文说明：组合生成 ID/EX 流水寄存器需要保存的指令和执行控制字段。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 说明：根据已经译码的统一操作描述，组合生成 ID/EX payload。
 // ============================================================
 
 module id_ex_payload_builder

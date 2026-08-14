@@ -1,7 +1,7 @@
 // ============================================================
-// Module: mem_wb_reg
-// Description: Slot 0 MEM/WB handshake and structured payload register.
-// Domain: pipeline boundary.
+// 中文说明：保存 slot0 的 MEM/WB 流水状态、最终访存数据和写回信息。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 说明：保存 slot0 的 MEM/WB 握手状态和结构化 payload。
 // ============================================================
 
 module mem_wb_reg
@@ -10,24 +10,24 @@ module mem_wb_reg
     input  logic          clk,
     input  logic          rst_n,
 
-    // Handshake
+    // 流水线握手信号
     input  logic          mem_valid,
     input  logic          mem_ready_go,
     output logic          wb_allowin,
     output logic          wb_valid,
 
-    // Load data is updated only when the shared LSU completes a load.
+    // 只有共享 LSU 完成 load 时，load 数据寄存器才更新。
     input  logic          mem_load_valid,
-    // Independent final DCache select cone for the remote EX repair copy.
+    // 给远端 EX 修复副本使用的物理独立 DCache 最终选择路径。
     input  logic [31:0]   mem_load_data_ex,
 
-    // Registered payload
+    // 需要保存的流水线 payload
     input  mem_wb_slot0_t mem_payload,
     output mem_wb_slot0_t wb_payload,
 
-    // Consumer-local physical copies used by EX-stage load-data repair. The
-    // current issue policy permits only one LSU per pair, so both copies carry
-    // the same completed load regardless of its producer slot.
+    // EX 阶段 load 数据修复使用的消费者局部副本。当前发射策略每对
+    // 指令最多允许一条 LSU，因此无论生产者来自哪个 slot，两个副本
+    // 都保存同一个已完成的 load 结果。
     (* keep = "true" *) output logic [31:0] wb_load_data_ex_s0,
     (* keep = "true" *) output logic [31:0] wb_load_data_ex_s1
 );
@@ -68,7 +68,7 @@ module mem_wb_reg
             wb_payload.csr_rstat    <= mem_payload.csr_rstat;
             wb_payload.csr_data     <= mem_payload.csr_data;
 
-            // A non-load retains the last completed load for WB repair.
+            // 非 load 指令保留上一次完成的 load 数据，供 WB 修复路径使用。
             if (mem_load_valid & mem_ready_go)
                 wb_payload.load_data <= mem_payload.load_data;
         end

@@ -1,7 +1,7 @@
 // ============================================================
-// Module: id_stage_derive
-// Description: Derive ID-stage dependency and repair metadata from neutral uops.
-// Domain: decode and issue.
+// 中文说明：从已译码的中间指令信息中整理 ID 阶段需要的相关性、修复和发射控制字段。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 说明：从统一操作描述中整理 ID 阶段的相关性和修复元数据。
 // ============================================================
 
 module id_stage_derive
@@ -37,9 +37,8 @@ module id_stage_derive
     output logic [ 1:0] id_s1_abtb_update_cfi_type
 );
 
-    // Dependency/hazard fields come from registered ISA-neutral hints. The
-    // full uop remains authoritative for execution, but no longer sits in the
-    // ID-ready -> IF/ID-clock-enable feedback cone.
+    // 相关性字段来自已寄存的通用提示。完整 uop 仍然是执行阶段的权威
+    // 来源，但不再进入 ID-ready 到 IF/ID 时钟使能的反馈路径。
     assign id_rs1_addr = slot0_hint.src0_addr;
     assign id_rs2_addr = slot0_hint.src1_addr;
     assign id_rd_addr = slot0_hint.dst_addr;
@@ -63,17 +62,16 @@ module id_stage_derive
     assign id_s1_rs1_used = slot1_hint.src0_used;
     assign id_s1_rs2_used = slot1_hint.src1_used;
 
-    // Ordinary ALU/LSU operations and conditional branch comparators may
-    // consume the registered WB repair value in EX. Indirect control remains
-    // excluded because JIRL uses rs1 to form its redirect target.
+    // 普通 ALU/LSU 操作和条件分支比较器可以在 EX 使用已寄存的 WB 修复值。
+    // 间接控制流不允许这样做，因为 JIRL 还要用 rs1 形成重定向目标。
     assign id_s0_alu_only = slot0_hint.alu_only;
     assign id_s1_repair_ok = slot1_hint.alu_only
                            | slot1_hint.conditional_control
                            | slot1_hint.mem_read
                            | slot1_hint.mem_write;
 
-    // Call/return conventions are decoded at the ISA boundary. The common
-    // predictor receives only an implementation-neutral CFI classification.
+    // 调用/返回约定在 ISA 边界完成译码；通用预测器只接收与具体 ISA
+    // 实现无关的控制流分类。
     assign id_abtb_update_qualified = slot0_uop.cfi_update;
     assign id_abtb_update_cfi_type = slot0_uop.cfi_type;
     assign id_s1_abtb_update_qualified = slot1_uop.cfi_update;

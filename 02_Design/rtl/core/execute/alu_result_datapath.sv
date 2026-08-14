@@ -1,12 +1,12 @@
 // ============================================================
-// Module: alu_result_datapath
-// Description: Ordinary integer-result logic without the LSU address adder.
+// 中文说明：整理 ALU 的原始结果、快速前递结果和需要写回的最终结果。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 模块：alu_result_datapath
+// 说明：生成普通整数运算结果，不包含 LSU 地址加法器。
 //
-// The execute stage instantiates this block twice per issue lane: the
-// architectural copy consumes WB-repaired operands and terminates at EX/MEM,
-// while the forwarding copy consumes only registered raw operands and
-// terminates at the ID bypass network. Keeping the address adder outside this
-// block avoids duplicating an LSU resource that is not part of EX forwarding.
+// EX 阶段的每个发射槽各实例化两份：架构结果副本使用 WB 修复后的操作数，
+// 输出到 EX/MEM；前递结果副本只使用已经寄存的原始操作数，输出到 ID 的旁路网络。
+// 地址加法器放在本模块之外，避免复制一个不参与 EX 前递的 LSU 资源。
 // ============================================================
 
 module alu_result_datapath
@@ -20,19 +20,19 @@ module alu_result_datapath
     output logic [31:0] alu_sum
 );
 
-    // Shared adder/subtractor. SUB, SLT and SLTU negate source 2.
+    // 加法器和减法器共用。SUB、SLT、SLTU 需要对源操作数 2 取反。
     wire negate = alu_op[3] | alu_op[1];
     wire [31:0] sum = alu_src1
                     + (negate ? ~alu_src2 : alu_src2)
                     + {31'b0, negate};
     assign alu_sum = sum;
 
-    // Same-sign comparisons use the subtraction sign. Different-sign signed
-    // and unsigned comparisons select the appropriate operand sign directly.
+    // 同号比较使用减法结果的符号位；异号时，有符号和无符号比较
+    // 直接选择相应的操作数符号位。
     wire cmp = (alu_src1[31] == alu_src2[31]) ? sum[31]
              : alu_op[0] ? alu_src2[31] : alu_src1[31];
 
-    // A right shifter plus bit reversal implements both shift directions.
+    // 通过右移器和位反转同时实现左右两个方向的移位。
     wire [31:0] shift_input = alu_op[2]
                             ? alu_src1 : bit_reverse(alu_src1);
     wire [32:0] signed_shift_input = {

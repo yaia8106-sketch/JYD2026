@@ -1,19 +1,19 @@
 // ============================================================
-// Module: lsu_data_format
-// Description: Format the single LSU's store requests and load response.
-// Domain: load/store unit.
-//
-// The two issue slots have independent EX store-format candidates, but issue
-// policy permits only one LSU operation per pair. The MEM load formatter is
-// shared because only one load response can return in a cycle.
+// 中文说明：按照 load 或 store 的大小、符号属性和地址低位完成数据扩展与写掩码生成。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 模块：lsu_data_format。
+// 说明：整理唯一 LSU 的 store 请求和 load 响应。
+// 所属单元：load/store。
+// 两个发射槽分别计算 EX store 格式候选，但发射策略保证每组最多只有一个
+// LSU 操作。MEM 的 load 格式器可以共用，因为每周期最多返回一个 load 结果。
 // ============================================================
 
 module lsu_data_format #(
-    // NSCSCC's DCache returns an already extracted and extended load value.
-    // Other platforms return a raw aligned word and use mem_interface below.
+    // NSCSCC 的 DCache 返回已经提取并扩展好的 load 值。
+    // 其他平台返回原始对齐字，并使用下面的 mem_interface 处理。
     parameter bit CACHE_RDATA_FORMATTED = 1'b0
 ) (
-    // Slot 0 EX store candidate.
+    // Slot0 EX store 候选。
     input  logic        ex_slot0_valid,
     input  logic        ex_slot0_kill,
     input  logic        ex_slot0_store,
@@ -22,7 +22,7 @@ module lsu_data_format #(
     input  logic [31:0] ex_slot0_store_data,
     output logic [ 3:0] ex_slot0_store_wea,
 
-    // Slot 1 EX store candidate.
+    // Slot1 EX store 候选。
     input  logic        ex_slot1_valid,
     input  logic        ex_slot1_kill,
     input  logic        ex_slot1_store,
@@ -31,7 +31,7 @@ module lsu_data_format #(
     input  logic [31:0] ex_slot1_store_data,
     output logic [ 3:0] ex_slot1_store_wea,
 
-    // Shared MEM load response.
+    // 共用的 MEM load 响应。
     input  logic        mem_load_en,
     input  logic [ 1:0] mem_load_addr_low,
     input  logic [ 1:0] mem_load_size,

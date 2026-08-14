@@ -1,10 +1,11 @@
 // ============================================================
-// Module: dcache_data_format
-// Description: DCache byte merge and architectural load formatting.
-// Domain: NSCSCC data cache.
-//
-// Hit data, refill/uncached data, and refill-store data are transformed in
-// parallel. The DCache top keeps only source ownership and response selection.
+// 中文说明：把 DCache 返回的 cache line 按访存大小、符号和地址低位整理成处理器 load 数据。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 模块：dcache_data_format。
+// 说明：完成 DCache 字节合并和架构 load 数据格式化。
+// 所属部分：NSCSCC 数据 Cache。
+// 命中数据、refill/未缓存数据以及 refill-store 数据并行转换，DCache 顶层
+// 只负责来源所有权和最终响应选择。
 // ============================================================
 
 module dcache_data_format (
@@ -50,8 +51,8 @@ module dcache_data_format (
         input logic        unsigned_load
     );
         begin
-            // Address and size select together, avoiding a serial variable
-            // shift followed by size selection and sign extension.
+            // 地址和访问大小一起选择，避免先进行可变移位，再串接大小选择
+            // 和符号扩展。
             case ({size, addr_low})
                 4'b00_00: format_load = {
                     {24{raw_data[7] & ~unsigned_load}}, raw_data[7:0]
@@ -74,7 +75,7 @@ module dcache_data_format (
                 4'b01_10: format_load = {
                     {16{raw_data[31] & ~unsigned_load}}, raw_data[31:16]
                 };
-                // The historical logical shift by 24 zeros shifted[15:8].
+                // 历史实现的 24 位逻辑移位会把 shifted[15:8] 置零。
                 4'b01_11: format_load = {24'd0, raw_data[31:24]};
                 4'b10_00: format_load = raw_data;
                 4'b10_01: format_load = {8'd0, raw_data[31:8]};

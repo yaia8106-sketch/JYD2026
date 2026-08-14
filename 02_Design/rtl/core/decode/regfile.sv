@@ -1,33 +1,35 @@
 // ============================================================
-// Module: regfile
-// Description: 32x32-bit register file, 4R2W, read-first
-// Domain: decode and issue.
-// Spec: 02_Design/spec/regfile_spec.md
+// 中文说明：实现双发射处理器使用的 32 个 32 位通用寄存器，提供四个读端口和两个写端口。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 模块：regfile。
+// 说明：32 个 32 位寄存器，提供四读两写端口，采用 read-first 行为。
+// 所属阶段：decode 和 issue。
+// 规格说明：02_Design/spec/regfile_spec.md。
 // ============================================================
 
 module regfile (
     input  logic        clk,
     input  logic        rst_n,
 
-    // Slot 0 read ports (combinational)
+    // Slot0 读端口（组合逻辑）。
     input  logic [ 4:0] rs1_addr,
     input  logic [ 4:0] rs2_addr,
     output logic [31:0] rs1_data,
     output logic [31:0] rs2_data,
 
-    // Slot 1 read ports (combinational)
+    // Slot1 读端口（组合逻辑）。
     input  logic [ 4:0] rs1_addr_s1,
     input  logic [ 4:0] rs2_addr_s1,
     output logic [31:0] rs1_data_s1,
     output logic [31:0] rs2_data_s1,
 
-    // Slot 0 write port (posedge)
+    // Slot0 写端口（时钟上升沿）。
     input  logic [ 4:0] rd_addr,
     input  logic [31:0] rd_data,
-    input  logic        rd_wen,     // reg_write_en from pipeline
-    input  logic        rd_valid,   // wb_valid (gating: only write when valid)
+    input  logic        rd_wen,     // 来自流水线的 reg_write_en
+    input  logic        rd_valid,   // wb_valid（只在有效时写入）
 
-    // Slot 1 write port (posedge), WAW priority over Slot 0
+    // Slot1 写端口（时钟上升沿），WAW 时优先于 Slot0。
     input  logic [ 4:0] rd_addr_s1,
     input  logic [31:0] rd_data_s1,
     input  logic        rd_wen_s1,
@@ -36,11 +38,11 @@ module regfile (
     output logic [1023:0] debug_state
 );
 
-    // ---- Register array ----
-    // x0 is intentionally omitted; reads of address zero return a constant.
-    logic [31:0] regs [1:31];   // x0 not stored, hardwired to 0
+    // ---- 寄存器数组 ----
+    // x0 不存入数组；读取地址零时直接返回常数。
+    logic [31:0] regs [1:31];   // 不存储 x0，读取时固定返回 0
 
-    // ---- Read (combinational, read-first) ----
+    // ---- 读取（组合逻辑，read-first）----
     assign rs1_data = (rs1_addr == 5'd0) ? 32'd0 : regs[rs1_addr];
     assign rs2_data = (rs2_addr == 5'd0) ? 32'd0 : regs[rs2_addr];
     assign rs1_data_s1 = (rs1_addr_s1 == 5'd0) ? 32'd0 : regs[rs1_addr_s1];
@@ -50,8 +52,8 @@ module regfile (
         assign debug_state[debug_reg*32 +: 32] = regs[debug_reg];
     end
 
-    // ---- Write (posedge, x0 guard). Slot 1 wins WAW by assigning last. ----
-    // Both write ports retire in program order in the same WB cycle.
+    // ---- 写入（上升沿，保护 x0；Slot1 最后赋值，因此 WAW 时获胜）----
+    // 两个写端口在同一个 WB 周期按程序顺序提交。
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             for (int i = 1; i < 32; i++) begin

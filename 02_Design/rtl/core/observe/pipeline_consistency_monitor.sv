@@ -1,9 +1,11 @@
 `ifndef SYNTHESIS
+// 中文说明：在仿真中检查各流水级 valid、allow、flush 和 payload 保持关系。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
 // ============================================================
-// Module: pipeline_consistency_monitor
-// Description: Simulation-only checks for pipeline timing mirrors and
-//              stage-local copies used by forwarding and MulDiv control.
-// Domain: observe.
+// 模块：pipeline_consistency_monitor。
+// 说明：仅在仿真中检查流水线时序镜像，以及前递和 MulDiv 控制使用的
+// 各阶段局部副本。
+// 所属部分：observe。
 // ============================================================
 
 module pipeline_consistency_monitor

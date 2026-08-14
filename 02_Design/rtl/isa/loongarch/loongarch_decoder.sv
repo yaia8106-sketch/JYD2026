@@ -1,6 +1,8 @@
 // ============================================================
-// Module: loongarch_decoder
-// Description: LA32R integer plus basic privileged decoder.
+// 中文说明：把 LoongArch 指令编码译码成处理器内部使用的统一操作描述。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 模块：loongarch_decoder。
+// 说明：译码 LA32R 整数指令和基础特权指令。
 // ============================================================
 
 module loongarch_decoder
@@ -69,9 +71,8 @@ module loongarch_decoder
     wire inst_bltu = op6 == LA_OP_BLTU;
     wire inst_bgeu = op6 == LA_OP_BGEU;
 
-    // LoongArch keeps CSR addressing and operand roles entirely separate from
-    // RISC-V: CSR index is inst[23:10], rd supplies the write value, and rj is
-    // the CSRXCHG mask.  ERTN is an exact fixed encoding.
+    // LoongArch 的 CSR 地址和操作数角色与 RISC-V 完全不同：CSR 索引为
+    // inst[23:10]，rd 提供写入值，rj 是 CSRXCHG 掩码；ERTN 使用固定编码。
     wire inst_csr     = inst[31:24] == 8'h04;
     wire inst_csrrd   = inst_csr & (rj == 5'd0);
     wire inst_csrwr   = inst_csr & (rj == 5'd1);
@@ -110,7 +111,7 @@ module loongarch_decoder
                      & (la_imm_si16_shift2(inst) == 32'd0);
 
     always_comb begin
-        // Unsupported encodings are contained as side-effect-free illegal uops.
+        // 不支持的编码统一转换为没有副作用的非法微操作。
         uop = '0;
         uop.exec_unit = EXEC_NONE;
         uop.src0_addr = rj;
@@ -373,8 +374,7 @@ module loongarch_decoder
             uop.control_flow = CF_INDIRECT;
             uop.branch_op = BR_ALWAYS;
             uop.target_base = TARGET_SRC0;
-            // LA32R does not clear target bit 0; ADEF belongs to the later
-            // exception phase.
+            // LA32R 不在这里清除目标地址 bit0；ADEF 由后续异常阶段处理。
             uop.target_clear_mask = 2'b00;
             uop.cfi_update = jirl_call | jirl_return;
             uop.cfi_type = jirl_return ? CFI_TYPE_RETURN

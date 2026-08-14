@@ -1,7 +1,9 @@
 // ============================================================
-// Module: redirect_target_select
-// Description: Select the final registered redirect PC in MEM.
-// Domain: architectural control.
+// 中文说明：从分支、异常、特权返回和中断等来源中选择最终的 PC 跳转目标。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 模块：redirect_target_select。
+// 说明：在 MEM 阶段从各个来源选择最终的已寄存重定向 PC。
+// 所属部分：架构控制。
 // ============================================================
 
 module redirect_target_select

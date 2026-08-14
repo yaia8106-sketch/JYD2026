@@ -1,11 +1,12 @@
 // ============================================================
-// Module: frontend_abtb_observer
-// Description: Complete observation-only boundary for ABTB/PHT behavior.
-// Domain: frontend observation.
+// 中文说明：记录并检查 ABTB 预测与实际控制流结果之间的一致性。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 模块：frontend_abtb_observer。
+// 说明：为 ABTB/PHT 行为提供完整的只观测边界。
+// 所属部分：前端观测。
 //
-// Production predictor signals enter this wrapper only as sinks. The packed
-// records and counters created here must never feed fetch steering, redirect,
-// ready/valid or predictor updates.
+// 正式预测器信号在这里仅作为接收端输入。这里生成的打包记录和计数器
+// 绝不能反馈到取指方向、重定向、ready/valid 或预测器更新。
 // ============================================================
 
 module frontend_abtb_observer

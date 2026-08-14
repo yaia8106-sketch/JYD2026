@@ -1,12 +1,14 @@
 // ============================================================
-// Package: loongarch_defs
-// Description: LA32R ordinary integer encodings and field helpers.
-// Source: LoongArch32 Reduced Manual V1.04, Appendix B.
+// 中文说明：定义 LoongArch 指令字段、操作码、立即数和特权操作相关常量。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 包：loongarch_defs。
+// 说明：定义 LA32R 普通整数指令编码和字段辅助函数。
+// 来源：LoongArch32 Reduced Manual V1.04，附录 B。
 // ============================================================
 
 package loongarch_defs;
 
-    // Register-register and shift-immediate encodings use inst[31:15].
+    // 寄存器-寄存器和移位立即数编码使用 inst[31:15]。
     localparam logic [16:0] LA_OP_ADD_W   = {6'h00, 4'h0, 2'h1, 5'h00};
     localparam logic [16:0] LA_OP_SUB_W   = {6'h00, 4'h0, 2'h1, 5'h02};
     localparam logic [16:0] LA_OP_SLT     = {6'h00, 4'h0, 2'h1, 5'h04};
@@ -29,7 +31,7 @@ package loongarch_defs;
     localparam logic [16:0] LA_OP_SRLI_W  = {6'h00, 4'h1, 2'h0, 5'h09};
     localparam logic [16:0] LA_OP_SRAI_W  = {6'h00, 4'h1, 2'h0, 5'h11};
 
-    // Twelve-bit immediate and ordinary load/store encodings use inst[31:22].
+    // 12 位立即数以及普通 load/store 编码使用 inst[31:22]。
     localparam logic [9:0] LA_OP_SLTI    = {6'h00, 4'h8};
     localparam logic [9:0] LA_OP_SLTUI   = {6'h00, 4'h9};
     localparam logic [9:0] LA_OP_ADDI_W  = {6'h00, 4'ha};
@@ -45,11 +47,11 @@ package loongarch_defs;
     localparam logic [9:0] LA_OP_LD_BU   = {6'h0a, 4'h8};
     localparam logic [9:0] LA_OP_LD_HU   = {6'h0a, 4'h9};
 
-    // Upper-immediate encodings use inst[31:25].
+    // 高位立即数编码使用 inst[31:25]。
     localparam logic [6:0] LA_OP_LU12I_W   = {6'h05, 1'b0};
     localparam logic [6:0] LA_OP_PCADDU12I = {6'h07, 1'b0};
 
-    // Control-flow encodings use inst[31:26].
+    // 控制流编码使用 inst[31:26]。
     localparam logic [5:0] LA_OP_JIRL = 6'h13;
     localparam logic [5:0] LA_OP_B    = 6'h14;
     localparam logic [5:0] LA_OP_BL   = 6'h15;

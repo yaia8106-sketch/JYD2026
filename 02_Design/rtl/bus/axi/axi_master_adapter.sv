@@ -1,14 +1,10 @@
 // ============================================================
-// Module: axi_master_adapter
-// Description:
-//   AXI master for the processor memory backend. It supports one outstanding
-//   read per AXI ID and one independent outstanding write. The internal
-//   command uses AXI AxLEN encoding (beats minus one), carries its burst type
-//   and read ID, and keeps write payloads on a separate ready/valid stream.
-//
-// This transport block is platform-neutral. Read ARID/RID are carried here;
-// the NSCSCC bridge adds its fixed write AWID and AXI3 WID. The JYD BRAM build
-// does not compile this file.
+// 中文说明：将处理器内部的读写请求转换成 AXI 主机接口事务，并把 AXI 返回结果整理回处理器。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 说明：每个读 ID 最多保留一个未完成读请求，同时允许一个独立写请求。
+// 内部命令中的 AxLEN 使用 AXI 规定的“传输拍数减一”编码，并携带
+// burst 类型和读 ID；写地址/写数据使用单独的 ready/valid 通道。
+// 读 ID 和读返回 ID 在这里保持原样传递，平台相关的固定写 ID 由上层桥接。
 // ============================================================
 
 module axi_master_adapter #(
@@ -164,9 +160,8 @@ module axi_master_adapter #(
     assign rd_resp = m_axi_rresp;
     assign rd_id = m_axi_rid;
 
-    // Only ownership/valid state is reset. Address and burst payload is loaded
-    // by the command-accept event before the corresponding valid becomes
-    // externally visible.
+    // 复位只清除请求所有权和 valid 状态。地址、burst 长度等数据在
+    // 命令握手时先写入寄存器，之后对应的 valid 才会对外可见。
     always_ff @(posedge clk) begin
         if (!rst_n)
             read_cmd_valid_q <= 1'b0;

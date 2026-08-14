@@ -1,11 +1,11 @@
 // ============================================================
-// Module: icache_refill_ctrl
-// Description: Own one four-beat critical-block-first ICache refill.
-// Domain: NSCSCC instruction cache.
-//
-// Lookup, replacement, data-array writes, and frontend response ownership stay
-// in icache.sv. This module owns only AXI request/data sequencing and the
-// transaction fields made valid by a refill launch.
+// 中文说明：管理 ICache 缺失后的读请求、返回数据接收、cache line 填充和错误响应。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 模块：icache_refill_ctrl。
+// 说明：管理一次四拍、关键字优先的 ICache refill。
+// 所属部分：NSCSCC 指令 Cache。
+// 查询、替换、数据阵列写入和前端响应所有权仍由 icache.sv 管理；本模块只
+// 负责 AXI 请求/数据时序，以及 refill 启动后才有效的事务字段。
 // ============================================================
 
 module icache_refill_ctrl #(
@@ -59,8 +59,8 @@ module icache_refill_ctrl #(
     assign mem_req_fire = mem_req_valid & mem_req_ready;
     assign mem_rd_fire = mem_rd_valid & mem_rd_ready;
 
-    // State changes only on accepted AXI transfers. Once AR is accepted, a
-    // kill drains through RLAST because the read itself cannot be cancelled.
+    // 状态只在 AXI 传输被接受时改变。AR 一旦接受，kill 也必须排空到 RLAST，
+    // 因为已经发出的读不能取消。
     always_ff @(posedge clk) begin
         if (!rst_n)
             state <= REFILL_IDLE;
@@ -90,8 +90,7 @@ module icache_refill_ctrl #(
         end
     end
 
-    // Payload fields are written by the event that makes them observable;
-    // only the state itself needs reset.
+    // payload 字段由使其可见的事件写入；只有状态本身需要复位。
     always_ff @(posedge clk) begin
         if (kill) begin
             response_needed <= 1'b0;

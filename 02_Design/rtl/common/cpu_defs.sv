@@ -1,12 +1,14 @@
 // ============================================================
-// Package: cpu_defs
-// Description: 全局常量定义，供所有模块共享
+// 中文说明：定义流水线、译码、访存、预测器和异常处理共用的枚举、结构体和常量。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 包：cpu_defs。
+// 说明：定义供所有模块共享的全局常量、枚举和结构体。
 // ============================================================
 
 package cpu_defs;
 
-    // The common pipeline consumes semantic operations only. Instruction
-    // encodings live in rtl/isa/<isa>/ and must not leak into this package.
+    // 通用流水线只接收语义化操作；指令编码位于 rtl/isa/<isa>/，
+    // 不应泄漏到这个公共定义包。
     typedef enum logic [3:0] {
         ALU_ADD  = 4'b0_000,
         ALU_SUB  = 4'b1_000,
@@ -61,8 +63,7 @@ package cpu_defs;
         MEM_WORD = 2'b10
     } mem_size_t;
 
-    // Values are deliberately independent from any ISA encoding even where
-    // the bit patterns happen to match the current RISC-V implementation.
+    // 这些值刻意独立于任何 ISA 编码，即使位模式碰巧与旧实现相同也不依赖它。
     typedef enum logic [2:0] {
         BR_EQ     = 3'b000,
         BR_NE     = 3'b001,
@@ -93,10 +94,9 @@ package cpu_defs;
         CFI_TYPE_RETURN = 2'b11
     } cfi_type_t;
 
-    // A redirect crosses EX/MEM as a source selector, not as a final 32-bit
-    // target.  MEM selects the target from candidates already carried by the
-    // normal pipeline payload, keeping the late EX branch decision away from
-    // every bit of a wide redirect register.
+    // redirect 经过 EX/MEM 时携带的是来源选择，而不是最终 32 位目标。
+    // MEM 从普通流水线 payload 已携带的候选项中选择目标，使 EX 阶段较晚的
+    // 分支判断不会驱动宽重定向寄存器的每一个数据位。
     typedef enum logic [1:0] {
         REDIRECT_S0_CONTROL = 2'b00,
         REDIRECT_PRIVILEGED = 2'b01,
@@ -109,11 +109,10 @@ package cpu_defs;
         PRIV_REG     = 3'b001,
         PRIV_SYSCALL = 3'b010,
         PRIV_RETURN  = 3'b011,
-        // LoongArch stable-counter reads share the privileged result path but
-        // are not CSR accesses and remain legal outside PLV0.
+        // LoongArch 稳定计数器读取共用特权结果路径，但不是 CSR 访问，
+        // 在 PLV0 之外仍然合法。
         PRIV_COUNTER = 3'b100,
-        // CPUCFG also reuses the privileged result path, but is an
-        // unprivileged, read-only architectural configuration query.
+        // CPUCFG 也复用特权结果路径，但它是非特权的只读架构配置查询。
         PRIV_CPUCFG  = 3'b101
     } priv_op_t;
 
@@ -122,8 +121,8 @@ package cpu_defs;
         PRIV_CMD_WRITE    = 3'b001,
         PRIV_CMD_SET      = 3'b010,
         PRIV_CMD_CLEAR    = 3'b011,
-        // LoongArch CSRXCHG uses a register mask and therefore cannot be
-        // represented by the RISC-V set/clear commands.
+        // LoongArch CSRXCHG 使用寄存器提供掩码，因此不能用 RISC-V 的
+        // set/clear 命令表示。
         PRIV_CMD_EXCHANGE = 3'b100
     } priv_cmd_t;
 
@@ -145,14 +144,13 @@ package cpu_defs;
     } decode_exception_t;
 
     localparam int PRIV_ADDR_W = 16;
-    // ISA adapters expose an opaque bank of architectural state to their
-    // platform-specific verification wrappers.  The common core assigns no
-    // meaning to individual words, preserving the ISA boundary.
+    // ISA 适配器向平台相关的验证包装器暴露一组不透明架构状态。
+    // 通用核心不解释其中单个字的含义，从而保持 ISA 边界。
     localparam int PRIV_DEBUG_STATE_WORDS = 27;
     localparam int PRIV_DEBUG_STATE_W = PRIV_DEBUG_STATE_WORDS * 32;
 
-    // One fully decoded architectural instruction. Valid/ready stays outside
-    // the payload so every pipeline boundary keeps handshake state explicit.
+    // 一条完整译码后的架构指令。valid/ready 保留在 payload 外部，
+    // 使每个流水线边界都显式保存握手状态。
     typedef struct packed {
         exec_unit_t       exec_unit;
         logic [4:0]       src0_addr;
@@ -187,9 +185,9 @@ package cpu_defs;
         logic             serializing;
     } decoded_uop_t;
 
-    // ---- Frontend / IF-ID payloads ----
-    // Keep pipeline data grouped by function. Handshake and lane-valid signals
-    // remain separate so pipeline control is explicit at every stage boundary.
+    // ---- 前端 / IF-ID payload ----
+    // 按功能组织流水线数据。握手和 lane-valid 信号保持独立，
+    // 使每个阶段边界的流水控制都清晰可见。
     typedef struct packed {
         logic        taken; // 方向
         logic [31:0] target; // 目标地址
@@ -205,10 +203,9 @@ package cpu_defs;
         logic [ 1:0] stage1_pht_counter;
     } prediction_meta_t;
 
-    // ISA-neutral dependency metadata carried across IF/ID. The ISA-specific
-    // predecoder computes it beside the IROM response, then the queue and
-    // IF/ID registers make it available without putting the full decoder in
-    // the ID stall/backpressure feedback loop.
+    // 跨越 IF/ID 携带的 ISA 无关相关性元数据。ISA 专用预译码器在 IROM
+    // 响应旁边计算这些信息，队列和 IF/ID 寄存器随后提供给后端，
+    // 不把完整译码器放入 ID 停顿/反压反馈环路。
     typedef struct packed {
         logic       src0_used;
         logic       src1_used;
@@ -238,7 +235,7 @@ package cpu_defs;
         fetch_slot_t slot1;
     } if_id_payload_t;
 
-    // ---- Frontend instruction predecode ----
+    // ---- 前端指令预译码 ----
     typedef struct packed {
         logic       is_conditional_branch;
         logic       is_direct_jump;
@@ -267,12 +264,10 @@ package cpu_defs;
         logic       serializing;
     } frontend_predecode_t;
 
-    // Exact instruction kind generated at ICache-refill time. Five bits are
-    // sufficient for every LA32R family implemented by the NSCSCC core. Bit 0
-    // is deliberately one exactly for the static classes that kill the next
-    // sequential instruction. This low kind bit lives in the shortened-tag
-    // LUTRAM half of ICache metadata, so F0 does not decode a late RAMB36
-    // output before deciding whether slot 1 may enter the fetch queue.
+    // 在 ICache refill 时生成的精确指令类别。5 位足以覆盖 NSCSCC 核心实现的
+    // 所有 LA32R 指令族。bit0 只在会阻止下一条顺序指令的静态类别中置 1。
+    // 这个低位 kind 信息存放在 ICache 缩短 tag 的 LUTRAM 部分，因此 F0
+    // 判断 slot1 是否可进入取指队列时，不需要等待较晚的 RAMB36 输出译码。
     typedef enum logic [4:0] {
         ICACHE_KIND_ALU_RR       = 5'd0,
         ICACHE_KIND_ILLEGAL      = 5'd1,
@@ -297,10 +292,9 @@ package cpu_defs;
 
     localparam integer ICACHE_KIND_STATIC_KILL_BIT = 0;
 
-    // Exactly seven bits are cached for each instruction.  The two frequently
-    // consumed controls stay explicit while the exact five-bit kind describes
-    // every remaining frontend field.  The physical ICache still splits these
-    // seven packed bits between RAMB36 parity and shortened-tag LUTRAM storage.
+    // 每条指令恰好缓存 7 位预译码信息。最常用的两个控制位保持显式，
+    // 其余前端属性由 5 位精确 kind 描述。物理 ICache 仍把这 7 位拆分到
+    // RAMB36 奇偶位和缩短 tag 的 LUTRAM 存储中。
     typedef struct packed {
         logic block_younger;
         logic writes_dst;
@@ -311,7 +305,7 @@ package cpu_defs;
         logic        valid;
         logic [31:0] pc;
         logic [31:0] inst;
-        // Prediction metadata / 预测元数据
+        // 预测元数据。
         logic        pred_taken;
         logic [31:0] pred_target;
         logic        pred_source_abtb;
@@ -319,7 +313,7 @@ package cpu_defs;
         logic [ 1:0] pred_cfi_type;
         logic [ 7:0] stage1_pht_index;
         logic [ 1:0] stage1_pht_counter;
-        // Decoded instruction class / 指令类型
+        // 译码后的指令类别。
         logic        is_conditional_branch;
         logic        is_direct_jump;
         logic        is_indirect_jump;
@@ -332,14 +326,13 @@ package cpu_defs;
         logic        is_load;
         logic        is_store;
         logic        is_alu_type;
-        // Register scheduling metadata / 寄存器调度信息
+        // 寄存器调度元数据。
         logic        writes_dst;
         logic        uses_src0;
         logic        uses_src1;
         logic        is_jump;
         logic        is_control;
         logic        is_lsu;
-        // Force single issue for classes unsupported by pairing.
         // 对不支持配对的指令强制单发射。
         logic        force_single;
     } frontend_fq_entry_t;
@@ -369,9 +362,8 @@ package cpu_defs;
         frontend_f0_bank_meta_t       bank1_meta;
     } frontend_f0_state_t;
 
-    // Metadata shadowed alongside each fetch-queue entry. The type is always
-    // complete so module boundaries and debug probes stay stable; individual
-    // implementations may omit the wide fields from synthesized state.
+    // 与每个取指队列表项并行保存的元数据。类型定义始终完整，以保持模块
+    // 边界和调试探针稳定；具体实现可以在综合状态中省略宽字段。
     typedef struct packed {
         logic        hit;
         logic        way;
@@ -415,7 +407,7 @@ package cpu_defs;
         logic [31:0] next_pc;
     } frontend_steer_result_t;
 
-    // ---- Predictor resolve / training interfaces ----
+    // ---- 预测结果确认 / 训练接口 ----
     typedef struct packed {
         logic        valid;
         logic [31:0] pc;
@@ -459,7 +451,7 @@ package cpu_defs;
         logic       actual_taken;
     } pht_update_t;
 
-    // ---- Frontend predictor observability interfaces ----
+    // ---- 前端预测器观测接口 ----
     typedef struct packed {
         logic        hit;
         logic        way;
@@ -513,7 +505,7 @@ package cpu_defs;
         logic [31:0] stage1_bank1_branch_lookup;
     } frontend_abtb_counters_t;
 
-    // ---- ID/EX payloads ----
+    // ---- ID/EX 有效载荷 ----
     typedef struct packed {
         prediction_meta_t prediction;
         logic             update_qualified;
@@ -564,7 +556,7 @@ package cpu_defs;
         logic [31:0]   inst;
     } id_ex_slot1_t;
 
-    // ---- EX/MEM payloads ----
+    // ---- EX/MEM 有效载荷 ----
     typedef struct packed {
         logic             valid;
         redirect_source_t source;
@@ -612,7 +604,7 @@ package cpu_defs;
         logic        is_cacheable;
     } ex_mem_slot1_t;
 
-    // ---- MEM/WB payloads ----
+    // ---- MEM/WB 有效载荷 ----
     typedef struct packed {
         logic [31:0] pc;
         logic [31:0] inst;

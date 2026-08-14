@@ -1,61 +1,57 @@
 // ============================================================
-// Module: dcache
-// Description: NSCSCC-only 64KB direct-mapped data cache.
-//
-// Architecture:
-//   - Internal EX->MEM pipeline register (synced with cpu_top's ex_mem_reg)
-//   - Tag: LUTRAM async read and EX-stage compare, hit result latched EX->MEM
-//   - Data: BRAM sync read (addr in EX, data in MEM)
-//   - 32-byte line, eight-beat critical-word-first AXI WRAP refill
-//   - Load miss: snapshot a dirty victim, then overlap its writeback with refill
-//   - WB store hit: update the cache and set one dirty bit
-//   - WB store miss: save the store, refill, merge its byte lanes, mark dirty
-//   - A one-cycle BRAM RAW-collision bypass handles an immediately following
-//     same-word load without a store queue or a load stall
-//   - Hit/refill/uncached load data is formatted before a late source select
+// 中文说明：实现写回写分配 DCache，包括命中访问、缺失 refill、脏行写回和未缓存访问。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 说明：当前 NSCSCC 使用的 64 KiB 直接映射 DCache。
+// 主要结构如下：
+//   - 内部有一个与 cpu_top 的 EX/MEM 同步的请求寄存器；
+//   - Tag 使用 LUTRAM 异步读取，在 EX 阶段比较，命中结果送入 EX/MEM；
+//   - 数据使用同步 BRAM，地址在 EX 采样，数据在 MEM 阶段得到；
+//   - cache line 为 32 字节，缺失时按关键字优先方式发起八拍 AXI WRAP 读取；
+//   - load 缺失会保存脏 victim，并让写回和 refill 尽量并行；
+//   - store 命中直接更新 cache word 并置脏；store 缺失先 refill，再合并写入字节；
+//   - BRAM 紧邻读写的同字旁路处理连续 store-load，不依赖 store queue；
+//   - 命中、refill 和未缓存 load 数据先并行格式化，再由末端选择器选出结果。
 // ============================================================
 
 module dcache #(
-    // The full 32-bit address is still carried to AXI and to the CPU's
-    // architectural exception logic.  These parameters describe only the
-    // fixed NSCSCC cacheable window used to shorten internal tag metadata.
+    // 完整 32 位地址仍然送往 AXI 和处理器的地址异常判断逻辑。
+    // 下面的参数只描述 NSCSCC 固定的可缓存地址窗口，用来压缩内部 Tag。
     parameter logic [31:0] CACHE_ADDR_BASE = 32'h1C08_0000,
     parameter logic [31:0] CACHE_ADDR_MASK = 32'hFFF8_0000
 ) (
     input  logic        clk,
     input  logic        rst_n,
 
-    // --- EX stage inputs ---
+    // --- EX 阶段输入 ---
     input  logic        cpu_req,
     input  logic        cpu_wr,
     input  logic [31:0] cpu_addr,
-    input  logic [16:0] cpu_lookup_addr, // addr[18:2] from the short LSU adder
+    input  logic [16:0] cpu_lookup_addr, // 来自 LSU 短地址加法器的 addr[18:2]
     input  logic [ 3:0] cpu_wea,
-    input  logic [31:0] cpu_wdata,       // raw, aligned after the EX->MEM register
+    input  logic [31:0] cpu_wdata,       // 原始数据，在 EX->MEM 寄存器后对齐
     input  logic [ 1:0] cpu_load_size,
     input  logic        cpu_load_unsigned,
     input  logic        cpu_uncached,
 
-    // --- MEM stage outputs ---
+    // --- MEM 阶段输出 ---
     output logic [31:0] cpu_rdata,
-    // Physically independent copy for the remote EX load-repair register.
+    // 给远端 EX load 修复寄存器使用的物理独立副本。
     output logic [31:0] cpu_rdata_ex,
     output logic        cpu_ready,
 
-    // Pipeline synchronization
-    input  logic        pipeline_stall,  // from cpu_top: ~mem_allowin (keep EX->MEM reg in sync)
+    // 流水线同步信号
+    input  logic        pipeline_stall,  // 来自 cpu_top：~mem_allowin（保持 EX->MEM 同步）
 
-    // Pipeline flush
+    // 流水线冲刷信号
     input  logic        flush,
 
-    // External memory backend interface. Commands and write data use separate
-    // ready/valid channels so writeback lines remain a 32-bit beat stream.
+    // 外部存储后端接口。命令和写数据使用独立的 ready/valid 通道，
+    // 因此 cache line 写回仍然可以按 32 位 beat 连续发送。
     output logic        mem_req_valid,
     input  logic        mem_req_ready,
     output logic        mem_req_write,
-    // Only dirty cache-line eviction commands assert this attribute.  It lets
-    // the NSCSCC arbiter overlap the write with reads while uncached/MMIO
-    // writes retain their strongly serialized behavior.
+    // 只有脏 cache line 淘汰命令会置位该属性。NSCSCC 仲裁器据此允许
+    // 写回和读请求重叠；未缓存/MMIO 写仍保持强串行。
     output logic        mem_req_writeback,
     output logic [31:0] mem_req_addr,
     output logic [ 7:0] mem_req_len,
@@ -80,18 +76,17 @@ module dcache #(
 );
 
     // ================================================================
-    //  Parameters
+    //  参数及地址窗口
     // ================================================================
     localparam SETS       = 2048;
     localparam LINE_WORDS = 8;
-    // CACHE_ADDR_MASK fixes addr[31:19].  addr[18:16] is therefore the only
-    // tag state required for requests already classified as cacheable using
-    // the complete architectural address.
+    // CACHE_ADDR_MASK 固定地址的 addr[31:19]。对于已经用完整地址
+    // 判定为可缓存的请求，内部 Tag 只需保存 addr[18:16]。
     localparam TAG_W      = 3;
     localparam INDEX_W    = 11;   // addr[15:5]
     localparam WORD_W     = 3;    // addr[4:2]
-    // Eight tag banks balance the asynchronous LUTRAM depth against the late
-    // registered bank selector.  Each bank contains 256 direct-mapped sets.
+    // Tag 分成八个物理 bank，在 LUTRAM 深度和末端 bank 选择之间折中。
+    // 每个 bank 包含 256 个直接映射组。
     localparam TAG_BANK_BITS    = 3;
     localparam TAG_BANKS        = 1 << TAG_BANK_BITS;
     localparam TAG_BANK_INDEX_W = INDEX_W - TAG_BANK_BITS;
@@ -118,8 +113,8 @@ module dcache #(
         input logic        load_unsigned
     );
         begin
-            // Address and size select together, avoiding a serial variable
-            // shift followed by size selection and sign extension.
+    // 地址低位和访问大小一起参与选择，避免先做可变移位、再做大小选择
+    // 和符号扩展的串行组合路径。
             case ({load_size, addr_low})
                 4'b00_00: format_load_data = {
                     {24{raw_data[7] & ~load_unsigned}}, raw_data[7:0]
@@ -142,7 +137,7 @@ module dcache #(
                 4'b01_10: format_load_data = {
                     {16{raw_data[31] & ~load_unsigned}}, raw_data[31:16]
                 };
-                // A logical shift by 24 places zeros in shifted[15:8].
+                // 逻辑左移 24 位后，shifted[15:8] 被置零。
                 4'b01_11: format_load_data = {24'd0, raw_data[31:24]};
                 4'b10_00: format_load_data = raw_data;
                 4'b10_01: format_load_data = {8'd0, raw_data[31:8]};
@@ -154,8 +149,8 @@ module dcache #(
     endfunction
 
 `ifndef SYNTHESIS
-    // Literal reference for the former serial formatter.  The assertion at
-    // the registered request boundary protects every address/size case.
+    // 这是原串行格式化器的参考模型。请求寄存边界上的断言覆盖所有
+    // 地址低位和访问大小组合，防止并行格式化产生语义变化。
     function automatic [31:0] format_load_data_reference (
         input logic [31:0] raw_data,
         input logic [ 1:0] addr_low,
@@ -185,14 +180,14 @@ module dcache #(
 `endif
 
     // ================================================================
-    //  EX-stage address decomposition
+    //  EX 阶段地址拆分
     // ================================================================
     wire [TAG_W-1:0]   ex_tag   = cpu_lookup_addr[16:14];
     wire [INDEX_W-1:0] ex_index = cpu_lookup_addr[13:3];
     wire [WORD_W-1:0]  ex_word  = cpu_lookup_addr[2:0];
 
     // ================================================================
-    //  Internal EX->MEM register (synced with cpu_top's ex_mem_reg)
+    //  内部 EX->MEM 请求寄存器（与 cpu_top 的 ex_mem_reg 同步）
     // ================================================================
     logic [TAG_W-1:0]   mem_tag;
     logic [INDEX_W-1:0] mem_index;
@@ -206,11 +201,10 @@ module dcache #(
     logic               mem_load_unsigned;
     logic               mem_uncached;
 
-    // pipeline_advance must match cpu_top's mem_allowin to keep DCache's
-    // internal EX->MEM register synchronized with cpu_top's ex_mem_reg.
-    // NOTE: Do NOT add "| flush" - flush no longer force-kills the current
-    // MEM instruction in ex_mem_reg (see fix: gate ~mem_branch_flush inside
-    // mem_allowin path). Both must stall/advance together.
+    // pipeline_advance 必须和 cpu_top 的 mem_allowin 完全一致，才能让
+    // DCache 内部 EX->MEM 请求寄存器与 cpu_top 的 ex_mem_reg 同步。
+    // 注意：这里不能再加“| flush”。当前 MEM 指令在冲刷时仍需按
+    // ex_mem_reg 的规则保持，两个寄存器必须同时停住或同时前进。
     wire pipeline_advance = ~pipeline_stall;
 
     always_ff @(posedge clk) begin
@@ -220,8 +214,8 @@ module dcache #(
             mem_req <= cpu_req & ~flush;
     end
 
-    // mem_req is the sole owner of the EX/MEM request payload.  Flush/reset
-    // therefore touch only that valid bit; a normal advance is the payload CE.
+    // mem_req_valid 是 EX/MEM 请求载荷的唯一所有权标志。因此冲刷和复位
+    // 只需要清它；正常前进时，它同时作为载荷寄存器的时钟使能。
     always_ff @(posedge clk) begin
         if (pipeline_advance) begin
             mem_tag   <= ex_tag;
@@ -238,23 +232,23 @@ module dcache #(
     end
 
     // ================================================================
-    //  FSM types & signals (declared early for simulator compatibility)
+    //  状态机类型和信号（提前声明以兼容仿真器）
     // ================================================================
     typedef enum logic [3:0] {
         S_IDLE,
-        S_REFILL_REQ,     // issue line-read request to backend
-        S_REFILL_DATA,    // receive line data beats from backend
-        S_REFILL_DROP,    // drain an aborted refill after pipeline flush
+S_REFILL_REQ,     // 向后端发出 line 读请求
+S_REFILL_DATA,    // 接收后端返回的 line 数据 beat
+S_REFILL_DROP,    // 流水线冲刷后排空已中止的 refill
         S_DONE,
-        S_REPLAY,         // re-read a request held while WB miss work used Port B
-        S_WB_CAPTURE,     // read eight victim words into the local line buffer
-        S_WB_REQ,         // issue one eight-beat writeback command
-        S_WB_JOIN_DONE,   // refill installed; wait for dirty writeback success
-        S_WB_JOIN_IDLE,   // killed refill; wait for dirty writeback success
-        S_UC_REQ,         // issue one uncached read/write command
-        S_UC_READ,        // wait for the uncached read beat
-        S_UC_WRITE_DATA,  // send the single uncached write beat
-        S_UC_WRITE_RESP   // wait for the uncached write response
+S_REPLAY,         // 重新读取因 WB miss 使用 Port B 而暂存的请求
+S_WB_CAPTURE,     // 将八个 victim word 读入本地 line 缓冲
+S_WB_REQ,         // 发出一条八 beat 写回命令
+S_WB_JOIN_DONE,   // refill 已安装，等待脏行写回成功
+S_WB_JOIN_IDLE,   // refill 被冲刷，等待脏行写回成功
+S_UC_REQ,         // 发出一条未缓存读/写命令
+S_UC_READ,        // 等待未缓存读 beat
+S_UC_WRITE_DATA,  // 发送单个未缓存写 beat
+S_UC_WRITE_RESP   // 等待未缓存写响应
     } state_t;
 
     (* fsm_encoding = "one_hot" *) state_t state;
@@ -274,8 +268,8 @@ module dcache #(
     wire state_uc_write_data = (state == S_UC_WRITE_DATA);
     wire state_uc_write_resp = (state == S_UC_WRITE_RESP);
     wire refill_start;
-    logic [WORD_W-1:0]  refill_beat;  // counts data beats received (0..LINE_WORDS-1)
-    wire                refill_data_fire; // current cycle has accepted backend data
+    logic [WORD_W-1:0]  refill_beat;  // 已接收的数据 beat 数（0..LINE_WORDS-1）
+    wire                refill_data_fire; // 当前周期接受了后端数据
     logic [TAG_W-1:0]   refill_tag;
     logic [INDEX_W-1:0] refill_index;
     logic [31:0]        refill_fetch_addr;
@@ -291,9 +285,8 @@ module dcache #(
     wire                refill_target_fire;
     wire                refill_cpu_ready;
 
-    // A dirty victim owns line_buffer until its B response succeeds.  Refill
-    // data goes straight to the selected BRAM, so write and read progress can
-    // advance independently without a second cache-line buffer.
+    // 脏 victim 在 B 响应成功前一直占用 line_buffer。refill 数据直接写入
+    // 选中的 BRAM，因此读写可以分别推进，不需要第二个 cache line 缓冲区。
     typedef enum logic [1:0] {
         WB_IDLE,
         WB_CMD,
@@ -311,12 +304,10 @@ module dcache #(
     wire refill_req_fire;
 
     // ================================================================
-    //  Tag RAM (LUTRAM, async read)
+    //  Tag RAM（LUTRAM，异步读取）
     // ================================================================
-    // The direct-mapped tag array is split into eight 256-set physical banks.
-    // All banks read from local copies of the low index bits in parallel; the
-    // three high index bits are registered with the request and perform only
-    // the final selection in MEM.
+    // 直接映射 Tag 数组拆成八个、每个 256 组的物理 bank。所有 bank
+    // 并行读取低位组索引；高三位和请求一起寄存，只在 MEM 阶段完成最终选择。
     wire [TAG_BANK_BITS-1:0] refill_tag_bank =
         refill_index[INDEX_W-1 -: TAG_BANK_BITS];
     wire [TAG_BANK_INDEX_W-1:0] refill_tag_set =
@@ -327,10 +318,9 @@ module dcache #(
     wire tag_rd_vld [TAG_BANKS-1:0];
     wire tag_rd_match [TAG_BANKS-1:0];
 
-    // Store valid beside tag in LUTRAM and clear all physical banks in
-    // parallel during the first 256 cycles after reset. Non-memory pipeline
-    // traffic may continue; the first memory request is held until the clear
-    // and one replay read have completed.
+    // valid 和 Tag 一起存放在 LUTRAM 中。复位后的前 256 个周期并行清空
+    // 所有物理 bank；非访存流水可以继续，第一条访存请求会等清空和一次
+    // 重放读取完成后再继续。
     logic [TAG_BANK_INDEX_W-1:0] tag_init_set;
     logic tag_init_done;
     logic tag_init_release_q;
@@ -349,8 +339,8 @@ module dcache #(
                 else
                     tag_init_set <= tag_init_set + 1'b1;
             end
-            // One cycle after the last LUTRAM write, replay any request that
-            // entered MEM while initialization was still in progress.
+            // 最后一笔 LUTRAM 清空写入后的下一个周期，重放初始化期间
+            // 已经进入 MEM 的请求。
             tag_init_release_q <= tag_init_done;
         end
     end
@@ -382,9 +372,8 @@ module dcache #(
             assign tag_rd_match[tag_bank] =
                 tag_rd_data[tag_bank] == tag_lookup_tag;
 
-            // One indexed write per physical memory retains the canonical
-            // single-write-port LUTRAM template. Refill completion keeps the
-            // old priority over invalidation.
+            // 每个物理存储器每周期只做一次按索引写入，保持单写端口
+            // LUTRAM 模板。refill 完成对 Tag 的提交优先于失效操作。
             always_ff @(posedge clk) begin
                 if (rst_n) begin
                     if (!tag_init_done)
@@ -402,21 +391,19 @@ module dcache #(
         end
     endgenerate
 
-    // Dirty metadata has one asynchronous lookup and at most one logical
-    // update per cycle. It needs no reset because tag valid masks every entry.
+    // Dirty 元数据只有一个异步查询端口，每周期最多进行一次逻辑更新。
+    // tag valid 会屏蔽所有未分配表项，因此不需要复位。
     (* ram_style = "distributed" *)
     logic dirty [0:SETS-1];
 
-    // Capture every physical bank. The registered high index bits choose the
-    // architecturally addressed candidate in MEM.
+    // 捕获每个物理 bank；已寄存的高位索引在 MEM 阶段选择架构地址对应的候选。
     logic [TAG_W-1:0] mem_tag_rd_bank [TAG_BANKS-1:0];
     logic mem_tag_vld_bank [TAG_BANKS-1:0];
     logic mem_tag_match_bank [TAG_BANKS-1:0];
 
 `ifndef SYNTHESIS
-    // Executable reference for the original single-table lookup. It selects
-    // the addressed bank before the edge and must agree with the new late
-    // selection after the edge.
+    // 原单表查找逻辑的可执行参考模型。它在时钟沿之前选择目标 bank，
+    // 必须和新的末端选择结果保持一致。
     wire lookup_hit_reference =
         tag_rd_vld[tag_lookup_bank]
         & tag_rd_match[tag_lookup_bank];
@@ -442,10 +429,10 @@ module dcache #(
     end
 
     // ================================================================
-    //  Hit result (MEM stage)
+    //  命中结果（MEM 阶段）
     //
-    //  Each bank's valid and comparison terminate at separate registers. The
-    //  registered high index bits perform only the final bank selection here.
+    //  每个 bank 的 valid 和 Tag 比较分别在寄存器处结束；寄存的高位组
+    //  索引这里只负责最终选择。
     // ================================================================
     wire [TAG_BANK_BITS-1:0] mem_tag_bank =
         mem_index[INDEX_W-1 -: TAG_BANK_BITS];
@@ -453,14 +440,13 @@ module dcache #(
     wire mem_tag_vld = mem_tag_vld_bank[mem_tag_bank];
     wire mem_tag_match = mem_tag_match_bank[mem_tag_bank];
     wire tag_hit = mem_tag_vld & mem_tag_match;
-    // mem_uncached comes from the full 32-bit window comparison in
-    // memory_access_unit.  It is authoritative: an out-of-window address
-    // sharing the shortened tag/index must never hit or perturb replacement
-    // state.
+    // mem_uncached 来自 memory_access_unit 对完整 32 位地址窗口的判断，
+    // 它具有最终权威性。即使窗口外地址与压缩 Tag/index 相同，也不能命中
+    // 或改变替换状态。
     wire cache_hit = ~mem_uncached & tag_hit;
 
     // ================================================================
-    //  Data RAM - one 16384x32 logical BRAM bank
+    //  数据 RAM——一个逻辑上的 16384x32 BRAM bank
     // ================================================================
     logic [31:0] data_rd;
     logic [31:0] line_buffer [0:LINE_WORDS-1];
@@ -488,23 +474,22 @@ module dcache #(
       : (state_replay | tag_init_replay) ? replay_read_addr
                       : data_rd_addr;
 
-    // BRAM write port signals (unified MUX, defined later)
+    // BRAM 写端口信号（统一 MUX，稍后定义）。
     wire  [ 3:0] data_bram_wea;
     wire  [INDEX_W+WORD_W-1:0] data_bram_waddr;
     wire  [31:0] data_bram_wdata;
 
-    // Victim capture and replay are registered miss-only address candidates.
-    // Normal load-hit timing still sees only the original pipeline address.
+    // victim 捕获和重放是只在 miss 时使用的、已经寄存的地址候选。
+    // 普通 load 命中时序仍然只观察原始流水线地址。
     wire data_bram_rd_en = pipeline_advance | wb_read_issue | state_replay
                           | tag_init_replay;
 
-    // Hold the BRAM output with its native ENB instead of muxing the late
-    // pipeline-ready response into every address bit.  The same address is
-    // sampled on exactly the same edge as before, but AXI write completion now
-    // terminates at a local enable instead of the 14-bit address path.
+    // 使用 BRAM 原生 ENB 保持输出，不把较晚的流水线 ready 响应 MUX 到每个
+    // 地址位。地址仍在与原来完全相同的时钟沿采样，但 AXI 写完成现在在
+    // 局部使能处结束，不再进入 14 位地址路径。
 
-    // Raw BRAM output - directly used as data_rd
-    // BRAM has inherent 1-cycle read latency, matching original FF behavior
+    // 原始 BRAM 输出直接作为 data_rd。
+    // BRAM 固有一拍读延迟，与原来的 FF 行为一致。
 
     dcache_data_ram u_data (
         .clka  (clk),
@@ -524,15 +509,15 @@ module dcache #(
     logic [31:0] raw_bypass_data;
     logic [ 3:0] raw_bypass_wea;
 
-    // Direct mapping makes the addressed entry the sole victim candidate.
-    // Dirty metadata remains absent from the normal hit-result cone.
+    // 直接映射使被寻址表项成为唯一 victim 候选。
+    // Dirty 元数据仍不进入普通命中结果逻辑锥。
     wire victim_valid_candidate = mem_tag_vld;
     wire victim_dirty_candidate = dirty[mem_index];
     wire [TAG_W-1:0] victim_tag_candidate = mem_tag_rd;
     wire victim_needs_writeback = victim_valid_candidate
                                 & victim_dirty_candidate;
 
-    // The NSCSCC build always uses the generic streaming AXI backend.
+    // NSCSCC 构建始终使用通用流式 AXI 后端。
     wire        backend_req_ready = mem_req_ready;
     wire        backend_rd_valid  = mem_rd_valid;
     wire [31:0] backend_rd_data   = mem_rd_data;
@@ -542,8 +527,8 @@ module dcache #(
     wire        backend_wr_valid  = mem_wr_valid;
     wire        backend_wr_ready  = wb_state_resp | state_uc_write_resp;
 
-    // Delay byte-lane alignment until after the internal EX->MEM register.
-    // This keeps the variable shift off the CPU ALU address path.
+    // 字节对齐延后到内部 EX->MEM 寄存器之后，避免可变移位进入 CPU
+    // ALU 的地址计算路径。
     wire [31:0] mem_wdata_aligned = mem_wdata << {mem_addr[1:0], 3'b0};
     wire [3:0] refill_store_merge_wea =
         (refill_is_store & (refill_word == refill_target_word))
@@ -552,7 +537,7 @@ module dcache #(
         backend_rd_data, refill_store_data, refill_store_merge_wea
     );
     // ================================================================
-    //  FSM - variable-latency refill/store backend
+    //  状态机——可变延迟 refill/store 后端
     // ================================================================
     always_ff @(posedge clk) begin
         if (!rst_n)
@@ -561,12 +546,10 @@ module dcache #(
             state <= state_next;
     end
 
-    // A store miss is captured as the sole active miss and may retire
-    // immediately; later memory operations remain backpressured until its
-    // write-allocate refill completes.
-    // A request may enter the otherwise-empty MEM stage while tag LUTRAM is
-    // being cleared.  Hold it in S_IDLE until the initialization replay has
-    // produced trustworthy registered tag and data candidates.
+    // store 缺失会被保存为当前唯一的缺失请求，并允许 store 尽快提交；
+    // 后续访存要等 write-allocate refill 完成后才能继续。
+    // Tag LUTRAM 清空期间，空闲 MEM 仍可能接收请求；请求会停在 S_IDLE，
+    // 等初始化重放产生可信的 Tag 和数据候选。
     wire idle_mem_req = state_idle & mem_req & tag_init_release_q;
     wire idle_uncached = idle_mem_req & mem_uncached;
     wire idle_load    = idle_mem_req & ~mem_uncached & ~mem_wr;
@@ -582,8 +565,8 @@ module dcache #(
     wire idle_uncached_start = idle_uncached;
     assign refill_start = idle_refill_start;
 
-    // An accepted AXI read cannot be cancelled. A killed load drains the
-    // remainder without installing it; a store allocation must always finish.
+    // 已经握手接受的 AXI 读不能取消。被冲刷的 load 会继续接收剩余返回
+    // 但不安装到 cache；store 分配必须完整完成。
     wire refill_abort = flush & ~refill_is_store;
     wire refill_data_last = refill_data_fire & (refill_beat == WORD_W'(LINE_WORDS - 1));
     assign refill_complete = refill_data_last & ~refill_abort;
@@ -601,12 +584,11 @@ module dcache #(
                       & backend_wr_ready;
     wire wb_resp_ok = wb_resp_fire & (mem_wr_resp == 2'b00);
     wire writeback_complete_now = ~wb_required | wb_done | wb_resp_ok;
-    // A retrying writeback command has priority if it happens to coincide with
-    // the still-pending refill command.
+    // 如果重试写回命令和仍在等待的 refill 命令同周期出现，优先重试写回。
     assign refill_req_fire = state_refill_req & ~wb_state_cmd
                            & backend_req_ready;
-    // refill_cpu_pending also remembers a one-cycle flush that coincided with
-    // acceptance of the non-cancellable writeback command.
+    // refill_cpu_pending 还会记住与不可取消写回命令握手同周期发生的
+    // 一拍冲刷。
     wire refill_cancel_before_read = ~refill_is_store
                                    & (refill_abort | ~refill_cpu_pending);
     wire uc_req_fire = state_uc_req & backend_req_ready;
@@ -647,8 +629,8 @@ module dcache #(
 
             S_REFILL_DATA: begin
                 if (refill_abort)
-                    // A non-cancellable backend has nothing left to drop when
-                    // flush coincides with the accepted final beat.
+                    // 后端事务不可取消；如果 flush 与最后一个已接受 beat 同周期，
+                    // 已经没有可丢弃的事务。
                     if (refill_data_last) begin
                         if (writeback_complete_now)
                             state_next = S_IDLE;
@@ -684,15 +666,14 @@ module dcache #(
                 state_next = S_IDLE;
             S_WB_CAPTURE: begin
                 if (refill_abort)
-                    // No external write command exists yet, so a killed load
-                    // can retain the original dirty cache line.
+                    // 还没有外部写命令，因此被冲刷的 load 可以保留原来的脏 cache line。
                     state_next = S_IDLE;
                 else if (wb_capture_last)
                     state_next = S_WB_REQ;
             end
             S_WB_REQ: begin
                 if (wb_req_fire)
-                    // Once accepted, the write transaction is never cancelled.
+                    // 写事务一旦被接受，就不能取消。
                     state_next = S_REFILL_REQ;
                 else if (refill_abort)
                     state_next = S_IDLE;
@@ -730,10 +711,9 @@ module dcache #(
         endcase
     end
 
-    // Dirty writeback is an independent transaction once its command is
-    // accepted.  A failed B response replays the same buffered command/data;
-    // flush may discard a load refill, but it cannot discard accepted memory
-    // side effects or the only surviving copy of the victim line.
+    // 脏行写回命令一旦接受就是独立事务。B 响应失败时重放同一条已缓存的
+    // 命令和数据；flush 可以丢弃 load refill，但不能丢弃已经接受的内存副作用，
+    // 也不能丢弃 victim line 唯一仍然存在的副本。
     always_ff @(posedge clk) begin
         if (!rst_n)
             wb_state <= WB_IDLE;
@@ -769,8 +749,8 @@ module dcache #(
         end
     end
 
-    // These are ownership/progress bits, not payload.  They are the only new
-    // state needed to join the independently completing read and write paths.
+    // 这些是所有权/进度位，不是 payload。它们是连接独立完成的读写路径所需的
+    // 唯一新增状态。
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             wb_required <= 1'b0;
@@ -820,9 +800,9 @@ module dcache #(
 
     assign refill_data_fire = state_refill_data & backend_rd_valid & backend_rd_ready;
 
-    // The eight local words exclusively snapshot the dirty victim until B
-    // succeeds. Port B is synchronous, so valid_q aligns each registered RAM
-    // result with its capture index. Refill beats never overwrite this buffer.
+    // 这 8 个本地字在 B 成功前独占保存脏 victim 的快照。Port B 是同步端口，
+    // 因此 valid_q 将每个已寄存的 RAM 结果与捕获索引对齐。refill beat 永远
+    // 不会覆盖这个缓冲区。
     always_ff @(posedge clk) begin
         if (refill_start) begin
             wb_read_issue_count   <= '0;
@@ -851,24 +831,24 @@ module dcache #(
     end
 
     // ================================================================
-    //  Data RAM write - unified write port MUX for BRAM IP
-    //  Refill and store are mutually exclusive, so they share Port A.
+    //  Data RAM 写入：供 BRAM IP 使用的统一写端口 MUX。
+    //  refill 和 store 由状态机保证互斥，因此共用 Port A。
     // ================================================================
     assign refill_write_addr = {refill_index, refill_word};
     wire [INDEX_W+WORD_W-1:0] store_data_addr    = {mem_index, mem_word};
 
-    // A store hit updates the selected cache word. A store miss is merged into
-    // the critical word during its write-allocate refill.
+    // store 命中更新选中的 cache word；store miss 在 write-allocate refill
+    // 期间合并到关键字。
     wire        store_cache_write = store_hit_accept;
     wire [INDEX_W+WORD_W-1:0] store_cache_write_addr = store_data_addr;
     wire [31:0] store_cache_write_data = mem_wdata_aligned;
     wire [ 3:0] store_cache_write_wea = mem_wea;
 
-    // Refill write: one cache data RAM write per accepted backend read beat.
+    // refill 写入：每接受一个后端读 beat，就写入一次 cache data RAM。
     assign refill_cache_write = refill_data_fire;
 
-    // Unified BRAM write port MUX.
-    // Priority: refill > store (they are mutually exclusive by FSM design)
+    // 统一 BRAM 写端口 MUX。
+    // 优先级：refill > store（FSM 保证两者互斥）。
     assign data_bram_wea = refill_cache_write ? 4'b1111
                          : store_cache_write ? store_cache_write_wea
                                              : 4'b0000;
@@ -880,21 +860,18 @@ module dcache #(
                                                : 32'd0;
 
     // ================================================================
-    //  One-cycle BRAM read-after-write collision bypass
+    //  一拍 BRAM 写后读冲突旁路。
     //
-    //  In the store-MEM/load-EX cycle, compare the complete aligned word
-    //  addresses directly. A matching physical word necessarily selects the
-    //  same cache way as the already-confirmed store hit, so this comparison
-    //  does not need to wait for the younger load's tag-RAM lookup.
+    //  在 store 位于 MEM、load 位于 EX 的周期，直接比较完整的对齐字地址。
+    //  如果物理字匹配，它一定选择与已确认 store 命中相同的 cache way，
+    //  因此不需要等待年轻 load 的 tag-RAM 查询。
     //
-    //  The payload registers are written unconditionally.  Capture a harmless
-    //  same-word candidate without the late request/flush cone, then qualify
-    //  its use with the registered MEM-stage load token below.
+    //  payload 寄存器无条件写入。先在不经过末级 request/flush 逻辑锥的情况下
+    //  捕获无害的同字候选，再由下面已寄存的 MEM 阶段 load token 决定是否使用。
     // ================================================================
-    // Both visible sides of this bypass are cacheable and therefore share the
-    // platform-owned addr[31:19] prefix.  Compare only the stored cache word
-    // identity, sourced from the parallel short address adder.  Three six-bit
-    // groups avoid recreating a serial wide equality/carry structure.
+    // 旁路两侧都来自可缓存地址，因此共享平台定义的 addr[31:19] 前缀。
+    // 只比较由并行短地址加法器产生的 cache word 标识；分成三个六位分组，
+    // 避免重新形成串行的宽等值/进位结构。
     wire [16:0] raw_bypass_word_addr_diff =
         cpu_lookup_addr ^ {mem_tag, mem_index, mem_word};
     wire raw_bypass_addr_eq0 = ~|raw_bypass_word_addr_diff[5:0];
@@ -925,15 +902,14 @@ module dcache #(
     end
 
     // ================================================================
-    //  Tag RAM write
+    //  Tag RAM 写入。
     // ================================================================
-    // Dirty/tag payload is masked by tag_vld. Every allocation or store hit
-    // initializes it before it can influence victim writeback selection.
+    // Dirty/tag payload 由 tag_vld 屏蔽。每次分配或 store 命中都会先初始化它，
+    // 然后才可能影响 victim 写回选择。
     //
-    // The four architectural events below are mutually exclusive except that
-    // writeback completion may coincide with refill request/completion for the
-    // same captured victim. Preserve the old procedural priority exactly:
-    // refill install > store hit > writeback clean > refill invalidation.
+    // 下面四个架构事件彼此互斥，唯一例外是同一个 victim 的写回完成可能与
+    // refill 请求/完成同周期发生。严格保持原来的非阻塞赋值优先级：
+    // refill 安装 > store 命中 > 写回清脏 > refill 失效。
     logic               dirty_write_valid;
     logic [INDEX_W-1:0] dirty_write_index;
     logic               dirty_write_data;
@@ -947,8 +923,8 @@ module dcache #(
             dirty_write_valid = 1'b1;
         end
 
-        // A successful writeback leaves a killed load's original line valid
-        // but clean. On the normal path it is invalidated next.
+        // 写回成功后，被冲刷 load 的原始 cache line 仍保持有效但变为干净；
+        // 正常路径会在下一步将其失效。
         if (wb_resp_ok & ~refill_read_accepted) begin
             dirty_write_valid = 1'b1;
         end
@@ -966,19 +942,17 @@ module dcache #(
         end
     end
 
-    // One indexed assignment per memory is the canonical single-write-port
-    // distributed-RAM template. No reset is required because tag_vld masks every
-    // unallocated entry.
+    // 每个存储体每周期一次索引赋值，是标准单写端口分布式 RAM 模板。
+    // tag_vld 会屏蔽未分配表项，因此不需要复位。
     always_ff @(posedge clk) begin
         if (dirty_write_valid)
             dirty[dirty_write_index] <= dirty_write_data;
     end
 
 `ifndef SYNTHESIS
-    // The single-write-port representation is cycle-equivalent provided a
-    // normal store hit cannot update a different line while refill/writeback
-    // metadata is being updated.  Same-line overlaps are legal and the
-    // priority above matches the former nonblocking-assignment ordering.
+    // 只要普通 store 命中不会在 refill/writeback 元数据更新时修改另一条 line，
+    // 单写端口表示就与原设计周期等价。同一 line 的重叠是合法的，上面的优先级
+    // 与原来的非阻塞赋值顺序一致。
     wire dirty_refill_metadata_event = refill_req_fire
         | (wb_resp_ok & ~refill_read_accepted)
         | refill_complete;
@@ -990,7 +964,7 @@ module dcache #(
 `endif
 
     // ================================================================
-    //  External memory backend request/response
+    //  外部存储后端请求/响应。
     // ================================================================
     assign mem_req_valid = wb_state_cmd | state_refill_req | state_uc_req;
     assign mem_req_write = wb_state_cmd | (state_uc_req & mem_wr);
@@ -1018,11 +992,10 @@ module dcache #(
     assign mem_wr_ready  = backend_wr_ready;
 
     // ================================================================
-    //  CPU read data formatting and late source selection (MEM stage)
+    //  CPU 读数据格式化和末级来源选择（MEM 阶段）。
     //
-    //  The BRAM hit and miss/uncached responses are formatted in parallel.
-    //  The late source control selects complete 32-bit results instead of
-    //  sitting in front of byte extraction and extension.
+    //  BRAM 命中、miss/未缓存响应并行格式化；末级来源控制选择完整 32 位
+    //  结果，不会位于字节提取和扩展逻辑之前。
     // ================================================================
     wire raw_bypass_apply = raw_bypass_valid
                           & mem_req & ~mem_wr & ~mem_uncached;
@@ -1064,9 +1037,8 @@ module dcache #(
     );
 `endif
 
-    // Duplicate only the late source selector.  Formatting and RAW-merge
-    // logic remain shared, while each distant MEM/WB destination receives a
-    // physically independent final LUT cone.
+    // 只复制末级来源选择器。格式化和 RAW 合并逻辑保持共享，远端每个
+    // MEM/WB 目的端各自得到独立的末级 LUT 逻辑锥。
     dcache_read_result_select u_read_select_wb (
         .special_valid   (special_read_valid),
         .formatted_hit   (formatted_hit),
@@ -1082,7 +1054,7 @@ module dcache #(
     );
 
     // ================================================================
-    //  CPU ready
+    //  CPU ready 信号。
     // ================================================================
     assign refill_cpu_ready = refill_cpu_pending
                             & writeback_complete_now
@@ -1114,15 +1086,12 @@ module dcache #(
             if (tag_hit !== mem_hit_reference)
                 $fatal(1, "DCache split tag-hit pipeline changed behavior");
 
-            // Both copies are deliberately identical logically; only their
-            // physical destinations differ.
+            // 两份副本在逻辑上有意保持完全相同，只有物理目的地不同。
             if (cpu_ready && (cpu_rdata_ex !== cpu_rdata))
                 $fatal(1, "DCache duplicated load result changed behavior");
 
-            // The shortened tag is legal only after the complete address was
-            // classified by the platform window.  This assertion guards the
-            // boundary contract without putting a 13-bit comparison onto the
-            // synthesized hit path.
+            // 只有完整地址已经由平台窗口分类后，缩短 tag 才合法。
+            // 该断言保护这个边界约定，但不会把 13 位比较放入综合后的命中路径。
             if (mem_uncached !== (((mem_addr & CACHE_ADDR_MASK)
                                   != (CACHE_ADDR_BASE & CACHE_ADDR_MASK))))
                 $fatal(1, "DCache cacheability disagrees with full address window");

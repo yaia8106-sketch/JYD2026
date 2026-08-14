@@ -1,9 +1,11 @@
 // ============================================================
-// Module: frontend_fetch_state
-// Description: BP0 PC/epoch, accepted F0 metadata, and outstanding count.
-// Domain: frontend.
-// All outputs in this module are clock-edge state; prediction and packet
-// construction remain combinational in frontend_ftq.
+// 中文说明：维护前端取指 PC、请求状态、响应等待和重定向后的取指状态。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 模块：frontend_fetch_state。
+// 说明：维护 BP0 PC/epoch、已接受的 F0 元数据和未完成请求计数。
+// 所属阶段：frontend。
+// 本模块的输出都是时钟沿更新的状态；预测和取指包构造仍在 frontend_ftq
+// 中以组合逻辑完成。
 // ============================================================
 
 module frontend_fetch_state
@@ -47,8 +49,8 @@ module frontend_fetch_state
     assign f0_abtb_bank1_meta.hit = f0_abtb_bank1_hit_r;
     assign f0_abtb_bank1_meta.way = f0_abtb_bank1_way_r;
 
-    // BP0 PC state advances on accepted predictions and is reset immediately
-    // by backend redirects. The epoch marks outstanding F0 responses.
+    // BP0 PC 状态在预测请求被接受时前进，在后端重定向时立即重置。
+    // epoch 用来标记尚未返回的 F0 响应。
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             current_pc <= RESET_PC;
@@ -61,11 +63,9 @@ module frontend_fetch_state
         end
     end
 
-    // A local synchronous ROM returns exactly one cycle after accept, while
-    // an AXI-backed instruction port must retain the request context until a
-    // response arrives.  Keep the two timing contracts explicit so the JYD
-    // BRAM path is unchanged and the NSCSCC path can tolerate arbitrary AXI
-    // latency.
+    // 本地同步 ROM 恰好在接受请求后一拍返回；AXI 指令端口则必须一直保存
+    // 请求上下文，直到响应到达。显式区分这两种时序约定，保证 JYD 的 BRAM
+    // 路径不变，同时让 NSCSCC 路径能够容忍任意 AXI 延迟。
     generate
         if (VARIABLE_IROM_LATENCY) begin : g_variable_irom_valid
             always_ff @(posedge clk) begin
@@ -86,10 +86,9 @@ module frontend_fetch_state
         end
     endgenerate
 
-    // F0 metadata is the one-cycle-delayed packet context paired with the IROM
-    // response.  An accept never fires with a redirect in the integrated
-    // frontend; even if both are driven in a unit test, the speculative payload
-    // write is harmless because the valid block above gives redirect priority.
+    // F0 元数据是与 IROM 响应配对的一拍延迟取指包上下文。
+    // 集成前端不会在重定向同周期接受请求；即使单元测试同时驱动两者，
+    // 上面的 valid 逻辑仍会让重定向优先，因此推测 payload 写入不会产生影响。
     always_ff @(posedge clk) begin
         if (accept) begin
             f0_state.epoch <= frontend_epoch;
@@ -110,7 +109,7 @@ module frontend_fetch_state
         end
     end
 
-    // Outstanding count tracks accepted BP0 requests minus returned F0 packets.
+    // outstanding 计数等于已接受的 BP0 请求数减去已返回的 F0 取指包数。
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             outstanding_count <= '0;
@@ -128,8 +127,8 @@ module frontend_fetch_state
     end
 
     generate
-        // Wide metadata is only needed for observation/debug builds; functional
-        // prediction uses hit/way plus normal carried prediction fields.
+        // 宽元数据只供观测/调试版本使用；正常功能预测只使用 hit/way 和
+        // 随请求携带的普通预测字段。
         if (WIDE_ABTB_META) begin : g_wide_abtb_meta
             logic [ 1:0] bank0_cfi_type_r;
             logic [31:0] bank0_target_r;

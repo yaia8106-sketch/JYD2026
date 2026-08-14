@@ -1,10 +1,10 @@
 // ============================================================
-// Module: frontend_ftq_compat_adapter
-// Description: Expose structured F0 state through legacy scalar probe names.
-// Domain: frontend observation compatibility.
-//
-// Production frontend logic consumes the packed records directly. These
-// scalar outputs exist for directed tests and performance tooling only.
+// 中文说明：为旧的 FTQ 观察接口提供兼容适配，不参与处理器的实际执行路径。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 模块：frontend_ftq_compat_adapter。
+// 说明：通过旧的标量探针名称暴露结构化 F0 状态。
+// 所属部分：前端观测兼容层。
+// 正式前端逻辑直接使用打包记录；这些标量输出只供定向测试和性能工具使用。
 // ============================================================
 
 module frontend_ftq_compat_adapter

@@ -1,10 +1,11 @@
 // ============================================================
-// Module: cpu_prediction_compat_adapter
-// Description: Flatten structured prediction records for legacy probes.
-// Domain: observation compatibility.
-//
-// Predictor control and training consume packed records. This adapter keeps
-// historical scalar names out of cpu_top's production wiring.
+// 中文说明：为旧的预测器观察接口提供兼容信号，不改变预测器本身的控制。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 模块：cpu_prediction_compat_adapter。
+// 说明：为旧探针展平结构化预测记录。
+// 所属部分：观测兼容层。
+// 预测器控制和训练使用打包记录；本适配器让历史标量名称不进入 cpu_top
+// 的正式连线。
 // ============================================================
 
 module cpu_prediction_compat_adapter

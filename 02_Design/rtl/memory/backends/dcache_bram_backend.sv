@@ -1,18 +1,16 @@
 // ============================================================
-// Module: dcache_bram_backend
-// Description:
-//   Backend adapter from the DCache memory request/response interface to the
-//   existing DRAM4MyOwn simple-dual-port BRAM.
+// 中文说明：为 DCache 提供数据 RAM 后端，封装 FPGA BRAM 的读写端口和时序。
+// 下面的寄存器和组合逻辑保持现有时序与握手约定；本文件只描述该模块的职责。
+// 模块：dcache_bram_backend。
+// 说明：把 DCache 的存储请求/响应接口适配到现有 DRAM4MyOwn 简单双口 BRAM。
 //
-//   This module deliberately behaves like a variable-latency backend from the
-//   DCache point of view: requests are accepted with valid/ready and read data
-//   is returned with valid/ready. The implementation underneath still uses the
-//   local BRAM model/IP.
+// 从 DCache 视角看，本模块有意表现为可变延迟后端：请求通过 valid/ready
+// 接受，读数据通过 valid/ready 返回；底层仍使用本地 BRAM 模型/IP。
 // ============================================================
 
 module dcache_bram_backend #(
-    // 1: BRAM output changes in the cycle after the address-sampling edge
-    // 2: BRAM has an additional output register enabled.
+    // 1：BRAM 输出在采样地址的时钟沿之后一周期改变。
+    // 2：BRAM 额外开启了输出寄存器。
     parameter integer READ_LATENCY = 1
 ) (
     input  logic        clk,
