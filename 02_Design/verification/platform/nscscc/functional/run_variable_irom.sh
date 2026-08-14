@@ -13,7 +13,7 @@ vcs -full64 -sverilog -timescale=1ns/1ps \
     -top tb_variable_irom_frontend \
     -Mdir="$WORK_DIR/csrc" \
     -o "$WORK_DIR/simv" \
-    -F "$RTL_DIR/filelists/loongarch_cpu.f" \
+    -F "$RTL_DIR/filelists/cpu.f" \
     "$NSCSCC_DIR/tb/tb_variable_irom_frontend.sv" \
     "$VCS_SHIM" >"$WORK_DIR/compile.log" 2>&1
 

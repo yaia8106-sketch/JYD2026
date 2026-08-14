@@ -389,17 +389,3 @@ module loongarch_decoder
     end
 
 endmodule
-
-// The common core instantiates this selected implementation name. Filelists
-// compile exactly one ISA adapter, so the core itself remains ISA-neutral.
-module isa_decoder
-    import cpu_defs::*;
-(
-    input  logic [31:0] inst,
-    output decoded_uop_t uop
-);
-    loongarch_decoder u_impl (
-        .inst (inst),
-        .uop  (uop)
-    );
-endmodule

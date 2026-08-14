@@ -94,7 +94,7 @@ module tb_icache_metadata;
     assign response_low_cached = irom_resp_predecode[6:0];
     assign response_high_cached = irom_resp_predecode[13:7];
 
-    isa_cached_predecode_expand u_response_low_expand (
+    loongarch_cached_predecode_expand u_response_low_expand (
         .inst          (irom_resp_data[31:0]),
         .cached        (response_low_cached),
         .pred_taken    (1'b1),
@@ -102,7 +102,7 @@ module tb_icache_metadata;
         .pair_metadata (response_low_pair_direct)
     );
 
-    isa_cached_predecode_expand u_response_high_expand (
+    loongarch_cached_predecode_expand u_response_high_expand (
         .inst          (irom_resp_data[63:32]),
         .cached        (response_high_cached),
         .pred_taken    (1'b0),

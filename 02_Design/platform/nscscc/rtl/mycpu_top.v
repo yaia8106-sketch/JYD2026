@@ -4,8 +4,8 @@
 //   file   : mycpu_top.v
 //   module : core_top
 // ISA/platform contract:
-//   LA32R sources are selected only by platform/nscscc/filelist.f.
-//   This wrapper never compiles into the JYD RISC-V BRAM build.
+//   platform/nscscc/filelist.f includes the sole LoongArch CPU manifest.
+//   No alternate ISA or platform wrapper is selected by this build.
 // ============================================================
 
 module core_top #(

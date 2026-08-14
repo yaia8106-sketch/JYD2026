@@ -1,13 +1,12 @@
 #!/bin/bash
-# Standalone randomized RV32M unit test.
+# Standalone randomized 32-bit multiply/divide unit test.
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 VERIFICATION_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
-RISCV_TESTS_DIR="$VERIFICATION_DIR/riscv"
 RTL_DIR="$(cd "$VERIFICATION_DIR/../rtl" && pwd)"
-WORK_DIR="$RISCV_TESTS_DIR/work/muldiv"
+WORK_DIR="$VERIFICATION_DIR/common/work/muldiv"
 VCS_ENV="${VCS_ENV:-/home/anokyai/synopsys/env.sh}"
 VCS_OPTS="${VCS_OPTS:--full64 -sverilog -timescale=1ns/1ps}"
 VCS_EXTRA_OPTS="${VCS_EXTRA_OPTS:-}"

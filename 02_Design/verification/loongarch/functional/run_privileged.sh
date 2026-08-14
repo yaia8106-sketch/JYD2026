@@ -17,7 +17,7 @@ vcs -full64 -sverilog -timescale=1ns/1ps \
     -top tb_loongarch_privileged \
     -Mdir="$WORK_DIR/vcs.csrc" \
     -o "$WORK_DIR/simv" \
-    -F "$RTL_DIR/filelists/loongarch_cpu.f" \
+    -F "$RTL_DIR/filelists/cpu.f" \
     "$RTL_DIR/core/cpu_top.sv" \
     "$LOONGARCH_DIR/tb/tb_loongarch_privileged.sv" \
     "$VCS_SHIM" >"$WORK_DIR/compile.log" 2>&1

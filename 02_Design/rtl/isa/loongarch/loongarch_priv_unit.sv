@@ -2,9 +2,8 @@
 // Module: loongarch_priv_unit
 // Description: LA32R CSR, synchronous trap, interrupt, and ERTN state.
 //
-// This file is selected only by the LoongArch filelist.  CSR numbers, reset
-// values, exception codes, and CSRXCHG behavior deliberately stay outside the
-// ISA-neutral pipeline.
+// CSR numbers, reset values, exception codes, and CSRXCHG behavior stay in the
+// sole LoongArch ISA boundary instead of leaking into the common pipeline.
 // ============================================================
 
 module loongarch_priv_unit
@@ -518,60 +517,4 @@ module loongarch_priv_unit
         end
     end
 
-endmodule
-
-module isa_priv_unit
-    import cpu_defs::*;
-(
-    input  logic        clk,
-    input  logic        rst_n,
-    input  logic        ex_valid,
-    input  logic        ex_ready_go,
-    input  logic        ex_priv_commit_ready,
-    input  logic        mem_allowin,
-    input  logic        mem_branch_flush,
-    input  logic        ex_redirect_fire,
-    input  logic [31:0] ex_pc,
-    input  logic [31:0] ex_inst,
-    input  logic [31:0] ex_src0_data,
-    input  logic [31:0] ex_src1_data,
-    input  priv_op_t    ex_priv_op,
-    input  logic        ex_priv_uses_imm,
-    input  priv_cmd_t   ex_priv_cmd,
-    input  logic [PRIV_ADDR_W-1:0] ex_priv_addr,
-    input  logic [ 4:0] ex_priv_imm,
-    input  decode_exception_t ex_exception,
-    input  logic        ex_mem_read_en,
-    input  logic        ex_mem_write_en,
-    input  mem_size_t   ex_mem_size,
-    input  logic [31:0] ex_mem_addr,
-    input  logic [ 1:0] ex_mem_addr_low,
-    input  logic        ex_s1_valid,
-    input  logic        ex_s1_mem_read_en,
-    input  logic        ex_s1_mem_write_en,
-    input  mem_size_t   ex_s1_mem_size,
-    input  logic [31:0] ex_s1_mem_addr,
-    input  logic [ 1:0] ex_s1_mem_addr_low,
-    input  logic        timer_irq_pending,
-    input  logic        timer_irq_take,
-    input  logic [31:0] timer_irq_mepc,
-    output logic        ex_priv_flow,
-    output logic        ex_priv_redirect,
-    output logic [31:0] ex_priv_target,
-    output logic        ex_priv_trap,
-    output logic        ex_priv_wait_older,
-    output logic        ex_s1_addr_replay,
-    output logic        timer_irq_request,
-    output logic        timer_irq_redirect,
-    output logic [31:0] timer_irq_target,
-    output logic [31:0] ex_priv_rdata,
-    output logic        debug_excp_valid,
-    output logic        debug_ertn,
-    output logic [31:0] debug_intr_no,
-    output logic [ 5:0] debug_cause,
-    output logic [31:0] debug_exception_pc,
-    output logic [31:0] debug_exception_inst,
-    output logic [PRIV_DEBUG_STATE_W-1:0] debug_priv_state
-);
-    loongarch_priv_unit u_impl (.*);
 endmodule

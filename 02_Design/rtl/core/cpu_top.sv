@@ -1204,12 +1204,12 @@ module cpu_top
         .id_s1_rf_rs2_addr(id_s1_rf_rs2_addr)
     );
 
-    isa_decoder u_decoder (
+    loongarch_decoder u_decoder (
         .inst (id_inst),
         .uop  (dec_uop)
     );
 
-    isa_decoder u_decoder_s1 (
+    loongarch_decoder u_decoder_s1 (
         .inst (id_inst1),
         .uop  (dec1_uop)
     );
@@ -1707,8 +1707,8 @@ module cpu_top
     );
 `endif
 
-    // The selected ISA owns its privileged registers and trap semantics.
-    isa_priv_unit u_isa_priv_unit (
+    // LoongArch owns its privileged registers and trap semantics.
+    loongarch_priv_unit u_isa_priv_unit (
         .clk                (clk),
         .rst_n              (rst_n),
         .ex_valid           (ex_valid),

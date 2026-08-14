@@ -47,11 +47,9 @@ and MMIO writes are explicitly unmarked and remain serialized against reads.
 Internal write commands and 32-bit write-data beats are separate, so a DCache
 line writeback does not require a 256-bit datapath through the wrapper.
 
-ISA and platform selection stay separate:
-
-- `platform/nscscc/filelist.f` includes `loongarch_cpu.f` and the AXI path;
-- `platform/jyd/filelist.f` includes `riscv_cpu.f` and the direct-BRAM path;
-- neither platform relies on a global `RISCV`/`LOONGARCH` preprocessor switch.
+LoongArch is the sole ISA. `platform/nscscc/filelist.f` includes the single
+`rtl/filelists/cpu.f` manifest and adds the cache and AXI integration path; no
+ISA-selection macro or alternate decoder is part of the active design.
 
 The inferred `rtl/dcache_data_ram.sv` replaces the JYD Vivado-project-specific
 DCache RAM IP for chiplab builds.  Official SoC RTL, constraints, and board IP

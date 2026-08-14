@@ -150,7 +150,7 @@ module tb_loongarch_privileged;
                     $fatal(1,
                            "[FAIL] load-dependent CSR captured stale source data");
             end
-            if (u_cpu.u_isa_priv_unit.u_impl.ex_csr_write_fire) begin
+            if (u_cpu.u_isa_priv_unit.ex_csr_write_fire) begin
                 csr_write_count <= csr_write_count + 1;
                 if (!cache_ready)
                     csr_fire_while_cache_wait_count <=

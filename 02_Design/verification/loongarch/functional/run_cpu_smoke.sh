@@ -34,7 +34,7 @@ echo "[INFO] Compiling LoongArch cpu_top execution smoke test..."
 if ! vcs $VCS_OPTS $VCS_EXTRA_OPTS -top tb_loongarch_cpu_smoke \
     -Mdir="$WORK_DIR/vcs.csrc" \
     -o "$SIM_BIN" \
-    -F "$RTL_DIR/filelists/loongarch_cpu.f" \
+    -F "$RTL_DIR/filelists/cpu.f" \
     "$RTL_DIR/core/cpu_top.sv" \
     "$LOONGARCH_DIR/tb/tb_loongarch_cpu_smoke.sv" \
     "$VCS_SHIM" >"$COMPILE_LOG" 2>&1; then

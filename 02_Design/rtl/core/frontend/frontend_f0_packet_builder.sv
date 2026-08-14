@@ -92,7 +92,7 @@ module frontend_f0_packet_builder
     // Refill-time metadata names every supported/illegal instruction family.
     // F0 therefore expands the cached kind directly and never places a full
     // opcode decoder after the synchronous ICache data output.
-    isa_cached_predecode_expand u_expand_slot0 (
+    loongarch_cached_predecode_expand u_expand_slot0 (
         .inst          (slot0_inst),
         .cached        (slot0_cached_dec),
         .pred_taken    (slot0_pred_taken),
@@ -100,7 +100,7 @@ module frontend_f0_packet_builder
         .pair_metadata (slot0_pair_metadata)
     );
 
-    isa_cached_predecode_expand u_expand_slot1 (
+    loongarch_cached_predecode_expand u_expand_slot1 (
         .inst          (slot1_inst),
         .cached        (slot1_cached_dec),
         .pred_taken    (slot1_pred_taken),

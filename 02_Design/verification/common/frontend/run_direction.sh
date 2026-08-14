@@ -5,9 +5,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 VERIFICATION_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
-RISCV_TESTS_DIR="$VERIFICATION_DIR/riscv"
 RTL_DIR="$(cd "$VERIFICATION_DIR/../rtl" && pwd)"
-WORK_DIR="$RISCV_TESTS_DIR/work/frontend_stage1_direction"
+WORK_DIR="$VERIFICATION_DIR/common/work/frontend_stage1_direction"
 VCS_ENV="${VCS_ENV:-/home/anokyai/synopsys/env.sh}"
 VCS_OPTS="${VCS_OPTS:--full64 -sverilog -timescale=1ns/1ps}"
 VCS_SHIM="$VERIFICATION_DIR/tools/vcs_pthread_yield.c"

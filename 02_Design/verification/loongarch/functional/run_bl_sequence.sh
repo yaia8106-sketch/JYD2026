@@ -15,7 +15,7 @@ vcs -full64 -sverilog -timescale=1ns/1ps \
   -top tb_loongarch_bl_sequence \
   -Mdir="$WORK_DIR/vcs.csrc" \
   -o "$WORK_DIR/simv" \
-  -F "$ROOT_DIR/rtl/filelists/loongarch_cpu.f" \
+  -F "$ROOT_DIR/rtl/filelists/cpu.f" \
   "$ROOT_DIR/rtl/core/cpu_top.sv" \
   "$ROOT_DIR/verification/loongarch/tb/tb_loongarch_bl_sequence.sv" \
   "$ROOT_DIR/verification/tools/vcs_pthread_yield.c" \

@@ -1,6 +1,5 @@
-// NSCSCC/chiplab source manifest.  This platform deliberately selects only
-// the LoongArch ISA boundary; the JYD manifest separately selects RISC-V.
--F ../../rtl/filelists/loongarch_cpu.f
+// NSCSCC/chiplab source manifest. LoongArch is the processor's sole ISA.
+-F ../../rtl/filelists/cpu.f
 ../../rtl/core/cpu_top.sv
 ../../rtl/memory/dcache_read_result_select.sv
 ../../rtl/memory/dcache_data_format.sv
