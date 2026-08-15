@@ -56,11 +56,11 @@ ForwardedOperand reference_forward(const ForwardingInputs& inputs,
             ? candidate.mul_result
             : candidate.alu_result;
     };
-    if (hit(inputs.ex_s1)) {
+    if (hit(inputs.ex_s1) && !inputs.ex_s1.result_repair) {
         return {ex_value(inputs.ex_s1, false),
                 ForwardingSource::S1Ex, RepairSource::None};
     }
-    if (hit(inputs.ex_s0)) {
+    if (hit(inputs.ex_s0) && !inputs.ex_s0.result_repair) {
         return {ex_value(inputs.ex_s0, true),
                 ForwardingSource::S0Ex, RepairSource::None};
     }
@@ -91,34 +91,61 @@ void check_operand(const ForwardedOperand& actual,
 
 std::uint32_t addi(const std::uint8_t rd, const std::uint8_t rs1,
                    const std::int32_t imm = 1) {
-    return (static_cast<std::uint32_t>(imm) & 0xfffu) << 20u |
-           static_cast<std::uint32_t>(rs1) << 15u |
-           static_cast<std::uint32_t>(rd) << 7u | 0x13u;
+    return 0x00au << 22u |
+           (static_cast<std::uint32_t>(imm) & 0xfffu) << 10u |
+           static_cast<std::uint32_t>(rs1) << 5u | rd;
 }
 
 std::uint32_t add(const std::uint8_t rd, const std::uint8_t rs1,
                   const std::uint8_t rs2) {
-    return static_cast<std::uint32_t>(rs2) << 20u |
-           static_cast<std::uint32_t>(rs1) << 15u |
-           static_cast<std::uint32_t>(rd) << 7u | 0x33u;
+    return 0x020u << 15u |
+           static_cast<std::uint32_t>(rs2) << 10u |
+           static_cast<std::uint32_t>(rs1) << 5u | rd;
 }
 
 std::uint32_t mul(const std::uint8_t rd, const std::uint8_t rs1,
                   const std::uint8_t rs2) {
-    return 1u << 25u | static_cast<std::uint32_t>(rs2) << 20u |
-           static_cast<std::uint32_t>(rs1) << 15u |
-           static_cast<std::uint32_t>(rd) << 7u | 0x33u;
+    return 0x038u << 15u |
+           static_cast<std::uint32_t>(rs2) << 10u |
+           static_cast<std::uint32_t>(rs1) << 5u | rd;
+}
+
+std::uint32_t slli(const std::uint8_t rd, const std::uint8_t rs1,
+                   const std::uint8_t shift) {
+    return 0x081u << 15u |
+           static_cast<std::uint32_t>(shift & 31u) << 10u |
+           static_cast<std::uint32_t>(rs1) << 5u | rd;
 }
 
 std::uint32_t lw(const std::uint8_t rd, const std::uint8_t rs1) {
-    return static_cast<std::uint32_t>(rs1) << 15u |
-           2u << 12u | static_cast<std::uint32_t>(rd) << 7u | 0x03u;
+    return 0x0a2u << 22u |
+           static_cast<std::uint32_t>(rs1) << 5u | rd;
 }
 
 std::uint32_t sw(const std::uint8_t rs2, const std::uint8_t rs1) {
-    return static_cast<std::uint32_t>(rs2) << 20u |
-           static_cast<std::uint32_t>(rs1) << 15u |
-           2u << 12u | 0x23u;
+    return 0x0a6u << 22u |
+           static_cast<std::uint32_t>(rs1) << 5u | rs2;
+}
+
+std::uint32_t beq(const std::uint8_t rs1, const std::uint8_t rs2) {
+    return 0x16u << 26u |
+           static_cast<std::uint32_t>(rs1) << 5u | rs2;
+}
+
+std::uint32_t bl() {
+    return 0x15u << 26u;
+}
+
+std::uint32_t jirl(const std::uint8_t rd, const std::uint8_t rs1) {
+    return 0x13u << 26u |
+           static_cast<std::uint32_t>(rs1) << 5u | rd;
+}
+
+std::uint32_t div_w(const std::uint8_t rd, const std::uint8_t rs1,
+                    const std::uint8_t rs2) {
+    return 0x040u << 15u |
+           static_cast<std::uint32_t>(rs2) << 10u |
+           static_cast<std::uint32_t>(rs1) << 5u | rd;
 }
 
 CfiEvent event(const std::uint64_t ordinal, const std::uint32_t pc,
@@ -180,6 +207,7 @@ void test_random_ordinary_equivalence() {
             value.is_load = (random() & 1u) != 0u;
             value.is_mul = (random() & 1u) != 0u;
             value.fast_alu = (random() & 1u) != 0u;
+            value.result_repair = (random() & 1u) != 0u;
             value.rd = static_cast<std::uint8_t>(random() & 31u);
             value.wb_sel = static_cast<std::uint8_t>(random() % 3u);
             value.alu_result = random();
@@ -270,6 +298,43 @@ void test_pair_policy() {
     assert(!archsim::forwarding_pair_ok(first, dependent_add, true));
 }
 
+void test_la32_decode_metadata() {
+    const auto store = archsim::decode_forwarding_instruction(
+        event(1u, 0x1c00'0000u, sw(7u, 6u)));
+    assert(store.is_store);
+    assert(store.uses_rs1 && store.rs1 == 6u);
+    assert(store.uses_rs2 && store.rs2 == 7u);
+    assert(!store.writes_rd);
+
+    const auto branch = archsim::decode_forwarding_instruction(
+        event(2u, 0x1c00'0004u, beq(8u, 9u)));
+    assert(branch.is_branch);
+    assert(branch.rs1 == 8u && branch.rs2 == 9u);
+
+    const auto link = archsim::decode_forwarding_instruction(
+        event(3u, 0x1c00'0008u, bl()));
+    assert(link.is_jal && link.writes_rd && link.rd == 1u);
+
+    const auto indirect = archsim::decode_forwarding_instruction(
+        event(4u, 0x1c00'000cu, jirl(1u, 5u)));
+    assert(indirect.is_jalr && indirect.uses_rs1);
+    assert(indirect.rs1 == 5u && indirect.rd == 1u);
+    assert(indirect.force_single);
+
+    const auto divide = archsim::decode_forwarding_instruction(
+        event(5u, 0x1c00'0010u, div_w(3u, 4u, 5u)));
+    assert(divide.is_muldiv && !divide.is_mul);
+    assert(divide.force_single);
+
+    const auto multiply = archsim::decode_forwarding_instruction(
+        event(6u, 0x1c00'0014u, mul(3u, 4u, 5u)));
+    const auto independent_add = archsim::decode_forwarding_instruction(
+        event(7u, 0x1c00'0018u, add(8u, 6u, 7u)));
+    assert(!multiply.force_single);
+    assert(archsim::forwarding_pair_ok(multiply, independent_add));
+    assert(!archsim::forwarding_pair_ok(independent_add, multiply));
+}
+
 ForwardingStudyModel run_two(const std::uint32_t first,
                              const std::uint32_t second,
                              const ForwardingNetworkMask mask =
@@ -334,6 +399,78 @@ void test_differential_pipeline() {
     assert(multiply.stats().selected_hits[static_cast<std::size_t>(
                ForwardingNetwork::MulS0Mem)] == 1u);
     assert(no_mul_mem.stats().cycles == multiply.stats().cycles + 1u);
+}
+
+void test_current_rtl_forwardability_rules() {
+    // JIRL uses src0 to form its redirect target, so it cannot consume the
+    // one-cycle-late MEM-load repair contract.
+    const auto load_to_jirl = run_two(lw(5u, 0u), jirl(0u, 5u));
+    assert(load_to_jirl.stats().selected_hits[static_cast<std::size_t>(
+               ForwardingNetwork::LoadRepairS0Mem)] == 0u);
+    assert(load_to_jirl.stats().selected_hits[static_cast<std::size_t>(
+               ForwardingNetwork::IdS0Wb)] == 1u);
+
+    // The committed RTL keeps a complete Slot1 EX fast copy, including the
+    // barrel shifter, so a dependent consumer uses the Slot1 EX path.
+    const auto slot1_shift = run_sequence({
+        addi(8u, 0u),
+        slli(5u, 0u, 3u),
+        add(6u, 5u, 0u),
+    });
+    assert(slot1_shift.stats().selected_hits[static_cast<std::size_t>(
+               ForwardingNetwork::IdS1Ex)] == 1u);
+
+    // An ALU result computed from a repaired load operand is not itself an
+    // EX fast-forward source. Its immediate consumer waits for MEM.
+    const auto repaired_chain = run_sequence({
+        lw(1u, 0u),
+        addi(2u, 1u),
+        addi(3u, 2u),
+    }, true);
+    assert(repaired_chain.stats().selected_hits[static_cast<std::size_t>(
+               ForwardingNetwork::LoadRepairS0Mem)] == 1u);
+    assert(repaired_chain.stats().selected_hits[static_cast<std::size_t>(
+               ForwardingNetwork::IdS0Ex)] == 0u);
+    assert(repaired_chain.stats().selected_hits[static_cast<std::size_t>(
+               ForwardingNetwork::IdS0Mem)] == 1u);
+
+    std::uint64_t detailed_hits = 0;
+    for (const auto& [key, path] : repaired_chain.stats().detailed_paths) {
+        (void)key;
+        detailed_hits += path.selected_operand_hits;
+    }
+    assert(detailed_hits == 2u);
+}
+
+void test_dcache_store_load_raw_bypass_accounting() {
+    ForwardingStudyModel model;
+    auto feed_memory = [&](const std::uint64_t ordinal,
+                           const std::uint32_t instruction,
+                           const archsim::MemoryAccessKind kind,
+                           const std::uint32_t address) {
+        auto decoded = archsim::decode_forwarding_instruction(
+            event(ordinal, 0x1c00'0000u +
+                           static_cast<std::uint32_t>(ordinal - 1u) * 4u,
+                  instruction));
+        decoded.force_single = true;
+        decoded.memory_kind = kind;
+        decoded.memory_address = address;
+        model.feed(decoded);
+    };
+
+    constexpr std::uint32_t address = 0x1c08'1040u;
+    // Warm the line, perform a store hit, then issue a same-word load in the
+    // following cycle while that store occupies MEM.
+    feed_memory(1u, lw(3u, 0u), archsim::MemoryAccessKind::Load, address);
+    feed_memory(2u, sw(0u, 0u), archsim::MemoryAccessKind::Store, address);
+    feed_memory(3u, lw(4u, 0u), archsim::MemoryAccessKind::Load, address);
+    model.finish();
+
+    assert(model.stats().dcache_store_hit_load_overlaps == 1u);
+    assert(model.stats().dcache_raw_bypass_hits == 1u);
+    assert(model.stats().dcache_raw_bypass_by_kind.at({
+               archsim::La32InstructionKind::StW,
+               archsim::La32InstructionKind::LdW}) == 1u);
 }
 
 void test_continuous_dependency_chain() {
@@ -456,7 +593,10 @@ int main() {
     test_load_repair_and_hazards();
     test_mul_copy();
     test_pair_policy();
+    test_la32_decode_metadata();
     test_differential_pipeline();
+    test_current_rtl_forwardability_rules();
+    test_dcache_store_load_raw_bypass_accounting();
     test_continuous_dependency_chain();
     test_continuous_two_input_and_operand_deduplication();
     test_continuous_same_bundle_pair();

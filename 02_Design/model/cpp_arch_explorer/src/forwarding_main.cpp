@@ -1,5 +1,5 @@
 #include "forwarding_model.hpp"
-#include "rv32_sim.hpp"
+#include "la32_sim.hpp"
 
 #include <algorithm>
 #include <array>
@@ -21,13 +21,15 @@ namespace archsim {
 namespace {
 
 constexpr std::array kDefaultPrograms{
-    "current", "src0", "src1", "src2", "new_without_Mext",
-    "new_with_Mext",
+    "bitcount", "bubble_sort", "coremark", "crc32", "dhrystone",
+    "quick_sort", "select_sort", "sha", "stream_copy", "stringsearch",
+    "fireye_A0", "fireye_B2", "fireye_C0", "fireye_D1", "fireye_I2",
+    "inner_product", "lookup_table", "loop_induction", "my_memcmp",
+    "minmax_sequence",
 };
 
 struct Options {
-    std::filesystem::path coe_root =
-        "02_Design/verification/riscv/coe/single_issue";
+    std::filesystem::path perf_root = NSCSCC_DEFAULT_PERF_ROOT;
     std::filesystem::path output_dir = "/tmp/forwarding_study_results";
     std::vector<std::string> programs{kDefaultPrograms.begin(),
                                       kDefaultPrograms.end()};
@@ -69,9 +71,9 @@ std::vector<std::string> split(const std::string& text,
 void usage(const char* executable) {
     std::cout
         << "Usage: " << executable << " [options]\n\n"
-        << "  --coe-root PATH       Root containing single_issue COE programs\n"
+        << "  --perf-root PATH      chiplab nscscc_perf obj directory\n"
         << "  --output-dir PATH     CSV directory (default /tmp/forwarding_study_results)\n"
-        << "  --programs A,B,...    Default: all six contest programs\n"
+        << "  --programs A,B,...    Default: all 20 chiplab perf programs\n"
         << "  --jobs N              Programs simulated in parallel, max 16\n"
         << "  --max-instructions N  Truncated smoke run (0 = full)\n"
         << "  --progress N          Trace progress interval (0 = disabled)\n"
@@ -89,8 +91,8 @@ Options parse_options(const int argc, char** argv) {
             }
             return std::string(argv[++index]);
         };
-        if (argument == "--coe-root") {
-            options.coe_root = value(argument);
+        if (argument == "--perf-root") {
+            options.perf_root = value(argument);
         } else if (argument == "--output-dir") {
             options.output_dir = value(argument);
         } else if (argument == "--programs") {
@@ -122,15 +124,15 @@ ProgramResult run_program(const Options& options, const std::string& name) {
     result.name = name;
     const auto start = std::chrono::steady_clock::now();
     try {
-        const auto image = load_program(options.coe_root, name);
-        Rv32Machine machine(image);
+        const auto image = load_la32_perf_program(options.perf_root, name);
+        La32Machine machine(image);
         ForwardingStudyModel baseline;
         std::vector<ForwardingStudyModel> mutants;
         if (!options.baseline_only) {
             mutants.reserve(kForwardingNetworkCount);
             for (const auto network : all_forwarding_networks()) {
                 mutants.emplace_back(
-                    ForwardingNetworkMask::without(network));
+                    ForwardingNetworkMask::without(network), false);
             }
         }
 
@@ -161,6 +163,13 @@ ProgramResult run_program(const Options& options, const std::string& name) {
         result.architectural_completed = machine.reached_stop();
         result.architectural = machine.stats();
         result.baseline = baseline.stats();
+        if (result.architectural_completed &&
+            machine.performance_result() != 1u) {
+            std::ostringstream message;
+            message << "benchmark reported failure, LED_RG0=0x"
+                    << std::hex << machine.performance_result();
+            result.error = message.str();
+        }
         for (std::size_t index = 0; index < mutants.size(); ++index) {
             result.variants.push_back(
                 {all_forwarding_networks()[index], mutants[index].stats()});
@@ -254,6 +263,159 @@ void add_chain_stats(ForwardingStudyStats& total,
                 value.continuous_network_pairs[network][outgoing];
         }
     }
+    for (const auto& [key, path] : value.detailed_paths) {
+        auto& destination = total.detailed_paths[key];
+        destination.selected_operand_hits += path.selected_operand_hits;
+        destination.issue_cycles_using_path += path.issue_cycles_using_path;
+    }
+    total.dcache_store_hit_load_overlaps +=
+        value.dcache_store_hit_load_overlaps;
+    total.dcache_raw_bypass_hits += value.dcache_raw_bypass_hits;
+    for (const auto& [key, hits] : value.dcache_raw_bypass_by_kind) {
+        total.dcache_raw_bypass_by_kind[key] += hits;
+    }
+}
+
+const char* producer_stage(const ForwardingNetwork network) {
+    switch (network) {
+        case ForwardingNetwork::IdS1Ex:
+        case ForwardingNetwork::IdS0Ex:
+            return "EX";
+        case ForwardingNetwork::IdS1Mem:
+        case ForwardingNetwork::IdS0Mem:
+        case ForwardingNetwork::LoadRepairS1Mem:
+        case ForwardingNetwork::LoadRepairS0Mem:
+        case ForwardingNetwork::MulS1Mem:
+        case ForwardingNetwork::MulS0Mem:
+            return "MEM";
+        case ForwardingNetwork::IdS1Wb:
+        case ForwardingNetwork::IdS0Wb:
+        case ForwardingNetwork::MulS1Wb:
+        case ForwardingNetwork::MulS0Wb:
+            return "WB";
+        case ForwardingNetwork::PairS0AluToS1StoreData:
+            return "SAME_BUNDLE";
+        case ForwardingNetwork::Count:
+            break;
+    }
+    return "NONE";
+}
+
+unsigned producer_slot(const ForwardingNetwork network) {
+    switch (network) {
+        case ForwardingNetwork::IdS1Ex:
+        case ForwardingNetwork::IdS1Mem:
+        case ForwardingNetwork::IdS1Wb:
+        case ForwardingNetwork::LoadRepairS1Mem:
+        case ForwardingNetwork::MulS1Mem:
+        case ForwardingNetwork::MulS1Wb:
+            return 1u;
+        case ForwardingNetwork::IdS0Ex:
+        case ForwardingNetwork::IdS0Mem:
+        case ForwardingNetwork::IdS0Wb:
+        case ForwardingNetwork::LoadRepairS0Mem:
+        case ForwardingNetwork::MulS0Mem:
+        case ForwardingNetwork::MulS0Wb:
+        case ForwardingNetwork::PairS0AluToS1StoreData:
+        case ForwardingNetwork::Count:
+            return 0u;
+    }
+    return 0u;
+}
+
+void write_detailed_path_rows(std::ostream& output,
+                              const std::string& scope,
+                              const ForwardingStudyStats& stats) {
+    const auto all_hits = total_selected_hits(stats);
+    for (const auto& [key, path] : stats.detailed_paths) {
+        const auto network_index = static_cast<std::size_t>(key.network);
+        output << scope << ',' << forwarding_network_name(key.network) << ','
+               << producer_stage(key.network) << ','
+               << producer_slot(key.network) << ','
+               << la32_instruction_name(key.producer_kind) << ','
+               << forwarding_memory_alignment_name(
+                      key.producer_alignment) << ','
+               << forwarding_memory_region_name(key.producer_region) << ','
+               << static_cast<unsigned>(key.consumer_slot) << ','
+               << (key.operand == 0u ? "src0" : "src1") << ','
+               << la32_instruction_name(key.consumer_kind) << ','
+               << forwarding_memory_alignment_name(
+                      key.consumer_alignment) << ','
+               << forwarding_memory_region_name(key.consumer_region) << ','
+               << path.selected_operand_hits << ','
+               << path.issue_cycles_using_path << ','
+               << probability(path.selected_operand_hits,
+                              stats.selected_hits[network_index]) << ','
+               << probability(path.selected_operand_hits, all_hits) << '\n';
+    }
+}
+
+void write_detailed_paths(const std::filesystem::path& path,
+                          const std::vector<ProgramResult>& programs) {
+    std::ofstream output(path);
+    if (!output) {
+        throw std::runtime_error("cannot write " + path.string());
+    }
+    output
+        << "scope,network,producer_stage,producer_slot,producer_instruction,"
+           "producer_alignment,producer_region,consumer_slot,"
+           "consumer_operand,consumer_instruction,consumer_alignment,"
+           "consumer_region,"
+           "selected_operand_hits,issue_cycles_using_path,"
+           "share_of_network_hits,share_of_all_forwarding_hits\n";
+    output << std::fixed << std::setprecision(9);
+
+    ForwardingStudyStats aggregate;
+    for (const auto& program : programs) {
+        if (!program.error.empty()) {
+            continue;
+        }
+        write_detailed_path_rows(output, program.name, program.baseline);
+        add_chain_stats(aggregate, program.baseline);
+    }
+    write_detailed_path_rows(output, "ALL", aggregate);
+}
+
+void write_dcache_raw_rows(std::ostream& output,
+                           const std::string& scope,
+                           const ForwardingStudyStats& stats) {
+    output << scope << ",ALL,ALL,"
+           << stats.dcache_store_hit_load_overlaps << ','
+           << stats.dcache_raw_bypass_hits << ','
+           << stats.dcache_raw_bypass_hits << ',' << stats.cycles << ','
+           << probability(stats.dcache_raw_bypass_hits, stats.cycles)
+           << '\n';
+    for (const auto& [key, hits] : stats.dcache_raw_bypass_by_kind) {
+        output << scope << ',' << la32_instruction_name(key.store_kind)
+               << ',' << la32_instruction_name(key.load_kind) << ','
+               << stats.dcache_store_hit_load_overlaps << ',' << hits << ','
+               << hits << ',' << stats.cycles << ','
+               << probability(hits, stats.cycles) << '\n';
+    }
+}
+
+void write_dcache_raw_bypass(const std::filesystem::path& path,
+                             const std::vector<ProgramResult>& programs) {
+    std::ofstream output(path);
+    if (!output) {
+        throw std::runtime_error("cannot write " + path.string());
+    }
+    output
+        << "scope,store_instruction,load_instruction,"
+           "store_hit_load_overlap_cycles,same_word_bypass_hits,"
+           "one_cycle_interlock_estimate,baseline_cycles,"
+           "estimated_cycle_increase\n";
+    output << std::fixed << std::setprecision(9);
+
+    ForwardingStudyStats aggregate;
+    for (const auto& program : programs) {
+        if (!program.error.empty()) {
+            continue;
+        }
+        write_dcache_raw_rows(output, program.name, program.baseline);
+        add_chain_stats(aggregate, program.baseline);
+    }
+    write_dcache_raw_rows(output, "ALL", aggregate);
 }
 
 void write_chain_summary_row(std::ostream& output,
@@ -656,6 +818,10 @@ int main(const int argc, char** argv) {
             options.output_dir / "forwarding_chain_networks.csv", results);
         write_chain_matrix(
             options.output_dir / "forwarding_chain_matrix.csv", results);
+        write_detailed_paths(
+            options.output_dir / "forwarding_detailed_paths.csv", results);
+        write_dcache_raw_bypass(
+            options.output_dir / "dcache_raw_bypass.csv", results);
         if (!options.baseline_only) {
             print_summary(results);
         }
@@ -678,6 +844,12 @@ int main(const int argc, char** argv) {
                   << "\nWrote "
                   << (options.output_dir /
                       "forwarding_chain_matrix.csv")
+                  << "\nWrote "
+                  << (options.output_dir /
+                      "forwarding_detailed_paths.csv")
+                  << "\nWrote "
+                  << (options.output_dir /
+                      "dcache_raw_bypass.csv")
                   << '\n';
 
         const auto failed = std::count_if(

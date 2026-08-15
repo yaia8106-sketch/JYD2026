@@ -1,6 +1,9 @@
 #include "forwarding_model.hpp"
 
+#include "la32_decode.hpp"
+
 #include <algorithm>
+#include <set>
 #include <stdexcept>
 #include <utility>
 
@@ -25,6 +28,23 @@ constexpr std::array<ForwardingNetwork, kForwardingNetworkCount> kNetworks = {
 
 constexpr std::size_t index_of(const ForwardingNetwork network) {
     return static_cast<std::size_t>(network);
+}
+
+ForwardingMemoryAlignment memory_alignment_for(
+    const La32InstructionKind kind, const std::uint32_t address,
+    const MemoryAccessKind memory_kind) {
+    if (memory_kind == MemoryAccessKind::None) {
+        return ForwardingMemoryAlignment::NotMemory;
+    }
+    using Kind = La32InstructionKind;
+    const bool half = kind == Kind::LdH || kind == Kind::LdHu ||
+                      kind == Kind::StH;
+    const bool word = kind == Kind::LdW || kind == Kind::StW;
+    const bool aligned = half ? (address & 1u) == 0u
+                       : word ? (address & 3u) == 0u
+                              : true;
+    return aligned ? ForwardingMemoryAlignment::NaturallyAligned
+                   : ForwardingMemoryAlignment::Unaligned;
 }
 
 ForwardingNetwork ordinary_network(const ForwardingSource source) {
@@ -78,12 +98,14 @@ ForwardedOperand select_ordinary(const ForwardingInputs& inputs,
         return mask.has(ordinary_network(candidate));
     };
     if (enabled(ForwardingSource::S1Ex) &&
-        matches(inputs.ex_s1, source)) {
+        matches(inputs.ex_s1, source) &&
+        !inputs.ex_s1.result_repair) {
         return {ex_value(inputs.ex_s1, false), ForwardingSource::S1Ex,
                 RepairSource::None};
     }
     if (enabled(ForwardingSource::S0Ex) &&
-        matches(inputs.ex_s0, source)) {
+        matches(inputs.ex_s0, source) &&
+        !inputs.ex_s0.result_repair) {
         return {ex_value(inputs.ex_s0, true), ForwardingSource::S0Ex,
                 RepairSource::None};
     }
@@ -202,6 +224,12 @@ bool ordinary_hit(const ForwardingInputs& inputs,
             return false;
     }
     if (!matches(*producer, operand == 0u ? consumer.rs1 : consumer.rs2)) {
+        return false;
+    }
+    if (source == ForwardingSource::S1Ex && producer->result_repair) {
+        return false;
+    }
+    if (source == ForwardingSource::S0Ex && producer->result_repair) {
         return false;
     }
     if ((source == ForwardingSource::S1Mem ||
@@ -363,6 +391,32 @@ const char* forwarding_network_name(const ForwardingNetwork network) {
     return "none";
 }
 
+const char* forwarding_memory_alignment_name(
+    const ForwardingMemoryAlignment value) {
+    switch (value) {
+        case ForwardingMemoryAlignment::NotMemory:
+            return "not_memory";
+        case ForwardingMemoryAlignment::NaturallyAligned:
+            return "aligned";
+        case ForwardingMemoryAlignment::Unaligned:
+            return "unaligned";
+    }
+    return "not_memory";
+}
+
+const char* forwarding_memory_region_name(
+    const ForwardingMemoryRegion value) {
+    switch (value) {
+        case ForwardingMemoryRegion::NotMemory:
+            return "not_memory";
+        case ForwardingMemoryRegion::Cacheable:
+            return "cacheable";
+        case ForwardingMemoryRegion::Uncached:
+            return "uncached";
+    }
+    return "not_memory";
+}
+
 const std::array<ForwardingNetwork, kForwardingNetworkCount>&
 all_forwarding_networks() {
     return kNetworks;
@@ -413,8 +467,7 @@ ForwardingOutputs evaluate_forwarding(const ForwardingInputs& inputs,
 
     const bool s0_repair_ok =
         inputs.s0.alu_only || inputs.s0.conditional_control ||
-        inputs.s0.indirect_control || inputs.s0.mem_read ||
-        inputs.s0.mem_write;
+        inputs.s0.mem_read || inputs.s0.mem_write;
     const bool s1_repair_ok = inputs.s1.valid && inputs.s1.repair_ok;
     for (std::uint8_t operand = 0; operand < 2u; ++operand) {
         outputs.s0[operand].repair = repair_source_for(
@@ -471,16 +524,25 @@ ForwardingOutputs evaluate_forwarding(const ForwardingInputs& inputs,
           any_operand_match(inputs.s0, inputs.ex_s0)) ||
          (inputs.ex_s1.valid && inputs.ex_s1.reg_write &&
           inputs.ex_s1.rd != 0u &&
-          any_operand_match(inputs.s0, inputs.ex_s1)));
+         any_operand_match(inputs.s0, inputs.ex_s1)));
+    const bool repair_use_hazard =
+        (inputs.ex_s0.valid && inputs.ex_s0.reg_write &&
+         inputs.ex_s0.result_repair && inputs.ex_s0.rd != 0u &&
+         (any_operand_match(inputs.s0, inputs.ex_s0) ||
+          any_operand_match(inputs.s1, inputs.ex_s0))) ||
+        (inputs.ex_s1.valid && inputs.ex_s1.reg_write &&
+         inputs.ex_s1.result_repair && inputs.ex_s1.rd != 0u &&
+         (any_operand_match(inputs.s0, inputs.ex_s1) ||
+          any_operand_match(inputs.s1, inputs.ex_s1)));
     const bool non_load_hazard =
-        outputs.muldiv_use_hazard || outputs.mul_launch_ex_raw_hazard;
-    outputs.id_ready_go_if_mem_ready =
-        !(load_in_ex || load_mem_ready || non_load_hazard);
-    outputs.id_ready_go_if_mem_wait =
-        !(load_in_ex || load_mem_wait || non_load_hazard);
-    outputs.id_ready_go = inputs.mem_load_ready
-        ? outputs.id_ready_go_if_mem_ready
-        : outputs.id_ready_go_if_mem_wait;
+        outputs.muldiv_use_hazard || outputs.mul_launch_ex_raw_hazard ||
+        repair_use_hazard;
+    outputs.id_ready_go_if_mem_ready = !load_mem_ready;
+    outputs.id_ready_go_if_mem_wait = !load_mem_wait;
+    outputs.id_ready_go =
+        (inputs.mem_load_ready ? outputs.id_ready_go_if_mem_ready
+                               : outputs.id_ready_go_if_mem_wait) &&
+        !non_load_hazard && !load_in_ex;
     outputs.load_use_hazard = inputs.mem_load_ready
         ? (load_in_ex || load_mem_ready)
         : (load_in_ex || load_mem_wait);
@@ -495,73 +557,36 @@ ForwardingDecodedInstruction decode_forwarding_instruction(
     decoded.instruction = event.instruction;
     decoded.predicted_taken = event.kind != CfiKind::None && event.taken;
 
-    const auto opcode = event.instruction & 0x7fu;
-    const auto funct3 = (event.instruction >> 12u) & 0x7u;
-    const auto funct7 = (event.instruction >> 25u) & 0x7fu;
-    decoded.rd =
-        static_cast<std::uint8_t>((event.instruction >> 7u) & 0x1fu);
-    decoded.rs1 =
-        static_cast<std::uint8_t>((event.instruction >> 15u) & 0x1fu);
-    decoded.rs2 =
-        static_cast<std::uint8_t>((event.instruction >> 20u) & 0x1fu);
-
-    const bool funct7_zero = funct7 == 0u;
-    const bool funct7_alt = funct7 == 0x20u;
-    const bool r_opcode = opcode == 0x33u;
-    const bool r_muldiv = r_opcode && funct7 == 0x01u;
-    const bool r_alt = funct7_alt && (funct3 == 0u || funct3 == 5u);
-    const bool r_base = r_opcode && (funct7_zero || r_alt);
-    const bool r_legal = r_base || r_muldiv;
-
-    const bool i_opcode = opcode == 0x13u;
-    const bool i_nonshift = funct3 == 0u || funct3 == 2u ||
-                            funct3 == 3u || funct3 == 4u ||
-                            funct3 == 6u || funct3 == 7u;
-    const bool i_shift_left = funct3 == 1u && funct7_zero;
-    const bool i_shift_right =
-        funct3 == 5u && (funct7_zero || funct7_alt);
-    const bool i_legal =
-        i_opcode && (i_nonshift || i_shift_left || i_shift_right);
-    const bool load = opcode == 0x03u &&
-        (funct3 == 0u || funct3 == 1u || funct3 == 2u ||
-         funct3 == 4u || funct3 == 5u);
-    const bool store =
-        opcode == 0x23u && (funct3 == 0u || funct3 == 1u || funct3 == 2u);
-    const bool branch = opcode == 0x63u &&
-        (funct3 == 0u || funct3 == 1u || funct3 == 4u ||
-         funct3 == 5u || funct3 == 6u || funct3 == 7u);
-    const bool jal = opcode == 0x6fu;
-    const bool jalr = opcode == 0x67u && funct3 == 0u;
-    const bool csr = opcode == 0x73u &&
-        (funct3 == 1u || funct3 == 2u || funct3 == 3u ||
-         funct3 == 5u || funct3 == 6u || funct3 == 7u);
-    const bool system_legal = csr || event.instruction == 0x0000'0073u ||
-                              event.instruction == 0x0010'0073u ||
-                              event.instruction == 0x3020'0073u;
-    const bool fence = opcode == 0x0fu;
-    const bool legal = r_legal || i_legal || load || store || branch ||
-                       opcode == 0x37u || opcode == 0x17u || jal || jalr ||
-                       system_legal || fence;
-
-    decoded.is_alu_type =
-        r_base || i_legal || opcode == 0x37u || opcode == 0x17u;
-    decoded.is_load = load;
-    decoded.is_store = store;
-    decoded.is_branch = branch;
-    decoded.is_jal = jal;
-    decoded.is_jalr = jalr;
-    decoded.is_muldiv = r_muldiv;
-    decoded.is_mul = r_muldiv && (funct3 & 0x4u) == 0u;
-    decoded.writes_rd = r_legal || i_legal || load ||
-                        opcode == 0x37u || opcode == 0x17u || jal || jalr ||
-                        csr;
-    decoded.uses_rs1 = r_legal || i_legal || load || store || branch ||
-                       jalr || (csr && (funct3 & 0x4u) == 0u);
-    decoded.uses_rs2 = r_legal || store || branch;
-    decoded.force_single = jalr || opcode == 0x73u || fence || !legal ||
-                           (r_muldiv && (funct3 & 0x4u) != 0u) ||
-                           (r_opcode && !r_legal) ||
-                           (i_opcode && !i_legal);
+    const auto la = decode_la32_instruction(event.instruction);
+    decoded.rd = la.rd;
+    decoded.rs1 = la.src0;
+    decoded.rs2 = la.src1;
+    decoded.is_alu_type = la.is_alu_type;
+    decoded.is_load = la.is_load;
+    decoded.is_store = la.is_store;
+    decoded.is_branch = la.is_conditional;
+    decoded.is_jal = la.is_direct;
+    decoded.is_jalr = la.is_jirl;
+    decoded.is_muldiv = la.is_mul || la.is_divmod;
+    decoded.is_mul = la.is_mul;
+    decoded.is_privileged = la.is_privileged;
+    decoded.writes_rd = la.writes_rd;
+    decoded.uses_rs1 = la.uses_src0;
+    decoded.uses_rs2 = la.uses_src1;
+    // This mirrors ICache predecode's block_younger bit, which is wired to
+    // both pair-policy force_single inputs in the current frontend.
+    decoded.force_single = la.block_younger;
+    decoded.kind = la.kind;
+    decoded.memory_kind = event.memory_kind;
+    decoded.memory_address = event.memory_address;
+    decoded.memory_alignment = memory_alignment_for(
+        decoded.kind, event.memory_address, event.memory_kind);
+    if (event.memory_kind != MemoryAccessKind::None) {
+        decoded.memory_region =
+            (event.memory_address & 0xfff8'0000u) == 0x1c08'0000u
+                ? ForwardingMemoryRegion::Cacheable
+                : ForwardingMemoryRegion::Uncached;
+    }
     return decoded;
 }
 
@@ -597,8 +622,10 @@ bool forwarding_pair_ok(const ForwardingDecodedInstruction& first,
            !blocking_raw;
 }
 
-ForwardingStudyModel::ForwardingStudyModel(ForwardingNetworkMask mask)
-    : mask_(std::move(mask)) {}
+ForwardingStudyModel::ForwardingStudyModel(
+    ForwardingNetworkMask mask, const bool collect_detailed_paths)
+    : mask_(std::move(mask)),
+      collect_detailed_paths_(collect_detailed_paths) {}
 
 bool ForwardingStudyModel::writes(const Token& token, const std::uint8_t reg) {
     return reg != 0u && token.decoded.writes_rd &&
@@ -684,8 +711,9 @@ ForwardingStudyModel::Delivery ForwardingStudyModel::delivery_for(
         return bundle.count > 1u && &bundle.slot[1] == writer ? 1u : 0u;
     }();
 
-    if (in_ex && (writer->decoded.is_load ||
-                  writer->decoded.is_muldiv)) {
+    if (in_ex && (writer->decoded.is_load || writer->decoded.is_muldiv ||
+                  writer->decoded.is_privileged ||
+                  writer->ex_result_repair)) {
         return {false, true, ForwardingNetwork::Count,
                 writer->decoded.ordinal};
     }
@@ -714,9 +742,8 @@ ForwardingStudyModel::Delivery ForwardingStudyModel::delivery_for(
     }
 
     if (in_mem && writer->decoded.is_load) {
-        const bool repair_ok = consumer_slot == 1u ||
-            consumer.decoded.is_alu_type || consumer.decoded.is_branch ||
-            consumer.decoded.is_jalr || consumer.decoded.is_load ||
+        const bool repair_ok = consumer.decoded.is_alu_type ||
+            consumer.decoded.is_branch || consumer.decoded.is_load ||
             consumer.decoded.is_store;
         const auto network = writer_slot == 1u
             ? ForwardingNetwork::LoadRepairS1Mem
@@ -798,6 +825,14 @@ void ForwardingStudyModel::annotate_issued_dependencies(
             consumer.continuous_chain_depth = std::max(
                 consumer.continuous_chain_depth,
                 producer->continuous_chain_depth + 1u);
+            if (delivery.network == ForwardingNetwork::LoadRepairS0Mem ||
+                delivery.network == ForwardingNetwork::LoadRepairS1Mem) {
+                const bool repairs_alu_result =
+                    consumer.decoded.is_alu_type ||
+                    ((consumer.decoded.is_load ||
+                      consumer.decoded.is_store) && operand == 0u);
+                consumer.ex_result_repair |= repairs_alu_result;
+            }
         }
     }
 }
@@ -829,6 +864,7 @@ void ForwardingStudyModel::record_issued_dependencies(
     std::array<DynamicPair, 4> observed_pairs{};
     std::size_t observed_pair_count = 0;
     bool continuous_cycle = false;
+    std::set<ForwardingPathKey> detailed_keys_this_cycle;
 
     for (std::uint8_t slot = 0; slot < issued.count; ++slot) {
         const auto consumer_ordinal = issued.slot[slot].decoded.ordinal;
@@ -844,8 +880,27 @@ void ForwardingStudyModel::record_issued_dependencies(
 
             auto* producer =
                 producer_token(issued, delivery.producer_ordinal);
-            if (producer == nullptr ||
-                !has_inflight_dependency(*producer)) {
+            if (producer == nullptr) {
+                throw std::runtime_error(
+                    "selected forwarding source has no producer token");
+            }
+            if (collect_detailed_paths_) {
+                const ForwardingPathKey path_key{
+                delivery.network,
+                producer->decoded.kind,
+                issued.slot[slot].decoded.kind,
+                producer->decoded.memory_alignment,
+                issued.slot[slot].decoded.memory_alignment,
+                producer->decoded.memory_region,
+                issued.slot[slot].decoded.memory_region,
+                slot,
+                operand,
+                };
+                ++stats_.detailed_paths[path_key].selected_operand_hits;
+                detailed_keys_this_cycle.insert(path_key);
+            }
+
+            if (!has_inflight_dependency(*producer)) {
                 continue;
             }
 
@@ -892,6 +947,67 @@ void ForwardingStudyModel::record_issued_dependencies(
     }
     stats_.cycles_with_continuous_forwarding +=
         static_cast<std::uint64_t>(continuous_cycle);
+    for (const auto& path_key : detailed_keys_this_cycle) {
+        ++stats_.detailed_paths[path_key].issue_cycles_using_path;
+    }
+}
+
+void ForwardingStudyModel::record_dcache_raw_bypass(
+    const Bundle& issued) {
+    if (!collect_detailed_paths_) {
+        return;
+    }
+    const Token* store = nullptr;
+    const Token* load = nullptr;
+    for (std::uint8_t slot = 0; slot < ex_.count; ++slot) {
+        const auto& token = ex_.slot[slot];
+        if (token.decoded.memory_kind == MemoryAccessKind::Store &&
+            token.dcache_cacheable && token.dcache_hit) {
+            store = &token;
+        }
+    }
+    for (std::uint8_t slot = 0; slot < issued.count; ++slot) {
+        const auto& token = issued.slot[slot];
+        if (token.decoded.memory_kind == MemoryAccessKind::Load &&
+            ((token.decoded.memory_address & 0xfff8'0000u) ==
+             0x1c08'0000u)) {
+            load = &token;
+        }
+    }
+    if (store == nullptr || load == nullptr) {
+        return;
+    }
+    ++stats_.dcache_store_hit_load_overlaps;
+    if ((store->decoded.memory_address >> 2u) !=
+        (load->decoded.memory_address >> 2u)) {
+        return;
+    }
+    ++stats_.dcache_raw_bypass_hits;
+    ++stats_.dcache_raw_bypass_by_kind[{
+        store->decoded.kind, load->decoded.kind}];
+}
+
+void ForwardingStudyModel::annotate_dcache_accesses(Bundle& issued) {
+    for (std::uint8_t slot = 0; slot < issued.count; ++slot) {
+        auto& token = issued.slot[slot];
+        if (token.decoded.memory_kind == MemoryAccessKind::None) {
+            continue;
+        }
+        const auto address = token.decoded.memory_address;
+        token.dcache_cacheable =
+            (address & 0xfff8'0000u) == 0x1c08'0000u;
+        if (!token.dcache_cacheable) {
+            continue;
+        }
+        const auto index = static_cast<std::size_t>(
+            (address >> 5u) & 0x7ffu);
+        const auto tag = static_cast<std::uint8_t>(
+            (address >> 16u) & 0x7u);
+        token.dcache_hit = dcache_valid_[index] &&
+                           dcache_tag_[index] == tag;
+        dcache_valid_[index] = true;
+        dcache_tag_[index] = tag;
+    }
 }
 
 void ForwardingStudyModel::tick(const bool) {
@@ -923,6 +1039,8 @@ void ForwardingStudyModel::tick(const bool) {
         issued = candidate;
         annotate_issued_dependencies(issued, deliveries);
         record_issued_dependencies(issued, deliveries);
+        record_dcache_raw_bypass(issued);
+        annotate_dcache_accesses(issued);
         for (std::uint8_t slot = 0; slot < issued.count; ++slot) {
             trace_.pop_front();
         }

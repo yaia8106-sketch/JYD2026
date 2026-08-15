@@ -36,7 +36,9 @@ ctest --test-dir 02_Design/model/cpp_arch_explorer/build --output-on-failure
 复制一套 LoongArch 功能模拟器，而是让 RTL 只输出已经确认的 CFI 事件；
 软件模型据此重放 bimodal、GShare 和 GSelect 的容量、历史长度、PC 折叠
 以及 PHT 写入可见性。RTL 随分支保存的 PHT index 还能反推出预测当拍看到
-的 GHR，因此当前 256-entry/H8 GShare 可以逐程序校准。
+的 GHR，因此基线 256-entry/H8 GShare 可以逐程序校准。RTL 改为其他方向
+预测器后，`rtl_current_*` 仍是硬件真值；GShare 候选的固定延迟结果只作为
+独立敏感性模型使用。
 
 在工作区根目录执行：
 
@@ -271,19 +273,29 @@ BACKEND_IQ_INT_DEPTHS=4,6,8,12 \
 
 ### 6. 前递网络与连续依赖
 
-`forwarding_study` 使用当前双发射、youngest-writer、load repair、MUL 本地
-副本和同发射 store-data 旁路规则，比较全网络基线与每次删除一组网络的 13
-个差分模型。它还识别严格的动态 `A -> B -> C` 连续依赖：B 消费仍未退休的
-A，并在自身退休前成为 C 实际选择的 producer。
+`forwarding_study` 已迁移到当前 LA32R 核：它直接装载 chiplab
+`nscscc_perf/obj` 下的 `inst_data.bin` 和 `main.elf`，从复位入口执行到 ELF 中
+的 `test_finish`，并按 LoongArch 的寄存器字段、立即数、控制流、CSR 和访存
+语义产生动态指令流。其他较早的预测器研究工具仍使用原有 RISC-V COE，二者
+不要混用。
+
+前递流水线部分使用当前双发射、youngest-writer、load repair、MUL 本地副本
+和同发射 store-data 旁路规则，比较全网络基线与每次删除一组网络的 13 个差分
+模型。它还识别严格的动态 `A -> B -> C` 连续依赖：B 消费仍未退休的 A，并在
+自身退休前成为 C 实际选择的 producer。
 
 ```bash
 /tmp/cpp_arch_explorer_build/forwarding_study \
-    --coe-root 02_Design/verification/riscv/coe/single_issue \
+    --perf-root ../chiplab/software/examples/nscscc_perf/obj \
     --output-dir /tmp/forwarding_study_results \
-    --programs current,src0,src1,src2,new_without_Mext,new_with_Mext \
-    --jobs 6 \
+    --programs bitcount,bubble_sort,coremark,crc32,dhrystone,quick_sort,select_sort,sha,stream_copy,stringsearch,fireye_A0,fireye_B2,fireye_C0,fireye_D1,fireye_I2,inner_product,lookup_table,loop_induction,my_memcmp,minmax_sequence \
+    --jobs 12 \
     --baseline-only
 ```
+
+不写 `--programs` 时默认执行上面的全部 20 个程序。模型把 UART 发送状态视为
+始终就绪，并把未建模 MMIO 的读取值设为 0；这些约定只用于让基准程序完成，
+不把软件模型的指令数或周期数冒充 RTL/DDR 的真实周期。
 
 `--baseline-only` 跳过 13 个删路模型，适合只测连续依赖；去掉它会同时生成
 删路数据。连续依赖输出为：
@@ -291,6 +303,10 @@ A，并在自身退休前成为 C 实际选择的 producer。
 - `forwarding_chain_summary.csv`：条件概率、程序密度、前递流量占比和链深度；
 - `forwarding_chain_networks.csv`：13 条网络作为连续链输入/输出边的统计；
 - `forwarding_chain_matrix.csv`：完整 13×13 的 `A->B` 与 `B->C` 路径矩阵。
+- `forwarding_detailed_paths.csv`：每条物理网络按 LA32R 生产者指令、消费者
+  槽位、源操作数和消费者指令继续细分。
+- `dcache_raw_bypass.csv`：当前 DCache 紧邻 store-hit→load 的 BRAM RAW 旁路
+  使用次数与一拍 interlock 代价估计。
 
 详细时钟边界、统计分母和可信范围见
 `02_Design/docs/backend/FORWARDING_ABLATION_MODEL.md`。

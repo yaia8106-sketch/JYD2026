@@ -21,9 +21,11 @@ verilator \
     --Mdir "$BUILD_DIR" \
     -CFLAGS "-std=c++20 -I$MODEL_DIR/src" \
     "$RTL_DIR/core/decode/load_hazard_ctrl.sv" \
+    "$RTL_DIR/core/decode/issue_hazard_ctrl.sv" \
     "$RTL_DIR/core/decode/forwarding.sv" \
     "$MODEL_DIR/src/forwarding_rtl_cosim.cpp" \
-    "$MODEL_DIR/src/forwarding_model.cpp"
+    "$MODEL_DIR/src/forwarding_model.cpp" \
+    "$MODEL_DIR/src/la32_decode.cpp"
 
 "$BUILD_DIR/Vforwarding"
 
@@ -40,9 +42,9 @@ verilator \
     --top-module mul_operand_forwarding \
     --Mdir "$MUL_BUILD_DIR" \
     -CFLAGS "-std=c++20 -I$MODEL_DIR/src" \
-    "$RTL_DIR/core/decode/load_hazard_ctrl.sv" \
-    "$RTL_DIR/core/decode/forwarding.sv" \
+    "$RTL_DIR/core/decode/mul_operand_forwarding.sv" \
     "$MODEL_DIR/src/mul_forwarding_rtl_cosim.cpp" \
-    "$MODEL_DIR/src/forwarding_model.cpp"
+    "$MODEL_DIR/src/forwarding_model.cpp" \
+    "$MODEL_DIR/src/la32_decode.cpp"
 
 "$MUL_BUILD_DIR/Vmul_operand_forwarding"

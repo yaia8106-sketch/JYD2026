@@ -1,5 +1,7 @@
 #pragma once
 
+#include "architectural_trace.hpp"
+
 #include <array>
 #include <cstdint>
 #include <filesystem>
@@ -13,46 +15,10 @@ constexpr std::uint32_t kIromBytes = 16u * 1024u;
 constexpr std::uint32_t kDramBase = 0x8010'0000u;
 constexpr std::uint32_t kDramBytes = 256u * 1024u;
 
-enum class CfiKind : std::uint8_t {
-    None,
-    Branch,
-    Jal,
-    Jalr,
-};
-
-enum class MemoryAccessKind : std::uint8_t {
-    None,
-    Load,
-    Store,
-};
-
-struct CfiEvent {
-    CfiKind kind = CfiKind::None;
-    std::uint64_t instruction_ordinal = 0;
-    std::uint32_t source_pc = 0;
-    std::uint32_t instruction = 0;
-    std::uint32_t target = 0;
-    std::uint32_t next_pc = 0;
-    bool taken = false;
-    MemoryAccessKind memory_kind = MemoryAccessKind::None;
-    std::uint32_t memory_address = 0;
-};
-
 struct ProgramImage {
     std::string name;
     std::vector<std::uint32_t> irom;
     std::vector<std::uint32_t> dram;
-    std::uint32_t stop_pc = 0;
-};
-
-struct ArchitecturalStats {
-    std::uint64_t retired_instructions = 0;
-    std::uint64_t conditional_branches = 0;
-    std::uint64_t taken_branches = 0;
-    std::uint64_t jal_count = 0;
-    std::uint64_t jalr_count = 0;
-    std::uint64_t trap_count = 0;
-    std::uint64_t timer_interrupt_count = 0;
     std::uint32_t stop_pc = 0;
 };
 

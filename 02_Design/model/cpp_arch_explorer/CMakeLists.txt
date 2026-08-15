@@ -84,7 +84,11 @@ target_compile_options(backend_iq_study PRIVATE
 add_executable(forwarding_study
     src/forwarding_main.cpp
     src/forwarding_model.cpp
-    src/rv32_sim.cpp
+    src/la32_decode.cpp
+    src/la32_sim.cpp
+)
+target_compile_definitions(forwarding_study PRIVATE
+    NSCSCC_DEFAULT_PERF_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/../../../../chiplab/software/examples/nscscc_perf/obj"
 )
 target_compile_features(forwarding_study PRIVATE cxx_std_20)
 target_compile_options(forwarding_study PRIVATE
@@ -117,6 +121,7 @@ add_executable(backend_model_tests
 add_executable(forwarding_model_tests
     src/forwarding_model_tests.cpp
     src/forwarding_model.cpp
+    src/la32_decode.cpp
 )
 target_compile_features(frontend_model_tests PRIVATE cxx_std_20)
 target_compile_options(frontend_model_tests PRIVATE
@@ -215,20 +220,18 @@ if(BUILD_TESTING)
     add_test(
         NAME forwarding_study_smoke
         COMMAND forwarding_study
-            --coe-root ${CMAKE_CURRENT_SOURCE_DIR}/../../verification/riscv/coe/single_issue
+            --perf-root ${CMAKE_CURRENT_SOURCE_DIR}/../../../../chiplab/software/examples/nscscc_perf/obj
             --output-dir ${CMAKE_CURRENT_BINARY_DIR}/forwarding_smoke_results
-            --programs current
-            --max-instructions 100000
+            --programs bitcount
             --progress 0
             --jobs 1
     )
     add_test(
         NAME forwarding_chain_baseline_only_smoke
         COMMAND forwarding_study
-            --coe-root ${CMAKE_CURRENT_SOURCE_DIR}/../../verification/riscv/coe/single_issue
+            --perf-root ${CMAKE_CURRENT_SOURCE_DIR}/../../../../chiplab/software/examples/nscscc_perf/obj
             --output-dir ${CMAKE_CURRENT_BINARY_DIR}/forwarding_chain_smoke_results
-            --programs current
-            --max-instructions 100000
+            --programs bitcount
             --progress 0
             --jobs 1
             --baseline-only

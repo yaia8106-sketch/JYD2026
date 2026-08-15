@@ -34,7 +34,7 @@ void drive_consumer(Vforwarding& rtl, ForwardingInputs& model,
     s0.rs1_used = (random() & 1u) != 0u;
     s0.rs2_used = (random() & 1u) != 0u;
     s0.alu_only = (random() & 1u) != 0u;
-    s0.indirect_control = (random() & 1u) != 0u;
+    s0.indirect_control = false;
     s0.conditional_control = (random() & 1u) != 0u;
     s0.mem_read = (random() & 1u) != 0u;
     s0.mem_write = (random() & 1u) != 0u;
@@ -51,7 +51,6 @@ void drive_consumer(Vforwarding& rtl, ForwardingInputs& model,
     rtl.id_rs1_used = s0.rs1_used;
     rtl.id_rs2_used = s0.rs2_used;
     rtl.id_s0_alu_only = s0.alu_only;
-    rtl.id_s0_indirect_control = s0.indirect_control;
     rtl.id_s0_conditional_control = s0.conditional_control;
     rtl.id_s0_mem_read = s0.mem_read;
     rtl.id_s0_mem_write = s0.mem_write;
@@ -110,11 +109,13 @@ void drive_producers(Vforwarding& rtl, ForwardingInputs& model,
     model.ex_s0.is_muldiv = (random() & 1u) != 0u;
     model.ex_s0.mem_read = (random() & 1u) != 0u;
     model.ex_s0.fast_alu = (random() & 1u) != 0u;
-    rtl.ex_valid = model.ex_s0.valid;
-    rtl.ex_reg_write = model.ex_s0.reg_write;
-    rtl.ex_is_muldiv = model.ex_s0.is_muldiv;
-    rtl.ex_mem_read = model.ex_s0.mem_read;
-    rtl.ex_rd = model.ex_s0.rd;
+    model.ex_s0.result_repair = (random() & 1u) != 0u;
+    rtl.ex_hazard_valid = model.ex_s0.valid;
+    rtl.ex_hazard_reg_write = model.ex_s0.reg_write;
+    rtl.ex_hazard_is_muldiv = model.ex_s0.is_muldiv;
+    rtl.ex_hazard_mem_read = model.ex_s0.mem_read;
+    rtl.ex_hazard_result_repair = model.ex_s0.result_repair;
+    rtl.ex_hazard_rd = model.ex_s0.rd;
     rtl.ex_alu_result = model.ex_s0.alu_result;
     rtl.ex_fast_alu = model.ex_s0.fast_alu;
     rtl.ex_fast_alu_result = model.ex_s0.fast_alu_result;
@@ -123,10 +124,12 @@ void drive_producers(Vforwarding& rtl, ForwardingInputs& model,
 
     random_common(model.ex_s1);
     model.ex_s1.mem_read = (random() & 1u) != 0u;
-    rtl.ex_s1_valid = model.ex_s1.valid;
-    rtl.ex_s1_reg_write = model.ex_s1.reg_write;
-    rtl.ex_s1_mem_read = model.ex_s1.mem_read;
-    rtl.ex_s1_rd = model.ex_s1.rd;
+    model.ex_s1.result_repair = (random() & 1u) != 0u;
+    rtl.ex_s1_hazard_valid = model.ex_s1.valid;
+    rtl.ex_s1_hazard_reg_write = model.ex_s1.reg_write;
+    rtl.ex_s1_hazard_mem_read = model.ex_s1.mem_read;
+    rtl.ex_s1_hazard_result_repair = model.ex_s1.result_repair;
+    rtl.ex_s1_hazard_rd = model.ex_s1.rd;
     rtl.ex_s1_alu_result = model.ex_s1.alu_result;
     rtl.ex_s1_pc_plus_4 = model.ex_s1.pc_plus_4;
     rtl.ex_s1_wb_sel = model.ex_s1.wb_sel;
@@ -139,6 +142,8 @@ void drive_producers(Vforwarding& rtl, ForwardingInputs& model,
     rtl.mem_is_load = model.mem_s0.is_load;
     rtl.mem_is_mul = model.mem_s0.is_mul;
     rtl.mem_rd = model.mem_s0.rd;
+    rtl.mem_fwd_s0_rd = model.mem_s0.rd;
+    rtl.mem_fwd_s1_rd = model.mem_s0.rd;
     rtl.mem_alu_result = model.mem_s0.alu_result;
     rtl.mem_mul_result = model.mem_s0.mul_result;
     rtl.mem_pc_plus_4 = model.mem_s0.pc_plus_4;

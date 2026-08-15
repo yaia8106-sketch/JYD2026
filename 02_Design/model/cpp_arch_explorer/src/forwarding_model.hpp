@@ -1,13 +1,16 @@
 #pragma once
 
-#include "rv32_sim.hpp"
+#include "architectural_trace.hpp"
+#include "la32_decode.hpp"
 
 #include <array>
 #include <bitset>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <map>
 #include <string>
+#include <tuple>
 
 namespace archsim {
 
@@ -72,6 +75,7 @@ struct ForwardingProducer {
     bool is_mul = false;
     bool is_muldiv = false;
     bool fast_alu = true;
+    bool result_repair = false;
     std::uint8_t rd = 0;
     std::uint8_t wb_sel = 0;  // 0=execute, 1=load, 2=PC+4
     std::uint32_t alu_result = 0;
@@ -141,6 +145,21 @@ ForwardingOutputs evaluate_forwarding(
     const ForwardingInputs& inputs,
     const ForwardingNetworkMask& mask = ForwardingNetworkMask::all());
 
+enum class ForwardingMemoryAlignment : std::uint8_t {
+    NotMemory,
+    NaturallyAligned,
+    Unaligned,
+};
+
+enum class ForwardingMemoryRegion : std::uint8_t {
+    NotMemory,
+    Cacheable,
+    Uncached,
+};
+
+const char* forwarding_memory_alignment_name(ForwardingMemoryAlignment value);
+const char* forwarding_memory_region_name(ForwardingMemoryRegion value);
+
 struct ForwardingDecodedInstruction {
     std::uint64_t ordinal = 0;
     std::uint32_t pc = 0;
@@ -157,10 +176,18 @@ struct ForwardingDecodedInstruction {
     bool is_jalr = false;
     bool is_muldiv = false;
     bool is_mul = false;
+    bool is_privileged = false;
     bool force_single = false;
     std::uint8_t rd = 0;
     std::uint8_t rs1 = 0;
     std::uint8_t rs2 = 0;
+    La32InstructionKind kind = La32InstructionKind::Illegal;
+    MemoryAccessKind memory_kind = MemoryAccessKind::None;
+    std::uint32_t memory_address = 0;
+    ForwardingMemoryAlignment memory_alignment =
+        ForwardingMemoryAlignment::NotMemory;
+    ForwardingMemoryRegion memory_region =
+        ForwardingMemoryRegion::NotMemory;
 };
 
 ForwardingDecodedInstruction decode_forwarding_instruction(
@@ -168,6 +195,53 @@ ForwardingDecodedInstruction decode_forwarding_instruction(
 bool forwarding_pair_ok(const ForwardingDecodedInstruction& first,
                         const ForwardingDecodedInstruction& second,
                         bool pair_bypass_enabled = true);
+
+// One selected dynamic operand edge. The physical producer stage/slot is
+// encoded by network; kind and the consumer coordinates expose which LA32R
+// instruction classes actually justify that hardware path.
+struct ForwardingPathKey {
+    ForwardingNetwork network = ForwardingNetwork::Count;
+    La32InstructionKind producer_kind = La32InstructionKind::Illegal;
+    La32InstructionKind consumer_kind = La32InstructionKind::Illegal;
+    ForwardingMemoryAlignment producer_alignment =
+        ForwardingMemoryAlignment::NotMemory;
+    ForwardingMemoryAlignment consumer_alignment =
+        ForwardingMemoryAlignment::NotMemory;
+    ForwardingMemoryRegion producer_region =
+        ForwardingMemoryRegion::NotMemory;
+    ForwardingMemoryRegion consumer_region =
+        ForwardingMemoryRegion::NotMemory;
+    std::uint8_t consumer_slot = 0;
+    std::uint8_t operand = 0;
+
+    auto as_tuple() const {
+        return std::tie(network, producer_kind, consumer_kind,
+                        producer_alignment, consumer_alignment,
+                        producer_region, consumer_region,
+                        consumer_slot, operand);
+    }
+    bool operator<(const ForwardingPathKey& other) const {
+        return as_tuple() < other.as_tuple();
+    }
+};
+
+struct ForwardingPathStats {
+    // Selected source-operand edges. A two-source instruction can contribute
+    // twice in one issue cycle.
+    std::uint64_t selected_operand_hits = 0;
+    // Issue cycles in which this exact key is selected at least once.
+    std::uint64_t issue_cycles_using_path = 0;
+};
+
+struct DcacheRawBypassKey {
+    La32InstructionKind store_kind = La32InstructionKind::Illegal;
+    La32InstructionKind load_kind = La32InstructionKind::Illegal;
+
+    bool operator<(const DcacheRawBypassKey& other) const {
+        return std::tie(store_kind, load_kind) <
+               std::tie(other.store_kind, other.load_kind);
+    }
+};
 
 struct ForwardingStudyStats {
     bool finished = false;
@@ -182,6 +256,13 @@ struct ForwardingStudyStats {
     // [network][consumer slot * 2 + operand], where operand 0/1 is rs1/rs2.
     std::array<std::array<std::uint64_t, 4>, kForwardingNetworkCount>
         selected_hits_by_operand{};
+    std::map<ForwardingPathKey, ForwardingPathStats> detailed_paths{};
+    // Current 64 KiB direct-mapped DCache: a store hit in MEM and a load in
+    // EX can overlap. Same-word cases require the BRAM write-after-read data
+    // bypass; without it a correct implementation needs an interlock/re-read.
+    std::uint64_t dcache_store_hit_load_overlaps = 0;
+    std::uint64_t dcache_raw_bypass_hits = 0;
+    std::map<DcacheRawBypassKey, std::uint64_t> dcache_raw_bypass_by_kind{};
 
     // A strict continuous dependency is A -> B -> C where B consumes an
     // in-flight A and, before B retires, becomes the selected producer for C.
@@ -216,7 +297,8 @@ struct ForwardingStudyStats {
 class ForwardingStudyModel {
 public:
     explicit ForwardingStudyModel(
-        ForwardingNetworkMask mask = ForwardingNetworkMask::all());
+        ForwardingNetworkMask mask = ForwardingNetworkMask::all(),
+        bool collect_detailed_paths = true);
 
     void feed(const CfiEvent& event);
     void feed(const ForwardingDecodedInstruction& instruction);
@@ -236,6 +318,12 @@ private:
         std::array<DependencyTag, 2> incoming{};
         std::uint32_t continuous_chain_depth = 0;
         bool counted_as_continuous_middle = false;
+        // True when this instruction's eventual register result consumes a
+        // load-repair operand. The current RTL does not expose that result on
+        // EX->ID until it advances to MEM.
+        bool ex_result_repair = false;
+        bool dcache_cacheable = false;
+        bool dcache_hit = false;
     };
     struct Bundle {
         std::array<Token, 2> slot{};
@@ -269,12 +357,17 @@ private:
                                       const DeliveryMatrix& deliveries);
     void record_issued_dependencies(Bundle& issued,
                                     const DeliveryMatrix& deliveries);
+    void record_dcache_raw_bypass(const Bundle& issued);
+    void annotate_dcache_accesses(Bundle& issued);
 
     ForwardingNetworkMask mask_;
+    bool collect_detailed_paths_ = true;
     std::deque<Token> trace_;
     Bundle ex_{};
     Bundle mem_{};
     Bundle wb_{};
+    std::array<bool, 2048> dcache_valid_{};
+    std::array<std::uint8_t, 2048> dcache_tag_{};
     ForwardingStudyStats stats_{};
 };
 
