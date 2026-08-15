@@ -316,7 +316,6 @@ S_UC_WRITE_RESP   // 等待未缓存写响应
     wire [TAG_W:0] tag_rd_entry [TAG_BANKS-1:0];
     wire [TAG_W-1:0] tag_rd_data [TAG_BANKS-1:0];
     wire tag_rd_vld [TAG_BANKS-1:0];
-    wire tag_rd_match [TAG_BANKS-1:0];
 
     // valid 和 Tag 一起存放在 LUTRAM 中。复位后的前 256 个周期并行清空
     // 所有物理 bank；非访存流水可以继续，第一条访存请求会等清空和一次
@@ -350,11 +349,6 @@ S_UC_WRITE_RESP   // 等待未缓存写响应
         tag_lookup_from_mem
         ? mem_index[TAG_BANK_INDEX_W-1:0]
         : ex_index[TAG_BANK_INDEX_W-1:0];
-    wire [TAG_BANK_BITS-1:0] tag_lookup_bank = tag_lookup_from_mem
-        ? mem_index[INDEX_W-1 -: TAG_BANK_BITS]
-        : ex_index[INDEX_W-1 -: TAG_BANK_BITS];
-    wire [TAG_W-1:0] tag_lookup_tag = tag_lookup_from_mem
-        ? mem_tag : ex_tag;
 
     generate
         for (genvar tag_bank = 0;
@@ -369,8 +363,6 @@ S_UC_WRITE_RESP   // 等待未缓存写响应
             assign tag_rd_data[tag_bank] =
                 tag_rd_entry[tag_bank][TAG_W-1:0];
             assign tag_rd_vld[tag_bank] = tag_rd_entry[tag_bank][TAG_W];
-            assign tag_rd_match[tag_bank] =
-                tag_rd_data[tag_bank] == tag_lookup_tag;
 
             // 每个物理存储器每周期只做一次按索引写入，保持单写端口
             // LUTRAM 模板。refill 完成对 Tag 的提交优先于失效操作。
@@ -396,17 +388,23 @@ S_UC_WRITE_RESP   // 等待未缓存写响应
     (* ram_style = "distributed" *)
     logic dirty [0:SETS-1];
 
-    // 捕获每个物理 bank；已寄存的高位索引在 MEM 阶段选择架构地址对应的候选。
+    // 捕获每个物理 bank 的原始 Tag 和 valid。已寄存的高位索引在 MEM
+    // 阶段选择架构地址对应的候选；Tag 比较也放在寄存器之后，避免把
+    // 比较器串在 EX 地址计算和 LUTRAM 异步读取之后。
     logic [TAG_W-1:0] mem_tag_rd_bank [TAG_BANKS-1:0];
     logic mem_tag_vld_bank [TAG_BANKS-1:0];
-    logic mem_tag_match_bank [TAG_BANKS-1:0];
 
 `ifndef SYNTHESIS
     // 原单表查找逻辑的可执行参考模型。它在时钟沿之前选择目标 bank，
     // 必须和新的末端选择结果保持一致。
+    wire [TAG_BANK_BITS-1:0] tag_lookup_bank = tag_lookup_from_mem
+        ? mem_index[INDEX_W-1 -: TAG_BANK_BITS]
+        : ex_index[INDEX_W-1 -: TAG_BANK_BITS];
+    wire [TAG_W-1:0] tag_lookup_tag = tag_lookup_from_mem
+        ? mem_tag : ex_tag;
     wire lookup_hit_reference =
         tag_rd_vld[tag_lookup_bank]
-        & tag_rd_match[tag_lookup_bank];
+        & (tag_rd_data[tag_lookup_bank] == tag_lookup_tag);
     logic mem_hit_reference;
 `endif
 
@@ -419,8 +417,6 @@ S_UC_WRITE_RESP   // 等待未缓存写响应
                     <= tag_rd_data[capture_bank];
                 mem_tag_vld_bank[capture_bank]
                     <= tag_rd_vld[capture_bank];
-                mem_tag_match_bank[capture_bank]
-                    <= tag_rd_match[capture_bank];
             end
 `ifndef SYNTHESIS
             mem_hit_reference <= lookup_hit_reference;
@@ -431,14 +427,15 @@ S_UC_WRITE_RESP   // 等待未缓存写响应
     // ================================================================
     //  命中结果（MEM 阶段）
     //
-    //  每个 bank 的 valid 和 Tag 比较分别在寄存器处结束；寄存的高位组
-    //  索引这里只负责最终选择。
+    //  每个 bank 的原始 Tag 和 valid 分别在寄存器处结束。这里先用已
+    //  寄存的高位组索引选择一个候选，再进行很窄的 3-bit Tag 比较。
+    //  比较发生在 MEM 周期，不增加 Cache 的查询周期数。
     // ================================================================
     wire [TAG_BANK_BITS-1:0] mem_tag_bank =
         mem_index[INDEX_W-1 -: TAG_BANK_BITS];
     wire [TAG_W-1:0] mem_tag_rd = mem_tag_rd_bank[mem_tag_bank];
     wire mem_tag_vld = mem_tag_vld_bank[mem_tag_bank];
-    wire mem_tag_match = mem_tag_match_bank[mem_tag_bank];
+    wire mem_tag_match = mem_tag_rd == mem_tag;
     wire tag_hit = mem_tag_vld & mem_tag_match;
     // mem_uncached 来自 memory_access_unit 对完整 32 位地址窗口的判断，
     // 它具有最终权威性。即使窗口外地址与压缩 Tag/index 相同，也不能命中
