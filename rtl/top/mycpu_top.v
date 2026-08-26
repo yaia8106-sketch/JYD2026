@@ -3,9 +3,9 @@
 // Chiplab contract:
 //   file   : mycpu_top.v
 //   module : core_top
-// ISA/platform contract:
-//   platform/nscscc/filelist.f includes the sole LoongArch CPU manifest.
-//   No alternate ISA or platform wrapper is selected by this build.
+// ISA/RTL contract:
+//   rtl/filelists/nscscc.f includes the sole LoongArch CPU manifest.
+//   No alternate ISA or wrapper is selected by this build.
 // ============================================================
 
 module core_top #(
