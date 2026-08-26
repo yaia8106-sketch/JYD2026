@@ -1,8 +1,0 @@
-# Simulation artifacts
-work/*
-!work/.gitkeep
-!work/.gitignore
-!work/dcache_data_ram.v
-!work/hex/
-*.vcd
-*.log
